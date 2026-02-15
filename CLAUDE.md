@@ -1,125 +1,60 @@
 # Project slop
 
-A place to house random ai assisted experiments. Cool stuff may migrate away from here into standalone projects.
+A place to house random AI assisted experiments. Cool stuff may migrate away from here into standalone projects.
 
-## Existing projects
+## Resources
 
-### rt-rs (GUI Ray Tracer)
-A real-time Vulkan ray tracer using NVIDIA RTX hardware acceleration. Renders a Cornell Box scene with a glass sphere in a GUI window.
+### ./vendor
 
-**Location**: `/home/iphands/prog/slop/rt/rt-rs`
+Here we will store clones of project source that we can use to read about and gain deep understandings about a third-party dependencies implementation.
 
-**Build and Run**:
-```bash
-cd rt/rt-rs
-cargo build
-cargo run
+From vendor:
+- Read this for very thorough understandings about how deps, libs, etc. work
+  - Sometimes the source is better than the API doc
+- Feel free to ALSO use the web for fast/quick API references and help
+- Look at examples directories in vendor for concrete implementation ideas
+- Understand what optimizations are done in one language to give ideas of how to do so in another language
+  - ie: Project Foobar a C library uses <some_technique> methods to optimize <some_implementation> we can make similar optimizations in Rust
+
+### ./context
+
+Here we will store (for long term) context / hints / API facts we discover that help us build better software.
+
+Dos:
+- If we discover in vendor/ or on the internet that an API/Library is best for <some_task> we can compact the info and store that in `./context/<lib_name>.md`
+- If we discover that a particular algorithm is known as a great way to highly optimize function/method/etc we compact this info and store that in `./context/aglo.md`
+  - Example: https://en.wikipedia.org/wiki/Fast_inverse_square_root we can store information about fast square root in the algo.md
+- If we discover great generic design patterns we can store those in `./context/patterns.md`
+- If we discover library specific design patterns we can store those in `./context/<lib_name>.md`
+- We can also store compact library use info (and function signatures) in `./context/<lib_name>.md` for super fast retrieval when developing
+
+DONTS:
+- Dont store private, trademarked, etc information
+- Dont store full source code! Short algorithm explanations, math formulas, and architecture ides are all fine
+
+
+NOTE: We want this informaiton to be dense! DONT INCLUDE FLUFF and try to compact it a bit BUT DONT compact so much we lose details!
+
+#### ./context/pitfalls.md
+
+As we work through bugs and issues in sub-projects IF we encounter pitfalls, errors, bugs, etc
+!!ESPECIALLY if we take multiple tries to fix!! Make take some short notes about the issue in `./context/pitfalls.md`.
+Use 200 words or so to describe the pitfall and how to avoid.
+You can add some info about which sub-project we discovered it in.
+
+Use a template like
+```
+# <pitfall_title#
+<200_words_or_so_to_describe_issue>
+<200_words_or_so_to_describe_how_to_avoid>
+## Sources
+- <sub_project_one>: <short_filename> (optionally: <function_name>)
+- <sub_project_two>: <short_filename> (optionally: <function_name>)
 ```
 
-**Architecture**:
-- `src/main.rs` - Application entry point with winit event loop
-- `src/render.rs` - Ray tracing command recording and frame rendering
-- `src/scene.rs` - Scene state and animation (sphere movement, lighting)
-- `src/vk/` - Modular Vulkan wrapper components:
-  - `instance.rs` - Vulkan instance with RTX extensions
-  - `device.rs` - Logical device and queue setup
-  - `accel.rs` - BLAS and TLAS acceleration structures
-  - `pipeline.rs` - Ray tracing pipeline and shader binding table
-  - `buffer.rs` - GPU buffer creation and staging
-  - `descriptor.rs` - Descriptor sets for shader resources
-  - `swapchain.rs` - Swapchain management
-- `src/shaders/` - GLSL ray tracing shaders (*.rgen, *.rmiss, *.rchit, *.rint) and precompiled SPIR-V (*.spv)
+#### ./context/high_level.md
 
-**Shaders**:
-Shaders are written in GLSL with ray tracing extensions and manually compiled to SPIR-V using glslc. The .spv files are embedded at compile time using `include_bytes!` in `pipeline.rs`.
+In `./context/high_level.md` store very high level and short explanations about deps we use and differences or why they might be better than various alternatives
 
-To recompile shaders:
-```bash
-cd rt/rt-rs/src/shaders
-glslc -fshader-stage=rgen raygen.rgen -o raygen.spv
-glslc -fshader-stage=rmiss miss.rmiss -o miss.spv
-glslc -fshader-stage=rchit closesthit_opaque.rchit -o closesthit_opaque.spv
-glslc -fshader-stage=rchit closesthit_glass.rchit -o closesthit_glass.spv
-glslc -fshader-stage=rint sphere.rint -o sphere.spv
-glslc -fshader-stage=rmiss shadow_miss.rmiss -o shadow_miss.spv
-```
-
-**Controls**:
-- Arrow keys: Move light in XZ plane
-- PgUp/PgDn: Move light in Y
-- R/G/B: Toggle light color channels
-- +/-: Adjust light intensity
-- [/]: Decrease/increase max bounces (0-31)
-- Escape: Quit
-
-### ascii-rt-glm5 (ASCII Ray Tracer)
-A Vulkan-accelerated ray tracer that renders to the terminal using ASCII art with half-block characters for 2x vertical resolution.
-
-**Location**: `/home/iphands/prog/slop/rt/ascii-rt-glm5`
-
-**Build and Run**:
-```bash
-cd rt/ascii-rt-glm5
-cargo build
-cargo run              # Interactive mode
-cargo run -- --debug   # Render 10 frames to debug/ directory
-```
-
-**Debug Output**:
-Debug mode saves frames to `debug/frame_XXX.txt`. View with:
-```bash
-./view_debug.sh 0      # View frame 0
-cat debug/frame_000.txt
-```
-
-**Architecture**:
-- `src/main.rs` - Application entry with interactive and debug modes
-- `src/lib.rs` - Library exports
-- `src/renderer.rs` - Ray tracing renderer and ASCII conversion
-- `src/scene.rs` - Scene setup (Cornell box)
-- `src/terminal.rs` - Terminal display handling with crossterm
-- `src/vulkan.rs` - Vulkan initialization and testing
-
-**Controls** (Interactive Mode):
-- Up/Down arrows: Adjust light height
-- Left/Right arrows: Adjust number of bounces
-- [ / ]: Camera zoom
-- R: Reset to defaults
-- Space: Pause (allows text selection)
-- Q or Escape: Quit
-
-## Development Notes
-
-**Vulkan Requirements**:
-Both projects require:
-- Linux (tested on Gentoo/Ubuntu 22.04+)
-- NVIDIA RTX GPU
-- Vulkan SDK 1.2+ with ray tracing extensions
-- The `rt-rs` project specifically requires RTX hardware support
-
-**Testing**:
-Run tests from the project root:
-```bash
-cd rt/ascii-rt-glm5
-cargo test
-```
-
-**Clean Build**:
-```bash
-cargo clean
-```
-
-## Key Dependencies
-
-**rt-rs**:
-- `ash` (0.38) - Vulkan bindings with linked feature
-- `glam` (0.29) - SIMD math library
-- `winit` (0.30) - Windowing
-- `bytemuck` - POD casts for GPU data
-
-**ascii-rt-glm5**:
-- `ash` (0.38) - Vulkan bindings
-- `gpu-allocator` (0.27) - GPU memory management
-- `nalgebra` (0.33) - Linear algebra
-- `crossterm` (0.28) - Terminal handling
-- `rayon` (1.10) - Parallel rendering fallback
+Feel free to build short pros/cons tables of competing libs! ITS okay to mark which ones we use in sub-folder / projects BUT KEEP THE MENTION short!
+ie: `ash` used in <sub-project-one> and <sub-project-two>
