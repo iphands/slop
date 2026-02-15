@@ -1,0 +1,51 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+layout(set = 0, binding = 3) uniform SceneUBO {
+    vec3 lightPos;
+    float lightIntensity;
+    vec3 lightColor;
+    float sphereCenterY;
+    vec3 sphereCenter;
+    float sphereRadius;
+    int maxBounces;
+} scene;
+
+hitAttributeEXT vec3 hitNormal;
+
+void main() {
+    // Ray in object space (AABB is centered at origin, sphere transform applied via instance)
+    vec3 origin = gl_ObjectRayOriginEXT;
+    vec3 direction = gl_ObjectRayDirectionEXT;
+
+    // Sphere centered at origin in object space, radius from scene UBO
+    vec3 center = vec3(0.0);
+    float radius = scene.sphereRadius;
+
+    vec3 oc = origin - center;
+    float a = dot(direction, direction);
+    float b = 2.0 * dot(oc, direction);
+    float c = dot(oc, oc) - radius * radius;
+    float discriminant = b * b - 4.0 * a * c;
+
+    if (discriminant < 0.0) {
+        return;
+    }
+
+    float sqrtDisc = sqrt(discriminant);
+    float t1 = (-b - sqrtDisc) / (2.0 * a);
+    float t2 = (-b + sqrtDisc) / (2.0 * a);
+
+    // Try front hit first
+    if (t1 >= gl_RayTminEXT && t1 <= gl_RayTmaxEXT) {
+        vec3 objHitPos = origin + direction * t1;
+        hitNormal = normalize(mat3(gl_ObjectToWorldEXT) * normalize(objHitPos - center));
+        reportIntersectionEXT(t1, 0);
+    }
+    // Then back hit (for rays starting inside the sphere)
+    else if (t2 >= gl_RayTminEXT && t2 <= gl_RayTmaxEXT) {
+        vec3 objHitPos = origin + direction * t2;
+        hitNormal = normalize(mat3(gl_ObjectToWorldEXT) * normalize(objHitPos - center));
+        reportIntersectionEXT(t2, 0);
+    }
+}

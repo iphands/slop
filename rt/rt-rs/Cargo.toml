@@ -1,0 +1,14 @@
+[package]
+name = "rt-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ash = { version = "0.38", features = ["linked"] }
+glam = "0.29"
+bytemuck = { version = "1", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"
+winit = "0.30"
+ash-window = "0.13"
+raw-window-handle = "0.6"

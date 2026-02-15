@@ -1,2 +1,3 @@
-/rt/ascii-rt-glm5/debug
-/rt/ascii-rt-glm5/target
+/rt/*/debug
+/rt/*/target
+/rt/*/tmp
