@@ -1,5 +1,6 @@
 /llama-proxy/config.yaml
 /llama-proxy/target
+/llama-proxy/trash
 /rt/*/debug
 /rt/*/target
 /rt/*/tmp
