@@ -130,3 +130,136 @@ The fix appeared to work in tests but failed in production because tests explici
 - llama-proxy: `src/fixes/mod.rs` (lines 181-198: trait defaults that bypass accumulator)
 - llama-proxy: `src/fixes/toolcall_bad_filepath_fix.rs` (fix that initially only overrode one variant)
 - llama-proxy: `src/proxy/streaming.rs` (line 145: calls the WITH-request variant in production)
+
+## Discovering API Types Reactively Instead of Proactively
+
+### The Problem
+When building format converters or API proxies, discovering content/message types **reactively** (only when hitting errors) leads to incomplete type coverage, production parsing failures, and multiple fix cycles for the same root cause. This pattern creates technical debt and user-facing errors that could be prevented with upfront research.
+
+### Description
+In llama-proxy, we initially implemented Anthropic content block types incrementally as we encountered them:
+
+1. **Initial implementation**: Only `text` and `thinking` content blocks
+2. **Hit parsing error**: Backend sent `tool_use` block we didn't handle
+3. **Debug session**: Discover `tool_use` exists, add to enum
+4. **Fix and deploy**: Parsing works again
+5. **Later**: Hit same error with `tool_result` blocks
+6. **Repeat cycle**: Add `tool_result`, fix parsing
+7. **Potential future**: Will hit errors if backend sends `image` blocks (llama.cpp supports this but proxy doesn't)
+
+This reactive approach causes:
+- **Production errors**: Legitimate backend responses fail to parse ("unknown variant `tool_use`")
+- **User friction**: Features break when backends evolve or use uncommon types
+- **Wasted effort**: Multiple debugging sessions for the same root issue
+- **Incomplete coverage**: Missing types only discovered when users hit specific code paths
+- **False confidence**: Tests pass, but only cover types we've encountered
+
+The **root cause** is treating API integration as "implement what we see right now" rather than "implement the complete specification". We were parsing incrementally based on observed traffic instead of consulting authoritative sources (official SDKs, documentation, backend source code).
+
+### How to Avoid
+**Principle**: Research ALL possible types/variants BEFORE implementing parsers, converters, or API clients.
+
+**Solution Pattern**:
+
+1. **Consult authoritative sources first**:
+   ```bash
+   # Check official SDK for complete type list
+   cd vendor/anthropic-sdk-python
+   grep -r "class.*Block" src/
+
+   # Check backend source for what it actually sends
+   cd vendor/llama.cpp
+   grep -r "content_block.*type" tools/server/
+
+   # Read official API docs
+   curl https://api.anthropic.com/docs/messages
+   ```
+
+2. **Document complete type catalogs**:
+   - Create `context/<api_name>_api.md` with ALL types (even if not implementing yet)
+   - List what backend supports vs. what official API supports
+   - Note which types you're implementing vs. deferring
+
+3. **Implement all types together**:
+   ```rust
+   // GOOD: Complete enum from research
+   #[derive(Deserialize)]
+   #[serde(tag = "type")]
+   enum AnthropicContentBlock {
+       #[serde(rename = "text")]
+       Text { text: String },
+       #[serde(rename = "thinking")]
+       Thinking { thinking: String, signature: Option<String> },
+       #[serde(rename = "tool_use")]
+       ToolUse { id: String, name: String, input: Value },
+       #[serde(rename = "tool_result")]
+       ToolResult { tool_use_id: String, content: String },
+       #[serde(rename = "image")]  // Even if not handling yet
+       Image { source: ImageSource },
+       // ... other types from spec
+   }
+
+   // BAD: Only implementing what we've seen
+   enum AnthropicContentBlock {
+       Text { text: String },
+       // We'll add more when we hit errors...
+   }
+   ```
+
+4. **Handle unimplemented types gracefully**:
+   ```rust
+   match content_block {
+       ContentBlock::Text { .. } => handle_text(),
+       ContentBlock::Thinking { .. } => handle_thinking(),
+       ContentBlock::ToolUse { .. } => handle_tool_use(),
+       ContentBlock::Image { .. } => {
+           tracing::warn!("Image blocks not yet supported, skipping");
+           Ok(())  // Don't crash
+       }
+       _ => {
+           tracing::error!("Unknown content block type");
+           Err(Error::UnsupportedContentBlock)
+       }
+   }
+   ```
+
+5. **Create comprehensive documentation**:
+   - `context/<api>_complete_types.md` - All official types
+   - `context/<backend>_supported_types.md` - What backend actually sends
+   - `context/<formats>_mapping.md` - Conversion possibilities/limitations
+
+6. **Test with all known types**:
+   ```rust
+   #[test]
+   fn test_parse_all_content_block_types() {
+       // Even if we don't handle them, ensure we can parse
+       let blocks = vec![
+           r#"{"type":"text","text":"hi"}"#,
+           r#"{"type":"thinking","thinking":"..."}"#,
+           r#"{"type":"tool_use","id":"x","name":"y","input":{}}"#,
+           r#"{"type":"tool_result","tool_use_id":"x","content":"z"}"#,
+           r#"{"type":"image","source":{"type":"url","url":"..."}}"#,
+           // Test ALL types, even unimplemented ones
+       ];
+
+       for block_json in blocks {
+           let result = serde_json::from_str::<ContentBlock>(block_json);
+           // Should parse without error (even if handling is TODO)
+           assert!(result.is_ok(), "Failed to parse: {}", block_json);
+       }
+   }
+   ```
+
+**Proactive Research Checklist**:
+- [ ] Read official API documentation
+- [ ] Clone and search official SDK source code
+- [ ] Check backend/server source for what it actually sends
+- [ ] Document complete type catalog before coding
+- [ ] Implement all known types (even if handlers are stubs)
+- [ ] Test parsing all documented types
+- [ ] Log warnings for unimplemented types instead of crashing
+
+### Sources
+- llama-proxy: `src/api/openai.rs` - Initially missing `tool_use`, `tool_result`, still missing `image`
+- llama-proxy: Multiple commits incrementally adding content block types after hitting errors
+- Created comprehensive documentation: `context/anthropic_api.md`, `context/llama_cpp_supported_types.md`, `context/openai_anthropic_mapping.md`
