@@ -263,3 +263,30 @@ The **root cause** is treating API integration as "implement what we see right n
 - llama-proxy: `src/api/openai.rs` - Initially missing `tool_use`, `tool_result`, still missing `image`
 - llama-proxy: Multiple commits incrementally adding content block types after hitting errors
 - Created comprehensive documentation: `context/anthropic_api.md`, `context/llama_cpp_supported_types.md`, `context/openai_anthropic_mapping.md`
+
+## UTF-8 Char Boundary Panics When Byte-Slicing Strings
+
+### The Problem
+Rust panics with `byte index N is not a char boundary` when you slice a `&str` at a byte offset that falls inside a multi-byte UTF-8 character (e.g., emoji = 4 bytes, accented chars = 2 bytes).
+
+### Description
+In llama-proxy's `chunk_text()` function, text was split into fixed-size chunks using byte arithmetic: `end = start + max_size`. When the calculated `end` landed inside an emoji (e.g., 💡 is 4 bytes, offset 50 lands at byte 2 of the emoji at bytes 48..52), the slice `text[start..end]` panicked. The function was documented as splitting on "chars" but worked with byte offsets — a hidden mismatch. The bug only surfaced in production when LLM responses contained emojis, since unit tests used ASCII-only text.
+
+Additionally, `rfind()` returns a byte offset; using `i + 1` to advance past the found whitespace char is wrong for multi-byte spaces (U+00A0 no-break space = 2 bytes, U+2009 thin space = 3 bytes).
+
+### How to Avoid
+1. **Never slice `&str` at raw byte offsets from arithmetic.** Always verify with `str::is_char_boundary()` first.
+2. Use a `floor_char_boundary` helper to walk back to the nearest valid boundary:
+   ```rust
+   fn floor_char_boundary(s: &str, index: usize) -> usize {
+       if index >= s.len() { return s.len(); }
+       let mut i = index;
+       while i > 0 && !s.is_char_boundary(i) { i -= 1; }
+       i
+   }
+   ```
+3. When finding whitespace with `rfind`, use `char_indices().rev()` and advance by `c.len_utf8()` instead of `+ 1`.
+4. **Test with emoji-heavy strings** — they are the most common multi-byte content in LLM output.
+
+### Sources
+- llama-proxy: `src/proxy/synthesis.rs` (`chunk_text` function)
