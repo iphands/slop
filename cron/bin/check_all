@@ -1,0 +1,14 @@
+#!/bin/bash
+set -e
+
+# Setup venv if needed
+if [[ ! -d venv ]]; then
+  python -mvenv venv > /dev/null 2>&1
+fi
+
+source venv/bin/activate
+pip install -q -r requirements.txt
+
+pyre check
+black src
+flake8 src

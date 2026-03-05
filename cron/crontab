@@ -1,0 +1,26 @@
+# Crontab schedule for plug control
+# Format: minute hour day month weekday command
+
+# Monday
+30 17 * * 1 /app/run_plug.sh on
+0 4   * * 2 /app/run_plug.sh off
+0 6   * * 2 /app/run_plug.sh on
+0 8   * * 2 /app/run_plug.sh off
+
+# Tuesday
+30 17 * * 2 /app/run_plug.sh on
+0 4   * * 3 /app/run_plug.sh off
+0 6   * * 3 /app/run_plug.sh on
+0 8   * * 3 /app/run_plug.sh off
+
+# Wednesday
+30 17 * * 3 /app/run_plug.sh on
+0 4   * * 4 /app/run_plug.sh off
+0 6   * * 4 /app/run_plug.sh on
+0 8   * * 4 /app/run_plug.sh off
+
+# Thursday
+30 17 * * 4 /app/run_plug.sh on
+0 4   * * 5 /app/run_plug.sh off
+0 6   * * 5 /app/run_plug.sh on
+0 8   * * 5 /app/run_plug.sh off
