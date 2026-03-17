@@ -10,8 +10,8 @@ mod extraction;
 mod injection;
 
 pub use client::AugmentBackend;
-pub use extraction::extract_user_content;
-pub use injection::inject_augmentation;
+pub use extraction::{extract_user_content, extract_user_content_raw};
+pub use injection::{inject_augmentation, inject_augmentation_raw};
 
 /// API format for augment backend communication
 #[derive(Debug, Clone, Copy, PartialEq)]

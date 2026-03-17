@@ -23,7 +23,7 @@ pub struct AppConfig {
     pub detection: DetectionConfig,
     #[serde(default)]
     pub streaming: StreamingConfig,
-    #[serde(default)]
+    #[serde(default, rename = "augment-backend")]
     pub augment_backend: Option<AugmentBackendConfig>,
 }
 

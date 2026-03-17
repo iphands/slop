@@ -2,6 +2,65 @@
 
 use crate::api::Message;
 
+/// Extract user content directly from raw JSON request value.
+///
+/// Handles both OpenAI format (messages[].content as string or array of parts)
+/// and Anthropic format (messages[].content as string or array of content blocks).
+/// Returns the last user message text, or all user messages joined by newline.
+///
+/// This avoids typed deserialization failures caused by unknown fields, strict
+/// enum variants, or content that doesn't match expected shapes.
+pub fn extract_user_content_raw(json: &serde_json::Value, is_anthropic: bool) -> String {
+    let messages = match json.get("messages").and_then(|m| m.as_array()) {
+        Some(m) => m,
+        None => return String::new(),
+    };
+
+    let texts: Vec<String> = messages
+        .iter()
+        .filter(|msg| msg.get("role").and_then(|r| r.as_str()) == Some("user"))
+        .filter_map(|msg| {
+            let content = msg.get("content")?;
+            let text = extract_text_from_content_value(content, is_anthropic);
+            if text.is_empty() { None } else { Some(text) }
+        })
+        .collect();
+
+    texts.join("\n")
+}
+
+/// Extract text from a content JSON value (string or array of blocks/parts).
+fn extract_text_from_content_value(content: &serde_json::Value, is_anthropic: bool) -> String {
+    match content {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(parts) => {
+            parts
+                .iter()
+                .filter_map(|part| {
+                    let part_type = part.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                    if is_anthropic {
+                        // Anthropic: text blocks have type "text" and field "text"
+                        if part_type == "text" {
+                            part.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                        } else {
+                            None
+                        }
+                    } else {
+                        // OpenAI: content parts have type "text" and field "text"
+                        if part_type == "text" {
+                            part.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                        } else {
+                            None
+                        }
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+        _ => String::new(),
+    }
+}
+
 /// Extract user message content from a list of messages
 ///
 /// Returns all user message contents as a Vec of strings.

@@ -2,6 +2,77 @@
 
 use crate::api::{ChatCompletionRequest, Message, MessageContent};
 
+/// Inject augmentation directly into a raw JSON request value.
+///
+/// Finds the last user message and appends the augmentation suffix to its content.
+/// Handles both string content and array-of-parts content, for both OpenAI and
+/// Anthropic formats. Returns true if injection succeeded, false otherwise.
+///
+/// This avoids typed deserialization failures by operating on raw JSON.
+pub fn inject_augmentation_raw(
+    json: &mut serde_json::Value,
+    is_anthropic: bool,
+    request_prompt: &str,
+    augmentation: &str,
+) -> bool {
+    if augmentation.is_empty() {
+        return false;
+    }
+
+    let suffix = format!("\n\n{}\n\n{}", request_prompt, augmentation);
+
+    let messages = match json.get_mut("messages").and_then(|m| m.as_array_mut()) {
+        Some(m) => m,
+        None => return false,
+    };
+
+    // Find the last user message index
+    let last_user_idx = messages
+        .iter()
+        .enumerate()
+        .filter(|(_, msg)| msg.get("role").and_then(|r| r.as_str()) == Some("user"))
+        .map(|(i, _)| i)
+        .last();
+
+    let idx = match last_user_idx {
+        Some(i) => i,
+        None => return false,
+    };
+
+    let msg = &mut messages[idx];
+    let content = msg.get_mut("content");
+
+    match content {
+        Some(serde_json::Value::String(s)) => {
+            let new_text = format!("{}{}", s, suffix);
+            *s = new_text;
+            true
+        }
+        Some(serde_json::Value::Array(parts)) => {
+            if is_anthropic {
+                // Anthropic: append a text content block
+                parts.push(serde_json::json!({
+                    "type": "text",
+                    "text": suffix
+                }));
+            } else {
+                // OpenAI: append a text content part
+                parts.push(serde_json::json!({
+                    "type": "text",
+                    "text": suffix
+                }));
+            }
+            true
+        }
+        None | Some(serde_json::Value::Null) => {
+            // No content field — set it as a string
+            msg["content"] = serde_json::Value::String(suffix);
+            true
+        }
+        _ => false,
+    }
+}
+
 /// Inject augmentation into the last user message
 ///
 /// The augmentation is appended to the user message content in the format:
