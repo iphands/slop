@@ -147,12 +147,12 @@ impl ProxyHandler {
     }
 
     /// Inject augmentation into Anthropic messages
-    fn inject_into_anthropic(request: &mut crate::api::AnthropicMessageRequest, augmentation: &str) {
+    fn inject_into_anthropic(request: &mut crate::api::AnthropicMessageRequest, request_prompt: &str, augmentation: &str) {
         if augmentation.is_empty() {
             return;
         }
 
-        let augmentation_with_markers = format!("\n\n<augmentation>\n{}\n</augmentation>\n\n", augmentation);
+        let suffix = format!("\n\n{}\n\n{}", request_prompt, augmentation);
 
         // Find the last user message
         let mut last_user_index = None;
@@ -165,7 +165,7 @@ impl ProxyHandler {
         if let Some(idx) = last_user_index {
             // Add augmentation as a new text block at the end
             request.messages[idx].content.push(crate::api::AnthropicContentBlock::Text {
-                text: augmentation_with_markers,
+                text: suffix,
             });
 
             tracing::debug!(
@@ -176,7 +176,7 @@ impl ProxyHandler {
         } else if !request.messages.is_empty() {
             // Fallback: prepend to first message
             request.messages[0].content.insert(0, crate::api::AnthropicContentBlock::Text {
-                text: format!("<augmentation>\n{}\n</augmentation>\n\n", augmentation),
+                text: suffix,
             });
 
             tracing::debug!(
@@ -304,7 +304,12 @@ impl ProxyHandler {
                     match augment_backend.get_augmentation(&user_content).await {
                         Ok(aug) if !aug.is_empty() => {
                             tracing::info!(augmentation_length = aug.len(), "Received augmentation");
-                            Some(aug)
+                            let request_prompt = augment_backend.load_request_prompt()
+                                .unwrap_or_else(|e| {
+                                    tracing::warn!(error = %e, "Failed to load request_prompt, using empty string");
+                                    String::new()
+                                });
+                            Some((aug, request_prompt))
                         }
                         Ok(_) => None,
                         Err(e) => {
@@ -328,14 +333,14 @@ impl ProxyHandler {
         };
 
         // Inject augmentation into request if we got one
-        let enriched_body_bytes = if let Some(ref aug) = augmentation {
+        let enriched_body_bytes = if let Some((ref aug, ref request_prompt)) = augmentation {
             if let Some(req_json) = request_json.clone() {
                 let is_anthropic_format = is_anthropic_api;
 
                 if is_anthropic_format {
                     // Inject into Anthropic format
                     if let Ok(mut anthropic_req) = serde_json::from_value::<crate::api::AnthropicMessageRequest>(req_json.clone()) {
-                        Self::inject_into_anthropic(&mut anthropic_req, aug);
+                        Self::inject_into_anthropic(&mut anthropic_req, request_prompt, aug);
                         serde_json::to_vec(&anthropic_req).unwrap_or(body_bytes.to_vec()).into()
                     } else {
                         body_bytes.clone()
@@ -343,7 +348,7 @@ impl ProxyHandler {
                 } else {
                     // Inject into OpenAI format
                     if let Ok(openai_req) = serde_json::from_value::<ChatCompletionRequest>(req_json.clone()) {
-                        match inject_augmentation(openai_req, aug) {
+                        match inject_augmentation(openai_req, request_prompt, aug) {
                             Ok(enriched) => serde_json::to_vec(&enriched).unwrap_or(body_bytes.to_vec()).into(),
                             Err(e) => {
                                 tracing::error!(error = %e, "Failed to inject augmentation");
@@ -360,6 +365,13 @@ impl ProxyHandler {
         } else {
             body_bytes.clone()
         };
+
+        // Log augmented request text if flag is set and augmentation was applied
+        if self.state.log_augmented_request_text && augmentation.is_some() {
+            if let Ok(text) = std::str::from_utf8(&enriched_body_bytes) {
+                tracing::info!(augmented_request = %text, "Augmented request body");
+            }
+        }
 
         // Log request (unless hide_requests is set)
         if !self.state.hide_requests {
@@ -931,6 +943,7 @@ mod tests {
             exporter_manager: std::sync::Arc::new(exporter_manager),
             augment_backend: None,
             hide_requests: false,
+            log_augmented_request_text: false,
         })
     }
 

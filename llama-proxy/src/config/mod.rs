@@ -304,9 +304,12 @@ pub struct AugmentBackendConfig {
     pub url: String,
     /// Model identifier for augment backend
     pub model: String,
-    /// Path to prompt file (defaults to "./augmenter/backend_prompt.md")
+    /// Path to backend prompt file (defaults to "./augmenter/backend_prompt.md")
     #[serde(default = "default_prompt_file")]
     pub prompt_file: String,
+    /// Path to request prompt file injected into enriched user message (defaults to "./augmenter/request_prompt.md")
+    #[serde(default = "default_request_prompt_file")]
+    pub request_prompt_file: String,
 }
 
 fn default_augment_enabled() -> bool {
@@ -317,6 +320,10 @@ fn default_prompt_file() -> String {
     "./augmenter/backend_prompt.md".to_string()
 }
 
+fn default_request_prompt_file() -> String {
+    "./augmenter/request_prompt.md".to_string()
+}
+
 impl Default for AugmentBackendConfig {
     fn default() -> Self {
         Self {
@@ -324,6 +331,7 @@ impl Default for AugmentBackendConfig {
             url: String::new(),
             model: String::new(),
             prompt_file: default_prompt_file(),
+            request_prompt_file: default_request_prompt_file(),
         }
     }
 }

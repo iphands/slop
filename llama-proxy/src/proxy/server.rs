@@ -27,6 +27,7 @@ pub struct ProxyState {
     pub exporter_manager: Arc<ExporterManager>,
     pub augment_backend: Option<Arc<AugmentBackend>>,
     pub hide_requests: bool,
+    pub log_augmented_request_text: bool,
 }
 
 /// Run the proxy server
@@ -35,6 +36,7 @@ pub async fn run_server(
     fix_registry: FixRegistry,
     exporter_manager: ExporterManager,
     hide_requests: bool,
+    log_augmented_request_text: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = config;
 
@@ -117,6 +119,7 @@ pub async fn run_server(
         exporter_manager: Arc::new(exporter_manager),
         augment_backend,
         hide_requests,
+        log_augmented_request_text,
     };
 
     // Build the router

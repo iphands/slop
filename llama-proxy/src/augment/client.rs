@@ -11,6 +11,7 @@ pub struct AugmentBackend {
     url: String,
     model: String,
     prompt_file: String,
+    request_prompt_file: String,
     http_client: Client,
     api_format: ApiFormat,
 }
@@ -41,6 +42,7 @@ impl AugmentBackend {
             url: config.url.trim_end_matches('/').to_string(),
             model: config.model.clone(),
             prompt_file: config.prompt_file.clone(),
+            request_prompt_file: config.request_prompt_file.clone(),
             http_client,
             api_format: ApiFormat::detect_from_url(&config.url),
         })
@@ -51,6 +53,14 @@ impl AugmentBackend {
         std::fs::read_to_string(&self.prompt_file)
             .map_err(|e| crate::config::AugmentBackendError {
                 message: format!("Failed to read prompt file '{}': {}", self.prompt_file, e),
+            })
+    }
+
+    /// Load the request prompt (injected into enriched user message)
+    pub fn load_request_prompt(&self) -> Result<String, crate::config::AugmentBackendError> {
+        std::fs::read_to_string(&self.request_prompt_file)
+            .map_err(|e| crate::config::AugmentBackendError {
+                message: format!("Failed to read request_prompt file '{}': {}", self.request_prompt_file, e),
             })
     }
 

@@ -5,17 +5,20 @@ use crate::api::{ChatCompletionRequest, Message, MessageContent};
 /// Inject augmentation into the last user message
 ///
 /// The augmentation is appended to the user message content in the format:
-/// `original_content\n\n<augmentation>\n\n<augmentation_result>`
+/// `original_content\n\n{request_prompt}\n\n{augmentation}`
 ///
 /// If no user message is found, the augmentation is prepended to the first message.
 pub fn inject_augmentation(
     mut request: ChatCompletionRequest,
+    request_prompt: &str,
     augmentation: &str,
 ) -> Result<ChatCompletionRequest, crate::config::AugmentBackendError> {
     if augmentation.is_empty() {
         tracing::debug!("Empty augmentation, returning request unchanged");
         return Ok(request);
     }
+
+    let suffix = format!("\n\n{}\n\n{}", request_prompt, augmentation);
 
     // Find the last user message
     let mut last_user_index = None;
@@ -26,12 +29,9 @@ pub fn inject_augmentation(
     }
 
     if let Some(idx) = last_user_index {
-        // Inject into last user message
-        let augmentation_with_markers = format!("\n\n<augmentation>\n{}\n</augmentation>\n\n", augmentation);
-
         request.messages[idx] = modify_message_content(
             &request.messages[idx],
-            &augmentation_with_markers,
+            &suffix,
         );
 
         tracing::debug!(
@@ -41,11 +41,9 @@ pub fn inject_augmentation(
         );
     } else if !request.messages.is_empty() {
         // Fallback: prepend to first message if no user message found
-        let augmentation_marker = format!("<augmentation>\n{}\n</augmentation>\n\n", augmentation);
-
         request.messages[0] = modify_message_content(
             &request.messages[0],
-            &augmentation_marker,
+            &suffix,
         );
 
         tracing::debug!(
@@ -127,13 +125,12 @@ mod tests {
             thinking_budget: None,
         };
 
-        let result = inject_augmentation(request, "Context info").unwrap();
+        let result = inject_augmentation(request, "", "Context info").unwrap();
 
         assert_eq!(result.messages.len(), 2);
         let user_msg = &result.messages[1];
         if let Some(MessageContent::Text(text)) = &user_msg.content {
             assert!(text.contains("Hello"));
-            assert!(text.contains("<augmentation>"));
             assert!(text.contains("Context info"));
         } else {
             panic!("Expected text content");
@@ -168,7 +165,7 @@ mod tests {
             thinking_budget: None,
         };
 
-        let result = inject_augmentation(request, "").unwrap();
+        let result = inject_augmentation(request, "", "").unwrap();
         // Empty augmentation should leave request unchanged
         if let Some(MessageContent::Text(text)) = &result.messages[0].content {
             assert_eq!(text, "Hello");
@@ -203,10 +200,10 @@ mod tests {
             thinking_budget: None,
         };
 
-        let result = inject_augmentation(request, "Context").unwrap();
+        let result = inject_augmentation(request, "", "Context").unwrap();
         // Should inject into first message when no user message
         if let Some(MessageContent::Text(text)) = &result.messages[0].content {
-            assert!(text.contains("<augmentation>"));
+            assert!(text.contains("Context"));
         }
     }
 
@@ -238,7 +235,7 @@ mod tests {
             thinking_budget: None,
         };
 
-        let result = inject_augmentation(request, "Context").unwrap();
+        let result = inject_augmentation(request, "", "Context").unwrap();
 
         assert_eq!(result.model, "test-model");
         assert_eq!(result.temperature, Some(0.7));

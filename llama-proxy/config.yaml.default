@@ -77,6 +77,7 @@ backend:
 #   url: "http://cosmo.lan:8701"
 #   model: "cosmo-6000"
 #   prompt_file: "./augmenter/backend_prompt.md"
+#   request_prompt_file: "./augmenter/request_prompt.md"
 
 # Response fix modules (default: enabled with all fixes active)
 # fixes:
