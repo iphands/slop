@@ -12,6 +12,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 use super::handler::ProxyHandler;
+use crate::augment::AugmentBackend;
 use crate::backends::{build_balancer_from_groups, build_balancer_from_single, preflight, LoadBalancer};
 use crate::config::AppConfig;
 use crate::exporters::ExporterManager;
@@ -24,6 +25,7 @@ pub struct ProxyState {
     pub load_balancer: Arc<dyn LoadBalancer>,
     pub fix_registry: Arc<FixRegistry>,
     pub exporter_manager: Arc<ExporterManager>,
+    pub augment_backend: Option<Arc<AugmentBackend>>,
     pub hide_requests: bool,
 }
 
@@ -82,11 +84,38 @@ pub async fn run_server(
 
     tracing::info!(strategy = %load_balancer.strategy_name(), "Load balancing strategy");
 
+    // Initialize augment backend if configured
+    let augment_backend = if let Some(ref augment_config) = config.augment_backend {
+        if augment_config.enabled {
+            match AugmentBackend::from_config(augment_config) {
+                Ok(backend) => {
+                    tracing::info!(
+                        url = %augment_config.url,
+                        model = %augment_config.model,
+                        prompt_file = %augment_config.prompt_file,
+                        "Augment backend enabled"
+                    );
+                    Some(Arc::new(backend))
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to initialize augment backend, will be disabled");
+                    None
+                }
+            }
+        } else {
+            tracing::info!("Augment backend disabled via config");
+            None
+        }
+    } else {
+        None
+    };
+
     let state = ProxyState {
         config: Arc::new(config.clone()),
         load_balancer,
         fix_registry: Arc::new(fix_registry),
         exporter_manager: Arc::new(exporter_manager),
+        augment_backend,
         hide_requests,
     };
 
