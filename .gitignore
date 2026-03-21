@@ -1,5 +1,6 @@
 /cron/venv
 /llama-proxy/config.yaml
+/llama-proxy/debug
 /llama-proxy/target
 /llama-proxy/trash
 /llama-proxy/e2e/target
