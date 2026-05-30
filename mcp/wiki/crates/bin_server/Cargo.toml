@@ -9,3 +9,11 @@ name = "server"
 path = "src/main.rs"
 
 [dependencies]
+lib_mcp = { path = "../lib_mcp" }
+lib_common = { path = "../lib_common" }
+rmcp = { version = "0.16", features = ["server"] }
+tokio = { workspace = true, features = ["full", "signal"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
