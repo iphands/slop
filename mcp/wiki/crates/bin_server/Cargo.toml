@@ -9,9 +9,10 @@ name = "server"
 path = "src/main.rs"
 
 [dependencies]
-lib_mcp = { path = "../lib_mcp" }
 lib_common = { path = "../lib_common" }
-rmcp = { version = "0.16", features = ["server"] }
+lib_embeddings = { path = "../lib_embeddings" }
+lib_vector = { path = "../lib_vector" }
+qdrant-client = "1.18"
 tokio = { workspace = true, features = ["full", "signal"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

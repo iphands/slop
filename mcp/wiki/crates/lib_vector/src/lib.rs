@@ -105,14 +105,17 @@ impl VectorStore {
 
     /// Create collection with vector storage
     pub async fn create_collection(&self) -> Result<()> {
-        let vector_params = qdrant::VectorParamsBuilder::new(
+        use qdrant_client::qdrant::CreateCollectionBuilder;
+        use qdrant_client::qdrant::VectorParamsBuilder;
+
+        let vector_params = VectorParamsBuilder::new(
             self.vector_size as u64,
             qdrant::Distance::Cosine,
         );
 
         self.client
             .create_collection(
-                qdrant::CreateCollectionBuilder::new(&self.collection_name)
+                CreateCollectionBuilder::new(&self.collection_name)
                     .vectors_config(vector_params)
             )
             .await
@@ -121,25 +124,51 @@ impl VectorStore {
         Ok(())
     }
 
-    /// Upsert points to collection (placeholder - needs QdrantServer implementation)
+    /// Upsert points to collection
     pub async fn upsert(
-        &mut self,
-        _points: Vec<qdrant::PointStruct>,
+        &self,
+        points: Vec<qdrant::PointStruct>,
     ) -> Result<()> {
-        // TODO: Implement actual upsert using QdrantServer trait
-        // This requires mutable access to the client
-        unimplemented!("Qdrant upsert requires QdrantServer trait implementation")
+        use qdrant_client::qdrant::UpsertPointsBuilder;
+
+        self.client
+            .upsert_points(
+                UpsertPointsBuilder::new(&self.collection_name, points)
+                    .wait(true)
+            )
+            .await
+            .context("Failed to upsert points")?;
+
+        Ok(())
     }
 
-    /// Search with dense vector only (placeholder - needs QdrantServer implementation)
+    /// Search with dense vector
     pub async fn search_dense(
-        &mut self,
-        _vector: Vec<f32>,
-        _limit: u64,
-        _filter: Option<qdrant::Filter>,
+        &self,
+        vector: Vec<f32>,
+        limit: u64,
+        filter: Option<qdrant::Filter>,
     ) -> Result<Vec<qdrant::ScoredPoint>> {
-        // TODO: Implement actual search using QdrantServer trait
-        unimplemented!("Qdrant search requires QdrantServer trait implementation")
+        use qdrant_client::qdrant::SearchPointsBuilder;
+
+        let mut builder = SearchPointsBuilder::new(
+            &self.collection_name,
+            vector,
+            limit,
+        )
+        .score_threshold(0.0)
+        .with_payload(true);
+
+        if let Some(f) = filter {
+            builder = builder.filter(f);
+        }
+
+        let result = self.client
+            .search_points(builder)
+            .await
+            .context("Failed to search collection")?;
+
+        Ok(result.result)
     }
 
     /// Build metadata filter from optional criteria
@@ -166,7 +195,10 @@ impl VectorStore {
 
     /// Optimize collection for local deployment
     pub async fn optimize_local(&self) -> Result<()> {
-        let hnsw_config = qdrant::HnswConfigDiff {
+        use qdrant_client::qdrant::UpdateCollectionBuilder;
+        use qdrant_client::qdrant::HnswConfigDiff;
+
+        let hnsw_config = HnswConfigDiff {
             m: Some(16),
             ef_construct: Some(200),
             full_scan_threshold: Some(10000),
@@ -175,7 +207,7 @@ impl VectorStore {
 
         self.client
             .update_collection(
-                qdrant::UpdateCollectionBuilder::new(&self.collection_name)
+                UpdateCollectionBuilder::new(&self.collection_name)
                     .hnsw_config(hnsw_config)
             )
             .await
