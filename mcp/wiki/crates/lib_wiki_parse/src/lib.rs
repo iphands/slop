@@ -50,7 +50,8 @@ impl WikiParser {
         loop {
             match self.reader.read_event_into(buf) {
                 Ok(Event::Start(e)) => {
-                    match e.name().as_ref() {
+                    let name_bytes = e.name().as_ref();
+                    match name_bytes {
                         b"title" => {
                             if let Ok(t) = self.reader.read_event_into(buf) {
                                 if let Event::Text(txt) = t {
@@ -73,11 +74,11 @@ impl WikiParser {
                             }
                         }
                         b"redirect" => {
-                            for attr_result in e.attributes() {
-                                if let Ok(attr) = attr_result {
-                                    if attr.key.as_ref() == b"title" {
-                                        redirects_to = Some(attr.value.to_vec());
-                                    }
+                            // Check attributes on the redirect element
+                            for attr in e.attributes().flatten() {
+                                let attr = attr;
+                                if attr.key.as_ref() == b"title" {
+                                    redirects_to = Some(String::from_utf8_lossy(&attr.value).to_string());
                                 }
                             }
                         }
@@ -115,7 +116,7 @@ impl WikiParser {
             );
             
             if let Some(redirect) = redirects_to {
-                article.redirects_to = Some(String::from_utf8_lossy(&redirect).to_string());
+                article.redirects_to = Some(redirect);
             }
             
             if !text.is_empty() || article.redirects_to.is_some() {
