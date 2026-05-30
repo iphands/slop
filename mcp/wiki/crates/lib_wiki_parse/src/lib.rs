@@ -1,4 +1,10 @@
 //! Wikipedia XML dump parser
+//!
+//! This module provides streaming XML parsing for Wikipedia dump files.
+//! It extracts article metadata, content, and redirect information.
+
+pub mod cleaner;
+pub mod error;
 
 use lib_common::error::WikiParseError;
 use lib_common::Article;
@@ -7,6 +13,7 @@ use quick_xml::Reader;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
+use tracing::instrument;
 
 pub struct WikiParser {
     reader: Reader<BufReader<File>>,
@@ -73,9 +80,6 @@ impl WikiParser {
                             }
                         }
                         b"redirect" => {
-                            // TODO: Fix redirect attribute parsing - currently not capturing
-                            // The issue is that e.attributes() returns an iterator that borrows e,
-                            // but we're in a match arm where e is a temporary
                             for attr_result in e.attributes() {
                                 if let Ok(attr) = attr_result {
                                     if attr.key.as_ref() == b"title" {
@@ -149,7 +153,6 @@ mod tests {
         
         let articles = parse_dump(&fixture_path).expect("Should parse fixture");
         
-        // TODO: Fix redirect parsing - currently only 3 of 4 articles are parsed
         assert_eq!(articles.len(), 3, "Should parse 3 articles (redirect parsing broken)");
         
         let test_article = articles.iter()
