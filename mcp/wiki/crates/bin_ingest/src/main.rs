@@ -15,11 +15,11 @@ struct Args {
     dump_dir: PathBuf,
 
     /// Qdrant host
-    #[arg(short, long, default_value = "localhost")]
+    #[arg(long, default_value = "localhost")]
     qdrant_host: String,
 
     /// Qdrant port  
-    #[arg(short, long, default_value = "6333")]
+    #[arg(long, default_value = "6333")]
     qdrant_port: u16,
 }
 
