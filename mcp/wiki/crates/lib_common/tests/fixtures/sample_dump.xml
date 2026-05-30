@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.11/" xml:lang="en">
+  <page>
+    <title>Test_Article</title>
+    <ns>0</ns>
+    <id>1</id>
+    <revision>
+      <id>101</id>
+      <timestamp>2026-05-30T10:00:00Z</timestamp>
+      <text xml:space="preserve">
+This is a test article for the Wikipedia MCP server.
+
+== Introduction ==
+This article demonstrates basic [[MediaWiki]] markup features.
+It contains [[Test_Article|self-references]] and [[External_Link|external links]].
+
+== Features ==
+The article shows:
+* '''Bold text''' for emphasis
+* ''Italic text'' for subtlety
+* [[Internal_Link]] references
+* [[File:Example.jpg|thumbnail|Example image]] references
+* [[Category:Test_Categories]] categorization
+
+== See Also ==
+* [[Related_Article]]
+* [[Another_Page]]
+
+</text>
+    </revision>
+  </page>
+
+  <page>
+    <title>History_of_Testing</title>
+    <ns>0</ns>
+    <id>2</id>
+    <revision>
+      <id>102</id>
+      <timestamp>2026-05-30T11:00:00Z</timestamp>
+      <text xml:space="preserve">
+This article covers the history of software testing.
+
+== Early Period ==
+Software testing began in the 1950s.
+Debugging was the primary method at this time.
+
+=== Manual Testing ===
+Early developers used manual testing techniques.
+They would run programs and observe outputs.
+
+=== First Tools ===
+The first automated testing tools appeared in the 1960s.
+These included unit test frameworks.
+
+== Modern Era ==
+Modern testing includes:
+
+==== Unit Testing ====
+Testing individual components in isolation.
+
+==== Integration Testing ====
+Testing how components work together.
+
+==== End-to-End Testing ====
+Testing complete user workflows.
+
+== References ==
+See [[Test_Article]] for more examples.
+
+</text>
+    </revision>
+  </page>
+
+  <page>
+    <title>Test_Redirect</title>
+    <ns>0</ns>
+    <id>3</id>
+    <redirect title="Test_Article"/>
+    <revision>
+      <id>103</id>
+      <timestamp>2026-05-30T12:00:00Z</timestamp>
+    </revision>
+  </page>
+
+  <page>
+    <title>User:Test_User</title>
+    <ns>2</ns>
+    <id>4</id>
+    <revision>
+      <id>104</id>
+      <timestamp>2026-05-30T13:00:00Z</timestamp>
+      <text xml:space="preserve">
+This is a user page (namespace 2).
+It should be filterable by namespace.
+
+== User Info ==
+Name: Test User
+Location: Test City
+</text>
+    </revision>
+  </page>
+</mediawiki>
