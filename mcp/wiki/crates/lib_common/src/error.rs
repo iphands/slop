@@ -27,6 +27,12 @@ pub enum WikiParseError {
     IoError(#[from] std::io::Error),
 }
 
+impl From<quick_xml::Error> for WikiParseError {
+    fn from(err: quick_xml::Error) -> Self {
+        WikiParseError::XmlError(err.to_string())
+    }
+}
+
 /// Error type for chunking operations
 #[derive(Error, Debug)]
 pub enum ChunkingError {
