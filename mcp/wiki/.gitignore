@@ -1,4 +1,5 @@
 *.rs.bk
+.fastembed_cache
 .sisyphus
 /target
 Cargo.lock

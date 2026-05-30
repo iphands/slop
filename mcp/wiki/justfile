@@ -1,32 +1,35 @@
-[workspace]
-resolver = "2"
-members = [
-    "crates/lib_common",
-    "crates/lib_wiki_parse",
-    "crates/lib_chunking",
-    "crates/lib_embeddings",
-    "crates/lib_vector",
-    "crates/lib_mcp",
-    "crates/bin_ingest",
-    "crates/bin_server",
-]
+# Build the workspace
+build:
+    cargo build
 
-[workspace.package]
-version = "0.1.0"
-edition = "2021"
-license = "MIT"
+# Run tests
+test:
+    cargo test
 
-[workspace.dependencies]
-thiserror = "1.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-tokio = { version = "1.0", features = ["full"] }
-tracing = "0.1"
-tracing-subscriber = "0.3"
+# Run the ingestion CLI with test data
+ingest-test:
+    cargo run --bin ingest -- --dump-dir crates/lib_common/tests/fixtures --skip-qdrant
 
-[profile.dev]
-opt-level = 0
+# Run the MCP server
+server:
+    cargo run --bin server
 
-[profile.release]
-lto = true
-codegen-units = 1
+# Clean build artifacts
+clean:
+    cargo clean
+
+# Check for warnings
+check:
+    cargo check --all-targets
+
+# Format code
+fmt:
+    cargo fmt --all
+
+# Lint code
+clippy:
+    cargo clippy --all-targets -- -D warnings
+
+# Build release
+release:
+    cargo build --release
