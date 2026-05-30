@@ -1,0 +1,50 @@
+{
+  "topic_id": 30067,
+  "subject": "[FF7] How to find out which map module is used?",
+  "starter": "Raziel80",
+  "replies": 4,
+  "estimated_pages": 1,
+  "url": "https://forums.qhimm.com/index.php?topic=30067.0",
+  "posts": [
+    {
+      "author": "Raziel80",
+      "date": "2025-09-12 12:53:40",
+      "subject": "[FF7] How to find out which map module is used?",
+      "reply_num": 0,
+      "body_text": "How to find out which map module is used during gameplay: World map or Field map or Battle? Interested in both versions PC and PSX. In theory, both versions use the same method.",
+      "body_html": "<div class=\"inner\" id=\"msg_301587\">\n How to find out which map module is used during gameplay: World map or Field map or Battle? Interested in both versions PC and PSX. In theory, both versions use the same method.\n</div>\n"
+    },
+    {
+      "author": "Akari",
+      "date": "2025-09-12 13:44:17",
+      "subject": "Re: [FF7] How to find out which map module is used?",
+      "reply_num": 1,
+      "body_text": "On PSX in english version used variable 0x8009c560\nCode:\n[Select]\n1 - field.\n2 - battle.\n3 - world map.\n4 - battle.\n5 - menu.\n6 - highway.\n7 - chocobo.\n8 - snowboard.\n9 - condor.\na - submarine.\nb - jet.\nc - disc change.\nd - menu.\ne - snowboard2.\n10 - ???",
+      "body_html": "<div class=\"inner\" id=\"msg_301588\">\n On PSX in english version used variable 0x8009c560\n <br/>\n <div class=\"codeheader\">\n  Code:\n  <a class=\"codeoperation\" href=\"javascript:void(0);\" onclick=\"return smfSelectText(this);\">\n   [Select]\n  </a>\n </div>\n <code class=\"bbc_code\">\n  1 - field.\n  <br/>\n  2 - battle.\n  <br/>\n  3 - world map.\n  <br/>\n  4 - battle.\n  <br/>\n  5 - menu.\n  <br/>\n  6 - highway.\n  <br/>\n  7 - chocobo.\n  <br/>\n  8 - snowboard.\n  <br/>\n  9 - condor.\n  <br/>\n  a - submarine.\n  <br/>\n  b - jet.\n  <br/>\n  c - disc change.\n  <br/>\n  d - menu.\n  <br/>\n  e - snowboard2.\n  <br/>\n  10 - ???\n </code>\n</div>\n"
+    },
+    {
+      "author": "Raziel80",
+      "date": "2025-09-13 07:44:38",
+      "subject": "Re: [FF7] How to find out which map module is used?",
+      "reply_num": 2,
+      "body_text": "Thank you very much.",
+      "body_html": "<div class=\"inner\" id=\"msg_301594\">\n Thank you very much.\n</div>\n"
+    },
+    {
+      "author": "mav",
+      "date": "2025-09-13 19:23:09",
+      "subject": "Re: [FF7] How to find out which map module is used?",
+      "reply_num": 3,
+      "body_text": "On PC it's at 0xCBF9DC and the list of possible values is the same as the one Akari shared.",
+      "body_html": "<div class=\"inner\" id=\"msg_301601\">\n On PC it's at 0xCBF9DC and the list of possible values is the same as the one Akari shared.\n</div>\n"
+    },
+    {
+      "author": "Raziel80",
+      "date": "2025-09-14 06:31:03",
+      "subject": "Re: [FF7] How to find out which map module is used?",
+      "reply_num": 4,
+      "body_text": "Quote from: mav on 2025-09-13 19:23:09\nthe list of possible values is the same as the one Akari shared.\nThanks. I want to clarify the question. What variable would you recommend using in a trainer in order to know where the player is located now: on the World map, on the Field map or in Battle? Is this map module variable most suitable for this purpose?",
+      "body_html": "<div class=\"inner\" id=\"msg_301605\">\n <div class=\"quoteheader\">\n  <div class=\"topslice_quote\">\n   <a href=\"https://forums.qhimm.com/index.php?topic=30067.msg301601#msg301601\">\n    Quote from: mav on 2025-09-13 19:23:09\n   </a>\n  </div>\n </div>\n <blockquote class=\"bbc_standard_quote\">\n  the list of possible values is the same as the one Akari shared.\n  <br/>\n </blockquote>\n <div class=\"quotefooter\">\n  <div class=\"botslice_quote\">\n  </div>\n </div>\n Thanks. I want to clarify the question. What variable would you recommend using in a trainer in order to know where the player is located now: on the World map, on the Field map or in Battle? Is this map module variable most suitable for this purpose?\n</div>\n"
+    }
+  ]
+}

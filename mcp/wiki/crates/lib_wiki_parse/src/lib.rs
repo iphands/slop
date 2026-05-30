@@ -13,7 +13,6 @@ use quick_xml::Reader;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
-use tracing::instrument;
 
 pub struct WikiParser {
     reader: Reader<BufReader<File>>,

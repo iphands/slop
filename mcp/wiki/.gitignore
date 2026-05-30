@@ -1,0 +1,5 @@
+*.rs.bk
+.sisyphus
+/target
+Cargo.lock
+crates/lib_embeddings/.fastembed_cache

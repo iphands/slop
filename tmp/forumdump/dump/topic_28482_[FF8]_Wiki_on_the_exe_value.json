@@ -1,0 +1,18 @@
+{
+  "topic_id": 28482,
+  "subject": "[FF8] Wiki on the exe value",
+  "starter": "hobbitdur",
+  "replies": 0,
+  "estimated_pages": 1,
+  "url": "https://forums.qhimm.com/index.php?topic=28482.0",
+  "posts": [
+    {
+      "author": "hobbitdur",
+      "date": "2025-02-16 20:05:41",
+      "subject": "[FF8] Wiki on the exe value",
+      "reply_num": 0,
+      "body_text": "I am working at the moment on a complete list of value we know on the exe gameplay wise.\nhttps://hobbitdur.github.io/FF8ModdingWiki/FF8/Technical%20Reference/ExeData/Exe_data_chart/\nI have added all info I could find digging qhimm, from SegaChief or any people having information, and now I am testing values and trying to understand how they work (sadly JWP found lots of thing but never explained how, just giving values).\nIf you have info to add or explanation on some part, please be kind to share",
+      "body_html": "<div class=\"inner\" id=\"msg_298876\">\n I am working at the moment on a complete list of value we know on the exe gameplay wise.\n <br/>\n <a class=\"bbc_link\" href=\"https://hobbitdur.github.io/FF8ModdingWiki/FF8/Technical%20Reference/ExeData/Exe_data_chart/\" rel=\"noopener noreferrer\" target=\"_blank\">\n  https://hobbitdur.github.io/FF8ModdingWiki/FF8/Technical%20Reference/ExeData/Exe_data_chart/\n </a>\n <br/>\n <br/>\n I have added all info I could find digging qhimm, from SegaChief or any people having information, and now I am testing values and trying to understand how they work (sadly JWP found lots of thing but never explained how, just giving values).\n <br/>\n If you have info to add or explanation on some part, please be kind to share\n <img alt=\":)\" class=\"smiley\" src=\"https://forums.qhimm.com/Smileys/akyhne/smiley.gif\" title=\"Smiley\"/>\n</div>\n"
+    }
+  ]
+}

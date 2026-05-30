@@ -1,0 +1,114 @@
+{
+  "topic_id": 30191,
+  "subject": "[FF7]Snowboard minigame and Emscripten",
+  "starter": "ergonomy_joe",
+  "replies": 12,
+  "estimated_pages": 1,
+  "url": "https://forums.qhimm.com/index.php?topic=30191.0",
+  "posts": [
+    {
+      "author": "ergonomy_joe",
+      "date": "2025-09-30 08:39:36",
+      "subject": "[FF7]Snowboard minigame and Emscripten",
+      "reply_num": 0,
+      "body_text": "I'm trying to port one of the mini-game from FF7, the snowboard \"simulator\", to Emscripten. For those who do not know what it is, it is a compiler that translates C or C++ source code to javascript, so that the resulting code can be executed directly in your, or my, favorite browser.\nI had some hard time with OpenGL ES. There is no sound yet. The framerate is a little low but ... here it is :\nI seem to have a problem with the Z-order, I am trying to fix that for now.\nI hope I can make a playable demo soon.\n(edit: fixed the image link)",
+      "body_html": "<div class=\"inner\" id=\"msg_301771\">\n I'm trying to port one of the mini-game from FF7, the snowboard \"simulator\", to Emscripten. For those who do not know what it is, it is a compiler that translates C or C++ source code to javascript, so that the resulting code can be executed directly in your, or my, favorite browser.\n <br/>\n <br/>\n I had some hard time with OpenGL ES. There is no sound yet. The framerate is a little low but ... here it is :\n <br/>\n <img alt=\"\" class=\"bbc_img resized\" height=\"539\" src=\"https://i.ibb.co/60RxyK9n/test.png\" width=\"640\"/>\n <br/>\n <br/>\n I seem to have a problem with the Z-order, I am trying to fix that for now.\n <br/>\n I hope I can make a playable demo soon.\n <br/>\n <br/>\n (edit: fixed the image link)\n</div>\n"
+    },
+    {
+      "author": "ergonomy_joe",
+      "date": "2025-10-01 01:29:53",
+      "subject": "Re: [FF7]Snowboard minigame and Emscripten",
+      "reply_num": 1,
+      "body_text": "I made some progress:\n.texturing works (sort of)\n.depth test\n.speed up (I just had to remove my debug calls to glGetError)\n.some control (keyboard only for now)\nthere is no sound and music yet.\nIf someone wants to run it in her/his browser, I could release the binary somewhere.\nAny idea where I could upload that ? All you will need after that is the \"snowboard-us.lgp\" from the original FF7 windows version.\nThe best would be to setup a little HTTP server, but there will be a problem with the \"lgp\" file that cannot be hosted without copyright issues.",
+      "body_html": "<div class=\"inner\" id=\"msg_301774\">\n I made some progress:\n <br/>\n .texturing works (sort of)\n <br/>\n .depth test\n <br/>\n .speed up (I just had to remove my debug calls to glGetError)\n <br/>\n .some control (keyboard only for now)\n <br/>\n <br/>\n <img alt=\"\" class=\"bbc_img\" src=\"https://i.ibb.co/qYm3mCQG/test.png\"/>\n <br/>\n <br/>\n there is no sound and music yet.\n <br/>\n <br/>\n If someone wants to run it in her/his browser, I could release the binary somewhere.\n <br/>\n Any idea where I could upload that ? All you will need after that is the \"snowboard-us.lgp\" from the original FF7 windows version.\n <br/>\n <br/>\n The best would be to setup a little HTTP server, but there will be a problem with the \"lgp\" file that cannot be hosted without copyright issues.\n</div>\n"
+    },
+    {
+      "author": "mav",
+      "date": "2025-10-01 07:15:05",
+      "subject": "Re: [FF7]Snowboard minigame and Emscripten",
+      "reply_num": 2,
+      "body_text": "I would go with\nhttps://www.netlify.com\n- it's super easy to upload a website there and have it hosted under a static URL by just dragging & dropping a zip file that contains an index.html and all your assets, you can even update the deployment later if you have a new version.\nAs for the LGP file you could have a file picker so people could upload the lgp file on their own. Similarly how Diablo Web works:\nhttps://d07riv.github.io/diabloweb/\nGreat work btw!",
+      "body_html": "<div class=\"inner\" id=\"msg_301777\">\n I would go with\n <a class=\"bbc_link\" href=\"https://www.netlify.com\" rel=\"noopener noreferrer\" target=\"_blank\">\n  https://www.netlify.com\n </a>\n - it's super easy to upload a website there and have it hosted under a static URL by just dragging &amp; dropping a zip file that contains an index.html and all your assets, you can even update the deployment later if you have a new version.\n <br/>\n <br/>\n As for the LGP file you could have a file picker so people could upload the lgp file on their own. Similarly how Diablo Web works:\n <a class=\"bbc_link\" href=\"https://d07riv.github.io/diabloweb/\" rel=\"noopener noreferrer\" target=\"_blank\">\n  https://d07riv.github.io/diabloweb/\n </a>\n <br/>\n <br/>\n Great work btw!\n</div>\n"
+    },
+    {
+      "author": "ergonomy_joe",
+      "date": "2025-10-01 23:11:32",
+      "subject": "Re: [FF7]Snowboard minigame and Emscripten",
+      "reply_num": 3,
+      "body_text": "@mav thank you for the information.\nThe filepicker would be the best I guess. The problem, so far, is that I could not find any good (by that I mean extra-easy to implement) example as how to do that with Emscripten. Emscripten seems to be very closed when it comes to access the local filesystem. I'll try to check the Diablo Web source code anyway, if available.\nedit:\nActualy, I found some examples to implement THE LAZIEST FILEPICKER ever. And it sortof works.\nI also found that github allows some projcet hosting so I created this url:\nhttps://ergonomy-joe.github.io/ff7snobo.github.io/test.html\nThe program should start by itself; though it is in a loop waiting for you the user to pick \"snowboard-us.lgp\" from the local filesystem. Once the file \"picked\" execution should resume automatically and starts the game.\nThere is only keyboard support for now:\nkey from A to L and the directional keypad\n(G is jump, L the pause/resume, + some other keys too)\nThe fullscreen buton doesn't work,\nThere is no sound or music,\nThere is a clipping problem on some sprites,\nthe opening fade from white doesn't work properly,\nThe game is locked to the Story mode with Cloud,\nI will try to allow the player to choose the character and the game mode for a next release... maybe.\nanyway ... Have Fun !",
+      "body_html": "<div class=\"inner\" id=\"msg_301791\">\n @mav thank you for the information.\n <br/>\n The filepicker would be the best I guess. The problem, so far, is that I could not find any good (by that I mean extra-easy to implement) example as how to do that with Emscripten. Emscripten seems to be very closed when it comes to access the local filesystem. I'll try to check the Diablo Web source code anyway, if available.\n <br/>\n <br/>\n edit:\n <br/>\n Actualy, I found some examples to implement THE LAZIEST FILEPICKER ever. And it sortof works.\n <br/>\n I also found that github allows some projcet hosting so I created this url:\n <br/>\n <br/>\n <a class=\"bbc_link\" href=\"https://ergonomy-joe.github.io/ff7snobo.github.io/test.html\" rel=\"noopener noreferrer\" target=\"_blank\">\n  https://ergonomy-joe.github.io/ff7snobo.github.io/test.html\n </a>\n <br/>\n <br/>\n The program should start by itself; though it is in a loop waiting for you the user to pick \"snowboard-us.lgp\" from the local filesystem. Once the file \"picked\" execution should resume automatically and starts the game.\n <br/>\n There is only keyboard support for now:\n <br/>\n key from A to L and the directional keypad\n <br/>\n (G is jump, L the pause/resume, + some other keys too)\n <br/>\n The fullscreen buton doesn't work,\n <br/>\n There is no sound or music,\n <br/>\n There is a clipping problem on some sprites,\n <br/>\n the opening fade from white doesn't work properly,\n <br/>\n The game is locked to the Story mode with Cloud,\n <br/>\n I will try to allow the player to choose the character and the game mode for a next release... maybe.\n <br/>\n <br/>\n anyway ... Have Fun !\n <br/>\n</div>\n"
+    },
+    {
+      "author": "Kuraudo",
+      "date": "2025-10-02 08:10:40",
+      "subject": "Re: [FF7]Snowboard minigame and Emscripten",
+      "reply_num": 4,
+      "body_text": "Just FYI you can also play the\n2005 Snowboarding mobile game\nthrough\nDoJa SDK Emulator.",
+      "body_html": "<div class=\"inner\" id=\"msg_301792\">\n Just FYI you can also play the\n <a class=\"bbc_link\" href=\"https://finalfantasy.fandom.com/wiki/Final_Fantasy_VII:_Snowboarding\" rel=\"noopener noreferrer\" target=\"_blank\">\n  2005 Snowboarding mobile game\n </a>\n through\n <a class=\"bbc_link\" href=\"https://forums.qhimm.com/index.php?topic=20884.msg289403#msg289403\" rel=\"noopener noreferrer\" target=\"_blank\">\n  DoJa SDK Emulator.\n </a>\n <br/>\n</div>\n"
+    },
+    {
+      "author": "ergonomy_joe",
+      "date": "2025-10-03 02:30:42",
+      "subject": "Re: [FF7]Snowboard minigame and Emscripten",
+      "reply_num": 5,
+      "body_text": "Allright, I made a small adjustement can you spot it:\nThat's it, a little selector at the top of the HTML page, which allows you to chose the game mode and the character to play with.\nThe URL is the same:\nhttps://ergonomy-joe.github.io/ff7snobo.github.io/test.html\nI also rebuild the code with the latest version of Emscripten, but that didn't make any visible difference.\nedit: Fullscreen seems fixed too",
+      "body_html": "<div class=\"inner\" id=\"msg_301795\">\n Allright, I made a small adjustement can you spot it:\n <br/>\n <img alt=\"\" class=\"bbc_img\" src=\"https://i.ibb.co/DgGsbgnP/test.png\"/>\n <br/>\n <br/>\n That's it, a little selector at the top of the HTML page, which allows you to chose the game mode and the character to play with.\n <br/>\n <br/>\n The URL is the same:\n <br/>\n <a class=\"bbc_link\" href=\"https://ergonomy-joe.github.io/ff7snobo.github.io/test.html\" rel=\"noopener noreferrer\" target=\"_blank\">\n  https://ergonomy-joe.github.io/ff7snobo.github.io/test.html\n </a>\n <br/>\n <br/>\n I also rebuild the code with the latest version of Emscripten, but that didn't make any visible difference.\n <br/>\n <br/>\n edit: Fullscreen seems fixed too\n</div>\n"
+    },
+    {
+      "author": "mav",
+      "date": "2025-10-03 07:14:09",
+      "subject": "Re: [FF7]Snowboard minigame and Emscripten",
+      "reply_num": 6,
+      "body_text": "Nice, it works for me! There were some minor graphical glitches (mostly in the tree section of \"Event\") but it's awesome that you've got it working!",
+      "body_html": "<div class=\"inner\" id=\"msg_301796\">\n Nice, it works for me! There were some minor graphical glitches (mostly in the tree section of \"Event\") but it's awesome that you've got it working!\n</div>\n"
+    },
+    {
+      "author": "ergonomy_joe",
+      "date": "2025-10-03 07:36:30",
+      "subject": "Re: [FF7]Snowboard minigame and Emscripten",
+      "reply_num": 7,
+      "body_text": "@mav thank you for the feedback. BTW, could you tell me which browser you were using for testing ?\nI just uploaded a new version. It fixes the white-fading at the beginning and adds a very simple joystick support. (when a joypad is connected to the system, the input from the keyboard will be ignored; that is a bad design, I'll try to fix that later). Only the DPAD and buttons 1~12 are used.",
+      "body_html": "<div class=\"inner\" id=\"msg_301797\">\n @mav thank you for the feedback. BTW, could you tell me which browser you were using for testing ?\n <br/>\n <br/>\n I just uploaded a new version. It fixes the white-fading at the beginning and adds a very simple joystick support. (when a joypad is connected to the system, the input from the keyboard will be ignored; that is a bad design, I'll try to fix that later). Only the DPAD and buttons 1~12 are used.\n <br/>\n</div>\n"
+    },
+    {
+      "author": "ergonomy_joe",
+      "date": "2025-10-06 03:03:01",
+      "subject": "Re: [FF7]Snowboard minigame and Emscripten",
+      "reply_num": 8,
+      "body_text": "I uploaded a new version.\nI added SFX support; it is still buggy and not complete, but at least there is an auditive cue when you catch a balloon.\nThe caveat is that you now have to load 3 files before playing.\nSince the loading is asynchronous and the \"sound.dat\" file is very big, the Go button is disabled until all loading operations are completed.\nAnyway, I hope you enjoy it, and feel free to leave some feedback here.\nThere is still no music, sorry.\n... until the next upload ...",
+      "body_html": "<div class=\"inner\" id=\"msg_301830\">\n I uploaded a new version.\n <br/>\n I added SFX support; it is still buggy and not complete, but at least there is an auditive cue when you catch a balloon.\n <br/>\n The caveat is that you now have to load 3 files before playing.\n <br/>\n Since the loading is asynchronous and the \"sound.dat\" file is very big, the Go button is disabled until all loading operations are completed.\n <br/>\n Anyway, I hope you enjoy it, and feel free to leave some feedback here.\n <br/>\n <br/>\n There is still no music, sorry.\n <br/>\n <br/>\n ... until the next upload ...\n <br/>\n</div>\n"
+    },
+    {
+      "author": "ergonomy_joe",
+      "date": "2025-10-09 05:49:27",
+      "subject": "Re: [FF7]Snowboard minigame and Emscripten",
+      "reply_num": 9,
+      "body_text": "A new version today too, and the URL hasn't change:\nhttps://ergonomy-joe.github.io/ff7snobo.github.io/test.html\nJust a little fix, but this one was annoying: now the trees won't display garbage anymore.\nIt seems that the original program didn't do clipping (or culling, I don't know, I am out of my league here) for the textured primitives; I just added a little code that removes all 3d models if one of the vertices has a negative Z. Well I'm not sure of what I am doing but it seems to work so ... enjoy !",
+      "body_html": "<div class=\"inner\" id=\"msg_301849\">\n A new version today too, and the URL hasn't change:\n <br/>\n <a class=\"bbc_link\" href=\"https://ergonomy-joe.github.io/ff7snobo.github.io/test.html\" rel=\"noopener noreferrer\" target=\"_blank\">\n  https://ergonomy-joe.github.io/ff7snobo.github.io/test.html\n </a>\n <br/>\n <br/>\n Just a little fix, but this one was annoying: now the trees won't display garbage anymore.\n <br/>\n <br/>\n It seems that the original program didn't do clipping (or culling, I don't know, I am out of my league here) for the textured primitives; I just added a little code that removes all 3d models if one of the vertices has a negative Z. Well I'm not sure of what I am doing but it seems to work so ... enjoy !\n <br/>\n</div>\n"
+    },
+    {
+      "author": "mav",
+      "date": "2025-10-09 10:04:45",
+      "subject": "Re: [FF7]Snowboard minigame and Emscripten",
+      "reply_num": 10,
+      "body_text": "The last update did indeed resolve the graphical glitches in the tree sections, good job!\nI see one more texture related glitch - the background image has this black outline on some parts of it:\nOtherwise it looks perfect!\nOh and one other thing - initially keyboard controls worked, but in this new version I could only use gamepad, keyboard would not work for me anymore.",
+      "body_html": "<div class=\"inner\" id=\"msg_301851\">\n The last update did indeed resolve the graphical glitches in the tree sections, good job!\n <br/>\n <br/>\n I see one more texture related glitch - the background image has this black outline on some parts of it:\n <br/>\n <br/>\n <img alt=\"\" class=\"bbc_img resized\" src=\"https://i.imgur.com/zvB2eMY.png\" width=\"500\"/>\n <br/>\n <br/>\n Otherwise it looks perfect!\n <br/>\n <br/>\n Oh and one other thing - initially keyboard controls worked, but in this new version I could only use gamepad, keyboard would not work for me anymore.\n</div>\n"
+    },
+    {
+      "author": "ergonomy_joe",
+      "date": "2025-10-15 02:17:33",
+      "subject": "Re: [FF7]Snowboard minigame and Emscripten",
+      "reply_num": 11,
+      "body_text": "Hi @mav, thanks for the feedback.\nYeah, when the code detects that a joypad is plugged in, it disables the keyboard input. That is stupid, and I'll try to fix it.\nThanks for the background issue screenshot too. I'll have to investigate that too.\nBTW, during the Great Glacier run, there is a cave with rocks falling from the ceiling, right ?\nAnd in the PlayStation version, the rocks flashes a little just before falling.\nBut there is no such effect in the windows version. Did anyone notice this ?\nIn the windows version, there is a call to the function at @0066335F, the equivalent of SetFarColor I guess, with parameters (255, 255, 255). That would set the far color white.\nAlso, there is only one rendering function (for the snowboard minigame) that has depth cueing (@00732429), and it totally ignores the far color. Instead, it does as if the far color was (0, 0, 0), which is black. And this function is called in the case of the falling rock, so my guess is that it is a bug. The programmer forgot to take the far color into account.\nI found this video on youtube:\nhttps://www.youtube.com/watch?v=_OVouVCewcE\nyou can check the effect from 2'35\"\nMaybe I will add a fix with an option at the start.",
+      "body_html": "<div class=\"inner\" id=\"msg_301870\">\n Hi @mav, thanks for the feedback.\n <br/>\n <br/>\n Yeah, when the code detects that a joypad is plugged in, it disables the keyboard input. That is stupid, and I'll try to fix it.\n <br/>\n Thanks for the background issue screenshot too. I'll have to investigate that too.\n <br/>\n <br/>\n BTW, during the Great Glacier run, there is a cave with rocks falling from the ceiling, right ?\n <br/>\n And in the PlayStation version, the rocks flashes a little just before falling.\n <br/>\n But there is no such effect in the windows version. Did anyone notice this ?\n <br/>\n <br/>\n In the windows version, there is a call to the function at @0066335F, the equivalent of SetFarColor I guess, with parameters (255, 255, 255). That would set the far color white.\n <br/>\n Also, there is only one rendering function (for the snowboard minigame) that has depth cueing (@00732429), and it totally ignores the far color. Instead, it does as if the far color was (0, 0, 0), which is black. And this function is called in the case of the falling rock, so my guess is that it is a bug. The programmer forgot to take the far color into account.\n <br/>\n <br/>\n I found this video on youtube:\n <br/>\n <a class=\"bbc_link\" href=\"https://www.youtube.com/watch?v=_OVouVCewcE\" rel=\"noopener noreferrer\" target=\"_blank\">\n  https://www.youtube.com/watch?v=_OVouVCewcE\n </a>\n <br/>\n you can check the effect from 2'35\"\n <br/>\n <br/>\n Maybe I will add a fix with an option at the start.\n <br/>\n</div>\n"
+    },
+    {
+      "author": "ergonomy_joe",
+      "date": "2025-10-17 08:18:53",
+      "subject": "Re: [FF7]Snowboard minigame and Emscripten",
+      "reply_num": 12,
+      "body_text": "Just so everyone can have fun with snowbarding this weekend, I uploaded a new version.\nSame URL :\nhttps://ergonomy-joe.github.io/ff7snobo.github.io/test.html\nI removed all filtering on textures, this is was caused the glitch on the mountains in the background. I may have to find a better patch in the future, but for now, it looks ok.\nI also fixed the input function: now you can have a gamepad connected to your system and still be able to use the keyboard.\nHave fun !",
+      "body_html": "<div class=\"inner\" id=\"msg_301877\">\n Just so everyone can have fun with snowbarding this weekend, I uploaded a new version.\n <br/>\n Same URL :\n <a class=\"bbc_link\" href=\"https://ergonomy-joe.github.io/ff7snobo.github.io/test.html\" rel=\"noopener noreferrer\" target=\"_blank\">\n  https://ergonomy-joe.github.io/ff7snobo.github.io/test.html\n </a>\n <br/>\n <br/>\n I removed all filtering on textures, this is was caused the glitch on the mountains in the background. I may have to find a better patch in the future, but for now, it looks ok.\n <br/>\n <br/>\n I also fixed the input function: now you can have a gamepad connected to your system and still be able to use the keyboard.\n <br/>\n <br/>\n Have fun !\n <br/>\n</div>\n"
+    }
+  ]
+}
