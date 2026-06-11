@@ -29,7 +29,7 @@ This document tracks the dependency chain and status of all plans for the qctrl 
 | 02 | Map Listing API | `done` | 01 |
 | 03 | Frontend Scaffolding | `done` | 01 |
 | 04 | Deathmatch Controls UI | `done` | 03 |
-| 05 | Map Selection UI | `pending` | 02, 03 |
+| 05 | Map Selection UI | `done` | 02, 03 |
 | 06 | Player Management | `pending` | 02, 07 |
 | 07 | Log Streaming | `pending` | 01, 03 |
 | 08 | Status Dashboard | `pending` | 04, 05, 06, 07 |
