@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMaps, getFavorites, addFavorite, removeFavorite } from '../lib/api';
 import type { MapInfo } from '../lib/api';
+import { Section } from './Section';
 
 interface MapGridProps {
   currentMap?: string;
@@ -94,28 +95,22 @@ export function MapGrid({ currentMap, onSelect }: MapGridProps) {
       />
 
       {favorites.length > 0 && (
-        <section>
-          <h3 className="text-md font-semibold mb-3 flex items-center gap-2">
-            <span>★</span> Favorites
-          </h3>
-          <hr className="border-gray-700 mb-4" />
+        <Section title="Favorites" showDivider>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {favoriteMaps.map((map) => (
               <MapCard key={map.name} map={map} />
             ))}
           </div>
-        </section>
+        </Section>
       )}
 
-      <section>
-        <h3 className="text-md font-semibold mb-3">All Maps</h3>
-        <hr className="border-gray-700 mb-4" />
+      <Section title="All Maps" showDivider>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {allOtherMaps.map((map) => (
             <MapCard key={map.name} map={map} />
           ))}
         </div>
-      </section>
+      </Section>
     </div>
   );
 }

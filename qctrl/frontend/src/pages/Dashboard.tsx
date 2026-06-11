@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { getHealth, getStatus } from '../lib/api';
+import { Section } from '../components/Section';
 
 export function Dashboard() {
   const { data: health, refetch: refetchHealth } = useQuery({
@@ -20,7 +21,7 @@ export function Dashboard() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Server Dashboard</h1>
 
-      <section className="p-4 bg-gray-800 rounded-lg">
+      <Section>
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-lg font-semibold">Server Status</h2>
           <button
@@ -42,10 +43,9 @@ export function Dashboard() {
         <p className="text-sm text-gray-400 mt-2">
           Last updated: {new Date().toLocaleTimeString()}
         </p>
-      </section>
+      </Section>
 
-      <section className="p-4 bg-gray-800 rounded-lg">
-        <h2 className="text-lg font-semibold mb-4">Quick Stats</h2>
+      <Section title="Quick Stats">
         <div className="grid grid-cols-2 gap-4">
           <div className="p-3 bg-gray-700 rounded">
             <div className="text-sm text-gray-400">Players</div>
@@ -64,10 +64,9 @@ export function Dashboard() {
             <div className="text-xl font-bold">25</div>
           </div>
         </div>
-      </section>
+      </Section>
 
-      <section className="p-4 bg-gray-800 rounded-lg">
-        <h2 className="text-lg font-semibold mb-4">Quick Actions</h2>
+      <Section title="Quick Actions">
         <div className="grid grid-cols-2 gap-4">
           <button
             type="button"
@@ -98,7 +97,7 @@ export function Dashboard() {
             <div className="text-lg font-medium">Logs</div>
           </button>
         </div>
-      </section>
+      </Section>
     </div>
   );
 }

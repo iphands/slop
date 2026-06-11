@@ -1,5 +1,6 @@
 import { useMutation } from '@tanstack/react-query';
 import { executeRcon } from '../lib/api';
+import { Section } from '../components/Section';
 
 export function Settings() {
   const { mutate: saveConfig, isPending } = useMutation({
@@ -39,8 +40,7 @@ export function Settings() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Settings</h1>
 
-      <section className="p-4 bg-gray-800 rounded-lg">
-        <h2 className="text-lg font-semibold mb-4">Server Settings</h2>
+      <Section title="Server Settings">
         <form onSubmit={handleSave} className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-1">Hostname</label>
@@ -109,7 +109,7 @@ export function Settings() {
             {isPending ? 'Saving...' : 'Save Settings'}
           </button>
         </form>
-      </section>
+      </Section>
     </div>
   );
 }

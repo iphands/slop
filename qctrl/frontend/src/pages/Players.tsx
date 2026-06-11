@@ -1,12 +1,12 @@
 import { PlayerList } from '../components/PlayerList';
+import { Section } from '../components/Section';
 
 export function Players() {
   return (
     <div className="space-y-6">
-      <section className="p-4 bg-gray-800 rounded-lg">
-        <h2 className="text-lg font-semibold mb-4">Connected Players</h2>
+      <Section title="Connected Players">
         <PlayerList />
-      </section>
+      </Section>
     </div>
   );
 }
