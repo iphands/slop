@@ -24,15 +24,19 @@ export function ChangesQueueUI() {
           commands.push(`fraglimit ${change.pendingValue}`);
           break;
         case 'map':
-          // Map change should be last
+          // Map change will be added last
           break;
       }
     });
 
-    // Add map restart last if there's a map change
+    // Add map restart last if there's a map change or if there are other changes
     const mapChange = state.changes.find((c) => c.type === 'map');
     if (mapChange) {
       commands.push(`map ${mapChange.pendingValue}`);
+    } else if (state.changes.some((c) => c.type === 'dmflags')) {
+      // If only dmflags changed, still need to restart to apply
+      // For now, we'll skip the map restart - user can use RestartMap button
+      // TODO: Get actual current map from server status
     }
 
     // Send all commands
