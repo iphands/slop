@@ -22,6 +22,7 @@ export function Dashboard() {
   const currentMap = status?.map || 'Loading...';
   const timelimit = Number(getServerValue('timelimit'));
   const fraglimit = Number(getServerValue('fraglimit'));
+  const currentDmflags = Number(getServerValue('dmflags'));
 
   return (
     <div className="space-y-6">
@@ -72,32 +73,24 @@ export function Dashboard() {
         </div>
       </Section>
 
-      <Section title="Quick Actions">
+      <Section title="Current Deathmatch Settings">
+        <div className="text-sm text-gray-400 mb-2">
+          View and modify settings on the{' '}
+          <Link to="/deathmatch" className="text-blue-400 hover:text-blue-300">
+            Deathmatch page
+          </Link>
+        </div>
         <div className="grid grid-cols-2 gap-4">
-          <Link
-            to="/maps"
-            className="p-4 bg-blue-600 hover:bg-blue-700 rounded text-center block"
-          >
-            <div className="text-lg font-medium">Change Map</div>
-          </Link>
-          <Link
-            to="/deathmatch"
-            className="p-4 bg-orange-600 hover:bg-orange-700 rounded text-center block"
-          >
-            <div className="text-lg font-medium">Deathmatch Settings</div>
-          </Link>
-          <Link
-            to="/players"
-            className="p-4 bg-green-600 hover:bg-green-700 rounded text-center block"
-          >
-            <div className="text-lg font-medium">Players</div>
-          </Link>
-          <Link
-            to="/logs"
-            className="p-4 bg-purple-600 hover:bg-purple-700 rounded text-center block"
-          >
-            <div className="text-lg font-medium">Logs</div>
-          </Link>
+          <div className="p-3 bg-gray-700 rounded">
+            <div className="text-sm text-gray-400">DM Flags</div>
+            <div className="text-xl font-bold font-mono">{currentDmflags}</div>
+          </div>
+          <div className="p-3 bg-gray-700 rounded">
+            <div className="text-sm text-gray-400">Server Info</div>
+            <div className="text-sm font-mono text-gray-300 break-all">
+              {status?.map ? `map: ${status.map}` : 'Loading...'}
+            </div>
+          </div>
         </div>
       </Section>
     </div>
