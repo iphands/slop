@@ -54,14 +54,27 @@ impl RconClient {
             .parse()
             .map_err(|e: std::net::AddrParseError| RconError::InvalidResponse(e.to_string()))?;
 
+        match self.execute_udp(addr, command).await {
+            Ok(response) => return Ok(response),
+            Err(RconError::Timeout) => {}
+            Err(e) => return Err(e),
+        }
+
+        self.execute_tcp(addr, command).await
+    }
+
+    async fn execute_udp(&self, addr: SocketAddr, command: &str) -> Result<String, RconError> {
         let socket = UdpSocket::bind("0.0.0.0:0").await?;
         socket.connect(addr).await?;
 
-        // Build RCON command: "rcon <password> <command>"
-        let rcon_command = format!("rcon {} {}", self.password, command);
-        socket.send(rcon_command.as_bytes()).await?;
+        let rcon_command = b"\xff\xff\xff\xff".to_vec();
+        let command_bytes = format!("rcon \"{}\" {}", self.password, command).into_bytes();
+        
+        let mut packet = rcon_command;
+        packet.extend_from_slice(&command_bytes);
+        
+        socket.send(&packet).await?;
 
-        // Wait for response with timeout
         let mut buf = [0u8; 4096];
         timeout(Duration::from_secs(5), async {
             socket.recv(&mut buf).await
@@ -70,8 +83,29 @@ impl RconClient {
         .map_err(|_| RconError::Timeout)?
         .map_err(|e| RconError::InvalidResponse(e.to_string()))?;
 
-        // Parse response - Quake 2 RCON returns the command output
-        let response = String::from_utf8_lossy(&buf[..]).to_string();
+        let response = String::from_utf8_lossy(&buf[4..]).to_string();
+        // Strip leading "print\n" if present (added by SV_OobPrintf macro)
+        let response = response.strip_prefix("print\n").unwrap_or(&response);
+        Ok(response.trim().to_string())
+    }
+
+    async fn execute_tcp(&self, addr: SocketAddr, command: &str) -> Result<String, RconError> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        
+        let mut stream = tokio::net::TcpStream::connect(addr).await?;
+        
+        let rcon_command = format!("rcon {} {}\n", self.password, command);
+        stream.write_all(rcon_command.as_bytes()).await?;
+        
+        let mut buf = [0u8; 4096];
+        let len = timeout(Duration::from_secs(5), async {
+            stream.read(&mut buf).await
+        })
+        .await
+        .map_err(|_| RconError::Timeout)?
+        .map_err(|e| RconError::InvalidResponse(e.to_string()))?;
+
+        let response = String::from_utf8_lossy(&buf[..len]).to_string();
         Ok(response.trim().to_string())
     }
 }
