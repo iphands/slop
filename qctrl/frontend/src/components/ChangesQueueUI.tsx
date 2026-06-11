@@ -8,7 +8,7 @@ const CURRENT_MAP = 'q2dm1';
 
 export function ChangesQueueUI() {
   const { state, clearQueue, applyChanges } = useChanges();
-  const { mutate: execute, isPending } = useMutation({
+  const { mutateAsync: execute, isPending } = useMutation({
     mutationFn: executeRcon,
   });
   const [showAll, setShowAll] = useState(false);
