@@ -84,18 +84,18 @@ mod tests {
     fn test_favorites_basic() {
         let temp_dir = TempDir::new().unwrap();
         let favorites_path = temp_dir.path().join("favorites.json");
-        
+
         let favorites = Favorites::new(favorites_path.to_str().unwrap()).unwrap();
-        
+
         assert!(!favorites.is_favorite("q2dm1"));
-        
+
         favorites.add_favorite("q2dm1").unwrap();
         assert!(favorites.is_favorite("q2dm1"));
-        
+
         let favs = favorites.get_favorites();
         assert_eq!(favs.len(), 1);
         assert_eq!(favs[0], "q2dm1");
-        
+
         favorites.remove_favorite("q2dm1").unwrap();
         assert!(!favorites.is_favorite("q2dm1"));
     }

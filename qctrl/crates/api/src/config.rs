@@ -30,9 +30,8 @@ impl Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self::load("config.defaults.yaml").unwrap_or_else(|_| {
-            panic!("Failed to load default config")
-        })
+        Self::load("config.defaults.yaml")
+            .unwrap_or_else(|_| panic!("Failed to load default config"))
     }
 }
 

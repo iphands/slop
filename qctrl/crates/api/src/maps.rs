@@ -113,7 +113,7 @@ impl MapCache {
 
                 if path.extension().is_some_and(|ext| ext == "pak") {
                     let pak_maps = self.scan_pak_file(&path)?;
-                    
+
                     for pak_map in pak_maps {
                         // Avoid duplicates - if map exists from directory, prefer that
                         if !maps.iter().any(|m| m.name == pak_map.name) {
@@ -128,7 +128,7 @@ impl MapCache {
         maps.sort_by(|a, b| {
             let a_is_q2dm = a.name.starts_with("q2dm");
             let b_is_q2dm = b.name.starts_with("q2dm");
-            
+
             match (a_is_q2dm, b_is_q2dm) {
                 (true, false) => std::cmp::Ordering::Less,
                 (false, true) => std::cmp::Ordering::Greater,
@@ -142,7 +142,7 @@ impl MapCache {
     fn scan_pak_file(&self, pak_path: &Path) -> Result<Vec<MapInfo>, MapError> {
         let mut file = fs::File::open(pak_path)
             .map_err(|e| MapError::PakError(format!("Failed to open PAK: {}", e)))?;
-        
+
         let mut header = [0u8; 1024];
         file.read(&mut header)
             .map_err(|e| MapError::PakError(format!("Failed to read PAK header: {}", e)))?;
@@ -158,7 +158,7 @@ impl MapCache {
         // Parse directory entries (each 64 bytes)
         let dir_offset = u32::from_le_bytes(header[4..8].try_into().unwrap());
         let dir_length = u32::from_le_bytes(header[8..12].try_into().unwrap());
-        
+
         let num_entries = dir_length / 64;
         if num_entries == 0 {
             return Ok(maps);
@@ -185,13 +185,15 @@ impl MapCache {
                 .position(|&b| b == 0)
                 .map(|pos| &filename_bytes[..pos])
                 .unwrap_or(filename_bytes);
-            
+
             let filename_str = String::from_utf8_lossy(filename).to_lowercase();
 
             // Check if it's a map file in the maps/ directory
             if filename_str.ends_with(".bsp") && filename_str.starts_with("maps/") {
-                let name = filename_str.trim_start_matches("maps/").trim_end_matches(".bsp");
-                
+                let name = filename_str
+                    .trim_start_matches("maps/")
+                    .trim_end_matches(".bsp");
+
                 maps.push(MapInfo {
                     name: name.to_string(),
                     filename: format!("{}:maps/{}", pak_filename, name),
