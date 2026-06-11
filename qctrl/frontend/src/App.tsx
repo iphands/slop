@@ -1,24 +1,59 @@
+import { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Layout } from './components/Layout';
 import { ServerStatus } from './components/ServerStatus';
 import { MapList } from './components/MapList';
+import { Deathmatch } from './pages/Deathmatch';
 
 const queryClient = new QueryClient();
 
+type Page = 'home' | 'deathmatch';
+
 function App() {
+  const [currentPage, setCurrentPage] = useState<Page>('home');
+
   return (
     <QueryClientProvider client={queryClient}>
       <Layout>
-        <div className="space-y-6">
-          <section className="p-4 bg-gray-800 rounded-lg">
-            <h2 className="text-lg font-semibold mb-2">Server Status</h2>
-            <ServerStatus />
-          </section>
+        <nav className="flex gap-4 mb-6 border-b border-gray-700 pb-4">
+          <button
+            onClick={() => setCurrentPage('home')}
+            className={`px-4 py-2 rounded ${
+              currentPage === 'home'
+                ? 'bg-blue-600'
+                : 'bg-gray-700 hover:bg-gray-600'
+            }`}
+          >
+            Home
+          </button>
+          <button
+            onClick={() => setCurrentPage('deathmatch')}
+            className={`px-4 py-2 rounded ${
+              currentPage === 'deathmatch'
+                ? 'bg-blue-600'
+                : 'bg-gray-700 hover:bg-gray-600'
+            }`}
+          >
+            Deathmatch
+          </button>
+        </nav>
 
-          <section className="p-4 bg-gray-800 rounded-lg">
-            <h2 className="text-lg font-semibold mb-4">Available Maps</h2>
-            <MapList />
-          </section>
+        <div className="space-y-6">
+          {currentPage === 'home' && (
+            <>
+              <section className="p-4 bg-gray-800 rounded-lg">
+                <h2 className="text-lg font-semibold mb-2">Server Status</h2>
+                <ServerStatus />
+              </section>
+
+              <section className="p-4 bg-gray-800 rounded-lg">
+                <h2 className="text-lg font-semibold mb-4">Available Maps</h2>
+                <MapList />
+              </section>
+            </>
+          )}
+
+          {currentPage === 'deathmatch' && <Deathmatch />}
         </div>
       </Layout>
     </QueryClientProvider>
