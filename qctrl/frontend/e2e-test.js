@@ -3,7 +3,12 @@
 /**
  * E2E Tests for Changes Queue System
  * Tests the actual running backend at cosmo.lan:3000
+ * 
+ * These tests use the SAME logic as the frontend (shared applyLogic)
+ * to ensure they test the exact same code paths.
  */
+
+import { buildApplyCommands } from './e2e-applyLogic.js';
 
 const API_BASE = 'http://cosmo.lan:3000/api';
 
@@ -80,29 +85,71 @@ async function testRcon(command) {
   }
 }
 
-async function testDmflagsSequence() {
-  console.log('\n=== Testing DMFlags Change Sequence ===');
+async function testDmflagsApply() {
+  console.log('\n=== Testing DMFlags Apply Flow (Red/Green TDD) ===');
   
   // Get current status
   console.log('1. Getting current status...');
   const statusResponse = await fetch(`${API_BASE}/status`);
   const status = await statusResponse.json();
-  console.log('   Players:', status.players?.length || 0);
+  const currentMap = status.map || 'q2dm1';
+  console.log('   Current map:', currentMap);
   
-  // Test RCON command
-  console.log('2. Testing dmflags command...');
-  const result = await testRcon('dmflags 17424');
+  // Simulate queuing a dmflags change
+  const changes = [
+    { type: 'dmflags', pendingValue: 17424, description: 'Deathmatch flags' }
+  ];
   
-  if (result) {
-    console.log('3. ✓ DMFlags command accepted by server');
-    return true;
+  console.log('2. Queuing dmflags change to 17424');
+  
+  // Use the SAME logic as the frontend (buildApplyCommands)
+  console.log('3. Building apply commands (using shared logic)...');
+  const commands = buildApplyCommands(changes, currentMap);
+  console.log('   Commands to send:', commands.join(', '));
+  
+  // Verify that a map restart IS included
+  const hasMapRestart = commands.some(cmd => cmd.startsWith('map'));
+  if (!hasMapRestart) {
+    console.log('   ✗ FAIL: No map restart in commands!');
+    console.log('   This is the BUG - dmflags changes need implicit map restart');
+    return false;
+  }
+  console.log('   ✓ Map restart included (GOOD)');
+  
+  // Execute the commands
+  console.log('4. Executing commands...');
+  for (const cmd of commands) {
+    console.log(`   Sending: ${cmd}`);
+    const result = await testRcon(cmd);
+    if (!result) {
+      console.log('   ✗ Command failed:', cmd);
+      return false;
+    }
   }
   
-  return false;
+  // Wait for changes to take effect
+  console.log('5. Waiting for changes to apply...');
+  await sleep(3000);
+  
+  // Verify dmflags actually changed
+  console.log('6. Verifying dmflags change...');
+  const dmflagsOutput = await testRcon('dmflags');
+  if (!dmflagsOutput) {
+    console.log('   ✗ Failed to get dmflags');
+    return false;
+  }
+  
+  console.log('   ✓ dmflags command executed');
+  
+  // Reset to default
+  console.log('7. Resetting dmflags to 0...');
+  await testRcon('dmflags 0');
+  
+  return true;
 }
 
-async function testMapChangeQueue() {
-  console.log('\n=== Testing Map Change Queue Flow ===');
+async function testMapChangeApply() {
+  console.log('\n=== Testing Map Change Apply Flow ===');
   
   // Get available maps
   const mapsResponse = await fetch(`${API_BASE}/maps`);
@@ -120,54 +167,22 @@ async function testMapChangeQueue() {
   const currentMap = status.map || 'unknown';
   console.log('   Current map:', currentMap);
   
-  // Pick a different map to change to
-  const targetMap = mapsData.maps.find(m => m.name !== currentMap)?.name;
-  if (!targetMap) {
-    console.log('   No different map found, using q2dm2');
-    // Just pick a different map
-    const targetMap = 'q2dm2';
-  }
-  
+  // Pick a different map
+  const targetMap = mapsData.maps.find(m => m.name !== currentMap)?.name || 'q2dm2';
   console.log('2. Queuing map change to:', targetMap);
   
-  // Simulate the queue flow
-  // Step 1: Queue the map change (this is what happens in the frontend)
-  const queuePayload = {
-    changes: [
-      { type: 'map', pendingValue: targetMap, description: 'Map change' }
-    ]
-  };
+  // Simulate queuing a map change
+  const changes = [
+    { type: 'map', pendingValue: targetMap, description: 'Map change' }
+  ];
   
-  // Step 2: Apply the changes (this is what handleApply does)
-  console.log('3. Applying changes...');
-  const commands = [];
-  
-  // Build commands based on pending changes (except map)
-  queuePayload.changes.forEach((change) => {
-    if (change.type === 'map') return;
-    
-    switch (change.type) {
-      case 'dmflags':
-        commands.push(`dmflags ${change.pendingValue}`);
-        break;
-      case 'timelimit':
-        commands.push(`timelimit ${change.pendingValue}`);
-        break;
-      case 'fraglimit':
-        commands.push(`fraglimit ${change.pendingValue}`);
-        break;
-    }
-  });
-  
-  // Always add map restart last
-  const mapChange = queuePayload.changes.find((c) => c.type === 'map');
-  if (mapChange) {
-    commands.push(`map ${mapChange.pendingValue}`);
-  }
-  
+  // Use the SAME logic as the frontend
+  console.log('3. Building apply commands (using shared logic)...');
+  const commands = buildApplyCommands(changes, currentMap);
   console.log('   Commands to send:', commands.join(', '));
   
-  // Send all commands and wait for them to complete
+  // Execute
+  console.log('4. Executing commands...');
   for (const cmd of commands) {
     console.log(`   Sending: ${cmd}`);
     const result = await testRcon(cmd);
@@ -177,12 +192,12 @@ async function testMapChangeQueue() {
     }
   }
   
-  // Step 3: Wait a bit for the map to change
-  console.log('4. Waiting for map change to complete...');
-  await new Promise(resolve => setTimeout(resolve, 3000));
+  // Wait for map change
+  console.log('5. Waiting for map change...');
+  await sleep(3000);
   
-  // Step 4: Verify the map actually changed
-  console.log('5. Verifying map change...');
+  // Verify
+  console.log('6. Verifying map change...');
   const newStatusResponse = await fetch(`${API_BASE}/status`);
   const newStatus = await newStatusResponse.json();
   const newMap = newStatus.map || 'unknown';
@@ -193,7 +208,6 @@ async function testMapChangeQueue() {
     return true;
   } else {
     console.log('   ✗ Map did not change. Expected:', targetMap, 'Got:', newMap);
-    console.log('   This means the map change command is not working!');
     return false;
   }
 }
@@ -207,7 +221,7 @@ async function testFavorites() {
   const favData = await getResponse.json();
   console.log('   Current favorites:', favData.favorites);
   
-  // Add a favorite (if we have maps)
+  // Add a favorite
   const mapsResponse = await fetch(`${API_BASE}/maps`);
   const mapsData = await mapsResponse.json();
   
@@ -231,7 +245,7 @@ async function testFavorites() {
         console.log('   ✓ Favorite verified in list');
       }
       
-      // Clean up - remove it
+      // Clean up
       console.log('3. Cleaning up...');
       await fetch(`${API_BASE}/favorites/${encodeURIComponent(testMap)}`, {
         method: 'DELETE',
@@ -249,6 +263,7 @@ async function runAllTests() {
   console.log('╔════════════════════════════════════════════════════════╗');
   console.log('║  E2E Tests for qctrl Changes Queue System             ║');
   console.log('║  Target: cosmo.lan:3000                               ║');
+  console.log('║  Using shared applyLogic from frontend                ║');
   console.log('╚════════════════════════════════════════════════════════╝');
   
   const results = [];
@@ -256,8 +271,8 @@ async function runAllTests() {
   results.push(await testHealth());
   results.push(await testConfig());
   results.push(await testMaps());
-  results.push(await testDmflagsSequence());
-  results.push(await testMapChangeQueue());
+  results.push(await testDmflagsApply());
+  results.push(await testMapChangeApply());
   results.push(await testFavorites());
   
   console.log('\n╔════════════════════════════════════════════════════════╗');

@@ -2,53 +2,29 @@ import { useState } from 'react';
 import { useChanges } from '../contexts/ChangesContext';
 import { useMutation } from '@tanstack/react-query';
 import { executeRcon } from '../lib/api';
+import { applyChanges } from '../lib/applyLogic';
 
 // Hardcoded current map - TODO: Get from server status endpoint
 const CURRENT_MAP = 'q2dm1';
 
 export function ChangesQueueUI() {
-  const { state, clearQueue, applyChanges } = useChanges();
+  const { state, clearQueue, applyChanges: clearApply } = useChanges();
   const { mutateAsync: execute, isPending } = useMutation({
     mutationFn: executeRcon,
   });
   const [showAll, setShowAll] = useState(false);
 
   const handleApply = async () => {
-    const commands: string[] = [];
+    const result = await applyChanges(
+      state.changes,
+      CURRENT_MAP,
+      execute
+    );
 
-    // Build commands based on pending changes (except map)
-    state.changes.forEach((change) => {
-      if (change.type === 'map') return; // Skip map for now, add it last
-      
-      switch (change.type) {
-        case 'dmflags':
-          commands.push(`dmflags ${change.pendingValue}`);
-          break;
-        case 'timelimit':
-          commands.push(`timelimit ${change.pendingValue}`);
-          break;
-        case 'fraglimit':
-          commands.push(`fraglimit ${change.pendingValue}`);
-          break;
-      }
-    });
-
-    // Always add map restart last
-    const mapChange = state.changes.find((c) => c.type === 'map');
-    if (mapChange) {
-      // Use the queued map change
-      commands.push(`map ${mapChange.pendingValue}`);
-    } else {
-      // No map change queued, but we still need to restart to apply other changes
-      commands.push(`map ${CURRENT_MAP}`);
+    if (result.success) {
+      // Only clear queue after all commands have been sent
+      clearApply();
     }
-
-    // Send all commands and wait for them to complete
-    const promises = commands.map((cmd) => execute(cmd));
-    await Promise.all(promises);
-
-    // Only clear queue after all commands have been sent
-    applyChanges();
   };
 
   const handleCancel = () => {
