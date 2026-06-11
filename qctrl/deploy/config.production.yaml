@@ -1,0 +1,10 @@
+# qctrl production configuration
+
+server:
+  host: noir.lan
+  port: 27910
+  rcon_password: ${RCON_PASSWORD}
+
+paths:
+  server_cfg: /mnt/noir/scratch/games/q2/baseq2/server.cfg
+  baseq2: /mnt/noir/scratch/games/q2/baseq2

@@ -1,0 +1,16 @@
+[Unit]
+Description=qctrl - Quake 2 Server Controller
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/qctrl
+ExecStart=/opt/qctrl/api
+Environment=QCTRL_CONFIG=/etc/qctrl/config.yaml
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
