@@ -6,7 +6,7 @@ fe-all:
 
 # Backend all-in-one checks (fails on any warning)
 be-all:
-    cargo fmt --check
+    cargo fmt --all
     cargo clippy --all-targets --all-features -- -D warnings
     RUSTFLAGS="-D warnings" cargo build --release
 
