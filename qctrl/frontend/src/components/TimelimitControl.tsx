@@ -1,12 +1,16 @@
 import { useState, type FormEvent } from 'react';
 import { useChanges } from '../contexts/ChangesContext';
 
-export function TimelimitControl() {
+interface TimelimitControlProps {
+  currentValue?: number;
+}
+
+export function TimelimitControl({ currentValue = 20 }: TimelimitControlProps) {
   const { queueChange, getPendingValue, isDirty } = useChanges();
 
-  // Get current value from pending change or default to 20
+  // Get current value from pending change or use provided currentValue or default
   const pendingValue = getPendingValue('timelimit');
-  const initialValue = typeof pendingValue === 'number' ? pendingValue : 20;
+  const initialValue = typeof pendingValue === 'number' ? pendingValue : currentValue;
   const [value, setValue] = useState(initialValue);
 
   const handleSubmit = (e: FormEvent) => {

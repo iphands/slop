@@ -1,12 +1,16 @@
 import { useState, type FormEvent } from 'react';
 import { useChanges } from '../contexts/ChangesContext';
 
-export function FraglimitControl() {
+interface FraglimitControlProps {
+  currentValue?: number;
+}
+
+export function FraglimitControl({ currentValue = 25 }: FraglimitControlProps) {
   const { queueChange, getPendingValue, isDirty } = useChanges();
 
-  // Get current value from pending change or default to 25
+  // Get current value from pending change or use provided currentValue or default
   const pendingValue = getPendingValue('fraglimit');
-  const initialValue = typeof pendingValue === 'number' ? pendingValue : 25;
+  const initialValue = typeof pendingValue === 'number' ? pendingValue : currentValue;
   const [value, setValue] = useState(initialValue);
 
   const handleSubmit = (e: FormEvent) => {

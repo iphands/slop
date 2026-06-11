@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { getStatus } from '../lib/api';
+import { useChanges } from '../contexts/ChangesContext';
 import { DmflagsPreset } from '../components/DmflagsPreset';
 import { DmflagsBits } from '../components/DmflagsBits';
 import { TimelimitControl } from '../components/TimelimitControl';
@@ -21,13 +22,19 @@ function Section({ title, children }: SectionProps) {
 }
 
 export function Deathmatch() {
+  const { getServerValue } = useChanges();
+  
+  // Use values from ChangesContext (which is updated by ServerStatusSync)
+  const currentDmflags = Number(getServerValue('dmflags'));
+  const currentTimelimit = Number(getServerValue('timelimit'));
+  const currentFraglimit = Number(getServerValue('fraglimit'));
+  
+  // Get map from React Query for display
   const { data: status } = useQuery({
     queryKey: ['status'],
     queryFn: getStatus,
     refetchInterval: 2000,
   });
-
-  const currentDmflags = status?.dmflags ?? 17424;
 
   return (
     <div className="space-y-6">
@@ -38,10 +45,10 @@ export function Deathmatch() {
         <DmflagsBits currentValue={currentDmflags} />
       </Section>
       <Section title="Time Limit">
-        <TimelimitControl />
+        <TimelimitControl currentValue={currentTimelimit} />
       </Section>
       <Section title="Frag Limit">
-        <FraglimitControl />
+        <FraglimitControl currentValue={currentFraglimit} />
       </Section>
       <Section title="Map">
         <RestartMap currentMap={status?.map ?? undefined} />
