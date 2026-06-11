@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useChanges } from '../contexts/ChangesContext';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { executeRcon, getStatus } from '../lib/api';
 import { applyChanges } from '../lib/applyLogic';
 
 export function ChangesQueueUI() {
+  const queryClient = useQueryClient();
   const { state, clearQueue, applyChanges: clearApply } = useChanges();
   const { data: status } = useQuery({
     queryKey: ['status'],
@@ -25,8 +26,10 @@ export function ChangesQueueUI() {
     );
 
     if (result.success) {
-      // Only clear queue after all commands have been sent
+      // Clear the queue immediately
       clearApply();
+      // Force a refetch of status to get the updated server state
+      await queryClient.invalidateQueries({ queryKey: ['status'] });
     }
   };
 
