@@ -58,7 +58,7 @@ export function buildApplyCommands(changes: Change[], currentMap: string): strin
 export async function applyChanges(
   changes: Change[],
   currentMap: string,
-  executeCommand: (cmd: string) => Promise<void>
+  executeCommand: (cmd: string) => Promise<string>
 ): Promise<ApplyResult> {
   try {
     const commands = buildApplyCommands(changes, currentMap);
