@@ -89,7 +89,7 @@ async function testDmflagsSequence() {
   const status = await statusResponse.json();
   console.log('   Players:', status.players?.length || 0);
   
-  // Test RCON commands work and dmflags is accepted
+  // Test RCON command
   console.log('2. Testing dmflags command...');
   const result = await testRcon('dmflags 17424');
   
@@ -101,8 +101,8 @@ async function testDmflagsSequence() {
   return false;
 }
 
-async function testMapChange() {
-  console.log('\n=== Testing Map Change ===');
+async function testMapChangeQueue() {
+  console.log('\n=== Testing Map Change Queue Flow ===');
   
   // Get available maps
   const mapsResponse = await fetch(`${API_BASE}/maps`);
@@ -113,12 +113,89 @@ async function testMapChange() {
     return false;
   }
   
-  const testMap = mapsData.maps[0].name;
-  console.log(`1. Testing map change to: ${testMap}`);
-  console.log('2. Would execute: map', testMap);
-  console.log('   (Skipped actual map change to avoid disrupting server)');
+  // Get current map
+  console.log('1. Getting current map...');
+  const statusResponse = await fetch(`${API_BASE}/status`);
+  const status = await statusResponse.json();
+  const currentMap = status.map || 'unknown';
+  console.log('   Current map:', currentMap);
   
-  return true;
+  // Pick a different map to change to
+  const targetMap = mapsData.maps.find(m => m.name !== currentMap)?.name;
+  if (!targetMap) {
+    console.log('   No different map found, using q2dm2');
+    // Just pick a different map
+    const targetMap = 'q2dm2';
+  }
+  
+  console.log('2. Queuing map change to:', targetMap);
+  
+  // Simulate the queue flow
+  // Step 1: Queue the map change (this is what happens in the frontend)
+  const queuePayload = {
+    changes: [
+      { type: 'map', pendingValue: targetMap, description: 'Map change' }
+    ]
+  };
+  
+  // Step 2: Apply the changes (this is what handleApply does)
+  console.log('3. Applying changes...');
+  const commands = [];
+  
+  // Build commands based on pending changes (except map)
+  queuePayload.changes.forEach((change) => {
+    if (change.type === 'map') return;
+    
+    switch (change.type) {
+      case 'dmflags':
+        commands.push(`dmflags ${change.pendingValue}`);
+        break;
+      case 'timelimit':
+        commands.push(`timelimit ${change.pendingValue}`);
+        break;
+      case 'fraglimit':
+        commands.push(`fraglimit ${change.pendingValue}`);
+        break;
+    }
+  });
+  
+  // Always add map restart last
+  const mapChange = queuePayload.changes.find((c) => c.type === 'map');
+  if (mapChange) {
+    commands.push(`map ${mapChange.pendingValue}`);
+  }
+  
+  console.log('   Commands to send:', commands.join(', '));
+  
+  // Send all commands and wait for them to complete
+  for (const cmd of commands) {
+    console.log(`   Sending: ${cmd}`);
+    const result = await testRcon(cmd);
+    if (!result) {
+      console.log('   ✗ Command failed:', cmd);
+      return false;
+    }
+  }
+  
+  // Step 3: Wait a bit for the map to change
+  console.log('4. Waiting for map change to complete...');
+  await new Promise(resolve => setTimeout(resolve, 3000));
+  
+  // Step 4: Verify the map actually changed
+  console.log('5. Verifying map change...');
+  const newStatusResponse = await fetch(`${API_BASE}/status`);
+  const newStatus = await newStatusResponse.json();
+  const newMap = newStatus.map || 'unknown';
+  console.log('   New map:', newMap);
+  
+  if (newMap === targetMap) {
+    console.log('   ✓ Map changed successfully to', targetMap);
+    return true;
+  } else {
+    console.log('   ✗ Map did not change. Expected:', targetMap, 'Got:', newMap);
+    console.log('   This means the map change command is not working!');
+    return false;
+  }
 }
 
 async function testFavorites() {
@@ -180,7 +257,7 @@ async function runAllTests() {
   results.push(await testConfig());
   results.push(await testMaps());
   results.push(await testDmflagsSequence());
-  results.push(await testMapChange());
+  results.push(await testMapChangeQueue());
   results.push(await testFavorites());
   
   console.log('\n╔════════════════════════════════════════════════════════╗');

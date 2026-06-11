@@ -23,21 +23,45 @@ pub struct Player {
 
 /// List of players.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[deprecated]
 pub struct PlayerList {
     pub players: Vec<Player>,
 }
 
-/// Parse the `status` command output into a PlayerList.
-pub fn parse_status_output(output: &str) -> Result<PlayerList, StatusParseError> {
+/// Full status response including map and players.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusResponse {
+    pub map: Option<String>,
+    pub players: Vec<Player>,
+}
+
+/// Parse the `status` command output into a StatusResponse.
+pub fn parse_status_output(output: &str) -> Result<StatusResponse, StatusParseError> {
+    let mut map: Option<String> = None;
     let mut players = Vec::new();
     let lines: Vec<&str> = output.lines().collect();
 
-    // Find the header line and start parsing from the next line
+    // First pass: look for map line
+    for line in &lines {
+        let line = line.trim();
+        if line.starts_with("map") && line.contains(':') {
+            // Extract map name after the colon
+            let parts: Vec<&str> = line.split(':').collect();
+            if parts.len() > 1 {
+                let map_name = parts[1].trim();
+                if !map_name.is_empty() {
+                    map = Some(map_name.to_string());
+                }
+            }
+        }
+    }
+
+    // Second pass: parse players (existing logic)
     let mut in_players = false;
-    for line in lines {
+    for line in &lines {
         let line = line.trim();
         
-        // Skip header line
+        // Find the header line and start parsing from the next line
         if line.starts_with("num") && line.contains("score") {
             in_players = true;
             continue;
@@ -64,7 +88,7 @@ pub fn parse_status_output(output: &str) -> Result<PlayerList, StatusParseError>
     use std::cmp::Reverse;
     players.sort_by_key(|p| Reverse(p.score));
 
-    Ok(PlayerList { players })
+    Ok(StatusResponse { map, players })
 }
 
 /// Parse a single player line from status output.
@@ -103,16 +127,18 @@ mod tests {
         let output = r#"
 --- server status ----------------------------------------------------------------
  rate loss    checks   mss  port    client            idletm   ping
-   0.0    0.0       0   512   27015 192.168.1.100:27910    0.0     45
-   0.0    0.0       0   512   27015 192.168.1.101:27910    0.0     78
+    0.0    0.0       0   512   27015 192.168.1.100:27910    0.0     45
+    0.0    0.0       0   512   27015 192.168.1.101:27910    0.0     78
 
  num score address              name            ping
    0    15   192.168.1.100:27   PlayerOne      45
    1     8   192.168.1.101:27   PlayerTwo      78
 ---------------------------------------------------------------------------
+map              : q2dm1
 "#;
 
         let result = parse_status_output(output).unwrap();
+        assert_eq!(result.map, Some("q2dm1".to_string()));
         assert_eq!(result.players.len(), 2);
         assert_eq!(result.players[0].name, "PlayerOne");
         assert_eq!(result.players[0].score, 15);
@@ -122,8 +148,9 @@ mod tests {
 
     #[test]
     fn test_parse_empty_status() {
-        let output = "No players connected";
+        let output = "No players connected\nmap              : test_map";
         let result = parse_status_output(output).unwrap();
+        assert_eq!(result.map, Some("test_map".to_string()));
         assert_eq!(result.players.len(), 0);
     }
 }

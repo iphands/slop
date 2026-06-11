@@ -21,7 +21,7 @@ use config::Config;
 use favorites::Favorites;
 use logs::LogStream;
 use maps::MapCache;
-use status::{parse_status_output, PlayerList};
+use status::{parse_status_output, StatusResponse};
 
 #[derive(Clone)]
 struct SharedState {
@@ -149,10 +149,10 @@ async fn remove_favorite(
     }
 }
 
-async fn get_status(State(state): State<SharedState>) -> Result<Json<PlayerList>, StatusCode> {
+async fn get_status(State(state): State<SharedState>) -> Result<Json<StatusResponse>, StatusCode> {
     match state.rcon_client.execute("status").await {
         Ok(output) => match parse_status_output(&output) {
-            Ok(players) => Ok(Json(players)),
+            Ok(status) => Ok(Json(status)),
             Err(e) => {
                 tracing::error!("Failed to parse status: {}", e);
                 Err(StatusCode::INTERNAL_SERVER_ERROR)

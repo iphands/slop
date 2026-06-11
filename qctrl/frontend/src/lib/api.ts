@@ -30,8 +30,25 @@ export interface Player {
   ping: number;
 }
 
-export interface PlayerList {
+export interface Player {
+  client_num: number;
+  score: number;
+  address: string;
+  name: string;
+  ping: number;
+}
+
+export interface StatusResponse {
+  map: string | null;
   players: Player[];
+}
+
+export async function getStatus(): Promise<StatusResponse> {
+  const res = await fetch('/api/status');
+  if (!res.ok) {
+    throw new Error('Failed to fetch status');
+  }
+  return res.json();
 }
 
 export async function getHealth(): Promise<HealthResponse> {
@@ -86,14 +103,6 @@ export async function removeFavorite(mapName: string): Promise<{ success: boolea
   });
   if (!res.ok) {
     throw new Error('Failed to remove favorite');
-  }
-  return res.json();
-}
-
-export async function getStatus(): Promise<PlayerList> {
-  const res = await fetch('/api/status');
-  if (!res.ok) {
-    throw new Error('Failed to fetch status');
   }
   return res.json();
 }
