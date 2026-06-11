@@ -1,5 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { executeRcon } from '../lib/api';
+import { useChanges } from '../contexts/ChangesContext';
 
 const PRESETS = [
   { name: "Standard", value: 16, description: "Instant powerups" },
@@ -13,24 +12,26 @@ interface DmflagsPresetProps {
 }
 
 export function DmflagsPreset({ currentValue }: DmflagsPresetProps) {
-  const queryClient = useQueryClient();
-  const { mutate: execute, isPending, error } = useMutation({
-    mutationFn: executeRcon,
-    onSuccess: () => {
-      // Sync after successful mutation
-      queryClient.invalidateQueries({ queryKey: ['status'] });
-    },
-  });
+  const { queueChange, getPendingValue, isDirty } = useChanges();
+
+  // Get the pending value from queue, or use current server value
+  const pendingDmflags = (getPendingValue('dmflags') as number | undefined) ?? currentValue;
 
   const handlePresetClick = (value: number) => {
-    execute(`dmflags ${value}`);
+    queueChange({
+      type: 'dmflags',
+      pendingValue: value,
+      description: 'Deathmatch flags',
+    });
   };
 
   return (
     <div className="space-y-4">
       <div className="text-sm text-gray-400">
-        Current: <span className="font-mono">{currentValue}</span>
-        {isPending && <span className="ml-2 text-xs text-blue-400">(sending...)</span>}
+        Current: <span className="font-mono">{pendingDmflags}</span>
+        {isDirty('dmflags') && (
+          <span className="ml-2 text-xs text-orange-400">(queued)</span>
+        )}
       </div>
       <div className="grid grid-cols-2 gap-3">
         {PRESETS.map((preset) => (
@@ -38,13 +39,12 @@ export function DmflagsPreset({ currentValue }: DmflagsPresetProps) {
             key={preset.name}
             type="button"
             onClick={() => handlePresetClick(preset.value)}
-            disabled={isPending}
             className={`p-3 rounded border text-left transition-colors ${
-              currentValue === preset.value
+              pendingDmflags === preset.value
                 ? 'bg-blue-900 border-blue-500'
                 : 'bg-gray-800 border-gray-700 hover:border-gray-600'
             } ${
-              isPending ? 'opacity-50' : ''
+              isDirty('dmflags') && pendingDmflags === preset.value ? 'ring-2 ring-orange-500/50' : ''
             }`}
           >
             <div className="font-medium">{preset.name}</div>
@@ -53,7 +53,6 @@ export function DmflagsPreset({ currentValue }: DmflagsPresetProps) {
           </button>
         ))}
       </div>
-      {error && <div className="text-red-400 text-sm">Failed: {error.message}</div>}
     </div>
   );
 }

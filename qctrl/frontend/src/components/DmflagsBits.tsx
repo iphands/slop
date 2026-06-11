@@ -1,5 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { executeRcon } from '../lib/api';
+import { useChanges } from '../contexts/ChangesContext';
 
 const FLAGS = [
   { bit: 1, name: 'No Health' },
@@ -25,29 +24,31 @@ interface DmflagsBitsProps {
 }
 
 export function DmflagsBits({ currentValue }: DmflagsBitsProps) {
-  const queryClient = useQueryClient();
-  const { mutate: execute, isPending, error } = useMutation({
-    mutationFn: executeRcon,
-    onSuccess: () => {
-      // Sync pending value back to current after successful mutation
-      queryClient.invalidateQueries({ queryKey: ['status'] });
-    },
-  });
+  const { queueChange, getPendingValue, isDirty } = useChanges();
+
+  // Get the pending value from queue, or use current server value
+  const pendingDmflags = (getPendingValue('dmflags') as number | undefined) ?? currentValue;
 
   const toggleBit = (bit: number) => {
-    const newValue = currentValue ^ bit;
-    execute(`dmflags ${newValue}`);
+    const newValue = pendingDmflags ^ bit;
+    queueChange({
+      type: 'dmflags',
+      pendingValue: newValue,
+      description: 'Deathmatch flags',
+    });
   };
 
   return (
     <div className="space-y-3">
       <div className="text-sm text-gray-400">
-        Combined: <span className="font-mono">{currentValue}</span>
-        {isPending && <span className="ml-2 text-xs text-blue-400">(sending...)</span>}
+        Combined: <span className="font-mono">{pendingDmflags}</span>
+        {isDirty('dmflags') && (
+          <span className="ml-2 text-xs text-orange-400">(queued)</span>
+        )}
       </div>
       <div className="grid grid-cols-2 gap-2">
         {FLAGS.map((flag) => {
-          const isChecked = Boolean(currentValue & flag.bit);
+          const isChecked = Boolean(pendingDmflags & flag.bit);
           
           return (
             <label
@@ -57,14 +58,13 @@ export function DmflagsBits({ currentValue }: DmflagsBitsProps) {
                   ? 'bg-blue-900/50'
                   : 'bg-gray-800 hover:bg-gray-700'
               } ${
-                isPending ? 'opacity-50' : ''
+                isDirty('dmflags') ? 'ring-2 ring-orange-500/50' : ''
               }`}
             >
               <input
                 type="checkbox"
                 checked={isChecked}
                 onChange={() => toggleBit(flag.bit)}
-                disabled={isPending}
                 className="rounded"
               />
               <span className="text-sm">{flag.name}</span>
@@ -72,7 +72,6 @@ export function DmflagsBits({ currentValue }: DmflagsBitsProps) {
           );
         })}
       </div>
-      {error && <div className="text-red-400 text-sm">Failed: {error.message}</div>}
     </div>
   );
 }
