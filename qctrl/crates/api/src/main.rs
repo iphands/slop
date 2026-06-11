@@ -11,9 +11,11 @@ use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
+mod maps;
 mod routes;
 
 use config::Config;
+use maps::MapCache;
 use routes::AppState;
 
 #[tokio::main]
@@ -36,12 +38,15 @@ async fn main() {
         &config.server.rcon_password,
     ));
 
-    let state = AppState { config, rcon_client };
+    let map_cache = MapCache::new(&config.paths.baseq2);
+
+    let state = AppState { config, rcon_client, map_cache };
 
     let app = Router::new()
         .route("/health", get(health))
         .route("/config", get(get_config))
         .route("/rcon/execute", post(rcon_execute))
+        .route("/maps", get(list_maps))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
@@ -64,6 +69,16 @@ async fn get_config(State(state): State<AppState>) -> Json<config::Config> {
     Json(state.config.clone())
 }
 
+async fn list_maps(State(state): State<AppState>) -> Result<Json<MapList>, StatusCode> {
+    match state.map_cache.get_maps() {
+        Ok(maps) => Ok(Json(MapList { maps })),
+        Err(e) => {
+            tracing::error!("Failed to list maps: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
 async fn rcon_execute(
     State(state): State<AppState>,
     Json(payload): Json<ExecutePayload>,
@@ -78,6 +93,11 @@ async fn rcon_execute(
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
+}
+
+#[derive(Serialize)]
+struct MapList {
+    maps: Vec<crate::maps::MapInfo>,
 }
 
 #[derive(Deserialize)]
