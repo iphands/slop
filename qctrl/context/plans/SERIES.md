@@ -26,7 +26,7 @@ This document tracks the dependency chain and status of all plans for the qctrl 
 | # | Plan | Status | Depends On |
 |---|------|--------|------------|
 | 01 | Project Setup & Config | `done` | N/A |
-| 02 | Map Listing API | `pending` | 01 |
+| 02 | Map Listing API | `done` | 01 |
 | 03 | Frontend Scaffolding | `pending` | 01 |
 | 04 | Deathmatch Controls UI | `pending` | 03 |
 | 05 | Map Selection UI | `pending` | 02, 03 |
