@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getStatus } from '../lib/api';
 import { useChanges } from '../contexts/ChangesContext';
@@ -15,14 +16,16 @@ export function ServerStatusSync() {
     refetchInterval: 2000,
   });
 
-  if (status) {
-    setServerState({
-      dmflags: status.dmflags ?? 17424,
-      timelimit: status.timelimit ?? 20,
-      fraglimit: status.fraglimit ?? 25,
-      currentMap: status.map ?? 'unknown',
-    });
-  }
+  useEffect(() => {
+    if (status) {
+      setServerState({
+        dmflags: status.dmflags ?? 17424,
+        timelimit: status.timelimit ?? 20,
+        fraglimit: status.fraglimit ?? 25,
+        currentMap: status.map ?? 'unknown',
+      });
+    }
+  }, [status, setServerState]);
 
   return null;
 }
