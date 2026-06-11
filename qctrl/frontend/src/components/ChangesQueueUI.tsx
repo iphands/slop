@@ -13,7 +13,7 @@ export function ChangesQueueUI() {
   });
   const [showAll, setShowAll] = useState(false);
 
-  const handleApply = () => {
+  const handleApply = async () => {
     const commands: string[] = [];
 
     // Build commands based on pending changes (except map)
@@ -43,15 +43,12 @@ export function ChangesQueueUI() {
       commands.push(`map ${CURRENT_MAP}`);
     }
 
-    // Send all commands
-    commands.forEach((cmd) => {
-      execute(cmd);
-    });
+    // Send all commands and wait for them to complete
+    const promises = commands.map((cmd) => execute(cmd));
+    await Promise.all(promises);
 
-    // Mark as applied
-    if (commands.length > 0) {
-      applyChanges();
-    }
+    // Only clear queue after all commands have been sent
+    applyChanges();
   };
 
   const handleCancel = () => {
