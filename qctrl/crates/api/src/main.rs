@@ -8,6 +8,7 @@ use qctrl_rcon::RconClient;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tower_http::services::ServeDir;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
@@ -58,7 +59,7 @@ async fn main() {
         log_stream,
     };
 
-    let app = Router::new()
+    let api_routes = Router::new()
         .route("/health", get(health))
         .route("/config", get(get_config))
         .route("/rcon/execute", post(rcon_execute))
@@ -67,8 +68,18 @@ async fn main() {
         .route("/logs/ws", get(logs_ws))
         .with_state(state);
 
+    let static_files = ServeDir::new("frontend/dist")
+        .not_found_service(ServeDir::new("frontend/dist").append_index_html_on_directories(true));
+
+    let app = Router::new()
+        .nest("/api", api_routes)
+        .nest_service("/", static_files)
+        .fallback_service(ServeDir::new("frontend/dist").append_index_html_on_directories(true));
+
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
-    tracing::info!("Starting qctrl API on {}", addr);
+    tracing::info!("Starting qctrl API + frontend on {}", addr);
+    tracing::info!("Frontend: http://localhost:3000");
+    tracing::info!("API: http://localhost:3000/api/*");
     
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();

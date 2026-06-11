@@ -1,4 +1,5 @@
 /.sisyphus
 /frontend/node_modules
 /target
+/target-host
 /vendor

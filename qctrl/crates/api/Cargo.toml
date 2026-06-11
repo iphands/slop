@@ -19,7 +19,7 @@ serde_json = "1.0"
 
 # Tower for middleware
 tower = "0.4"
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
 
 # Logging
 tracing = "0.1"

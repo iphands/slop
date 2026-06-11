@@ -34,7 +34,7 @@ export interface PlayerList {
 }
 
 export async function getHealth(): Promise<HealthResponse> {
-  const res = await fetch('/health');
+  const res = await fetch('/api/health');
   if (!res.ok) {
     throw new Error('Failed to fetch health');
   }
@@ -42,7 +42,7 @@ export async function getHealth(): Promise<HealthResponse> {
 }
 
 export async function getConfig(): Promise<Config> {
-  const res = await fetch('/config');
+  const res = await fetch('/api/config');
   if (!res.ok) {
     throw new Error('Failed to fetch config');
   }
@@ -50,7 +50,7 @@ export async function getConfig(): Promise<Config> {
 }
 
 export async function getMaps(): Promise<{ maps: MapInfo[] }> {
-  const res = await fetch('/maps');
+  const res = await fetch('/api/maps');
   if (!res.ok) {
     throw new Error('Failed to fetch maps');
   }
@@ -58,7 +58,7 @@ export async function getMaps(): Promise<{ maps: MapInfo[] }> {
 }
 
 export async function getStatus(): Promise<PlayerList> {
-  const res = await fetch('/status');
+  const res = await fetch('/api/status');
   if (!res.ok) {
     throw new Error('Failed to fetch status');
   }
@@ -66,7 +66,7 @@ export async function getStatus(): Promise<PlayerList> {
 }
 
 export async function executeRcon(command: string): Promise<string> {
-  const res = await fetch('/rcon/execute', {
+  const res = await fetch('/api/rcon/execute', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

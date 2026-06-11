@@ -20,7 +20,7 @@ export function Logs() {
   });
 
   useEffect(() => {
-    const wsUrl = `ws://${window.location.host}/logs/ws`;
+    const wsUrl = `ws://${window.location.host}/api/logs/ws`;
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
