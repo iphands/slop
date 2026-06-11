@@ -1,8 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { getHealth, getStatus } from '../lib/api';
+import { useChanges } from '../contexts/ChangesContext';
 import { Section } from '../components/Section';
 
 export function Dashboard() {
+  const { getServerValue } = useChanges();
   const { data: health, refetch: refetchHealth } = useQuery({
     queryKey: ['health'],
     queryFn: getHealth,
@@ -16,6 +18,9 @@ export function Dashboard() {
   });
 
   const players = status?.players || [];
+  const currentMap = status?.map || 'Loading...';
+  const timelimit = Number(getServerValue('timelimit'));
+  const fraglimit = Number(getServerValue('fraglimit'));
 
   return (
     <div className="space-y-6">
@@ -53,15 +58,15 @@ export function Dashboard() {
           </div>
           <div className="p-3 bg-gray-700 rounded">
             <div className="text-sm text-gray-400">Map</div>
-            <div className="text-xl font-bold">{status?.map || 'Loading...'}</div>
+            <div className="text-xl font-bold">{currentMap}</div>
           </div>
           <div className="p-3 bg-gray-700 rounded">
             <div className="text-sm text-gray-400">Time Limit</div>
-            <div className="text-xl font-bold">20 min</div>
+            <div className="text-xl font-bold">{timelimit} min</div>
           </div>
           <div className="p-3 bg-gray-700 rounded">
             <div className="text-sm text-gray-400">Frag Limit</div>
-            <div className="text-xl font-bold">25</div>
+            <div className="text-xl font-bold">{fraglimit}</div>
           </div>
         </div>
       </Section>
