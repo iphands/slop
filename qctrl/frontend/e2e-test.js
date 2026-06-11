@@ -173,6 +173,133 @@ async function testDmflagsApply() {
   }
 }
 
+async function testTimelimitApply() {
+  console.log('\n=== Testing Timelimit Apply Flow ===');
+  
+  // Get current status
+  console.log('1. Getting current status...');
+  const statusResponse = await fetch(`${API_BASE}/status`);
+  const status = await statusResponse.json();
+  const currentMap = status.map || 'q2dm1';
+  console.log('   Current map:', currentMap);
+  
+  // Get current timelimit
+  console.log('2. Getting current timelimit...');
+  const currentTimelimitOutput = await testRcon('timelimit');
+  if (!currentTimelimitOutput) {
+    console.log('   ✗ Failed to get current timelimit');
+    return false;
+  }
+  const match = currentTimelimitOutput.match(/"timelimit" is "(\d+)"/);
+  const currentTimelimit = match ? parseInt(match[1]) : 0;
+  console.log('   Current timelimit:', currentTimelimit);
+  
+  // Choose a different value
+  const testValue = currentTimelimit === 0 ? 30 : 0;
+  console.log('3. Queuing timelimit change to:', testValue);
+  
+  const changes = [
+    { type: 'timelimit', pendingValue: testValue, description: 'Time limit' }
+  ];
+  
+  console.log('4. Building apply commands...');
+  const commands = buildApplyCommands(changes, currentMap);
+  console.log('   Commands to send:', commands.join(', '));
+  
+  const hasMapRestart = commands.some(cmd => cmd.startsWith('map'));
+  if (!hasMapRestart) {
+    console.log('   ✗ FAIL: No map restart in commands!');
+    return false;
+  }
+  console.log('   ✓ Map restart included (GOOD)');
+  
+  console.log('5. Executing commands...');
+  for (const cmd of commands) {
+    await testRcon(cmd);
+  }
+  
+  console.log('6. Waiting for changes...');
+  await sleep(3000);
+  
+  console.log('7. Verifying timelimit changed...');
+  const newTimelimitOutput = await testRcon('timelimit');
+  const newMatch = newTimelimitOutput.match(/"timelimit" is "(\d+)"/);
+  const newTimelimit = newMatch ? parseInt(newMatch[1]) : null;
+  console.log('   New timelimit:', newTimelimit);
+  
+  if (newTimelimit === testValue) {
+    console.log('   ✓ SUCCESS: timelimit changed from', currentTimelimit, 'to', testValue);
+    await testRcon(`timelimit ${currentTimelimit}`);
+    return true;
+  } else {
+    console.log('   ✗ FAIL: timelimit did NOT change!');
+    console.log('   Expected:', testValue, 'Got:', newTimelimit);
+    return false;
+  }
+}
+
+async function testFraglimitApply() {
+  console.log('\n=== Testing Fraglimit Apply Flow ===');
+  
+  console.log('1. Getting current status...');
+  const statusResponse = await fetch(`${API_BASE}/status`);
+  const status = await statusResponse.json();
+  const currentMap = status.map || 'q2dm1';
+  console.log('   Current map:', currentMap);
+  
+  console.log('2. Getting current fraglimit...');
+  const currentFraglimitOutput = await testRcon('fraglimit');
+  if (!currentFraglimitOutput) {
+    console.log('   ✗ Failed to get current fraglimit');
+    return false;
+  }
+  const match = currentFraglimitOutput.match(/"fraglimit" is "(\d+)"/);
+  const currentFraglimit = match ? parseInt(match[1]) : 0;
+  console.log('   Current fraglimit:', currentFraglimit);
+  
+  const testValue = currentFraglimit === 0 ? 50 : 0;
+  console.log('3. Queuing fraglimit change to:', testValue);
+  
+  const changes = [
+    { type: 'fraglimit', pendingValue: testValue, description: 'Frag limit' }
+  ];
+  
+  console.log('4. Building apply commands...');
+  const commands = buildApplyCommands(changes, currentMap);
+  console.log('   Commands to send:', commands.join(', '));
+  
+  const hasMapRestart = commands.some(cmd => cmd.startsWith('map'));
+  if (!hasMapRestart) {
+    console.log('   ✗ FAIL: No map restart in commands!');
+    return false;
+  }
+  console.log('   ✓ Map restart included (GOOD)');
+  
+  console.log('5. Executing commands...');
+  for (const cmd of commands) {
+    await testRcon(cmd);
+  }
+  
+  console.log('6. Waiting for changes...');
+  await sleep(3000);
+  
+  console.log('7. Verifying fraglimit changed...');
+  const newFraglimitOutput = await testRcon('fraglimit');
+  const newMatch = newFraglimitOutput.match(/"fraglimit" is "(\d+)"/);
+  const newFraglimit = newMatch ? parseInt(newMatch[1]) : null;
+  console.log('   New fraglimit:', newFraglimit);
+  
+  if (newFraglimit === testValue) {
+    console.log('   ✓ SUCCESS: fraglimit changed from', currentFraglimit, 'to', testValue);
+    await testRcon(`fraglimit ${currentFraglimit}`);
+    return true;
+  } else {
+    console.log('   ✗ FAIL: fraglimit did NOT change!');
+    console.log('   Expected:', testValue, 'Got:', newFraglimit);
+    return false;
+  }
+}
+
 async function testMapChangeApply() {
   console.log('\n=== Testing Map Change Apply Flow ===');
   
@@ -297,6 +424,8 @@ async function runAllTests() {
   results.push(await testConfig());
   results.push(await testMaps());
   results.push(await testDmflagsApply());
+  results.push(await testTimelimitApply());
+  results.push(await testFraglimitApply());
   results.push(await testMapChangeApply());
   results.push(await testFavorites());
   

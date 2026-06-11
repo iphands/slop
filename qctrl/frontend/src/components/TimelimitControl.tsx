@@ -1,28 +1,43 @@
 import { useState, type FormEvent } from 'react';
-import { useMutation } from '@tanstack/react-query';
-import { executeRcon } from '../lib/api';
+import { useChanges } from '../contexts/ChangesContext';
 
 export function TimelimitControl() {
-  const [value, setValue] = useState(20);
-  const { mutate: execute, isPending, error } = useMutation({
-    mutationFn: executeRcon,
-  });
+  const { queueChange, getPendingValue, isDirty } = useChanges();
+
+  // Get current value from pending change or default to 20
+  const pendingValue = getPendingValue('timelimit');
+  const initialValue = typeof pendingValue === 'number' ? pendingValue : 20;
+  const [value, setValue] = useState(initialValue);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (value >= 0 && value <= 999) {
-      execute(`timelimit ${value}`);
+      queueChange({
+        type: 'timelimit',
+        pendingValue: value,
+        description: 'Time limit',
+      });
     }
   };
 
   const setQuickValue = (m: number) => {
     setValue(m);
+    queueChange({
+      type: 'timelimit',
+      pendingValue: m,
+      description: 'Time limit',
+    });
   };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
-        <label className="block text-sm font-medium mb-2">Time Limit (minutes)</label>
+        <label className="block text-sm font-medium mb-2">
+          Time Limit (minutes)
+          {isDirty('timelimit') && (
+            <span className="ml-2 text-xs text-orange-400">(queued)</span>
+          )}
+        </label>
         <input
           type="number"
           min={0}
@@ -53,12 +68,11 @@ export function TimelimitControl() {
       </div>
       <button
         type="submit"
-        disabled={isPending || value < 0 || value > 999}
+        disabled={value < 0 || value > 999}
         className="w-full py-2 bg-blue-600 hover:bg-blue-700 rounded disabled:opacity-50"
       >
-        {isPending ? 'Setting...' : 'Set Time Limit'}
+        Set Time Limit
       </button>
-      {error && <div className="text-red-400 text-sm">Failed: {error.message}</div>}
     </form>
   );
 }
