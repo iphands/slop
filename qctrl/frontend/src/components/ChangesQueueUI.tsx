@@ -3,6 +3,9 @@ import { useChanges } from '../contexts/ChangesContext';
 import { useMutation } from '@tanstack/react-query';
 import { executeRcon } from '../lib/api';
 
+// Hardcoded current map - TODO: Get from server status endpoint
+const CURRENT_MAP = 'q2dm1';
+
 export function ChangesQueueUI() {
   const { state, clearQueue, applyChanges } = useChanges();
   const { mutate: execute, isPending } = useMutation({
@@ -13,8 +16,10 @@ export function ChangesQueueUI() {
   const handleApply = () => {
     const commands: string[] = [];
 
-    // Build commands based on pending changes
+    // Build commands based on pending changes (except map)
     state.changes.forEach((change) => {
+      if (change.type === 'map') return; // Skip map for now, add it last
+      
       switch (change.type) {
         case 'dmflags':
           commands.push(`dmflags ${change.pendingValue}`);
@@ -25,20 +30,17 @@ export function ChangesQueueUI() {
         case 'fraglimit':
           commands.push(`fraglimit ${change.pendingValue}`);
           break;
-        case 'map':
-          // Map change will be added last
-          break;
       }
     });
 
-    // Add map restart last if there's a map change or if there are other changes
+    // Always add map restart last
     const mapChange = state.changes.find((c) => c.type === 'map');
     if (mapChange) {
+      // Use the queued map change
       commands.push(`map ${mapChange.pendingValue}`);
-    } else if (state.changes.some((c) => c.type === 'dmflags')) {
-      // If only dmflags changed, still need to restart to apply
-      // For now, we'll skip the map restart - user can use RestartMap button
-      // TODO: Get actual current map from server status
+    } else {
+      // No map change queued, but we still need to restart to apply other changes
+      commands.push(`map ${CURRENT_MAP}`);
     }
 
     // Send all commands
