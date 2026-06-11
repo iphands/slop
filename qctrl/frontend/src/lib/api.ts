@@ -41,6 +41,10 @@ export interface Player {
 export interface StatusResponse {
   map: string | null;
   players: Player[];
+  // Server settings - may be undefined until backend exposes them
+  dmflags?: number;
+  timelimit?: number;
+  fraglimit?: number;
 }
 
 export async function getStatus(): Promise<StatusResponse> {

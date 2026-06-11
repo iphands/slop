@@ -53,7 +53,7 @@ export function Dashboard() {
           </div>
           <div className="p-3 bg-gray-700 rounded">
             <div className="text-sm text-gray-400">Map</div>
-            <div className="text-xl font-bold">q2dm1</div>
+            <div className="text-xl font-bold">{status?.map || 'Loading...'}</div>
           </div>
           <div className="p-3 bg-gray-700 rounded">
             <div className="text-sm text-gray-400">Time Limit</div>

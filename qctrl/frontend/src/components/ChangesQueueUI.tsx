@@ -1,23 +1,26 @@
 import { useState } from 'react';
 import { useChanges } from '../contexts/ChangesContext';
-import { useMutation } from '@tanstack/react-query';
-import { executeRcon } from '../lib/api';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { executeRcon, getStatus } from '../lib/api';
 import { applyChanges } from '../lib/applyLogic';
-
-// Hardcoded current map - TODO: Get from server status endpoint
-const CURRENT_MAP = 'q2dm1';
 
 export function ChangesQueueUI() {
   const { state, clearQueue, applyChanges: clearApply } = useChanges();
+  const { data: status } = useQuery({
+    queryKey: ['status'],
+    queryFn: getStatus,
+    refetchInterval: 2000,
+  });
   const { mutateAsync: execute, isPending } = useMutation({
     mutationFn: executeRcon,
   });
   const [showAll, setShowAll] = useState(false);
 
   const handleApply = async () => {
+    const currentMap = status?.map || 'unknown';
     const result = await applyChanges(
       state.changes,
-      CURRENT_MAP,
+      currentMap,
       execute
     );
 

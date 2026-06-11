@@ -1,3 +1,5 @@
+import { useQuery } from '@tanstack/react-query';
+import { getStatus } from '../lib/api';
 import { DmflagsPreset } from '../components/DmflagsPreset';
 import { DmflagsBits } from '../components/DmflagsBits';
 import { TimelimitControl } from '../components/TimelimitControl';
@@ -19,7 +21,13 @@ function Section({ title, children }: SectionProps) {
 }
 
 export function Deathmatch() {
-  const currentDmflags = 17424;
+  const { data: status } = useQuery({
+    queryKey: ['status'],
+    queryFn: getStatus,
+    refetchInterval: 2000,
+  });
+
+  const currentDmflags = status?.dmflags ?? 17424;
 
   return (
     <div className="space-y-6">
@@ -36,7 +44,7 @@ export function Deathmatch() {
         <FraglimitControl />
       </Section>
       <Section title="Map">
-        <RestartMap currentMap="q2dm1" />
+        <RestartMap currentMap={status?.map ?? undefined} />
       </Section>
     </div>
   );

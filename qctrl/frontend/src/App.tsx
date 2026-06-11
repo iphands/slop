@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ChangesProvider } from './contexts/ChangesContext';
 import { ChangesQueueUI } from './components/ChangesQueueUI';
+import { ServerStatusSync } from './components/ServerStatusSync';
 import { Layout } from './components/Layout';
 import { Deathmatch } from './pages/Deathmatch';
 import { Maps } from './pages/Maps';
@@ -20,6 +21,7 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ChangesProvider>
+        <ServerStatusSync />
         <Layout>
           <nav className="flex gap-4 mb-6 border-b border-gray-700 pb-4 flex-wrap">
             <button

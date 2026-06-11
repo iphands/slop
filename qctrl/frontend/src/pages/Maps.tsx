@@ -1,19 +1,24 @@
 import { useQuery } from '@tanstack/react-query';
 import { useChanges } from '../contexts/ChangesContext';
-import { getMaps } from '../lib/api';
+import { getMaps, getStatus } from '../lib/api';
 import type { MapInfo } from '../lib/api';
 import { MapGrid } from '../components/MapGrid';
 import { CurrentMap } from '../components/CurrentMap';
 
 export function Maps() {
   const { queueChange } = useChanges();
-  const { isLoading, error } = useQuery({
+  const { isLoading: mapsLoading, error: mapsError } = useQuery({
     queryKey: ['maps'],
     queryFn: getMaps,
   });
+  
+  const { data: status } = useQuery({
+    queryKey: ['status'],
+    queryFn: getStatus,
+    refetchInterval: 2000,
+  });
 
   const handleMapSelect = (map: MapInfo) => {
-    // Queue the map change directly without confirmation
     queueChange({
       type: 'map',
       pendingValue: map.name,
@@ -27,13 +32,13 @@ export function Maps() {
 
       <section className="p-4 bg-gray-800 rounded-lg">
         <h2 className="text-lg font-semibold mb-4">Select Map</h2>
-        {isLoading ? (
+        {mapsLoading ? (
           <div className="text-gray-400">Loading maps...</div>
-        ) : error ? (
+        ) : mapsError ? (
           <div className="text-red-400">Failed to load maps</div>
         ) : (
           <MapGrid
-            currentMap="q2dm1"
+            currentMap={status?.map ?? undefined}
             onSelect={handleMapSelect}
           />
         )}
