@@ -21,7 +21,7 @@ use config::Config;
 use favorites::Favorites;
 use logs::LogStream;
 use maps::MapCache;
-use status::{parse_status_output, StatusResponse};
+use status::{parse_status_output, parse_rcon_int, StatusResponse};
 
 #[derive(Clone)]
 struct SharedState {
@@ -55,7 +55,10 @@ async fn main() {
     let map_cache = MapCache::new(&config.paths.baseq2);
     let log_stream = Arc::new(LogStream::new(1000));
     let favorites = Favorites::new("favorites.json").unwrap_or_else(|e| {
-        tracing::warn!("Failed to initialize favorites: {}, using empty favorites", e);
+        tracing::warn!(
+            "Failed to initialize favorites: {}, using empty favorites",
+            e
+        );
         Favorites::new("favorites.json").unwrap_or_else(|_| {
             // Last resort: create empty favorites
             let _ = std::fs::write("favorites.json", "[]");
@@ -95,7 +98,7 @@ async fn main() {
     tracing::info!("Starting qctrl API + frontend on {}", addr);
     tracing::info!("Frontend: http://localhost:3000");
     tracing::info!("API: http://localhost:3000/api/*");
-    
+
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
@@ -150,19 +153,47 @@ async fn remove_favorite(
 }
 
 async fn get_status(State(state): State<SharedState>) -> Result<Json<StatusResponse>, StatusCode> {
-    match state.rcon_client.execute("status").await {
+    // Get base status (map, players)
+    let base_output = state.rcon_client.execute("status").await;
+    
+    // Get server settings separately
+    let dmflags_output = state.rcon_client.execute("dmflags").await;
+    let timelimit_output = state.rcon_client.execute("timelimit").await;
+    let fraglimit_output = state.rcon_client.execute("fraglimit").await;
+    
+    // Parse base status
+    let mut status = match base_output {
         Ok(output) => match parse_status_output(&output) {
-            Ok(status) => Ok(Json(status)),
+            Ok(s) => s,
             Err(e) => {
                 tracing::error!("Failed to parse status: {}", e);
-                Err(StatusCode::INTERNAL_SERVER_ERROR)
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
             }
         },
         Err(e) => {
             tracing::error!("Failed to get status: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    
+    // Parse server settings
+    if let Ok(output) = dmflags_output {
+        if let Some(value) = parse_rcon_int(&output, "dmflags") {
+            status.dmflags = Some(value);
         }
     }
+    if let Ok(output) = timelimit_output {
+        if let Some(value) = parse_rcon_int(&output, "timelimit") {
+            status.timelimit = Some(value);
+        }
+    }
+    if let Ok(output) = fraglimit_output {
+        if let Some(value) = parse_rcon_int(&output, "fraglimit") {
+            status.fraglimit = Some(value);
+        }
+    }
+    
+    Ok(Json(status))
 }
 
 async fn rcon_execute(
@@ -171,14 +202,18 @@ async fn rcon_execute(
 ) -> Result<Json<ExecuteResponse>, StatusCode> {
     match state.rcon_client.execute(&payload.command).await {
         Ok(output) => {
-            state.log_stream.broadcast("INFO", &format!("Executing: {}", payload.command));
+            state
+                .log_stream
+                .broadcast("INFO", &format!("Executing: {}", payload.command));
             Ok(Json(ExecuteResponse {
                 success: true,
                 output,
             }))
         }
         Err(e) => {
-            state.log_stream.broadcast("ERROR", &format!("Command failed: {}", e));
+            state
+                .log_stream
+                .broadcast("ERROR", &format!("Command failed: {}", e));
             tracing::error!("RCON command failed: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
@@ -192,10 +227,7 @@ async fn logs_ws(
     ws.on_upgrade(move |socket| handle_websocket(socket, state.log_stream.subscribe()))
 }
 
-async fn handle_websocket(
-    mut socket: axum::extract::ws::WebSocket,
-    mut rx: logs::LogReceiver,
-) {
+async fn handle_websocket(mut socket: axum::extract::ws::WebSocket, mut rx: logs::LogReceiver) {
     loop {
         tokio::select! {
             msg = rx.recv() => {

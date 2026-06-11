@@ -76,9 +76,9 @@ async function testRcon(command) {
       return null;
     }
     
-    const text = await response.text();
-    console.log('✓ RCON response:', text.substring(0, 100) + (text.length > 100 ? '...' : ''));
-    return text;
+    const json = await response.json();
+    console.log('✓ RCON response:', json.output.substring(0, 100) + (json.output.length > 100 ? '...' : ''));
+    return json.output; // Return the actual command output, not the wrapper JSON
   } catch (error) {
     console.error('✗ RCON failed:', error.message);
     return null;
@@ -95,15 +95,29 @@ async function testDmflagsApply() {
   const currentMap = status.map || 'q2dm1';
   console.log('   Current map:', currentMap);
   
+  // Get CURRENT dmflags value first
+  console.log('2. Getting current dmflags value...');
+  const currentDmflagsOutput = await testRcon('dmflags');
+  if (!currentDmflagsOutput) {
+    console.log('   ✗ Failed to get current dmflags');
+    return false;
+  }
+  // Parse the output: "dmflags" is 17424
+  const match = currentDmflagsOutput.match(/"dmflags" is "(\d+)"/);
+  const currentDmflags = match ? parseInt(match[1]) : 0;
+  console.log('   Current dmflags:', currentDmflags);
+  
+  // Choose a DIFFERENT value to test with
+  const testValue = currentDmflags === 0 ? 17434 : 0;
+  console.log('3. Queuing dmflags change to:', testValue);
+  
   // Simulate queuing a dmflags change
   const changes = [
-    { type: 'dmflags', pendingValue: 17424, description: 'Deathmatch flags' }
+    { type: 'dmflags', pendingValue: testValue, description: 'Deathmatch flags' }
   ];
   
-  console.log('2. Queuing dmflags change to 17424');
-  
   // Use the SAME logic as the frontend (buildApplyCommands)
-  console.log('3. Building apply commands (using shared logic)...');
+  console.log('4. Building apply commands (using shared logic)...');
   const commands = buildApplyCommands(changes, currentMap);
   console.log('   Commands to send:', commands.join(', '));
   
@@ -117,7 +131,7 @@ async function testDmflagsApply() {
   console.log('   ✓ Map restart included (GOOD)');
   
   // Execute the commands
-  console.log('4. Executing commands...');
+  console.log('5. Executing commands...');
   for (const cmd of commands) {
     console.log(`   Sending: ${cmd}`);
     const result = await testRcon(cmd);
@@ -128,24 +142,35 @@ async function testDmflagsApply() {
   }
   
   // Wait for changes to take effect
-  console.log('5. Waiting for changes to apply...');
+  console.log('6. Waiting for changes to apply...');
   await sleep(3000);
   
-  // Verify dmflags actually changed
-  console.log('6. Verifying dmflags change...');
-  const dmflagsOutput = await testRcon('dmflags');
-  if (!dmflagsOutput) {
-    console.log('   ✗ Failed to get dmflags');
+  // VERIFY the dmflags actually changed - THIS IS THE CRITICAL CHECK
+  console.log('7. Verifying dmflags actually changed...');
+  const newDmflagsOutput = await testRcon('dmflags');
+  if (!newDmflagsOutput) {
+    console.log('   ✗ Failed to get new dmflags');
     return false;
   }
   
-  console.log('   ✓ dmflags command executed');
+  const newMatch = newDmflagsOutput.match(/"dmflags" is "(\d+)"/);
+  const newDmflags = newMatch ? parseInt(newMatch[1]) : null;
+  console.log('   New dmflags value:', newDmflags);
   
-  // Reset to default
-  console.log('7. Resetting dmflags to 0...');
-  await testRcon('dmflags 0');
-  
-  return true;
+  if (newDmflags === testValue) {
+    console.log('   ✓ SUCCESS: dmflags changed from', currentDmflags, 'to', testValue);
+    
+    // Reset to original value
+    console.log('8. Resetting dmflags back to', currentDmflags, '...');
+    await testRcon(`dmflags ${currentDmflags}`);
+    return true;
+  } else {
+    console.log('   ✗ FAIL: dmflags did NOT change!');
+    console.log('   Expected:', testValue);
+    console.log('   Got:', newDmflags);
+    console.log('   This is the BUG - dmflags changes are not persisting!');
+    return false;
+  }
 }
 
 async function testMapChangeApply() {
