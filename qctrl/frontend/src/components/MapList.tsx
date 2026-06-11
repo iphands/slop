@@ -1,11 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { getMaps } from '../lib/api';
+import type { MapInfo } from '../lib/api';
 
 export function MapList() {
-  const { data: maps, isLoading, error } = useQuery({
+  const { data: data, isLoading, error } = useQuery({
     queryKey: ['maps'],
     queryFn: getMaps,
   });
+
+  const maps = data?.maps || [];
 
   if (isLoading) {
     return <div className="text-gray-400">Loading maps...</div>;
@@ -15,13 +18,13 @@ export function MapList() {
     return <div className="text-red-400">Failed to load maps</div>;
   }
 
-  if (!maps || maps.length === 0) {
+  if (maps.length === 0) {
     return <div className="text-gray-400">No maps found</div>;
   }
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-      {maps.map((map) => (
+      {maps.map((map: MapInfo) => (
         <div
           key={map.name}
           className="p-3 bg-gray-800 rounded border border-gray-700 hover:border-gray-600"

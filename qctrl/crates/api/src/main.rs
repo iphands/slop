@@ -13,10 +13,12 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod config;
 mod maps;
 mod routes;
+mod status;
 
 use config::Config;
 use maps::MapCache;
 use routes::AppState;
+use status::{parse_status_output, PlayerList};
 
 #[tokio::main]
 async fn main() {
@@ -47,6 +49,7 @@ async fn main() {
         .route("/config", get(get_config))
         .route("/rcon/execute", post(rcon_execute))
         .route("/maps", get(list_maps))
+        .route("/status", get(get_status))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
@@ -74,6 +77,22 @@ async fn list_maps(State(state): State<AppState>) -> Result<Json<MapList>, Statu
         Ok(maps) => Ok(Json(MapList { maps })),
         Err(e) => {
             tracing::error!("Failed to list maps: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+async fn get_status(State(state): State<AppState>) -> Result<Json<PlayerList>, StatusCode> {
+    match state.rcon_client.execute("status").await {
+        Ok(output) => match parse_status_output(&output) {
+            Ok(players) => Ok(Json(players)),
+            Err(e) => {
+                tracing::error!("Failed to parse status: {}", e);
+                Err(StatusCode::INTERNAL_SERVER_ERROR)
+            }
+        },
+        Err(e) => {
+            tracing::error!("Failed to get status: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }

@@ -21,6 +21,18 @@ export interface HealthResponse {
   status: string;
 }
 
+export interface Player {
+  clientNum: number;
+  score: number;
+  address: string;
+  name: string;
+  ping: number;
+}
+
+export interface PlayerList {
+  players: Player[];
+}
+
 export async function getHealth(): Promise<HealthResponse> {
   const res = await fetch('/health');
   if (!res.ok) {
@@ -37,13 +49,20 @@ export async function getConfig(): Promise<Config> {
   return res.json();
 }
 
-export async function getMaps(): Promise<MapInfo[]> {
+export async function getMaps(): Promise<{ maps: MapInfo[] }> {
   const res = await fetch('/maps');
   if (!res.ok) {
     throw new Error('Failed to fetch maps');
   }
-  const data = await res.json();
-  return data.maps || [];
+  return res.json();
+}
+
+export async function getStatus(): Promise<PlayerList> {
+  const res = await fetch('/status');
+  if (!res.ok) {
+    throw new Error('Failed to fetch status');
+  }
+  return res.json();
 }
 
 export async function executeRcon(command: string): Promise<string> {

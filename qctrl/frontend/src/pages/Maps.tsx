@@ -10,10 +10,12 @@ export function Maps() {
   const [selectedMap, setSelectedMap] = useState<MapInfo | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
 
-  const { data: maps, isLoading, error } = useQuery({
+  const { data: data, isLoading, error } = useQuery({
     queryKey: ['maps'],
     queryFn: getMaps,
   });
+
+  const maps = data?.maps || [];
 
   const handleMapSelect = (map: MapInfo) => {
     setSelectedMap(map);
@@ -32,7 +34,7 @@ export function Maps() {
           <div className="text-red-400">Failed to load maps</div>
         ) : (
           <MapGrid
-            maps={maps || []}
+            maps={maps}
             currentMap="q2dm1"
             onSelect={handleMapSelect}
           />

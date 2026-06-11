@@ -5,10 +5,11 @@ import { ServerStatus } from './components/ServerStatus';
 import { MapList } from './components/MapList';
 import { Deathmatch } from './pages/Deathmatch';
 import { Maps } from './pages/Maps';
+import { Players } from './pages/Players';
 
 const queryClient = new QueryClient();
 
-type Page = 'home' | 'deathmatch' | 'maps';
+type Page = 'home' | 'deathmatch' | 'maps' | 'players';
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('home');
@@ -16,7 +17,7 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <Layout>
-        <nav className="flex gap-4 mb-6 border-b border-gray-700 pb-4">
+        <nav className="flex gap-4 mb-6 border-b border-gray-700 pb-4 flex-wrap">
           <button
             onClick={() => setCurrentPage('home')}
             className={`px-4 py-2 rounded ${
@@ -47,6 +48,16 @@ function App() {
           >
             Maps
           </button>
+          <button
+            onClick={() => setCurrentPage('players')}
+            className={`px-4 py-2 rounded ${
+              currentPage === 'players'
+                ? 'bg-blue-600'
+                : 'bg-gray-700 hover:bg-gray-600'
+            }`}
+          >
+            Players
+          </button>
         </nav>
 
         <div className="space-y-6">
@@ -66,6 +77,7 @@ function App() {
 
           {currentPage === 'deathmatch' && <Deathmatch />}
           {currentPage === 'maps' && <Maps />}
+          {currentPage === 'players' && <Players />}
         </div>
       </Layout>
     </QueryClientProvider>
