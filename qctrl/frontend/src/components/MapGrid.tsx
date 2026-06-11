@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMaps, getFavorites, addFavorite, removeFavorite } from '../lib/api';
 import type { MapInfo } from '../lib/api';
 
@@ -10,6 +10,7 @@ interface MapGridProps {
 
 export function MapGrid({ currentMap, onSelect }: MapGridProps) {
   const [search, setSearch] = useState('');
+  const queryClient = useQueryClient();
 
   const { data: mapsData } = useQuery({
     queryKey: ['maps'],
@@ -50,6 +51,8 @@ export function MapGrid({ currentMap, onSelect }: MapGridProps) {
       } else {
         await addFavorite(map.name);
       }
+      // Invalidate favorites query to trigger re-fetch and UI update
+      await queryClient.invalidateQueries({ queryKey: ['favorites'] });
     } catch (error) {
       console.error('Failed to toggle favorite:', error);
     }
