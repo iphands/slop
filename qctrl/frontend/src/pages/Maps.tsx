@@ -1,23 +1,24 @@
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useChanges } from '../contexts/ChangesContext';
 import { getMaps } from '../lib/api';
 import type { MapInfo } from '../lib/api';
 import { MapGrid } from '../components/MapGrid';
-import { MapDialog } from '../components/MapDialog';
 import { CurrentMap } from '../components/CurrentMap';
 
 export function Maps() {
-  const [selectedMap, setSelectedMap] = useState<MapInfo | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
-
+  const { queueChange } = useChanges();
   const { isLoading, error } = useQuery({
     queryKey: ['maps'],
     queryFn: getMaps,
   });
 
   const handleMapSelect = (map: MapInfo) => {
-    setSelectedMap(map);
-    setDialogOpen(true);
+    // Queue the map change directly without confirmation
+    queueChange({
+      type: 'map',
+      pendingValue: map.name,
+      description: 'Map change',
+    });
   };
 
   return (
@@ -37,12 +38,6 @@ export function Maps() {
           />
         )}
       </section>
-
-      <MapDialog
-        map={selectedMap}
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-      />
     </div>
   );
 }
