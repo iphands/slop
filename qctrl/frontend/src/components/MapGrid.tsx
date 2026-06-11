@@ -23,8 +23,8 @@ export function MapGrid({ currentMap, onSelect }: MapGridProps) {
     queryFn: getFavorites,
   });
 
-  const maps = mapsData?.maps || [];
-  const favorites = favoritesData?.favorites || [];
+  const maps = useMemo(() => mapsData?.maps || [], [mapsData]);
+  const favorites = useMemo(() => favoritesData?.favorites || [], [favoritesData]);
 
   const filteredMaps = useMemo(() => {
     if (!search) return maps;

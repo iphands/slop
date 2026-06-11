@@ -1,11 +1,5 @@
-import { createContext, useContext, useReducer, type ReactNode } from 'react';
-
-export interface Change {
-  id: string;
-  type: 'dmflags' | 'timelimit' | 'fraglimit' | 'map';
-  pendingValue: number | string;
-  description: string;
-}
+import { createContext, useReducer, type ReactNode } from 'react';
+import type { Change } from './changes.types';
 
 interface ChangesState {
   changes: Change[];
@@ -101,6 +95,8 @@ interface ChangesContextValue {
 
 const ChangesContext = createContext<ChangesContextValue | undefined>(undefined);
 
+export { ChangesContext };
+
 export function ChangesProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(changesReducer, {
     changes: [],
@@ -164,10 +160,5 @@ export function ChangesProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useChanges() {
-  const context = useContext(ChangesContext);
-  if (!context) {
-    throw new Error('useChanges must be used within ChangesProvider');
-  }
-  return context;
-}
+// eslint-disable-next-line react-refresh/only-export-components
+export { useChanges } from './useChanges';
