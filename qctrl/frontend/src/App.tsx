@@ -6,10 +6,11 @@ import { Maps } from './pages/Maps';
 import { Players } from './pages/Players';
 import { Logs } from './pages/Logs';
 import { Dashboard } from './pages/Dashboard';
+import { Settings } from './pages/Settings';
 
 const queryClient = new QueryClient();
 
-type Page = 'home' | 'dashboard' | 'deathmatch' | 'maps' | 'players' | 'logs';
+type Page = 'dashboard' | 'deathmatch' | 'maps' | 'players' | 'logs' | 'settings';
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('dashboard');
@@ -68,6 +69,16 @@ function App() {
           >
             Logs
           </button>
+          <button
+            onClick={() => setCurrentPage('settings')}
+            className={`px-4 py-2 rounded ${
+              currentPage === 'settings'
+                ? 'bg-blue-600'
+                : 'bg-gray-700 hover:bg-gray-600'
+            }`}
+          >
+            Settings
+          </button>
         </nav>
 
         <div className="space-y-6">
@@ -76,6 +87,7 @@ function App() {
           {currentPage === 'maps' && <Maps />}
           {currentPage === 'players' && <Players />}
           {currentPage === 'logs' && <Logs />}
+          {currentPage === 'settings' && <Settings />}
         </div>
       </Layout>
     </QueryClientProvider>
