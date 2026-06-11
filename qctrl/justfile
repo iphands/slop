@@ -1,0 +1,40 @@
+# qctrl development commands
+
+# Frontend tests
+testall:
+    cd frontend && npm run testall
+
+# Frontend build
+build-frontend:
+    cd frontend && npm run build
+
+# Rust format all crates
+fmt:
+    cargo fmt --all
+
+# Rust clippy with warnings as errors
+clippy:
+    cargo clippy --all-targets --all-features -- -D warnings
+
+# Rust build with warnings as errors
+build:
+    RUSTFLAGS="-D warnings" cargo build --release
+
+# Full CI check: fmt, clippy, build, frontend tests
+ci:
+    cargo fmt --check
+    cargo clippy --all-targets --all-features -- -D warnings
+    RUSTFLAGS="-D warnings" cargo build --release
+    cd frontend && npm run build
+
+# Run backend
+run-backend:
+    cargo run --bin qctrl-api --release -- --config-path config.yaml
+
+# Run e2e tests
+e2e:
+    cd frontend && node e2e-test.js
+
+# Format and check frontend
+fmt-frontend:
+    cd frontend && npm run lint
