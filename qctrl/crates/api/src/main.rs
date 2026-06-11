@@ -11,7 +11,6 @@ use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
-mod logs;
 mod maps;
 mod routes;
 mod status;
