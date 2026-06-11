@@ -1,5 +1,15 @@
 # qctrl development commands
 
+# Frontend all-in-one checks
+fe-all:
+    cd frontend && npm run build && npm run lint && npm run testall
+
+# Backend all-in-one checks (fails on any warning)
+be-all:
+    cargo fmt --check
+    cargo clippy --all-targets --all-features -- -D warnings
+    RUSTFLAGS="-D warnings" cargo build --release
+
 # Frontend tests
 testall:
     cd frontend && npm run testall
