@@ -150,6 +150,8 @@ NOTE: YOU MUST make sure that linting, auto formating and (in rust) cargo clippy
 NOTE: Fix all warnings before each commit
 NOTE: All unit tests must pass before each commit!
 
+**MANDITORY** bake commit reminders into the plan TODO / Task lists!
+
 ---
 
 ## Content Style
