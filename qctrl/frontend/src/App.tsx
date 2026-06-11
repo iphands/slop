@@ -4,10 +4,11 @@ import { Layout } from './components/Layout';
 import { ServerStatus } from './components/ServerStatus';
 import { MapList } from './components/MapList';
 import { Deathmatch } from './pages/Deathmatch';
+import { Maps } from './pages/Maps';
 
 const queryClient = new QueryClient();
 
-type Page = 'home' | 'deathmatch';
+type Page = 'home' | 'deathmatch' | 'maps';
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('home');
@@ -36,6 +37,16 @@ function App() {
           >
             Deathmatch
           </button>
+          <button
+            onClick={() => setCurrentPage('maps')}
+            className={`px-4 py-2 rounded ${
+              currentPage === 'maps'
+                ? 'bg-blue-600'
+                : 'bg-gray-700 hover:bg-gray-600'
+            }`}
+          >
+            Maps
+          </button>
         </nav>
 
         <div className="space-y-6">
@@ -54,6 +65,7 @@ function App() {
           )}
 
           {currentPage === 'deathmatch' && <Deathmatch />}
+          {currentPage === 'maps' && <Maps />}
         </div>
       </Layout>
     </QueryClientProvider>
