@@ -1,0 +1,30 @@
+[package]
+name = "qctrl-api"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Workspace dependencies
+tokio.workspace = true
+serde.workspace = true
+serde_yaml.workspace = true
+axum.workspace = true
+thiserror.workspace = true
+
+# Internal crates
+qctrl-rcon = { path = "../rcon" }
+
+# HTTP/JSON
+serde_json = "1.0"
+
+# Tower for middleware
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+assert_cmd = "2.0"

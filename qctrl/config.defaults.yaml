@@ -1,0 +1,11 @@
+# qctrl configuration
+# Reference configuration for Quake 2 server management
+
+server:
+  host: noir.lan        # RCON server hostname
+  port: 27910           # RCON UDP port
+  rcon_password: ace123 # Server RCON password
+
+paths:
+  server_cfg: /mnt/noir/scratch/games/q2/baseq2/server.cfg
+  baseq2: /mnt/noir/scratch/games/q2/baseq2

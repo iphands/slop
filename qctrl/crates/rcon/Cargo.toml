@@ -1,0 +1,15 @@
+[package]
+name = "qctrl-rcon"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Workspace dependencies
+tokio.workspace = true
+thiserror.workspace = true
+
+# Bytes for packet handling
+bytes = "1.5"
+
+[dev-dependencies]
+tokio-test = "0.4"

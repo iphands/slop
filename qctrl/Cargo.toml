@@ -1,0 +1,10 @@
+[workspace]
+members = ["crates/api", "crates/rcon"]
+resolver = "2"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+axum = "0.7"
+thiserror = "1.0"
