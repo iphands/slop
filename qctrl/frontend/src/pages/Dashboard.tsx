@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getHealth, getStatus } from '../lib/api';
 import { useChanges } from '../contexts/ChangesContext';
 import { Section } from '../components/Section';
+import { Link } from 'react-router-dom';
 
 export function Dashboard() {
   const { getServerValue } = useChanges();
@@ -73,34 +74,30 @@ export function Dashboard() {
 
       <Section title="Quick Actions">
         <div className="grid grid-cols-2 gap-4">
-          <button
-            type="button"
-            onClick={() => (window.location.href = '/?page=maps')}
-            className="p-4 bg-blue-600 hover:bg-blue-700 rounded text-center"
+          <Link
+            to="/maps"
+            className="p-4 bg-blue-600 hover:bg-blue-700 rounded text-center block"
           >
             <div className="text-lg font-medium">Change Map</div>
-          </button>
-          <button
-            type="button"
-            onClick={() => (window.location.href = '/?page=deathmatch')}
-            className="p-4 bg-orange-600 hover:bg-orange-700 rounded text-center"
+          </Link>
+          <Link
+            to="/deathmatch"
+            className="p-4 bg-orange-600 hover:bg-orange-700 rounded text-center block"
           >
-            <div className="text-lg font-medium">Restart Map</div>
-          </button>
-          <button
-            type="button"
-            onClick={() => (window.location.href = '/?page=players')}
-            className="p-4 bg-green-600 hover:bg-green-700 rounded text-center"
+            <div className="text-lg font-medium">Deathmatch Settings</div>
+          </Link>
+          <Link
+            to="/players"
+            className="p-4 bg-green-600 hover:bg-green-700 rounded text-center block"
           >
             <div className="text-lg font-medium">Players</div>
-          </button>
-          <button
-            type="button"
-            onClick={() => (window.location.href = '/?page=logs')}
-            className="p-4 bg-purple-600 hover:bg-purple-700 rounded text-center"
+          </Link>
+          <Link
+            to="/logs"
+            className="p-4 bg-purple-600 hover:bg-purple-700 rounded text-center block"
           >
             <div className="text-lg font-medium">Logs</div>
-          </button>
+          </Link>
         </div>
       </Section>
     </div>

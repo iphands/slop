@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Link, useLocation, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ChangesProvider } from './contexts/ChangesContext';
 import { ChangesQueueUI } from './components/ChangesQueueUI';
@@ -13,88 +13,50 @@ import { Settings } from './pages/Settings';
 
 const queryClient = new QueryClient();
 
-type Page = 'dashboard' | 'deathmatch' | 'maps' | 'players' | 'logs' | 'settings';
+function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
+  const location = useLocation();
+  const isActive = location.pathname === to;
+  
+  return (
+    <Link
+      to={to}
+      className={`px-4 py-2 rounded transition-colors ${
+        isActive
+          ? 'bg-blue-600'
+          : 'bg-gray-700 hover:bg-gray-600'
+      }`}
+    >
+      {children}
+    </Link>
+  );
+}
 
 function App() {
-  const [currentPage, setCurrentPage] = useState<Page>('dashboard');
-
   return (
     <QueryClientProvider client={queryClient}>
       <ChangesProvider>
         <ServerStatusSync />
         <Layout>
           <nav className="flex gap-4 mb-6 border-b border-gray-700 pb-4 flex-wrap">
-            <button
-              onClick={() => setCurrentPage('dashboard')}
-              className={`px-4 py-2 rounded ${
-                currentPage === 'dashboard'
-                  ? 'bg-blue-600'
-                  : 'bg-gray-700 hover:bg-gray-600'
-              }`}
-            >
-              Dashboard
-            </button>
-            <button
-              onClick={() => setCurrentPage('deathmatch')}
-              className={`px-4 py-2 rounded ${
-                currentPage === 'deathmatch'
-                  ? 'bg-blue-600'
-                  : 'bg-gray-700 hover:bg-gray-600'
-              }`}
-            >
-              Deathmatch
-            </button>
-            <button
-              onClick={() => setCurrentPage('maps')}
-              className={`px-4 py-2 rounded ${
-                currentPage === 'maps'
-                  ? 'bg-blue-600'
-                  : 'bg-gray-700 hover:bg-gray-600'
-              }`}
-            >
-              Maps
-            </button>
-            <button
-              onClick={() => setCurrentPage('players')}
-              className={`px-4 py-2 rounded ${
-                currentPage === 'players'
-                  ? 'bg-blue-600'
-                  : 'bg-gray-700 hover:bg-gray-600'
-              }`}
-            >
-              Players
-            </button>
-            <button
-              onClick={() => setCurrentPage('logs')}
-              className={`px-4 py-2 rounded ${
-                currentPage === 'logs'
-                  ? 'bg-blue-600'
-                  : 'bg-gray-700 hover:bg-gray-600'
-              }`}
-            >
-              Logs
-            </button>
-            <button
-              onClick={() => setCurrentPage('settings')}
-              className={`px-4 py-2 rounded ${
-                currentPage === 'settings'
-                  ? 'bg-blue-600'
-                  : 'bg-gray-700 hover:bg-gray-600'
-              }`}
-            >
-              Settings
-            </button>
+            <NavLink to="/">Dashboard</NavLink>
+            <NavLink to="/deathmatch">Deathmatch</NavLink>
+            <NavLink to="/maps">Maps</NavLink>
+            <NavLink to="/players">Players</NavLink>
+            <NavLink to="/logs">Logs</NavLink>
+            <NavLink to="/settings">Settings</NavLink>
           </nav>
 
           <ChangesQueueUI />
 
           <div className="space-y-6">
-            {currentPage === 'dashboard' && <Dashboard />}
-            {currentPage === 'deathmatch' && <Deathmatch />}
-            {currentPage === 'maps' && <Maps />}
-            {currentPage === 'players' && <Players />}
-            {currentPage === 'logs' && <Logs />}
-            {currentPage === 'settings' && <Settings />}
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/deathmatch" element={<Deathmatch />} />
+              <Route path="/maps" element={<Maps />} />
+              <Route path="/players" element={<Players />} />
+              <Route path="/logs" element={<Logs />} />
+              <Route path="/settings" element={<Settings />} />
+            </Routes>
           </div>
         </Layout>
       </ChangesProvider>
