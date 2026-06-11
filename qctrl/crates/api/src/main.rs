@@ -1,7 +1,7 @@
 use axum::{
     extract::State,
     http::StatusCode,
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use qctrl_rcon::RconClient;
@@ -12,11 +12,13 @@ use tower_http::services::ServeDir;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
+mod favorites;
 mod logs;
 mod maps;
 mod status;
 
 use config::Config;
+use favorites::Favorites;
 use logs::LogStream;
 use maps::MapCache;
 use status::{parse_status_output, PlayerList};
@@ -27,6 +29,7 @@ struct SharedState {
     rcon_client: Arc<RconClient>,
     map_cache: MapCache,
     log_stream: Arc<LogStream>,
+    favorites: Favorites,
 }
 
 #[tokio::main]
@@ -51,12 +54,21 @@ async fn main() {
 
     let map_cache = MapCache::new(&config.paths.baseq2);
     let log_stream = Arc::new(LogStream::new(1000));
+    let favorites = Favorites::new("favorites.json").unwrap_or_else(|e| {
+        tracing::warn!("Failed to initialize favorites: {}, using empty favorites", e);
+        Favorites::new("favorites.json").unwrap_or_else(|_| {
+            // Last resort: create empty favorites
+            let _ = std::fs::write("favorites.json", "[]");
+            Favorites::new("favorites.json").unwrap()
+        })
+    });
 
     let state = SharedState {
         config,
         rcon_client,
         map_cache,
         log_stream,
+        favorites,
     };
 
     let api_routes = Router::new()
@@ -64,6 +76,9 @@ async fn main() {
         .route("/config", get(get_config))
         .route("/rcon/execute", post(rcon_execute))
         .route("/maps", get(list_maps))
+        .route("/favorites", get(get_favorites))
+        .route("/favorites", post(add_favorite))
+        .route("/favorites/:map_name", delete(remove_favorite))
         .route("/status", get(get_status))
         .route("/logs/ws", get(logs_ws))
         .with_state(state);
@@ -98,6 +113,37 @@ async fn list_maps(State(state): State<SharedState>) -> Result<Json<MapList>, St
         Ok(maps) => Ok(Json(MapList { maps })),
         Err(e) => {
             tracing::error!("Failed to list maps: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+async fn get_favorites(State(state): State<SharedState>) -> Json<FavoritesResponse> {
+    let favorites = state.favorites.get_favorites();
+    Json(FavoritesResponse { favorites })
+}
+
+async fn add_favorite(
+    State(state): State<SharedState>,
+    Json(payload): Json<AddFavoritePayload>,
+) -> Result<Json<AddFavoriteResponse>, StatusCode> {
+    match state.favorites.add_favorite(&payload.map_name) {
+        Ok(_) => Ok(Json(AddFavoriteResponse { success: true })),
+        Err(e) => {
+            tracing::error!("Failed to add favorite: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+async fn remove_favorite(
+    State(state): State<SharedState>,
+    axum::extract::Path(map_name): axum::extract::Path<String>,
+) -> Result<Json<RemoveFavoriteResponse>, StatusCode> {
+    match state.favorites.remove_favorite(&map_name) {
+        Ok(_) => Ok(Json(RemoveFavoriteResponse { success: true })),
+        Err(e) => {
+            tracing::error!("Failed to remove favorite: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -178,6 +224,26 @@ struct HealthResponse {
 #[derive(Serialize)]
 struct MapList {
     maps: Vec<crate::maps::MapInfo>,
+}
+
+#[derive(Serialize)]
+struct FavoritesResponse {
+    favorites: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct AddFavoritePayload {
+    map_name: String,
+}
+
+#[derive(Serialize)]
+struct AddFavoriteResponse {
+    success: bool,
+}
+
+#[derive(Serialize)]
+struct RemoveFavoriteResponse {
+    success: bool,
 }
 
 #[derive(Deserialize)]

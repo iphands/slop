@@ -3,6 +3,7 @@ export interface MapInfo {
   filename: string;
   size: number;
   modified: number;
+  source: 'Directory' | { Pak: string };
 }
 
 export interface Config {
@@ -53,6 +54,38 @@ export async function getMaps(): Promise<{ maps: MapInfo[] }> {
   const res = await fetch('/api/maps');
   if (!res.ok) {
     throw new Error('Failed to fetch maps');
+  }
+  return res.json();
+}
+
+export async function getFavorites(): Promise<{ favorites: string[] }> {
+  const res = await fetch('/api/favorites');
+  if (!res.ok) {
+    throw new Error('Failed to fetch favorites');
+  }
+  return res.json();
+}
+
+export async function addFavorite(mapName: string): Promise<{ success: boolean }> {
+  const res = await fetch('/api/favorites', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ map_name: mapName }),
+  });
+  if (!res.ok) {
+    throw new Error('Failed to add favorite');
+  }
+  return res.json();
+}
+
+export async function removeFavorite(mapName: string): Promise<{ success: boolean }> {
+  const res = await fetch(`/api/favorites/${encodeURIComponent(mapName)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    throw new Error('Failed to remove favorite');
   }
   return res.json();
 }
