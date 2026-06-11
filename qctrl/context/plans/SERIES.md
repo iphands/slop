@@ -31,7 +31,7 @@ This document tracks the dependency chain and status of all plans for the qctrl 
 | 04 | Deathmatch Controls UI | `done` | 03 |
 | 05 | Map Selection UI | `done` | 02, 03 |
 | 06 | Player Management | `done` | 02, 07 |
-| 07 | Log Streaming | `pending` | 01, 03 |
+| 07 | Log Streaming | `done` | 01, 03 |
 | 08 | Status Dashboard | `pending` | 04, 05, 06, 07 |
 | 09 | Settings Persistence | `pending` | 01 |
 | 10 | Final Testing & Polish | `pending` | 01-09 |
