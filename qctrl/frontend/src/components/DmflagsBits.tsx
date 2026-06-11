@@ -1,5 +1,4 @@
-import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { executeRcon } from '../lib/api';
 
 const FLAGS = [
@@ -26,29 +25,29 @@ interface DmflagsBitsProps {
 }
 
 export function DmflagsBits({ currentValue }: DmflagsBitsProps) {
-  const [pendingValue, setPendingValue] = useState(currentValue);
+  const queryClient = useQueryClient();
   const { mutate: execute, isPending, error } = useMutation({
     mutationFn: executeRcon,
+    onSuccess: () => {
+      // Sync pending value back to current after successful mutation
+      queryClient.invalidateQueries({ queryKey: ['status'] });
+    },
   });
 
   const toggleBit = (bit: number) => {
-    const newValue = pendingValue ^ bit;
-    setPendingValue(newValue);
+    const newValue = currentValue ^ bit;
     execute(`dmflags ${newValue}`);
   };
 
   return (
     <div className="space-y-3">
       <div className="text-sm text-gray-400">
-        Combined: <span className="font-mono">{pendingValue}</span>
-        {pendingValue !== currentValue && (
-          <span className="ml-2 text-xs text-orange-400">(unsaved)</span>
-        )}
+        Combined: <span className="font-mono">{currentValue}</span>
+        {isPending && <span className="ml-2 text-xs text-blue-400">(sending...)</span>}
       </div>
       <div className="grid grid-cols-2 gap-2">
         {FLAGS.map((flag) => {
-          const isChecked = Boolean(pendingValue & flag.bit);
-          const isDirty = isChecked !== Boolean(currentValue & flag.bit);
+          const isChecked = Boolean(currentValue & flag.bit);
           
           return (
             <label
@@ -58,7 +57,7 @@ export function DmflagsBits({ currentValue }: DmflagsBitsProps) {
                   ? 'bg-blue-900/50'
                   : 'bg-gray-800 hover:bg-gray-700'
               } ${
-                isDirty ? 'ring-2 ring-orange-500/50' : ''
+                isPending ? 'opacity-50' : ''
               }`}
             >
               <input
@@ -74,7 +73,6 @@ export function DmflagsBits({ currentValue }: DmflagsBitsProps) {
         })}
       </div>
       {error && <div className="text-red-400 text-sm">Failed: {error.message}</div>}
-      {isPending && <div className="text-blue-400 text-sm">Sending command...</div>}
     </div>
   );
 }
