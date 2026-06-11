@@ -24,7 +24,7 @@ interface DmflagsBitsProps {
 }
 
 export function DmflagsBits({ currentValue }: DmflagsBitsProps) {
-  const { queueChange, getPendingValue, isDirty } = useChanges();
+  const { queueChange, getPendingValue } = useChanges();
 
   // Get the pending value from queue, or use current server value
   const pendingDmflags = (getPendingValue('dmflags') as number | undefined) ?? currentValue;
@@ -42,13 +42,15 @@ export function DmflagsBits({ currentValue }: DmflagsBitsProps) {
     <div className="space-y-3">
       <div className="text-sm text-gray-400">
         Combined: <span className="font-mono">{pendingDmflags}</span>
-        {isDirty('dmflags') && (
+        {pendingDmflags !== currentValue && (
           <span className="ml-2 text-xs text-orange-400">(queued)</span>
         )}
       </div>
       <div className="grid grid-cols-2 gap-2">
         {FLAGS.map((flag) => {
           const isChecked = Boolean(pendingDmflags & flag.bit);
+          const wasChecked = Boolean(currentValue & flag.bit);
+          const isDirty = isChecked !== wasChecked;
           
           return (
             <label
@@ -58,7 +60,7 @@ export function DmflagsBits({ currentValue }: DmflagsBitsProps) {
                   ? 'bg-blue-900/50'
                   : 'bg-gray-800 hover:bg-gray-700'
               } ${
-                isDirty('dmflags') ? 'ring-2 ring-orange-500/50' : ''
+                isDirty ? 'ring-2 ring-orange-500/50' : ''
               }`}
             >
               <input

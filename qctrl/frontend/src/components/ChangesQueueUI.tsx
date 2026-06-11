@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useChanges } from '../contexts/ChangesContext';
 import { useMutation } from '@tanstack/react-query';
 import { executeRcon } from '../lib/api';
@@ -7,6 +8,7 @@ export function ChangesQueueUI() {
   const { mutate: execute, isPending } = useMutation({
     mutationFn: executeRcon,
   });
+  const [showAll, setShowAll] = useState(false);
 
   const handleApply = () => {
     const commands: string[] = [];
@@ -58,64 +60,76 @@ export function ChangesQueueUI() {
     return null;
   }
 
-  return (
-    <div className="fixed bottom-0 left-0 right-0 bg-gray-900 border-t border-orange-500/50 p-4 shadow-lg z-50">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-3">
-            <h3 className="text-lg font-semibold text-orange-400">
-              Pending Changes ({state.changes.length})
-            </h3>
-            <span className="text-sm text-gray-400">
-              Requires map restart to apply
-            </span>
-          </div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={handleCancel}
-              disabled={isPending}
-              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleApply}
-              disabled={isPending}
-              className="px-4 py-2 bg-orange-600 hover:bg-orange-700 rounded text-sm font-medium disabled:opacity-50"
-            >
-              {isPending ? 'Applying...' : 'Apply Changes'}
-            </button>
-          </div>
-        </div>
+  // Show only first 3 items if showAll is false
+  const visibleChanges = showAll ? state.changes : state.changes.slice(0, 3);
+  const hiddenCount = state.changes.length - visibleChanges.length;
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {state.changes.map((change) => (
-            <div
-              key={change.id}
-              className="p-3 bg-gray-800 rounded border border-orange-500/30"
-            >
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-sm font-medium text-orange-300">
-                  {change.description}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => clearQueue()}
-                  className="text-xs text-gray-400 hover:text-gray-300"
-                  title="Remove this change"
-                >
-                  ×
-                </button>
-              </div>
-              <div className="text-xs text-gray-400">
-                → <span className="text-orange-400 font-mono">{change.pendingValue}</span>
-              </div>
-            </div>
-          ))}
+  return (
+    <div className="mb-4 p-3 bg-orange-900/20 border border-orange-500/50 rounded">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-orange-400">
+            Pending Changes ({state.changes.length})
+          </h3>
+          <span className="text-xs text-gray-400">
+            Requires map restart to apply
+          </span>
+        </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={handleCancel}
+            disabled={isPending}
+            className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleApply}
+            disabled={isPending}
+            className="px-3 py-1 bg-orange-600 hover:bg-orange-700 rounded text-xs font-medium disabled:opacity-50"
+          >
+            {isPending ? 'Applying...' : 'Apply'}
+          </button>
         </div>
       </div>
+
+      <div className="space-y-2">
+        {visibleChanges.map((change) => (
+          <div
+            key={change.id}
+            className="p-2 bg-gray-800 rounded border border-orange-500/30 flex items-center justify-between"
+          >
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-medium text-orange-300">
+                {change.description}
+              </span>
+              <span className="text-xs text-gray-400">
+                → <span className="text-orange-400 font-mono">{change.pendingValue}</span>
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => clearQueue()}
+              className="text-xs text-gray-400 hover:text-gray-300"
+              title="Remove this change"
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          onClick={() => setShowAll(!showAll)}
+          className="mt-2 text-xs text-orange-400 hover:text-orange-300"
+        >
+          {showAll ? `Show less (-${hiddenCount})` : `Show all (+${hiddenCount})`}
+        </button>
+      )}
     </div>
   );
 }

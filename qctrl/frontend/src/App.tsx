@@ -84,6 +84,8 @@ function App() {
             </button>
           </nav>
 
+          <ChangesQueueUI />
+
           <div className="space-y-6">
             {currentPage === 'dashboard' && <Dashboard />}
             {currentPage === 'deathmatch' && <Deathmatch />}
@@ -92,8 +94,6 @@ function App() {
             {currentPage === 'logs' && <Logs />}
             {currentPage === 'settings' && <Settings />}
           </div>
-
-          <ChangesQueueUI />
         </Layout>
       </ChangesProvider>
     </QueryClientProvider>
