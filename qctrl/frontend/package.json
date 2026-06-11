@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "e2e": "node e2e-test.js",
+    "test": "echo 'No tests configured yet. Run npm run e2e for backend tests.'"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.0",
