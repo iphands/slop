@@ -1,1 +1,4 @@
+/.sisyphus
+/frontend/node_modules
+/target
 /vendor
