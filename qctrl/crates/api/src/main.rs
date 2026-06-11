@@ -21,7 +21,7 @@ use config::Config;
 use favorites::Favorites;
 use logs::LogStream;
 use maps::MapCache;
-use status::{parse_status_output, parse_rcon_int, StatusResponse};
+use status::{parse_rcon_int, parse_status_output, StatusResponse};
 
 #[derive(Clone)]
 struct SharedState {
@@ -155,12 +155,12 @@ async fn remove_favorite(
 async fn get_status(State(state): State<SharedState>) -> Result<Json<StatusResponse>, StatusCode> {
     // Get base status (map, players)
     let base_output = state.rcon_client.execute("status").await;
-    
+
     // Get server settings separately
     let dmflags_output = state.rcon_client.execute("dmflags").await;
     let timelimit_output = state.rcon_client.execute("timelimit").await;
     let fraglimit_output = state.rcon_client.execute("fraglimit").await;
-    
+
     // Parse base status
     let mut status = match base_output {
         Ok(output) => match parse_status_output(&output) {
@@ -175,7 +175,7 @@ async fn get_status(State(state): State<SharedState>) -> Result<Json<StatusRespo
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
-    
+
     // Parse server settings
     if let Ok(output) = dmflags_output {
         if let Some(value) = parse_rcon_int(&output, "dmflags") {
@@ -192,7 +192,7 @@ async fn get_status(State(state): State<SharedState>) -> Result<Json<StatusRespo
             status.fraglimit = Some(value);
         }
     }
-    
+
     Ok(Json(status))
 }
 

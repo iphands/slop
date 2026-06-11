@@ -69,10 +69,10 @@ impl RconClient {
 
         let rcon_command = b"\xff\xff\xff\xff".to_vec();
         let command_bytes = format!("rcon \"{}\" {}", self.password, command).into_bytes();
-        
+
         let mut packet = rcon_command;
         packet.extend_from_slice(&command_bytes);
-        
+
         socket.send(&packet).await?;
 
         let mut buf = [0u8; 4096];
@@ -91,12 +91,12 @@ impl RconClient {
 
     async fn execute_tcp(&self, addr: SocketAddr, command: &str) -> Result<String, RconError> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        
+
         let mut stream = tokio::net::TcpStream::connect(addr).await?;
-        
+
         let rcon_command = format!("rcon {} {}\n", self.password, command);
         stream.write_all(rcon_command.as_bytes()).await?;
-        
+
         let mut buf = [0u8; 4096];
         let len = timeout(Duration::from_secs(5), async {
             stream.read(&mut buf).await
