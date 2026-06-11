@@ -11,14 +11,22 @@ use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
+mod logs;
 mod maps;
-mod routes;
 mod status;
 
 use config::Config;
+use logs::LogStream;
 use maps::MapCache;
-use routes::AppState;
 use status::{parse_status_output, PlayerList};
+
+#[derive(Clone)]
+struct SharedState {
+    config: Config,
+    rcon_client: Arc<RconClient>,
+    map_cache: MapCache,
+    log_stream: Arc<LogStream>,
+}
 
 #[tokio::main]
 async fn main() {
@@ -41,8 +49,14 @@ async fn main() {
     ));
 
     let map_cache = MapCache::new(&config.paths.baseq2);
+    let log_stream = Arc::new(LogStream::new(1000));
 
-    let state = AppState { config, rcon_client, map_cache };
+    let state = SharedState {
+        config,
+        rcon_client,
+        map_cache,
+        log_stream,
+    };
 
     let app = Router::new()
         .route("/health", get(health))
@@ -50,6 +64,7 @@ async fn main() {
         .route("/rcon/execute", post(rcon_execute))
         .route("/maps", get(list_maps))
         .route("/status", get(get_status))
+        .route("/logs/ws", get(logs_ws))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
@@ -59,20 +74,15 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-#[derive(Serialize)]
-struct HealthResponse {
-    status: &'static str,
-}
-
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
 }
 
-async fn get_config(State(state): State<AppState>) -> Json<config::Config> {
+async fn get_config(State(state): State<SharedState>) -> Json<config::Config> {
     Json(state.config.clone())
 }
 
-async fn list_maps(State(state): State<AppState>) -> Result<Json<MapList>, StatusCode> {
+async fn list_maps(State(state): State<SharedState>) -> Result<Json<MapList>, StatusCode> {
     match state.map_cache.get_maps() {
         Ok(maps) => Ok(Json(MapList { maps })),
         Err(e) => {
@@ -82,7 +92,7 @@ async fn list_maps(State(state): State<AppState>) -> Result<Json<MapList>, Statu
     }
 }
 
-async fn get_status(State(state): State<AppState>) -> Result<Json<PlayerList>, StatusCode> {
+async fn get_status(State(state): State<SharedState>) -> Result<Json<PlayerList>, StatusCode> {
     match state.rcon_client.execute("status").await {
         Ok(output) => match parse_status_output(&output) {
             Ok(players) => Ok(Json(players)),
@@ -99,19 +109,59 @@ async fn get_status(State(state): State<AppState>) -> Result<Json<PlayerList>, S
 }
 
 async fn rcon_execute(
-    State(state): State<AppState>,
+    State(state): State<SharedState>,
     Json(payload): Json<ExecutePayload>,
 ) -> Result<Json<ExecuteResponse>, StatusCode> {
     match state.rcon_client.execute(&payload.command).await {
-        Ok(output) => Ok(Json(ExecuteResponse {
-            success: true,
-            output,
-        })),
+        Ok(output) => {
+            state.log_stream.broadcast("INFO", &format!("Executing: {}", payload.command));
+            Ok(Json(ExecuteResponse {
+                success: true,
+                output,
+            }))
+        }
         Err(e) => {
+            state.log_stream.broadcast("ERROR", &format!("Command failed: {}", e));
             tracing::error!("RCON command failed: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
+}
+
+async fn logs_ws(
+    State(state): State<SharedState>,
+    ws: axum::extract::ws::WebSocketUpgrade,
+) -> axum::response::Response {
+    ws.on_upgrade(move |socket| handle_websocket(socket, state.log_stream.subscribe()))
+}
+
+async fn handle_websocket(
+    mut socket: axum::extract::ws::WebSocket,
+    mut rx: logs::LogReceiver,
+) {
+    loop {
+        tokio::select! {
+            msg = rx.recv() => {
+                match msg {
+                    Ok(entry) => {
+                        let json = serde_json::to_string(&entry).unwrap();
+                        if socket.send(axum::extract::ws::Message::Text(json)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            _ = socket.recv() => {
+                break;
+            }
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct HealthResponse {
+    status: &'static str,
 }
 
 #[derive(Serialize)]

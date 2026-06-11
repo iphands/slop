@@ -25,6 +25,9 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# WebSocket
+tokio-stream = "0.1"
+
 [dev-dependencies]
 tokio-test = "0.4"
 assert_cmd = "2.0"
