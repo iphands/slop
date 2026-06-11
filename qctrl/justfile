@@ -11,23 +11,23 @@ be-all:
     RUSTFLAGS="-D warnings" cargo build --release
 
 # Frontend tests
-testall:
+fe-test:
     cd frontend && npm run testall
 
 # Frontend build
-build-frontend:
+fe-build:
     cd frontend && npm run build
 
 # Rust format all crates
-fmt:
+be-fmt:
     cargo fmt --all
 
 # Rust clippy with warnings as errors
-clippy:
+be-clippy:
     cargo clippy --all-targets --all-features -- -D warnings
 
 # Rust build with warnings as errors
-build:
+be-build:
     RUSTFLAGS="-D warnings" cargo build --release
 
 # Full CI check: fmt, clippy, build, frontend tests
@@ -38,13 +38,13 @@ ci:
     cd frontend && npm run build
 
 # Run backend
-run-backend:
+be-run:
     cargo run --bin qctrl-api --release -- --config-path config.yaml
 
 # Run e2e tests
-e2e:
+fe-e2e:
     cd frontend && node e2e-test.js
 
 # Format and check frontend
-fmt-frontend:
+fe-lint:
     cd frontend && npm run lint
