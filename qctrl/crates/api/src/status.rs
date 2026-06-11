@@ -24,6 +24,7 @@ pub struct Player {
 /// List of players.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[deprecated]
+#[allow(dead_code)]
 pub struct PlayerList {
     pub players: Vec<Player>,
 }
