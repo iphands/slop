@@ -73,7 +73,7 @@ impl LogStream {
                 Ok(output) => {
                     if output != last_status {
                         if !last_status.is_empty() {
-                            self.broadcast("INFO", &format!("Server status changed"));
+                            self.broadcast("INFO", "Server status changed");
                         }
                         last_status = output;
                     }
