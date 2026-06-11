@@ -1,33 +1,32 @@
 import { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Layout } from './components/Layout';
-import { ServerStatus } from './components/ServerStatus';
-import { MapList } from './components/MapList';
 import { Deathmatch } from './pages/Deathmatch';
 import { Maps } from './pages/Maps';
 import { Players } from './pages/Players';
 import { Logs } from './pages/Logs';
+import { Dashboard } from './pages/Dashboard';
 
 const queryClient = new QueryClient();
 
-type Page = 'home' | 'deathmatch' | 'maps' | 'players' | 'logs';
+type Page = 'home' | 'dashboard' | 'deathmatch' | 'maps' | 'players' | 'logs';
 
 function App() {
-  const [currentPage, setCurrentPage] = useState<Page>('home');
+  const [currentPage, setCurrentPage] = useState<Page>('dashboard');
 
   return (
     <QueryClientProvider client={queryClient}>
       <Layout>
         <nav className="flex gap-4 mb-6 border-b border-gray-700 pb-4 flex-wrap">
           <button
-            onClick={() => setCurrentPage('home')}
+            onClick={() => setCurrentPage('dashboard')}
             className={`px-4 py-2 rounded ${
-              currentPage === 'home'
+              currentPage === 'dashboard'
                 ? 'bg-blue-600'
                 : 'bg-gray-700 hover:bg-gray-600'
             }`}
           >
-            Home
+            Dashboard
           </button>
           <button
             onClick={() => setCurrentPage('deathmatch')}
@@ -72,20 +71,7 @@ function App() {
         </nav>
 
         <div className="space-y-6">
-          {currentPage === 'home' && (
-            <>
-              <section className="p-4 bg-gray-800 rounded-lg">
-                <h2 className="text-lg font-semibold mb-2">Server Status</h2>
-                <ServerStatus />
-              </section>
-
-              <section className="p-4 bg-gray-800 rounded-lg">
-                <h2 className="text-lg font-semibold mb-4">Available Maps</h2>
-                <MapList />
-              </section>
-            </>
-          )}
-
+          {currentPage === 'dashboard' && <Dashboard />}
           {currentPage === 'deathmatch' && <Deathmatch />}
           {currentPage === 'maps' && <Maps />}
           {currentPage === 'players' && <Players />}
