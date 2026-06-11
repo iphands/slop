@@ -1,0 +1,12 @@
+[package]
+name = "qctrl-tools"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rcon-test"
+path = "src/rcon_test.rs"
+
+[dependencies]
+qctrl-rcon = { path = "../rcon" }
+tokio = { workspace = true }
