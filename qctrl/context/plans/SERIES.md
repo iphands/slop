@@ -33,7 +33,7 @@ This document tracks the dependency chain and status of all plans for the qctrl 
 | 06 | Player Management | `done` | 02, 07 |
 | 07 | Log Streaming | `done` | 01, 03 |
 | 08 | Status Dashboard | `done` | 04, 05, 06, 07 |
-| 09 | Settings Persistence | `pending` | 01 |
+| 09 | Settings Persistence | `done` | 01 |
 | 10 | Final Testing & Polish | `pending` | 01-09 |
 | 11 | Deployment Setup | `pending` | 10 |
 
