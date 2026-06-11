@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { executeRcon } from '../lib/api';
 
@@ -25,40 +26,52 @@ interface DmflagsBitsProps {
 }
 
 export function DmflagsBits({ currentValue }: DmflagsBitsProps) {
+  const [pendingValue, setPendingValue] = useState(currentValue);
   const { mutate: execute, isPending, error } = useMutation({
     mutationFn: executeRcon,
   });
 
   const toggleBit = (bit: number) => {
-    const newValue = currentValue ^ bit;
+    const newValue = pendingValue ^ bit;
+    setPendingValue(newValue);
     execute(`dmflags ${newValue}`);
   };
 
   return (
     <div className="space-y-3">
       <div className="text-sm text-gray-400">
-        Combined: <span className="font-mono">{currentValue}</span>
+        Combined: <span className="font-mono">{pendingValue}</span>
+        {pendingValue !== currentValue && (
+          <span className="ml-2 text-xs text-orange-400">(unsaved)</span>
+        )}
       </div>
       <div className="grid grid-cols-2 gap-2">
-        {FLAGS.map((flag) => (
-          <label
-            key={flag.bit}
-            className={`flex items-center gap-2 p-2 rounded cursor-pointer transition-colors ${
-              currentValue & flag.bit
-                ? 'bg-blue-900/50'
-                : 'bg-gray-800 hover:bg-gray-700'
-            }`}
-          >
-            <input
-              type="checkbox"
-              checked={Boolean(currentValue & flag.bit)}
-              onChange={() => toggleBit(flag.bit)}
-              disabled={isPending}
-              className="rounded"
-            />
-            <span className="text-sm">{flag.name}</span>
-          </label>
-        ))}
+        {FLAGS.map((flag) => {
+          const isChecked = Boolean(pendingValue & flag.bit);
+          const isDirty = isChecked !== Boolean(currentValue & flag.bit);
+          
+          return (
+            <label
+              key={flag.bit}
+              className={`flex items-center gap-2 p-2 rounded cursor-pointer transition-colors ${
+                isChecked
+                  ? 'bg-blue-900/50'
+                  : 'bg-gray-800 hover:bg-gray-700'
+              } ${
+                isDirty ? 'ring-2 ring-orange-500/50' : ''
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={isChecked}
+                onChange={() => toggleBit(flag.bit)}
+                disabled={isPending}
+                className="rounded"
+              />
+              <span className="text-sm">{flag.name}</span>
+            </label>
+          );
+        })}
       </div>
       {error && <div className="text-red-400 text-sm">Failed: {error.message}</div>}
       {isPending && <div className="text-blue-400 text-sm">Sending command...</div>}
