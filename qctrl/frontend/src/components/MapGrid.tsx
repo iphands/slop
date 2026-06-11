@@ -98,6 +98,7 @@ export function MapGrid({ currentMap, onSelect }: MapGridProps) {
           <h3 className="text-md font-semibold mb-3 flex items-center gap-2">
             <span>★</span> Favorites
           </h3>
+          <hr className="border-gray-700 mb-4" />
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {favoriteMaps.map((map) => (
               <MapCard key={map.name} map={map} />
@@ -108,6 +109,7 @@ export function MapGrid({ currentMap, onSelect }: MapGridProps) {
 
       <section>
         <h3 className="text-md font-semibold mb-3">All Maps</h3>
+        <hr className="border-gray-700 mb-4" />
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {allOtherMaps.map((map) => (
             <MapCard key={map.name} map={map} />
