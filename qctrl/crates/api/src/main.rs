@@ -1,6 +1,8 @@
 use axum::{
+    body::Body,
     extract::State,
-    http::StatusCode,
+    http::{Request, StatusCode},
+    middleware,
     routing::{delete, get, post},
     Json, Router,
 };
@@ -86,12 +88,35 @@ async fn main() {
         .route("/logs/ws", get(logs_ws))
         .with_state(state);
 
-    let static_files = ServeDir::new("frontend/dist")
-        .not_found_service(ServeDir::new("frontend/dist").append_index_html_on_directories(true));
+    let static_files = ServeDir::new("frontend/dist");
+
+    async fn spa_fallback(
+        request: Request<Body>,
+        next: middleware::Next,
+    ) -> Result<axum::response::Response, StatusCode> {
+        let path = request.uri().path().to_string();
+        
+        if path.starts_with("/api/") {
+            return Ok(next.run(request).await);
+        }
+        
+        let response = next.run(request).await;
+        
+        if response.status() == StatusCode::NOT_FOUND {
+            let index_html = tokio::fs::read("frontend/dist/index.html")
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            
+            Ok(axum::response::Response::new(Body::from(index_html)))
+        } else {
+            Ok(response)
+        }
+    }
 
     let app = Router::new()
         .nest("/api", api_routes)
         .nest_service("/", static_files)
+        .layer(middleware::from_fn(spa_fallback))
         .fallback_service(ServeDir::new("frontend/dist").append_index_html_on_directories(true));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
