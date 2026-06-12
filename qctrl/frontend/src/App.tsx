@@ -10,6 +10,7 @@ import { Players } from './pages/Players';
 import { Logs } from './pages/Logs';
 import { Dashboard } from './pages/Dashboard';
 import { Settings } from './pages/Settings';
+import { NotFound } from './pages/NotFound';
 
 const queryClient = new QueryClient();
 
@@ -56,6 +57,7 @@ function App() {
               <Route path="/players" element={<Players />} />
               <Route path="/logs" element={<Logs />} />
               <Route path="/settings" element={<Settings />} />
+              <Route path="*" element={<NotFound />} />
             </Routes>
           </div>
         </Layout>
