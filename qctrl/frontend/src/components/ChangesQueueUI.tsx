@@ -46,7 +46,7 @@ export function ChangesQueueUI() {
   const hiddenCount = state.changes.length - visibleChanges.length;
 
   return (
-    <div className="mb-4 p-3 bg-orange-900/20 border border-orange-500/50 rounded">
+    <div className="sticky top-16 z-50 mb-4 p-3 bg-orange-900/95 border border-orange-500/50 rounded shadow-lg backdrop-blur-sm">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-orange-400">
