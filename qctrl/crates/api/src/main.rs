@@ -3,7 +3,7 @@ use axum::{
     extract::State,
     http::{Request, StatusCode},
     middleware,
-    routing::{delete, get, post},
+    routing::{delete, get, put, post},
     Json, Router,
 };
 use qctrl_rcon::RconClient;
@@ -17,12 +17,14 @@ mod config;
 mod favorites;
 mod logs;
 mod maps;
+mod rotation;
 mod status;
 
 use config::Config;
 use favorites::Favorites;
 use logs::LogStream;
 use maps::MapCache;
+use rotation::{AddMapRequest, QueueResponse, QueueStatusResponse, RotationMode, RotationQueue};
 use status::{parse_rcon_int, parse_status_output, StatusResponse};
 
 #[derive(Clone)]
@@ -32,6 +34,7 @@ struct SharedState {
     map_cache: MapCache,
     log_stream: Arc<LogStream>,
     favorites: Favorites,
+    rotation_queue: Arc<tokio::sync::Mutex<RotationQueue>>,
 }
 
 #[tokio::main]
@@ -68,12 +71,17 @@ async fn main() {
         })
     });
 
+    let rotation_queue = Arc::new(tokio::sync::Mutex::new(
+        RotationQueue::new_with_persistence(RotationMode::Sequential, "rotation.yaml"),
+    ));
+
     let state = SharedState {
         config,
         rcon_client,
         map_cache,
         log_stream,
         favorites,
+        rotation_queue,
     };
 
     let api_routes = Router::new()
@@ -85,6 +93,10 @@ async fn main() {
         .route("/favorites", post(add_favorite))
         .route("/favorites/:map_name", delete(remove_favorite))
         .route("/status", get(get_status))
+        .route("/rotation", get(get_rotation))
+        .route("/rotation", post(add_to_rotation))
+        .route("/rotation", put(update_rotation))
+        .route("/rotation/:map_name", delete(remove_from_rotation))
         .route("/logs/ws", get(logs_ws))
         .with_state(state);
 
@@ -219,6 +231,109 @@ async fn get_status(State(state): State<SharedState>) -> Result<Json<StatusRespo
     }
 
     Ok(Json(status))
+}
+
+async fn get_rotation(
+    State(state): State<SharedState>,
+) -> Result<Json<QueueStatusResponse>, StatusCode> {
+    let queue = state.rotation_queue.lock().await;
+    let maps = queue.get_maps();
+    let current_map = if !maps.is_empty() {
+        Some(maps[0].clone())
+    } else {
+        None
+    };
+
+    Ok(Json(QueueStatusResponse {
+        maps,
+        mode: queue.mode(),
+        current_map,
+    }))
+}
+
+async fn add_to_rotation(
+    State(state): State<SharedState>,
+    Json(payload): Json<AddMapRequest>,
+) -> Result<Json<QueueResponse>, StatusCode> {
+    match state.map_cache.get_maps() {
+        Ok(available_maps) => {
+            let map_exists = available_maps
+                .iter()
+                .any(|m| m.name == payload.map_name);
+
+            if !map_exists {
+                return Ok(Json(QueueResponse {
+                    success: false,
+                    message: format!("Map '{}' not found in baseq2/maps/", payload.map_name),
+                    queue_size: 0,
+                }));
+            }
+
+            let mut queue = state.rotation_queue.lock().await;
+            queue.add_map(payload.map_name.clone());
+            
+            if let Err(e) = queue.save() {
+                tracing::error!("Failed to save rotation queue: {}", e);
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+
+            Ok(Json(QueueResponse {
+                success: true,
+                message: format!("Added '{}' to rotation queue", payload.map_name),
+                queue_size: queue.len(),
+            }))
+        }
+        Err(e) => {
+            tracing::error!("Failed to list maps for validation: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+async fn update_rotation(
+    State(state): State<SharedState>,
+    Json(payload): Json<QueueStatusResponse>,
+) -> Result<Json<QueueResponse>, StatusCode> {
+    let mut queue = state.rotation_queue.lock().await;
+
+    queue.set_maps(payload.maps);
+    queue.set_mode(payload.mode);
+
+    if let Err(e) = queue.save() {
+        tracing::error!("Failed to save rotation queue: {}", e);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    Ok(Json(QueueResponse {
+        success: true,
+        message: "Rotation queue updated".to_string(),
+        queue_size: queue.len(),
+    }))
+}
+
+async fn remove_from_rotation(
+    State(state): State<SharedState>,
+    axum::extract::Path(map_name): axum::extract::Path<String>,
+) -> Result<Json<QueueResponse>, StatusCode> {
+    let mut queue = state.rotation_queue.lock().await;
+    
+    let was_present = queue.get_maps().contains(&map_name);
+    queue.remove_map(&map_name);
+
+    if let Err(e) = queue.save() {
+        tracing::error!("Failed to save rotation queue: {}", e);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    Ok(Json(QueueResponse {
+        success: was_present,
+        message: if was_present {
+            format!("Removed '{}' from rotation queue", map_name)
+        } else {
+            format!("Map '{}' was not in rotation queue", map_name)
+        },
+        queue_size: queue.len(),
+    }))
 }
 
 async fn rcon_execute(

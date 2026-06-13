@@ -24,6 +24,7 @@ pub struct RotationQueue {
 
 impl RotationQueue {
     /// Create a new rotation queue with the given mode.
+    #[allow(dead_code)]
     pub fn new(mode: RotationMode) -> Self {
         Self {
             maps: Vec::new(),
@@ -58,7 +59,12 @@ impl RotationQueue {
         self.maps.retain(|name| name != map_name);
     }
 
+    pub fn set_maps(&mut self, maps: Vec<String>) {
+        self.maps = maps;
+    }
+
     /// Get the next map to play based on rotation mode.
+    #[allow(dead_code)]
     pub fn next_map(&mut self) -> Option<String> {
         self.maps.first().cloned()
     }
@@ -74,6 +80,7 @@ impl RotationQueue {
     }
 
     /// Check if the queue is empty.
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.maps.is_empty()
     }
@@ -87,6 +94,7 @@ impl RotationQueue {
     ///
     /// If the file doesn't exist, returns an empty queue.
     /// If the file is malformed, returns an error.
+    #[allow(dead_code)]
     pub fn load(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let content = if Path::new(path).exists() {
             fs::read_to_string(path)?
@@ -152,12 +160,14 @@ pub struct QueueStatusResponse {
 }
 
 /// Request body for setting rotation mode.
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SetModeRequest {
     pub mode: RotationMode,
 }
 
 /// Response for setting rotation mode.
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ModeResponse {
     pub success: bool,
@@ -328,6 +338,119 @@ mode: Sequential
         let parsed: RotationQueueData = serde_yaml::from_str(&content).unwrap();
         assert_eq!(parsed.queue.len(), 1);
         assert_eq!(parsed.queue[0], "q2dm1");
+        assert_eq!(parsed.mode, RotationMode::Sequential);
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_queue_crud_operations() {
+        let temp_dir = TempDir::new().unwrap();
+        let queue_path = temp_dir.path().join("queue.yaml");
+
+        let mut queue = RotationQueue::new(RotationMode::Sequential);
+        queue.path = Some(queue_path.to_str().unwrap().to_string());
+
+        queue.add_map("q2dm1".to_string());
+        queue.add_map("kessel".to_string());
+        assert_eq!(queue.len(), 2);
+
+        let maps = queue.get_maps();
+        assert_eq!(maps.len(), 2);
+        assert_eq!(maps[0], "q2dm1");
+        assert_eq!(maps[1], "kessel");
+
+        queue.remove_map("q2dm1");
+        assert_eq!(queue.len(), 1);
+        assert!(!queue.get_maps().contains(&"q2dm1".to_string()));
+
+        queue.set_maps(vec!["map1".to_string(), "map2".to_string(), "map3".to_string()]);
+        assert_eq!(queue.len(), 3);
+        let maps = queue.get_maps();
+        assert_eq!(maps[0], "map1");
+        assert_eq!(maps[1], "map2");
+        assert_eq!(maps[2], "map3");
+    }
+
+    #[test]
+    fn test_persistence_roundtrip() {
+        let temp_dir = TempDir::new().unwrap();
+        let queue_path = temp_dir.path().join("queue.yaml");
+
+        {
+            let mut queue = RotationQueue::new(RotationMode::Random);
+            queue.path = Some(queue_path.to_str().unwrap().to_string());
+            queue.add_map("q2dm1".to_string());
+            queue.add_map("q2dm2".to_string());
+            queue.save().unwrap();
+        }
+
+        let loaded_queue = RotationQueue::load(queue_path.to_str().unwrap()).unwrap();
+        assert_eq!(loaded_queue.len(), 2);
+        assert_eq!(loaded_queue.mode(), RotationMode::Random);
+        assert_eq!(loaded_queue.get_maps()[0], "q2dm1");
+        assert_eq!(loaded_queue.get_maps()[1], "q2dm2");
+    }
+
+    #[test]
+    fn test_duplicate_prevention() {
+        let mut queue = RotationQueue::new(RotationMode::Sequential);
+
+        queue.add_map("q2dm1".to_string());
+        queue.add_map("q2dm1".to_string());
+        queue.add_map("q2dm1".to_string());
+
+        assert_eq!(queue.len(), 1);
+    }
+
+    #[test]
+    fn test_mode_change_persistence() {
+        let temp_dir = TempDir::new().unwrap();
+        let queue_path = temp_dir.path().join("queue.yaml");
+
+        let mut queue = RotationQueue::new(RotationMode::Sequential);
+        queue.path = Some(queue_path.to_str().unwrap().to_string());
+        queue.add_map("q2dm1".to_string());
+        queue.save().unwrap();
+
+        queue.set_mode(RotationMode::Random);
+        queue.save().unwrap();
+
+        let loaded = RotationQueue::load(queue_path.to_str().unwrap()).unwrap();
+        assert_eq!(loaded.mode(), RotationMode::Random);
+    }
+
+    #[test]
+    fn test_empty_queue_operations() {
+        let mut queue = RotationQueue::new(RotationMode::Sequential);
+
+        assert!(queue.is_empty());
+        assert!(queue.next_map().is_none());
+        assert_eq!(queue.get_maps().len(), 0);
+
+        queue.remove_map("nonexistent");
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn test_yaml_format_validation() {
+        let temp_dir = TempDir::new().unwrap();
+        let queue_path = temp_dir.path().join("queue.yaml");
+
+        let mut queue = RotationQueue::new(RotationMode::Sequential);
+        queue.path = Some(queue_path.to_str().unwrap().to_string());
+        queue.add_map("test_map".to_string());
+        queue.save().unwrap();
+
+        let content = fs::read_to_string(&queue_path).unwrap();
+        let parsed: RotationQueueData = serde_yaml::from_str(&content).unwrap();
+        
+        assert_eq!(parsed.queue.len(), 1);
+        assert_eq!(parsed.queue[0], "test_map");
         assert_eq!(parsed.mode, RotationMode::Sequential);
     }
 }
