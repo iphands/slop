@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Section } from '../components/Section';
 import { QueueList } from '../components/QueueList';
 import { AddMapDialog } from '../components/AddMapDialog';
@@ -11,6 +12,7 @@ import { NotificationContainer } from '../components/NotificationContainer';
 import { getRotationQueue } from '../lib/api';
 
 export function Rotation() {
+  const queryClient = useQueryClient();
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [queueMaps, setQueueMaps] = useState<string[]>([]);
   const [currentMode, setCurrentMode] = useState<'Sequential' | 'Random'>('Sequential');
@@ -34,6 +36,7 @@ export function Rotation() {
 
   const handleQueueChange = async () => {
     try {
+      await queryClient.invalidateQueries({ queryKey: ['rotationQueue'] });
       const queue = await getRotationQueue();
       setQueueMaps(queue.maps);
       setCurrentMode(queue.mode);
