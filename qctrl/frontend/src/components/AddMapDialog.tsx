@@ -90,6 +90,11 @@ export function AddMapDialog({ isOpen, onClose, onMapAdded, addNotification }: A
     }
   };
 
+  const selectAllFiltered = () => {
+    const filteredNames = new Set<string>(filteredMaps.map((m: MapInfo) => m.name));
+    setSelectedMaps(filteredNames);
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -149,14 +154,24 @@ export function AddMapDialog({ isOpen, onClose, onMapAdded, addNotification }: A
         </div>
 
         <div className="p-4 border-t border-gray-700 flex gap-2 justify-between items-center">
-          <button
-            type="button"
-            onClick={() => setSelectedMaps(new Set())}
-            disabled={selectedMaps.size === 0 || isAdding}
-            className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Clear Selection ({selectedMaps.size})
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={selectAllFiltered}
+              disabled={filteredMaps.length === 0 || isAdding}
+              className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Select All ({filteredMaps.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedMaps(new Set())}
+              disabled={selectedMaps.size === 0 || isAdding}
+              className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Clear Selection ({selectedMaps.size})
+            </button>
+          </div>
           <div className="flex gap-2">
             <button
               type="button"
