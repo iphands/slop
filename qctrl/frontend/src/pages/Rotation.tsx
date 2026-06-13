@@ -111,6 +111,7 @@ export function Rotation() {
         isOpen={showAddDialog}
         onClose={() => setShowAddDialog(false)}
         onMapAdded={handleQueueChange}
+        addNotification={addNotification}
       />
 
       <NotificationContainer notifications={notifications} onDismiss={removeNotification} />

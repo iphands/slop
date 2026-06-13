@@ -3,14 +3,16 @@ import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { addMapToQueue } from '../lib/api';
 import type { MapInfo } from '../lib/api';
+import { useNotifications } from '../hooks/useNotifications';
 
 interface AddMapDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onMapAdded: () => void;
+  addNotification: (type: 'info' | 'success' | 'error', message: string) => void;
 }
 
-export function AddMapDialog({ isOpen, onClose, onMapAdded }: AddMapDialogProps) {
+export function AddMapDialog({ isOpen, onClose, onMapAdded, addNotification }: AddMapDialogProps) {
   const [search, setSearch] = useState('');
   const [selectedMaps, setSelectedMaps] = useState<Set<string>>(new Set());
   const [isAdding, setIsAdding] = useState(false);
@@ -53,12 +55,36 @@ export function AddMapDialog({ isOpen, onClose, onMapAdded }: AddMapDialogProps)
     setIsAdding(true);
     try {
       const mapsArray = Array.from(selectedMaps);
+      let successCount = 0;
+      let failCount = 0;
+      
       for (const mapName of mapsArray) {
-        await addMapToQueue(mapName);
+        try {
+          const result = await addMapToQueue(mapName);
+          if (result.success) {
+            successCount++;
+          } else {
+            failCount++;
+            addNotification('error', result.message || `Failed to add ${mapName}`);
+          }
+        } catch (error) {
+          failCount++;
+          const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+          addNotification('error', `Failed to add ${mapName}: ${errorMsg}`);
+        }
       }
-      onMapAdded();
-      onClose();
+      
+      if (successCount > 0) {
+        addNotification('success', `Added ${successCount} map(s) to queue`);
+        onMapAdded();
+        onClose();
+      }
+      
+      if (failCount > 0) {
+        addNotification('error', `${failCount} map(s) failed to add`);
+      }
     } catch (error) {
+      addNotification('error', 'Failed to add maps to queue');
       console.error('Failed to add maps to queue:', error);
     } finally {
       setIsAdding(false);
