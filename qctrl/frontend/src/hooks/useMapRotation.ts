@@ -10,6 +10,7 @@ export interface MapRotationOptions {
   onMapChangeComplete?: (mapName: string) => void;
   onMapChangeError?: (error: string) => void;
   onResetTimer?: () => void;
+  rotationEnabled?: boolean;
 }
 
 export interface MapRotationReturn {
@@ -29,6 +30,7 @@ export function useMapRotation(
     onMapChangeComplete,
     onMapChangeError,
     onResetTimer,
+    rotationEnabled = true,
   } = options;
 
   const isSwitchingRef = useRef(false);
@@ -38,6 +40,11 @@ export function useMapRotation(
 
   const handleTrigger = useCallback(
     async () => {
+      // Skip if rotation is disabled
+      if (!rotationEnabled) {
+        return;
+      }
+
       if (isSwitchingRef.current) {
         return;
       }
@@ -67,7 +74,7 @@ export function useMapRotation(
         setSwitchingToState(null);
       }
     },
-    [mode, queueMaps, currentMap, onMapChangeStart, onMapChangeComplete, onMapChangeError, onResetTimer]
+    [mode, queueMaps, currentMap, onMapChangeStart, onMapChangeComplete, onMapChangeError, onResetTimer, rotationEnabled]
   );
 
   return {

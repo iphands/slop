@@ -51,6 +51,7 @@ export interface QueueStatus {
   maps: string[];
   mode: 'Sequential' | 'Random';
   current_map: string | null;
+  enabled: boolean;
 }
 
 export interface QueueResponse {
@@ -180,6 +181,16 @@ export async function removeMapFromQueue(mapName: string): Promise<QueueResponse
   });
   if (!res.ok) {
     throw new Error('Failed to remove map from queue');
+  }
+  return res.json();
+}
+
+export async function toggleRotation(): Promise<{ success: boolean; enabled: boolean; message: string }> {
+  const res = await fetch('/api/rotation/toggle', {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    throw new Error('Failed to toggle rotation');
   }
   return res.json();
 }

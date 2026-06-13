@@ -35,6 +35,7 @@ struct SharedState {
     log_stream: Arc<LogStream>,
     favorites: Favorites,
     rotation_queue: Arc<tokio::sync::Mutex<RotationQueue>>,
+    rotation_enabled: Arc<tokio::sync::Mutex<bool>>,
 }
 
 #[tokio::main]
@@ -71,9 +72,18 @@ async fn main() {
         })
     });
 
-    let rotation_queue = Arc::new(tokio::sync::Mutex::new(
-        RotationQueue::new_with_persistence(RotationMode::Sequential, "rotation.yaml"),
-    ));
+    let rotation_queue = Arc::new(tokio::sync::Mutex::new({
+        // Try to load existing queue from disk, or create new with persistence
+        match RotationQueue::load("rotation.yaml") {
+            Ok(queue) => queue,
+            Err(e) => {
+                tracing::warn!("Failed to load rotation queue: {}, creating new one", e);
+                RotationQueue::new_with_persistence(RotationMode::Sequential, "rotation.yaml")
+            }
+        }
+    }));
+
+    let rotation_enabled = Arc::new(tokio::sync::Mutex::new(true));
 
     let state = SharedState {
         config,
@@ -82,6 +92,7 @@ async fn main() {
         log_stream,
         favorites,
         rotation_queue,
+        rotation_enabled,
     };
 
     let api_routes = Router::new()
@@ -97,6 +108,7 @@ async fn main() {
         .route("/rotation", post(add_to_rotation))
         .route("/rotation", put(update_rotation))
         .route("/rotation/:map_name", delete(remove_from_rotation))
+        .route("/rotation/toggle", post(toggle_rotation))
         .route("/logs/ws", get(logs_ws))
         .with_state(state);
 
@@ -237,6 +249,7 @@ async fn get_rotation(
     State(state): State<SharedState>,
 ) -> Result<Json<QueueStatusResponse>, StatusCode> {
     let queue = state.rotation_queue.lock().await;
+    let enabled = *state.rotation_enabled.lock().await;
     let maps = queue.get_maps();
     let current_map = if !maps.is_empty() {
         Some(maps[0].clone())
@@ -248,6 +261,7 @@ async fn get_rotation(
         maps,
         mode: queue.mode(),
         current_map,
+        enabled,
     }))
 }
 
@@ -331,6 +345,32 @@ async fn remove_from_rotation(
             format!("Map '{}' was not in rotation queue", map_name)
         },
         queue_size: queue.len(),
+    }))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ToggleRotationResponse {
+    success: bool,
+    enabled: bool,
+    message: String,
+}
+
+async fn toggle_rotation(
+    State(state): State<SharedState>,
+) -> Result<Json<ToggleRotationResponse>, StatusCode> {
+    let mut enabled = state.rotation_enabled.lock().await;
+    *enabled = !*enabled;
+
+    let message = if *enabled {
+        "Map rotation enabled".to_string()
+    } else {
+        "Map rotation disabled".to_string()
+    };
+
+    Ok(Json(ToggleRotationResponse {
+        success: true,
+        enabled: *enabled,
+        message,
     }))
 }
 

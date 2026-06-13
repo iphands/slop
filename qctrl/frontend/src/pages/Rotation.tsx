@@ -9,7 +9,7 @@ import type { TimerTriggerEvent } from '../hooks/useRotationTimer';
 import { useMapRotation } from '../hooks/useMapRotation';
 import { useNotifications } from '../hooks/useNotifications';
 import { NotificationContainer } from '../components/NotificationContainer';
-import { getRotationQueue } from '../lib/api';
+import { getRotationQueue, toggleRotation } from '../lib/api';
 
 export function Rotation() {
   const queryClient = useQueryClient();
@@ -17,6 +17,7 @@ export function Rotation() {
   const [queueMaps, setQueueMaps] = useState<string[]>([]);
   const [currentMode, setCurrentMode] = useState<'Sequential' | 'Random'>('Sequential');
   const [currentMap, setCurrentMap] = useState<string | null>(null);
+  const [rotationEnabled, setRotationEnabled] = useState(true);
 
   const { notifications, addNotification, removeNotification } = useNotifications();
 
@@ -27,6 +28,7 @@ export function Rotation() {
         setQueueMaps(queue.maps);
         setCurrentMode(queue.mode);
         setCurrentMap(queue.current_map);
+        setRotationEnabled(queue.enabled);
       } catch {
         // Silently fail on initial load
       }
@@ -41,8 +43,23 @@ export function Rotation() {
       setQueueMaps(queue.maps);
       setCurrentMode(queue.mode);
       setCurrentMap(queue.current_map);
+      setRotationEnabled(queue.enabled);
     } catch {
       // Silently fail
+    }
+  };
+
+  const handleToggleRotation = async () => {
+    try {
+      const response = await toggleRotation();
+      setRotationEnabled(response.enabled);
+      addNotification(
+        response.enabled ? 'success' : 'info',
+        response.message
+      );
+    } catch (error) {
+      addNotification('error', 'Failed to toggle rotation');
+      console.error(error);
     }
   };
 
@@ -68,6 +85,7 @@ export function Rotation() {
     onResetTimer: () => {
       // Timer reset is handled by useRotationTimer detecting map change
     },
+    rotationEnabled,
   });
 
   const onTimerTrigger = async (event: TimerTriggerEvent) => {
@@ -90,10 +108,27 @@ export function Rotation() {
       )}
 
       <Section title="Rotation Mode">
-        <RotationModeToggle 
-          currentMode={currentMode}
-          onModeChange={(newMode) => setCurrentMode(newMode)}
-        />
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex-1">
+            <RotationModeToggle 
+              currentMode={currentMode}
+              onModeChange={(newMode) => setCurrentMode(newMode)}
+            />
+          </div>
+          <div className="ml-4">
+            <button
+              type="button"
+              onClick={handleToggleRotation}
+              className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
+                rotationEnabled
+                  ? 'bg-green-600 hover:bg-green-700 text-white'
+                  : 'bg-red-600 hover:bg-red-700 text-white'
+              }`}
+            >
+              {rotationEnabled ? 'Rotation ON' : 'Rotation OFF'}
+            </button>
+          </div>
+        </div>
       </Section>
 
       <Section title="Queue Management">

@@ -157,6 +157,7 @@ pub struct QueueStatusResponse {
     pub maps: Vec<String>,
     pub mode: RotationMode,
     pub current_map: Option<String>,
+    pub enabled: bool,
 }
 
 /// Request body for setting rotation mode.
