@@ -38,7 +38,7 @@ describe('useRotationTimer', () => {
   });
 
   it('initializes with default values when no status', () => {
-    vi.mocked(api.getStatus).mockResolvedValue(null as any);
+    vi.mocked(api.getStatus).mockResolvedValue(null as unknown as StatusResponse);
 
     const { result } = renderHook(() => useRotationTimer(), {
       wrapper: createWrapper(),

@@ -50,9 +50,13 @@ impl RconClient {
     /// * `Ok(String)` - Server response output.
     /// * `Err(RconError)` - Connection timeout, invalid response, or network error.
     pub async fn execute(&self, command: &str) -> Result<String, RconError> {
-        let addr: SocketAddr = format!("{}:{}", self.host, self.port)
-            .parse()
-            .map_err(|e: std::net::AddrParseError| RconError::InvalidResponse(e.to_string()))?;
+        // Resolve hostname to IP address first
+        let addr_str = format!("{}:{}", self.host, self.port);
+        let addr = tokio::net::lookup_host(&addr_str)
+            .await
+            .map_err(|e| RconError::InvalidResponse(format!("Failed to resolve host: {}", e)))?
+            .next()
+            .ok_or_else(|| RconError::InvalidResponse("Failed to resolve host".to_string()))?;
 
         match self.execute_udp(addr, command).await {
             Ok(response) => return Ok(response),
@@ -68,7 +72,7 @@ impl RconClient {
         socket.connect(addr).await?;
 
         let rcon_command = b"\xff\xff\xff\xff".to_vec();
-        let command_bytes = format!("rcon \"{}\" {}", self.password, command).into_bytes();
+        let command_bytes = format!("rcon {} {}", self.password, command).into_bytes();
 
         let mut packet = rcon_command;
         packet.extend_from_slice(&command_bytes);

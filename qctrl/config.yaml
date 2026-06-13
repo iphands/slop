@@ -1,8 +1,8 @@
 server:
-  host: 127.0.0.1
+  host: noir.lan
   port: 27910
-  rcon_password: test
+  rcon_password: ace123
 
 paths:
-  server_cfg: /tmp/qtest/baseq2/server.cfg
-  baseq2: /tmp/qtest/baseq2
+  server_cfg: /mnt/noir/scratch/games/q2/baseq2/server.cfg
+  baseq2: /mnt/noir/scratch/games/q2/baseq2

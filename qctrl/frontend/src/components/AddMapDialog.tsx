@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { addMapToQueue } from '../lib/api';
@@ -28,7 +29,7 @@ export function AddMapDialog({ isOpen, onClose, onMapAdded }: AddMapDialogProps)
   }, [allMaps, search]);
 
   useEffect(() => {
-    if (!isOpen) {
+    if (isOpen) {
       setSearch('');
       setSelectedMaps(new Set());
     }

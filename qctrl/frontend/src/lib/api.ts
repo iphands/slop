@@ -47,11 +47,6 @@ export interface StatusResponse {
   fraglimit?: number;
 }
 
-export interface RotationMode {
-  Sequential: {};
-  Random: {};
-}
-
 export interface QueueStatus {
   maps: string[];
   mode: 'Sequential' | 'Random';

@@ -1,41 +1,23 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { TimerTriggerEvent } from './useRotationTimer';
 import { executeRcon, getMaps } from '../lib/api';
 
 export interface MapRotationOptions {
-  /** Current rotation mode */
   mode: 'Sequential' | 'Random';
-  /** Current queue maps */
   queueMaps: string[];
-  /** Current map name */
   currentMap: string | null;
-  /** Callback when map change starts */
   onMapChangeStart?: (mapName: string) => void;
-  /** Callback when map change completes */
   onMapChangeComplete?: (mapName: string) => void;
-  /** Callback when map change fails */
   onMapChangeError?: (error: string) => void;
-  /** Callback to reset timer after map change */
   onResetTimer?: () => void;
 }
 
 export interface MapRotationReturn {
-  /** Execute map rotation when trigger fires */
   handleTrigger: (event: TimerTriggerEvent) => Promise<void>;
-  /** Whether a map change is in progress */
   isSwitching: boolean;
-  /** Current map being switched to (or null) */
   switchingTo: string | null;
 }
 
-/**
- * Custom hook for handling automatic map rotation
- * 
- * Determines next map based on mode:
- * - Sequential: Next map in queue (loop to 0 at end)
- * - Random: Random map from queue
- * - Empty queue: Sequential loops to first, Random picks from all available
- */
 export function useMapRotation(
   options: MapRotationOptions
 ): MapRotationReturn {
@@ -51,16 +33,20 @@ export function useMapRotation(
 
   const isSwitchingRef = useRef(false);
   const switchingToRef = useRef<string | null>(null);
+  const [isSwitchingState, setIsSwitchingState] = useState(false);
+  const [switchingToState, setSwitchingToState] = useState<string | null>(null);
 
   const handleTrigger = useCallback(
-    async (_event: TimerTriggerEvent) => {
+    async () => {
       if (isSwitchingRef.current) {
         return;
       }
 
       try {
         isSwitchingRef.current = true;
+        setIsSwitchingState(true);
         switchingToRef.current = await determineNextMap(mode, queueMaps, currentMap);
+        setSwitchingToState(switchingToRef.current);
 
         const nextMap = switchingToRef.current;
 
@@ -77,6 +63,8 @@ export function useMapRotation(
       } finally {
         isSwitchingRef.current = false;
         switchingToRef.current = null;
+        setIsSwitchingState(false);
+        setSwitchingToState(null);
       }
     },
     [mode, queueMaps, currentMap, onMapChangeStart, onMapChangeComplete, onMapChangeError, onResetTimer]
@@ -84,14 +72,11 @@ export function useMapRotation(
 
   return {
     handleTrigger,
-    isSwitching: isSwitchingRef.current,
-    switchingTo: switchingToRef.current,
+    isSwitching: isSwitchingState,
+    switchingTo: switchingToState,
   };
 }
 
-/**
- * Determine the next map based on rotation mode and queue state
- */
 export async function determineNextMap(
   mode: 'Sequential' | 'Random',
   queueMaps: string[],
@@ -125,15 +110,11 @@ export async function determineNextMap(
   return queueMaps[randomIndex];
 }
 
-/**
- * Fetch all available maps from backend when queue is empty
- */
 export async function fetchAvailableMaps(): Promise<string[]> {
   try {
     const response = await getMaps();
     return response.maps.map((m: { name: string }) => m.name);
   } catch {
-    // Fallback to default map
     return ['q2dm1'];
   }
 }
