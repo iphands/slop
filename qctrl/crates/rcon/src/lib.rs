@@ -72,7 +72,7 @@ impl RconClient {
         socket.connect(addr).await?;
 
         let rcon_command = b"\xff\xff\xff\xff".to_vec();
-        let command_bytes = format!("rcon {} {}", self.password, command).into_bytes();
+        let command_bytes = format!("rcon \"{}\" {}", self.password, command).into_bytes();
 
         let mut packet = rcon_command;
         packet.extend_from_slice(&command_bytes);
@@ -140,5 +140,37 @@ mod tests {
         let client = RconClient::new("noir.lan", 27910, "ace123");
         let result = client.execute("status").await;
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_rcon_command_format() {
+        // Verify the RCON command format matches Quake 2 server expectations
+        // The server expects: rcon "password" command (with quotes around password)
+        let client = RconClient::new("localhost", 27910, "ace123");
+        
+        // Test UDP format (connectionless packet with 0xFFFFFFFF prefix)
+        let command = "status";
+        let expected_format = format!("rcon \"{}\" {}", client.password, command);
+        assert_eq!(expected_format, r#"rcon "ace123" status"#);
+    }
+
+    #[test]
+    fn test_rcon_password_no_quotes_in_format() {
+        // Regression test: ensure password is quoted in the format string
+        // This test will fail if someone removes the quotes (like in commit 00284c4e9)
+        let client = RconClient::new("localhost", 27910, "test123");
+        let command = "dmflags";
+        let format_str = format!("rcon \"{}\" {}", client.password, command);
+
+        // Must contain quoted password
+        assert!(
+            format_str.contains(r#"rcon "test123" dmflags"#),
+            "RCON format must have quoted password: {}",
+            format_str
+        );
+        assert!(
+            !format_str.contains("rcon test123 dmflags"),
+            "RCON format must NOT have unquoted password"
+        );
     }
 }

@@ -41,6 +41,10 @@ ci:
 be-run:
     cargo run --bin qctrl-api --release -- --config-path config.yaml
 
+# Run backend tests
+be-test:
+    cargo test --all-targets --all-features
+
 # Run e2e tests
 fe-e2e:
     cd frontend && node e2e-test.js
