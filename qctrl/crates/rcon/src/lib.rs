@@ -147,7 +147,7 @@ mod tests {
         // Verify the RCON command format matches Quake 2 server expectations
         // The server expects: rcon "password" command (with quotes around password)
         let client = RconClient::new("localhost", 27910, "ace123");
-        
+
         // Test UDP format (connectionless packet with 0xFFFFFFFF prefix)
         let command = "status";
         let expected_format = format!("rcon \"{}\" {}", client.password, command);

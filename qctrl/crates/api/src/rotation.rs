@@ -106,9 +106,9 @@ impl RotationQueue {
                 path: Some(path.to_string()),
             });
         };
-        
+
         let data: RotationQueueData = serde_yaml::from_str(&content)?;
-        
+
         Ok(Self {
             maps: data.queue,
             mode: data.mode,
@@ -368,7 +368,11 @@ mod integration_tests {
         assert_eq!(queue.len(), 1);
         assert!(!queue.get_maps().contains(&"q2dm1".to_string()));
 
-        queue.set_maps(vec!["map1".to_string(), "map2".to_string(), "map3".to_string()]);
+        queue.set_maps(vec![
+            "map1".to_string(),
+            "map2".to_string(),
+            "map3".to_string(),
+        ]);
         assert_eq!(queue.len(), 3);
         let maps = queue.get_maps();
         assert_eq!(maps[0], "map1");
@@ -448,7 +452,7 @@ mod integration_tests {
 
         let content = fs::read_to_string(&queue_path).unwrap();
         let parsed: RotationQueueData = serde_yaml::from_str(&content).unwrap();
-        
+
         assert_eq!(parsed.queue.len(), 1);
         assert_eq!(parsed.queue[0], "test_map");
         assert_eq!(parsed.mode, RotationMode::Sequential);

@@ -3,7 +3,7 @@ use axum::{
     extract::State,
     http::{Request, StatusCode},
     middleware,
-    routing::{delete, get, put, post},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use qctrl_rcon::RconClient;
@@ -107,18 +107,18 @@ async fn main() {
         next: middleware::Next,
     ) -> Result<axum::response::Response, StatusCode> {
         let path = request.uri().path().to_string();
-        
+
         if path.starts_with("/api/") {
             return Ok(next.run(request).await);
         }
-        
+
         let response = next.run(request).await;
-        
+
         if response.status() == StatusCode::NOT_FOUND {
             let index_html = tokio::fs::read("frontend/dist/index.html")
                 .await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            
+
             Ok(axum::response::Response::new(Body::from(index_html)))
         } else {
             Ok(response)
@@ -257,9 +257,7 @@ async fn add_to_rotation(
 ) -> Result<Json<QueueResponse>, StatusCode> {
     match state.map_cache.get_maps() {
         Ok(available_maps) => {
-            let map_exists = available_maps
-                .iter()
-                .any(|m| m.name == payload.map_name);
+            let map_exists = available_maps.iter().any(|m| m.name == payload.map_name);
 
             if !map_exists {
                 return Ok(Json(QueueResponse {
@@ -271,7 +269,7 @@ async fn add_to_rotation(
 
             let mut queue = state.rotation_queue.lock().await;
             queue.add_map(payload.map_name.clone());
-            
+
             if let Err(e) = queue.save() {
                 tracing::error!("Failed to save rotation queue: {}", e);
                 return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -316,7 +314,7 @@ async fn remove_from_rotation(
     axum::extract::Path(map_name): axum::extract::Path<String>,
 ) -> Result<Json<QueueResponse>, StatusCode> {
     let mut queue = state.rotation_queue.lock().await;
-    
+
     let was_present = queue.get_maps().contains(&map_name);
     queue.remove_map(&map_name);
 
