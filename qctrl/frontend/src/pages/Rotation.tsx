@@ -90,7 +90,10 @@ export function Rotation() {
       )}
 
       <Section title="Rotation Mode">
-        <RotationModeToggle currentMode={currentMode} />
+        <RotationModeToggle 
+          currentMode={currentMode}
+          onModeChange={(newMode) => setCurrentMode(newMode)}
+        />
       </Section>
 
       <Section title="Queue Management">

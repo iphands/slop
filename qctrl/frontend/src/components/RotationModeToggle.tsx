@@ -1,19 +1,25 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useChanges } from '../contexts/ChangesContext';
 import { getRotationQueue, updateRotationQueue } from '../lib/api';
 
 interface RotationModeToggleProps {
   currentMode?: 'Sequential' | 'Random';
+  onModeChange?: (mode: 'Sequential' | 'Random') => void;
 }
 
-export function RotationModeToggle({ currentMode = 'Sequential' }: RotationModeToggleProps) {
+export function RotationModeToggle({ currentMode = 'Sequential', onModeChange }: RotationModeToggleProps) {
   const { queueChange, getPendingValue, isDirty } = useChanges();
-  const [mode, setMode] = useState<'Sequential' | 'Random'>(currentMode);
+  const [localMode, setLocalMode] = useState<'Sequential' | 'Random'>(currentMode);
+
+  // Sync local state when currentMode prop changes
+  useEffect(() => {
+    setLocalMode(currentMode);
+  }, [currentMode]);
 
   const handleModeChange = (newMode: 'Sequential' | 'Random') => {
-    if (newMode === mode) return;
+    if (newMode === localMode) return;
     
-    setMode(newMode);
+    setLocalMode(newMode);
     queueChange({
       type: 'rotationMode',
       pendingValue: newMode,
@@ -23,6 +29,9 @@ export function RotationModeToggle({ currentMode = 'Sequential' }: RotationModeT
     getRotationQueue()
       .then((queue) => {
         return updateRotationQueue(queue.maps, newMode);
+      })
+      .then(() => {
+        onModeChange?.(newMode);
       })
       .catch(() => {});
   };
