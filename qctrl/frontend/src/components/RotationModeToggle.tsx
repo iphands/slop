@@ -37,7 +37,7 @@ export function RotationModeToggle({ currentMode = 'Sequential', onModeChange }:
   };
 
   const pending = getPendingValue('rotationMode');
-  const displayMode = pending ? (pending as 'Sequential' | 'Random') : mode;
+  const displayMode = pending ? (pending as 'Sequential' | 'Random') : localMode;
   const isSequential = displayMode === 'Sequential';
 
   return (

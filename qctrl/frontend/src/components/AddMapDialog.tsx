@@ -3,7 +3,6 @@ import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { addMapToQueue } from '../lib/api';
 import type { MapInfo } from '../lib/api';
-import { useNotifications } from '../hooks/useNotifications';
 
 interface AddMapDialogProps {
   isOpen: boolean;
