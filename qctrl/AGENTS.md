@@ -74,6 +74,10 @@ Before writing code for any non-trivial feature:
   - Rust: `cargo test --all-features`.
   - TS: `npm test`.
 - **Linting**: `cargo clippy`, `cargo fmt`, `eslint`, `prettier`.
+- **Build Verification**: **NEVER commit broken code**. Always run:
+  - Frontend: `just fe-build` → Must pass before ANY frontend commit
+  - Backend: `just be-all` → Must pass before ANY backend commit
+  - **If build fails, FIX IT FIRST. Do NOT claim "done" if build is broken.**
 - **Commits**:
   - Pass all tests/lints before committing.
   - Message format: `task(TN): <description>` (e.g., `task(T1): add rcon client`).
