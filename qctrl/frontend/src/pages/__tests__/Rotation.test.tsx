@@ -1,24 +1,43 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ChangesProvider } from '../../contexts/ChangesContext';
 import { Rotation } from '../Rotation';
+
+function createWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+      },
+    },
+  });
+  return ({ children }: { children: React.ReactNode }) => (
+    <QueryClientProvider client={queryClient}>
+      <ChangesProvider>
+        {children}
+      </ChangesProvider>
+    </QueryClientProvider>
+  );
+}
 
 describe('Rotation Page', () => {
   it('renders without crashing', () => {
-    render(<Rotation />);
+    render(<Rotation />, { wrapper: createWrapper() });
     
     expect(screen.getByText('Map Rotation')).toBeInTheDocument();
   });
 
   it('displays the Map Rotation heading', () => {
-    render(<Rotation />);
+    render(<Rotation />, { wrapper: createWrapper() });
     
     const heading = screen.getByRole('heading', { level: 1 });
     expect(heading).toHaveTextContent('Map Rotation');
   });
 
-  it('shows placeholder content', () => {
-    render(<Rotation />);
+  it('shows queue management section', () => {
+    render(<Rotation />, { wrapper: createWrapper() });
     
-    expect(screen.getByText('Map rotation management coming soon.')).toBeInTheDocument();
+    expect(screen.getByText('Queue Management')).toBeInTheDocument();
   });
 });
