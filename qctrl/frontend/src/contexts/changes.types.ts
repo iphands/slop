@@ -1,6 +1,6 @@
 export interface Change {
   id: string;
-  type: 'dmflags' | 'timelimit' | 'fraglimit' | 'map';
+  type: 'dmflags' | 'timelimit' | 'fraglimit' | 'map' | 'rotationMode';
   pendingValue: number | string;
   description: string;
 }

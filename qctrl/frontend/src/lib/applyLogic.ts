@@ -4,7 +4,7 @@
  */
 
 export interface Change {
-  type: 'dmflags' | 'timelimit' | 'fraglimit' | 'map';
+  type: 'dmflags' | 'timelimit' | 'fraglimit' | 'map' | 'rotationMode';
   pendingValue: number | string;
   description: string;
 }
