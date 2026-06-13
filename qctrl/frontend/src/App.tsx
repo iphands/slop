@@ -9,6 +9,7 @@ import { Maps } from './pages/Maps';
 import { Players } from './pages/Players';
 import { Logs } from './pages/Logs';
 import { Dashboard } from './pages/Dashboard';
+import { Rotation } from './pages/Rotation';
 import { Settings } from './pages/Settings';
 import { NotFound } from './pages/NotFound';
 
@@ -42,6 +43,7 @@ function App() {
             <NavLink to="/">Dashboard</NavLink>
             <NavLink to="/deathmatch">Deathmatch</NavLink>
             <NavLink to="/maps">Maps</NavLink>
+            <NavLink to="/rotation">Rotation</NavLink>
             <NavLink to="/players">Players</NavLink>
             <NavLink to="/logs">Logs</NavLink>
             <NavLink to="/settings">Settings</NavLink>
@@ -54,6 +56,7 @@ function App() {
               <Route path="/" element={<Dashboard />} />
               <Route path="/deathmatch" element={<Deathmatch />} />
               <Route path="/maps" element={<Maps />} />
+              <Route path="/rotation" element={<Rotation />} />
               <Route path="/players" element={<Players />} />
               <Route path="/logs" element={<Logs />} />
               <Route path="/settings" element={<Settings />} />
