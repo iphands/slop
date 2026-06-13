@@ -47,6 +47,23 @@ export interface StatusResponse {
   fraglimit?: number;
 }
 
+export interface RotationMode {
+  Sequential: {};
+  Random: {};
+}
+
+export interface QueueStatus {
+  maps: string[];
+  mode: 'Sequential' | 'Random';
+  current_map: string | null;
+}
+
+export interface QueueResponse {
+  success: boolean;
+  message: string;
+  queue_size: number;
+}
+
 export async function getStatus(): Promise<StatusResponse> {
   const res = await fetch('/api/status');
   if (!res.ok) {
@@ -123,4 +140,51 @@ export async function executeRcon(command: string): Promise<string> {
     throw new Error('Failed to execute RCON command');
   }
   return res.text();
+}
+
+// Rotation queue API
+export async function getRotationQueue(): Promise<QueueStatus> {
+  const res = await fetch('/api/rotation');
+  if (!res.ok) {
+    throw new Error('Failed to fetch rotation queue');
+  }
+  return res.json();
+}
+
+export async function addMapToQueue(mapName: string): Promise<QueueResponse> {
+  const res = await fetch('/api/rotation', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ map_name: mapName }),
+  });
+  if (!res.ok) {
+    throw new Error('Failed to add map to queue');
+  }
+  return res.json();
+}
+
+export async function updateRotationQueue(maps: string[], mode: 'Sequential' | 'Random'): Promise<QueueResponse> {
+  const res = await fetch('/api/rotation', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ maps, mode }),
+  });
+  if (!res.ok) {
+    throw new Error('Failed to update rotation queue');
+  }
+  return res.json();
+}
+
+export async function removeMapFromQueue(mapName: string): Promise<QueueResponse> {
+  const res = await fetch(`/api/rotation/${encodeURIComponent(mapName)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    throw new Error('Failed to remove map from queue');
+  }
+  return res.json();
 }
