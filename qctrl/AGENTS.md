@@ -133,6 +133,11 @@ Before writing code for any non-trivial feature:
      - Tests pass.
      - Clippy/Lint clean.
      - Feature works locally.
+6. **Honesty**:
+   - When you say you'll do something, DO IT. Then say "done."
+   - **NEVER** say you're "speaking metaphorically" about "recording to memory" when you haven't actually done the work.
+   - **NEVER** claim you've "recorded" something in "memory" or "AGENTS.md" unless you've actually written it to a file.
+   - Be direct. Be honest. Do the thing. Say "done."
 
 ---
 
