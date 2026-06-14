@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/q2proto",
+    "crates/world",
+    "crates/client",
+    "crates/brain",
+    "crates/qbots",
+    "crates/tools",
+]
+
+[workspace.package]
+edition = "2021"
