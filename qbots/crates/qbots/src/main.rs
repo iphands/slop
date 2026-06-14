@@ -39,6 +39,24 @@ fn default_qport() -> u16 {
     (std::process::id() & 0xFFFF) as u16
 }
 
+/// Resolve `host[:port]` to a socket address via DNS lookup. Hostnames (e.g.
+/// `noir.lan`), `IP:port`, and bare IPs (defaulting port to 27910) all work.
+async fn resolve_addr(addr: &str) -> Result<SocketAddr, String> {
+    let target = if addr.contains(':') {
+        addr.to_string()
+    } else {
+        format!("{addr}:27910")
+    };
+    // Pass `target` by value so the lookup future owns it (avoids a borrow that would
+    // otherwise be extended across the await).
+    match tokio::net::lookup_host(target).await {
+        Ok(mut it) => it
+            .next()
+            .ok_or_else(|| format!("no addresses found for '{addr}'")),
+        Err(e) => Err(format!("can't resolve '{addr}': {e}")),
+    }
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -46,10 +64,10 @@ async fn main() -> ExitCode {
         Cmd::ConnectOne { addr, name, qport } => {
             let name = name.unwrap_or_else(|| "qbots".to_string());
             let qport = qport.unwrap_or_else(default_qport);
-            let addr: SocketAddr = match addr.parse() {
+            let addr = match resolve_addr(&addr).await {
                 Ok(a) => a,
                 Err(e) => {
-                    eprintln!("qbots: bad address '{addr}': {e}");
+                    eprintln!("qbots: {e}");
                     return ExitCode::FAILURE;
                 }
             };
