@@ -21,6 +21,7 @@ export function Logs() {
 
   useEffect(() => {
     const wsUrl = `ws://${window.location.host}/api/logs/ws`;
+    console.log('Connecting to WebSocket:', wsUrl);
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
@@ -30,6 +31,7 @@ export function Logs() {
     ws.onmessage = (event) => {
       try {
         const entry: LogEntry = JSON.parse(event.data);
+        console.log('Received log entry:', entry);
         setLogs((prev) => [...prev, entry].slice(-1000));
       } catch (e) {
         console.error('Failed to parse log entry:', e);
@@ -106,21 +108,35 @@ export function Logs() {
         </form>
       </div>
 
-      <div className="flex-1 overflow-y-auto font-mono text-sm p-4 bg-gray-900 text-green-400">
+      <div className="flex-1 overflow-y-auto font-mono text-sm p-4 bg-gray-900 text-green-400 text-left">
         {filteredLogs.length === 0 ? (
           <div className="text-gray-500">No logs yet. Send a command to start streaming.</div>
         ) : (
-          filteredLogs.map((log) => (
-            <div key={log.id} className="whitespace-pre-wrap py-1">
-              <span className="text-gray-500">
-                {new Date(log.timestamp * 1000).toLocaleTimeString()}
-              </span>{' '}
-              <span className={log.level === 'ERROR' ? 'text-red-400' : 'text-green-400'}>
-                [{log.level}]
-              </span>{' '}
-              {log.message}
-            </div>
-          ))
+          <div className="space-y-2 text-left">
+            {filteredLogs.map((log) => {
+              const isResponse = log.level === 'RESPONSE';
+              const isError = log.level === 'ERROR';
+              
+              const levelColor = isError 
+                ? 'text-red-400' 
+                : isResponse 
+                  ? 'text-gray-400' 
+                  : 'text-blue-400';
+              
+              return (
+                <div 
+                  key={log.id} 
+                  className="whitespace-pre-wrap py-1 border-b border-gray-800 last:border-b-0 text-left"
+                >
+                  <span className="text-gray-500 min-w-[80px] inline-block">
+                    {new Date(log.timestamp * 1000).toLocaleTimeString()}
+                  </span>{' '}
+                  <span className={levelColor}>[{log.level}]</span>{' '}
+                  <span className={isResponse ? 'text-gray-400' : ''}>{log.message}</span>
+                </div>
+              );
+            })}
+          </div>
         )}
         <div ref={endRef} />
       </div>

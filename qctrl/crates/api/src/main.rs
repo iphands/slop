@@ -59,7 +59,7 @@ async fn main() {
     ));
 
     let map_cache = MapCache::new(&config.paths.baseq2);
-    let log_stream = Arc::new(LogStream::new(1000));
+    let log_stream = Arc::new(LogStream::new(1000, 200));
     let favorites = Favorites::new("favorites.json").unwrap_or_else(|e| {
         tracing::warn!(
             "Failed to initialize favorites: {}, using empty favorites",
@@ -432,11 +432,25 @@ async fn rcon_execute(
     State(state): State<SharedState>,
     Json(payload): Json<ExecutePayload>,
 ) -> Result<Json<ExecuteResponse>, StatusCode> {
+    tracing::info!("Received RCON command: {}", payload.command);
     match state.rcon_client.execute(&payload.command).await {
         Ok(output) => {
+            tracing::info!("Command executed successfully, broadcasting logs");
             state
                 .log_stream
                 .broadcast("INFO", &format!("Executing: {}", payload.command));
+            
+            // Truncate long responses to prevent log flooding
+            let display_output = if output.len() > 500 {
+                format!("{}... (truncated {} chars)", &output[..500], output.len() - 500)
+            } else {
+                output.clone()
+            };
+            
+            state
+                .log_stream
+                .broadcast("RESPONSE", &display_output);
+            tracing::info!("Logs broadcast complete");
             Ok(Json(ExecuteResponse {
                 success: true,
                 output,
@@ -456,28 +470,52 @@ async fn logs_ws(
     State(state): State<SharedState>,
     ws: axum::extract::ws::WebSocketUpgrade,
 ) -> axum::response::Response {
-    ws.on_upgrade(move |socket| handle_websocket(socket, state.log_stream.subscribe()))
+    tracing::info!("WebSocket connection requested to /api/logs/ws");
+    ws.on_upgrade(move |socket| {
+        tracing::info!("WebSocket connected to /api/logs/ws");
+        handle_websocket(socket, state.log_stream.subscribe())
+    })
 }
 
-async fn handle_websocket(mut socket: axum::extract::ws::WebSocket, mut rx: logs::LogReceiver) {
+async fn handle_websocket(
+    mut socket: axum::extract::ws::WebSocket,
+    (mut rx, history): (logs::LogReceiver, Vec<logs::LogEntry>),
+) {
+    tracing::info!("WebSocket handler started, sending {} history entries", history.len());
+    
+    for entry in history {
+        let json = serde_json::to_string(&entry).unwrap();
+        if socket.send(axum::extract::ws::Message::Text(json)).await.is_err() {
+            tracing::info!("WebSocket disconnected during history send");
+            return;
+        }
+    }
+    
     loop {
         tokio::select! {
             msg = rx.recv() => {
                 match msg {
                     Ok(entry) => {
                         let json = serde_json::to_string(&entry).unwrap();
+                        tracing::debug!("Sending log entry via WebSocket: {:?}", entry);
                         if socket.send(axum::extract::ws::Message::Text(json)).await.is_err() {
+                            tracing::info!("WebSocket disconnected");
                             break;
                         }
                     }
-                    Err(_) => break,
+                    Err(e) => {
+                        tracing::warn!("Error receiving from log stream: {:?}", e);
+                        break;
+                    }
                 }
             }
             _ = socket.recv() => {
+                tracing::info!("WebSocket client disconnected");
                 break;
             }
         }
     }
+    tracing::info!("WebSocket handler ended");
 }
 
 #[derive(Serialize)]
