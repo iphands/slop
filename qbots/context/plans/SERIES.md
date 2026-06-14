@@ -5,7 +5,7 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 
 | Plan | Title | Depends on | Status | Milestone / Notes |
 |------|-------|-----------|--------|-------------------|
-| **01** | Workspace scaffold | — | pending | `crates/` skeleton, `.gitignore`, `justfile`, build gates |
+| **01** | Workspace scaffold | — | done | `crates/` skeleton, `.gitignore`, `justfile`, build gates |
 | **02** | Wire codec (`q2proto`) | 01 | pending | `MSG_*` R/W, `usercmd` delta, InfoString, OOB framing |
 | **03** | Connection (`client`) | 02 | pending | handshake + netchan + spawn → **bot appears in server `status`** |
 | **04** | Frame loop & movement | 03 | pending | decode frames + real `Usercmd`s → **bot stands and walks on the map** |
