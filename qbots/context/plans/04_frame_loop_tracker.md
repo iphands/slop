@@ -1,7 +1,8 @@
 # Frame Loop & Movement — Tracker
 
 ## Overview
-- Status: ~50% — T1–T3 done (bot now perceives frames); T4–T6 (movement + walk) remain.
+- Status: 100% — DONE (2026-06-14); **verified live** (bot walks on `noir.lan:27910`).
+  T5 (pmove prediction) deferred to after Plan 05 (needs the world tracer).
 - Start date: 2026-06-14
 - Plan: `04_frame_loop.md`
 - Depends on: Plan 03 (live connection + Plan 02 codec)
@@ -20,6 +21,11 @@
 | 1 | T1: player/entity state decoders | `q2proto/src/{playerstate,entitystate}.rs` | done | U_* MOREBITS + PS_*; 5 tests |
 | 2 | T2: svc_frame + ring | `q2proto/src/frame.rs` | done | parse_frame + FrameRing; terminator = WriteShort(0); 3 tests |
 | 3 | T3: snapshot decode (wired) | `client/src/conn.rs` | done | conn decodes svc_frame → conn.frame; self_origin() |
-| 4 | T4: movement controller → real clc_move | `client/src/movement.rs` | pending | needs COM_BlockSequenceCRCByte checksum port |
-| 5 | T5: pmove prediction | `client/src/predict.rs` | pending | port `pmove.c`; needs world tracer (Plan 05) |
-| 6 | T6: verify walking | — | pending | real map, ≥ 2 min, no drop; live-test against noir.lan |
+| 4 | T4: movement controller → real clc_move | `client/src/conn.rs` (keepalive) | done | COM_BlockSequenceCRCByte ported; bot walks live (~100 u/s) |
+| 5 | T5: pmove prediction | `client/src/predict.rs` | deferred | needs world tracer (Plan 05); not required for the walk milestone |
+| 6 | T6: verify walking | — | done | **VERIFIED**: origin streams + changes (361→−30 X over ~4s); no drop/kick |
+
+## Confirmed live
+- Full perceive→act loop proven: connect → spawn → decode frames (own state + PVS ents) →
+  send real `clc_move` → server moves the bot → new frames show the new origin.
+- Checksum port is byte-correct (server accepted moves; no kick).

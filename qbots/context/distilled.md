@@ -38,3 +38,28 @@ Reaches "test connected" / "test entered the game" on a real yquake2 server:
 - A connect `--addr` may be a **hostname** (`noir.lan`): resolve with
   `tokio::net::lookup_host`, not `SocketAddr::from_str` (which rejects hostnames). Pass
   the owned `String` into `lookup_host` to avoid a borrow-across-`await` error.
+
+## svc_frame — perception (VERIFIED LIVE)
+- `svc_frame` body (`CL_ParseFrame`, cl_parse.c:739): `serverframe`(i32) `deltaframe`(i32)
+  `surpressCount`(byte) `areabits`(len-byte + data) `svc_playerinfo` + player_state
+  `svc_packetentities` + entity loop.
+- Entity-list terminator = `MSG_WriteShort(0)` (sv_entities.c:150) → 2 zero bytes, decoded
+  as `bits=0` + `number=0` (not one byte).
+- `event` is single-frame: force-cleared to 0 when `U_EVENT` is absent.
+- Entity delta field order matters (decoder reads FRAME8 before ORIGIN1, etc.).
+- Confirmed live: frames stream at ~10 Hz, delta-resolve across the 16-frame ring, `ents`
+  tracks the PVS. Bot perceives its own origin + visible world.
+
+## clc_move — movement (VERIFIED LIVE)
+- Format (`CL_SendMove`, cl_input.c:786): `clc_move` op + checksum byte + serverframe ack
+  (i32, or -1) + **three** delta usercmds (`nullcmd→a, a→b, b→c`).
+- Checksum = `COM_BlockSequenceCRCByte(body_after_checksum, len, outgoing_sequence)`
+  (crc.c:157). The server validates it strictly — wrong byte → move dropped/kick. Ported
+  correctly: **bot walks, no kick.**
+- CRC is CRC-16/CCITT-FALSE (poly 0x1021, init 0xffff); check value of "123456789" = 0x29B1.
+- `chktbl[1024]` in source has only **960** initializers — C zero-pads; the trailing 64
+  bytes (readable at high sequence) must be explicit zeros.
+- `sequence` for the checksum = the netchan `outgoing_sequence` that `transmit` will write
+  to `w1` (i.e. the pre-increment value).
+- Timing: 3 usercmds × `msec=33` ≈ 99 ms per 100 ms heartbeat ≈ realtime. Observed the bot
+  walk at ~100 u/s with `forwardmove=400`; yaw 0 ⇒ forward ≈ −X here.

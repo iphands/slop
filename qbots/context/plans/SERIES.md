@@ -8,7 +8,7 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 | **01** | Workspace scaffold | — | done | `crates/` skeleton, `.gitignore`, `justfile`, build gates |
 | **02** | Wire codec (`q2proto`) | 01 | done | `MSG_*` R/W, `usercmd` delta, InfoString, OOB framing |
 | **03** | Connection (`client`) | 02 | done | handshake + netchan + spawn → **bot connects & enters the game** (verified live) |
-| **04** | Frame loop & movement | 03 | pending | decode frames + real `Usercmd`s → **bot stands and walks on the map** |
+| **04** | Frame loop & movement | 03 | done | decode frames + real `Usercmd`s → **bot walks** (verified live; T5 pmove deferred) |
 | **05** | World model (`world`) | 04 | pending | `.bsp` parse → trace + PVS + nav graph (replaces `gi.trace()`) |
 | **06** | Brain (`brain`) | 05 | pending | perceive → navigate → fight → **single bot scores frags** |
 | **07** | Fleet (`qbots` bin) | 06 | pending | N supervised bots, staggered, logged, rate-safe |
