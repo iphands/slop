@@ -14,7 +14,10 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use bytes::Bytes;
-use q2proto::{is_oob, oob_payload, tokenize, write_oob, ClcOp, Reader, Writer, PROTOCOL_VERSION};
+use q2proto::{
+    is_oob, oob_payload, parse_frame, tokenize, write_oob, ClcOp, Frame, FrameRing, Reader, SvcOp,
+    Writer, PROTOCOL_VERSION,
+};
 use tokio::net::UdpSocket;
 use tokio::time;
 
@@ -45,6 +48,9 @@ pub struct Conn {
     netchan: Option<Netchan>,
     configstrings: ConfigStrings,
     pub serverdata: Option<ServerData>,
+    ring: FrameRing,
+    /// Most recently decoded server frame (our state + visible world).
+    pub frame: Option<Frame>,
     begin_queued: bool,
 }
 
@@ -60,6 +66,8 @@ impl Conn {
             netchan: None,
             configstrings: ConfigStrings::default(),
             serverdata: None,
+            ring: FrameRing::new(),
+            frame: None,
             begin_queued: false,
         }
     }
@@ -151,7 +159,17 @@ impl Conn {
                     self.state = ConnState::Connecting;
                     return Some(oob_line("getchallenge\n"));
                 }
-                // Frame / baseline / sound ops — stop here; full decode is Plan 04.
+                // svc_frame → decode the full snapshot (Plan 04); other un-handled ops
+                // (spawnbaseline, sound, …) still stop the payload parse here.
+                Ok(SvcEvent::Unhandled(op)) if SvcOp::from_u8(op) == Some(SvcOp::Frame) => {
+                    match parse_frame(&mut r, &self.ring) {
+                        Ok(frame) => {
+                            self.ring.store(frame.clone());
+                            self.frame = Some(frame);
+                        }
+                        Err(_) => break,
+                    }
+                }
                 Ok(SvcEvent::Unhandled(_)) | Err(_) => break,
             }
         }
@@ -169,6 +187,13 @@ impl Conn {
     /// Current state.
     pub fn state(&self) -> ConnState {
         self.state
+    }
+
+    /// Our player's world-space origin from the most recent frame, if any.
+    pub fn self_origin(&self) -> Option<[f32; 3]> {
+        self.frame
+            .as_ref()
+            .map(|f| f.playerstate.pmove.origin_f32())
     }
 }
 
