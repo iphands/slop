@@ -217,6 +217,7 @@ pub async fn run(addr: SocketAddr, name: &str, qport: u16) -> std::io::Result<()
 
     let mut buf = vec![0u8; 4096];
     let mut ticker = time::interval(Duration::from_millis(100));
+    let mut ticks = 0u32;
     loop {
         tokio::select! {
             res = sock.recv(&mut buf) => {
@@ -231,6 +232,25 @@ pub async fn run(addr: SocketAddr, name: &str, qport: u16) -> std::io::Result<()
             _ = ticker.tick() => {
                 if let Some(pkt) = conn.keepalive() {
                     let _ = sock.send(&pkt).await;
+                }
+                // ~1s heartbeat: state + latest frame's serverframe, entity count, origin.
+                ticks = ticks.wrapping_add(1);
+                if ticks.is_multiple_of(10) {
+                    match &conn.frame {
+                        Some(f) => {
+                            let o = f.playerstate.pmove.origin_f32();
+                            eprintln!(
+                                "qbots: {:?} frame={} ents={} origin=({:.1},{:.1},{:.1})",
+                                conn.state(),
+                                f.serverframe,
+                                f.entities.len(),
+                                o[0],
+                                o[1],
+                                o[2]
+                            );
+                        }
+                        None => eprintln!("qbots: {:?} (no frame yet)", conn.state()),
+                    }
                 }
             }
         }
