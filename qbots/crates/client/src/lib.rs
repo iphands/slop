@@ -6,5 +6,7 @@
 //! See `AGENTS.md` and `context/plans/completed/03_connection_client.md`.
 
 pub mod netchan;
+pub mod userinfo;
 
 pub use netchan::Netchan;
+pub use userinfo::Userinfo;
