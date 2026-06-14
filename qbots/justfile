@@ -1,0 +1,24 @@
+default: all
+
+# Format all crates.
+fmt:
+    cargo fmt --all
+
+# Fail if any crate isn't formatted.
+fmt-check:
+    cargo fmt --all -- --check
+
+# Lint everything; warnings are errors.
+clippy:
+    cargo clippy --all-targets --all-features -- -D warnings
+
+# Run all tests.
+test:
+    cargo test --all-features
+
+# Build all targets.
+build:
+    cargo build --all-targets
+
+# CI / pre-commit gate — fmt-check + clippy + test + build, all must pass.
+all: fmt-check clippy test build
