@@ -15,8 +15,8 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use q2proto::{
-    is_oob, oob_payload, parse_frame, tokenize, write_oob, ClcOp, Frame, FrameRing, Reader, SvcOp,
-    Writer, PROTOCOL_VERSION,
+    build_clc_move, is_oob, oob_payload, parse_frame, tokenize, write_oob, ClcOp, Frame, FrameRing,
+    Reader, SvcOp, Usercmd, Writer, PROTOCOL_VERSION,
 };
 use tokio::net::UdpSocket;
 use tokio::time;
@@ -176,12 +176,24 @@ impl Conn {
         None
     }
 
-    /// Build a keep-alive frame: an empty netchan transmit that flushes any queued
-    /// reliable messages (`new`, `begin`) and refreshes the server's last_received.
-    /// (Real `clc_move` with the usercmd checksum lands in Plan 04.)
+    /// Build a heartbeat frame. Once Active, send a real `clc_move` (walk forward) so
+    /// the server moves us; before that, an empty transmit flushes the queued reliable
+    /// `new`/`begin` and refreshes the server's last_received.
     pub fn keepalive(&mut self) -> Option<Bytes> {
+        let payload: Vec<u8> = if self.state == ConnState::Active {
+            let cmd = Usercmd {
+                msec: 33,
+                forwardmove: 400, // walk forward
+                ..Default::default()
+            };
+            let serverframe = self.frame.as_ref().map(|f| f.serverframe).unwrap_or(-1);
+            let seq = self.netchan.as_ref()?.outgoing_sequence();
+            build_clc_move(serverframe, [&cmd, &cmd, &cmd], seq)
+        } else {
+            Vec::new()
+        };
         let nc = self.netchan.as_mut()?;
-        Some(nc.transmit(&[]))
+        Some(nc.transmit(&payload))
     }
 
     /// Current state.

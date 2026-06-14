@@ -3,9 +3,10 @@
 //! Ports `usercmd_t` (`common/header/shared.h:676`) and its delta encode/decode
 //! (`MSG_WriteDeltaUsercmd` at `movemsg.c:644`, `MSG_ReadDeltaUsercmd` at `:1181`).
 
+use crate::crc::block_sequence_crc_byte;
 use crate::error::DecodeError;
 use crate::ops::{
-    CM_ANGLE1, CM_ANGLE2, CM_ANGLE3, CM_BUTTONS, CM_FORWARD, CM_IMPULSE, CM_SIDE, CM_UP,
+    ClcOp, CM_ANGLE1, CM_ANGLE2, CM_ANGLE3, CM_BUTTONS, CM_FORWARD, CM_IMPULSE, CM_SIDE, CM_UP,
 };
 use crate::{Reader, Writer};
 
@@ -126,6 +127,31 @@ impl Usercmd {
     }
 }
 
+/// Build a `clc_move` payload, porting the body of `CL_SendMove` (`cl_input.c:786`):
+/// `clc_move` opcode + a checksum byte + the serverframe ack + **three** delta usercmds
+/// (nullcmd→a, a→b, b→c). `cmds` is `[oldest, mid, newest]`; `sequence` is the netchan
+/// outgoing_sequence this packet will carry, which the server uses to recompute the
+/// checksum — so it must equal the sequence `Netchan::transmit` writes to `w1`.
+pub fn build_clc_move(serverframe: i32, cmds: [&Usercmd; 3], sequence: u32) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.write_u8(ClcOp::Move.into());
+    let checksum_index = w.len();
+    w.write_u8(0); // checksum placeholder
+    w.write_i32(serverframe);
+
+    let nullcmd = Usercmd::default();
+    cmds[0].write_delta(&mut w, &nullcmd);
+    cmds[1].write_delta(&mut w, cmds[0]);
+    cmds[2].write_delta(&mut w, cmds[1]);
+
+    let bytes = w.freeze();
+    let body = &bytes[checksum_index + 1..];
+    let checksum = block_sequence_crc_byte(body, sequence);
+    let mut out = bytes.to_vec();
+    out[checksum_index] = checksum;
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,5 +229,26 @@ mod tests {
             Usercmd::read_delta(&mut r, &Usercmd::default()).unwrap_err(),
             DecodeError::Eof
         );
+    }
+
+    #[test]
+    fn clc_move_checksum_is_self_consistent() {
+        let cmd = Usercmd {
+            msec: 33,
+            forwardmove: 400,
+            ..Default::default()
+        };
+        let bytes = build_clc_move(100, [&cmd, &cmd, &cmd], 5);
+
+        assert_eq!(bytes[0], ClcOp::Move as u8);
+        // serverframe ack at bytes[2..6]
+        assert_eq!(
+            i32::from_le_bytes([bytes[2], bytes[3], bytes[4], bytes[5]]),
+            100
+        );
+        // the stored checksum byte recomputes over the body with the same sequence
+        let stored = bytes[1];
+        let recomputed = block_sequence_crc_byte(&bytes[2..], 5);
+        assert_eq!(stored, recomputed);
     }
 }
