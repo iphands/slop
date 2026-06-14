@@ -1,7 +1,7 @@
 # Frame Loop & Movement — Tracker
 
 ## Overview
-- Status: 0% complete
+- Status: ~50% — T1–T3 done (bot now perceives frames); T4–T6 (movement + walk) remain.
 - Start date: 2026-06-14
 - Plan: `04_frame_loop.md`
 - Depends on: Plan 03 (live connection + Plan 02 codec)
@@ -17,9 +17,9 @@
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: player/entity state decoders | `q2proto/src/{playerstate,entitystate}.rs` | pending | `shared.h:1233/1280`, `common.h:243` |
-| 2 | T2: svc_frame + ring | `client/src/frame.rs` | pending | `cl_parse.c:739`; UPDATE_BACKUP=16 |
-| 3 | T3: snapshot decode | `client/src/snapshot.rs` | pending | entity types via CS table |
-| 4 | T4: movement controller | `client/src/movement.rs` | pending | desired vel → Usercmd |
-| 5 | T5: pmove prediction | `client/src/predict.rs` | pending | port `pmove.c`; stub collision |
-| 6 | T6: verify walking | — | pending | real map, ≥ 2 min, no drop |
+| 1 | T1: player/entity state decoders | `q2proto/src/{playerstate,entitystate}.rs` | done | U_* MOREBITS + PS_*; 5 tests |
+| 2 | T2: svc_frame + ring | `q2proto/src/frame.rs` | done | parse_frame + FrameRing; terminator = WriteShort(0); 3 tests |
+| 3 | T3: snapshot decode (wired) | `client/src/conn.rs` | done | conn decodes svc_frame → conn.frame; self_origin() |
+| 4 | T4: movement controller → real clc_move | `client/src/movement.rs` | pending | needs COM_BlockSequenceCRCByte checksum port |
+| 5 | T5: pmove prediction | `client/src/predict.rs` | pending | port `pmove.c`; needs world tracer (Plan 05) |
+| 6 | T6: verify walking | — | pending | real map, ≥ 2 min, no drop; live-test against noir.lan |
