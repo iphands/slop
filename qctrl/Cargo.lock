@@ -667,6 +667,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-test",
+ "tracing",
 ]
 
 [[package]]

@@ -1,4 +1,3 @@
-import { useState, useEffect } from 'react';
 import { useChanges } from '../contexts/ChangesContext';
 import { getRotationQueue, updateRotationQueue } from '../lib/api';
 
@@ -9,17 +8,19 @@ interface RotationModeToggleProps {
 
 export function RotationModeToggle({ currentMode = 'Sequential', onModeChange }: RotationModeToggleProps) {
   const { queueChange, getPendingValue, isDirty } = useChanges();
-  const [localMode, setLocalMode] = useState<'Sequential' | 'Random'>(currentMode);
 
-  // Sync local state when currentMode prop changes
-  useEffect(() => {
-    setLocalMode(currentMode);
-  }, [currentMode]);
+  // The displayed mode is the queued (pending) change if any, else the mode the
+  // server reports. Deriving this — instead of mirroring the prop into local
+  // state via an effect — avoids the set-state-in-effect anti-pattern.
+  // queueChange sets the pending value synchronously, so the toggle still
+  // updates optimistically on click.
+  const pending = getPendingValue('rotationMode');
+  const displayMode =
+    (pending as 'Sequential' | 'Random' | undefined) ?? currentMode;
 
   const handleModeChange = (newMode: 'Sequential' | 'Random') => {
-    if (newMode === localMode) return;
-    
-    setLocalMode(newMode);
+    if (newMode === displayMode) return;
+
     queueChange({
       type: 'rotationMode',
       pendingValue: newMode,
@@ -36,8 +37,6 @@ export function RotationModeToggle({ currentMode = 'Sequential', onModeChange }:
       .catch(() => {});
   };
 
-  const pending = getPendingValue('rotationMode');
-  const displayMode = pending ? (pending as 'Sequential' | 'Random') : localMode;
   const isSequential = displayMode === 'Sequential';
 
   return (

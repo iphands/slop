@@ -3,6 +3,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ChangesProvider } from './contexts/ChangesContext';
 import { ChangesQueueUI } from './components/ChangesQueueUI';
 import { ServerStatusSync } from './components/ServerStatusSync';
+import { NotificationsProvider } from './hooks/useNotifications';
+import { NotificationContainer } from './components/NotificationContainer';
+import { RotationController } from './components/RotationController';
 import { Layout } from './components/Layout';
 import { Deathmatch } from './pages/Deathmatch';
 import { Maps } from './pages/Maps';
@@ -37,8 +40,12 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ChangesProvider>
-        <ServerStatusSync />
-        <Layout>
+        <NotificationsProvider>
+          <ServerStatusSync />
+          {/* Drives automatic map rotation globally, independent of the
+              current page. Must live outside <Routes>. */}
+          <RotationController />
+          <Layout>
           <nav className="flex gap-4 mb-6 border-b border-gray-700 pb-4 flex-wrap">
             <NavLink to="/">Dashboard</NavLink>
             <NavLink to="/deathmatch">Deathmatch</NavLink>
@@ -64,6 +71,9 @@ function App() {
             </Routes>
           </div>
         </Layout>
+        {/* Global notification stack — single instance for the whole app. */}
+        <NotificationContainer />
+        </NotificationsProvider>
       </ChangesProvider>
     </QueryClientProvider>
   );

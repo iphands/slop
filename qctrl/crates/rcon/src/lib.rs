@@ -27,12 +27,6 @@ pub struct RconClient {
 }
 
 impl RconClient {
-    /// Create a new RCON client.
-    ///
-    /// # Arguments
-    /// * `host` - Server hostname.
-    /// * `port` - Server RCON port (typically 27910).
-    /// * `password` - RCON password.
     pub fn new(host: &str, port: u16, password: &str) -> Self {
         Self {
             host: host.to_string(),
@@ -41,16 +35,9 @@ impl RconClient {
         }
     }
 
-    /// Execute an RCON command on the server.
-    ///
-    /// # Arguments
-    /// * `command` - The command to execute (e.g., "status", "dmflags", "kick").
-    ///
-    /// # Returns
-    /// * `Ok(String)` - Server response output.
-    /// * `Err(RconError)` - Connection timeout, invalid response, or network error.
     pub async fn execute(&self, command: &str) -> Result<String, RconError> {
-        // Resolve hostname to IP address first
+        tracing::info!("RCON executing: {}", command);
+        
         let addr_str = format!("{}:{}", self.host, self.port);
         let addr = tokio::net::lookup_host(&addr_str)
             .await
@@ -59,15 +46,23 @@ impl RconClient {
             .ok_or_else(|| RconError::InvalidResponse("Failed to resolve host".to_string()))?;
 
         match self.execute_udp(addr, command).await {
-            Ok(response) => return Ok(response),
-            Err(RconError::Timeout) => {}
+            Ok(response) => {
+                tracing::info!("RCON UDP response ({} chars): {}", response.len(), response.lines().next().unwrap_or(""));
+                return Ok(response);
+            }
+            Err(RconError::Timeout) => {
+                tracing::warn!("RCON UDP timeout, falling back to TCP");
+            }
             Err(e) => return Err(e),
         }
 
-        self.execute_tcp(addr, command).await
+        let response = self.execute_tcp(addr, command).await?;
+        tracing::info!("RCON TCP response ({} chars): {}", response.len(), response.lines().next().unwrap_or(""));
+        Ok(response)
     }
 
     async fn execute_udp(&self, addr: SocketAddr, command: &str) -> Result<String, RconError> {
+        // Create a fresh socket for each command to avoid response mixing
         let socket = UdpSocket::bind("0.0.0.0:0").await?;
         socket.connect(addr).await?;
 
@@ -98,7 +93,7 @@ impl RconClient {
 
         let mut stream = tokio::net::TcpStream::connect(addr).await?;
 
-        let rcon_command = format!("rcon {} {}\n", self.password, command);
+        let rcon_command = format!("rcon \"{}\" {}\n", self.password, command);
         stream.write_all(rcon_command.as_bytes()).await?;
 
         let mut buf = [0u8; 4096];
@@ -171,6 +166,25 @@ mod tests {
         assert!(
             !format_str.contains("rcon test123 dmflags"),
             "RCON format must NOT have unquoted password"
+        );
+    }
+
+    #[test]
+    fn test_tcp_password_quoting() {
+        // Regression test: TCP path must also quote the password
+        // Prevents regression of unquoted password in TCP format
+        let client = RconClient::new("localhost", 27910, "ace123");
+        let command = "status";
+        let format_str = format!("rcon \"{}\" {}\n", client.password, command);
+
+        assert!(
+            format_str.contains(r#"rcon "ace123" status"#),
+            "TCP RCON format must have quoted password: {}",
+            format_str
+        );
+        assert!(
+            !format_str.contains("rcon ace123 status"),
+            "TCP RCON format must NOT have unquoted password"
         );
     }
 }

@@ -4,30 +4,29 @@ import { Section } from '../components/Section';
 import { QueueList } from '../components/QueueList';
 import { AddMapDialog } from '../components/AddMapDialog';
 import { RotationModeToggle } from '../components/RotationModeToggle';
-import { useRotationTimer } from '../hooks/useRotationTimer';
-import type { TimerTriggerEvent } from '../hooks/useRotationTimer';
-import { useMapRotation } from '../hooks/useMapRotation';
 import { useNotifications } from '../hooks/useNotifications';
-import { NotificationContainer } from '../components/NotificationContainer';
 import { getRotationQueue, toggleRotation } from '../lib/api';
 
+/**
+ * Queue-management UI for map rotation.
+ *
+ * The actual automatic rotation is driven by <RotationController />, which is
+ * mounted at the app root and runs regardless of which page is open. This page
+ * only manages what's in the queue and the rotation mode/enable state.
+ */
 export function Rotation() {
   const queryClient = useQueryClient();
   const [showAddDialog, setShowAddDialog] = useState(false);
-  const [queueMaps, setQueueMaps] = useState<string[]>([]);
   const [currentMode, setCurrentMode] = useState<'Sequential' | 'Random'>('Sequential');
-  const [currentMap, setCurrentMap] = useState<string | null>(null);
   const [rotationEnabled, setRotationEnabled] = useState(true);
 
-  const { notifications, addNotification, removeNotification } = useNotifications();
+  const { addNotification } = useNotifications();
 
   useEffect(() => {
     const loadQueue = async () => {
       try {
         const queue = await getRotationQueue();
-        setQueueMaps(queue.maps);
         setCurrentMode(queue.mode);
-        setCurrentMap(queue.current_map);
         setRotationEnabled(queue.enabled);
       } catch {
         // Silently fail on initial load
@@ -40,9 +39,7 @@ export function Rotation() {
     try {
       await queryClient.invalidateQueries({ queryKey: ['rotationQueue'] });
       const queue = await getRotationQueue();
-      setQueueMaps(queue.maps);
       setCurrentMode(queue.mode);
-      setCurrentMap(queue.current_map);
       setRotationEnabled(queue.enabled);
     } catch {
       // Silently fail
@@ -63,54 +60,14 @@ export function Rotation() {
     }
   };
 
-  const handleTimerTrigger = async (event: TimerTriggerEvent) => {
-    const triggerType = event.type === 'time_limit' ? 'Time limit' : 'Frag limit';
-    addNotification('info', `${triggerType} reached - switching map...`);
-  };
-
-  const { handleTrigger: handleMapRotation, isSwitching, switchingTo } = useMapRotation({
-    mode: currentMode,
-    queueMaps,
-    currentMap,
-    onMapChangeStart: (mapName) => {
-      addNotification('info', `Switching to ${mapName}...`);
-    },
-    onMapChangeComplete: (mapName) => {
-      addNotification('success', `Successfully switched to ${mapName}`);
-      handleQueueChange();
-    },
-    onMapChangeError: (error) => {
-      addNotification('error', `Failed to switch map: ${error}`);
-    },
-    onResetTimer: () => {
-      // Timer reset is handled by useRotationTimer detecting map change
-    },
-    rotationEnabled,
-  });
-
-  const onTimerTrigger = async (event: TimerTriggerEvent) => {
-    await handleTimerTrigger(event);
-    await handleMapRotation(event);
-  };
-
-  useRotationTimer({
-    onTrigger: onTimerTrigger,
-  });
-
   return (
     <div className="space-y-6 relative">
       <h1 className="text-2xl font-bold">Map Rotation</h1>
 
-      {isSwitching && switchingTo && (
-        <div className="bg-orange-600/20 border border-orange-500 rounded-lg p-4">
-          <p className="text-orange-300">Switching to {switchingTo}...</p>
-        </div>
-      )}
-
       <Section title="Rotation Mode">
         <div className="flex items-center justify-between mb-4">
           <div className="flex-1">
-            <RotationModeToggle 
+            <RotationModeToggle
               currentMode={currentMode}
               onModeChange={(newMode) => setCurrentMode(newMode)}
             />
@@ -154,8 +111,6 @@ export function Rotation() {
         onMapAdded={handleQueueChange}
         addNotification={addNotification}
       />
-
-      <NotificationContainer notifications={notifications} onDismiss={removeNotification} />
     </div>
   );
 }

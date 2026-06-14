@@ -95,6 +95,14 @@ async fn main() {
         rotation_enabled,
     };
 
+    // Push the persisted rotation queue to the server on startup so the server's
+    // own end-of-match rotation is correct from the first map (sv_maplist is
+    // lost on server restart).
+    {
+        let queue = state.rotation_queue.lock().await;
+        spawn_sv_maplist_sync(state.clone(), &queue);
+    }
+
     let api_routes = Router::new()
         .route("/health", get(health))
         .route("/config", get(get_config))
@@ -257,6 +265,8 @@ async fn get_rotation(
         None
     };
 
+    tracing::info!("Rotation status: enabled={}, maps={:?}, current={:?}", enabled, maps, current_map);
+
     Ok(Json(QueueStatusResponse {
         maps,
         mode: queue.mode(),
@@ -269,11 +279,14 @@ async fn add_to_rotation(
     State(state): State<SharedState>,
     Json(payload): Json<AddMapRequest>,
 ) -> Result<Json<QueueResponse>, StatusCode> {
+    tracing::info!("Adding to rotation: {}", payload.map_name);
+    
     match state.map_cache.get_maps() {
         Ok(available_maps) => {
             let map_exists = available_maps.iter().any(|m| m.name == payload.map_name);
 
             if !map_exists {
+                tracing::warn!("Map '{}' not found in baseq2/maps/", payload.map_name);
                 return Ok(Json(QueueResponse {
                     success: false,
                     message: format!("Map '{}' not found in baseq2/maps/", payload.map_name),
@@ -288,6 +301,9 @@ async fn add_to_rotation(
                 tracing::error!("Failed to save rotation queue: {}", e);
                 return Err(StatusCode::INTERNAL_SERVER_ERROR);
             }
+
+            tracing::info!("Added '{}' to rotation queue. Queue size: {}", payload.map_name, queue.len());
+            spawn_sv_maplist_sync(state.clone(), &queue);
 
             Ok(Json(QueueResponse {
                 success: true,
@@ -306,6 +322,8 @@ async fn update_rotation(
     State(state): State<SharedState>,
     Json(payload): Json<QueueStatusResponse>,
 ) -> Result<Json<QueueResponse>, StatusCode> {
+    tracing::info!("Updating rotation: mode={:?}, maps={:?}", payload.mode, payload.maps);
+    
     let mut queue = state.rotation_queue.lock().await;
 
     queue.set_maps(payload.maps);
@@ -315,6 +333,9 @@ async fn update_rotation(
         tracing::error!("Failed to save rotation queue: {}", e);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
+
+    tracing::info!("Rotation queue updated. Queue size: {}", queue.len());
+    spawn_sv_maplist_sync(state.clone(), &queue);
 
     Ok(Json(QueueResponse {
         success: true,
@@ -327,6 +348,8 @@ async fn remove_from_rotation(
     State(state): State<SharedState>,
     axum::extract::Path(map_name): axum::extract::Path<String>,
 ) -> Result<Json<QueueResponse>, StatusCode> {
+    tracing::info!("Removing from rotation: {}", map_name);
+    
     let mut queue = state.rotation_queue.lock().await;
 
     let was_present = queue.get_maps().contains(&map_name);
@@ -336,6 +359,9 @@ async fn remove_from_rotation(
         tracing::error!("Failed to save rotation queue: {}", e);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
+
+    tracing::info!("Removed '{}' from rotation. Was present: {}, queue size: {}", map_name, was_present, queue.len());
+    spawn_sv_maplist_sync(state.clone(), &queue);
 
     Ok(Json(QueueResponse {
         success: was_present,
@@ -367,11 +393,39 @@ async fn toggle_rotation(
         "Map rotation disabled".to_string()
     };
 
+    tracing::info!("Rotation toggled: enabled={}, {}", *enabled, message);
+
     Ok(Json(ToggleRotationResponse {
         success: true,
         enabled: *enabled,
         message,
     }))
+}
+
+/// Push the current rotation queue to the server's `sv_maplist` cvar.
+///
+/// The Quake 2 game logic (`EndDMLevel`) advances through `sv_maplist` when a
+/// match ends on timelimit/fraglimit. With it empty the server resolves its
+/// next map to an empty string and dies on `maps/.bsp`. Syncing our queue makes
+/// the server's own rotation a correct fallback that always lands on a real
+/// map — even if qctrl's frontend is closed when the limit hits.
+///
+/// Runs on a background task (rcon may take a few seconds) and is best-effort:
+/// a failure to reach the server never fails the API request. An empty queue is
+/// intentionally a no-op so we never clear a good `sv_maplist` and reintroduce
+/// the empty-map crash.
+fn spawn_sv_maplist_sync(state: SharedState, queue: &RotationQueue) {
+    let maps = queue.get_maps();
+    if maps.is_empty() {
+        return;
+    }
+    tokio::spawn(async move {
+        let command = format!("set sv_maplist \"{}\"", maps.join(" "));
+        match state.rcon_client.execute(&command).await {
+            Ok(_) => tracing::info!("Synced sv_maplist ({} maps) to server", maps.len()),
+            Err(e) => tracing::warn!("Failed to sync sv_maplist to server: {}", e),
+        }
+    });
 }
 
 async fn rcon_execute(

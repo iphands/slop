@@ -2,6 +2,16 @@ import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getStatus } from '../lib/api';
 
+/**
+ * Advance the map this many seconds before the server's real timelimit. qctrl's
+ * clock starts when it detects the map change (lagging the server by up to one
+ * poll) and ticks on a coarse interval, so this margin lets qctrl reliably win
+ * the race against the server's authoritative end-of-match rotation. The
+ * server's `sv_maplist` (kept in sync by the backend) is the fallback if qctrl
+ * still loses.
+ */
+const EARLY_FIRE_SECONDS = 45;
+
 export interface TimerTriggerEvent {
   type: 'time_limit' | 'frag_limit';
   message: string;
@@ -94,8 +104,11 @@ export function useRotationTimer(
   useEffect(() => {
     if (isLoading || !currentMap) return;
 
-    const timeLimitReached = timelimit > 0 && elapsedSeconds >= timelimit * 60;
-    const fragLimitReached = fraglimit > 0 && currentFrags >= fraglimit;
+    // Fire before the server's authoritative timelimit so qctrl owns the
+    // rotation instead of racing (and losing to) the server's end-of-match
+    // rotation.
+    const timeLimitReached =
+      timelimit > 0 && elapsedSeconds >= timelimit * 60 - EARLY_FIRE_SECONDS;
 
     if (timeLimitReached && lastTriggerRef.current !== 'time_limit') {
       const event: TimerTriggerEvent = {
@@ -110,19 +123,10 @@ export function useRotationTimer(
       onTrigger?.(event);
     }
 
-    if (fragLimitReached && lastTriggerRef.current !== 'frag_limit') {
-      const event: TimerTriggerEvent = {
-        type: 'frag_limit',
-        message: `Frag limit reached: ${currentFrags} frags`,
-        details: {
-          frags: currentFrags,
-          fraglimit,
-        },
-      };
-      lastTriggerRef.current = 'frag_limit';
-      onTrigger?.(event);
-    }
-  }, [isLoading, currentMap, timelimit, fraglimit, currentFrags, elapsedSeconds, onTrigger]);
+    // Frag-limit rotation is intentionally NOT triggered here. The server runs
+    // its end-of-match logic the same frame frags hit the limit, so qctrl can't
+    // preempt it — the server's `sv_maplist` handles frag-triggered rotation.
+  }, [isLoading, currentMap, timelimit, elapsedSeconds, onTrigger]);
 
   const countdownSeconds = useMemo(() => {
     if (!timelimit) return 0;
@@ -136,7 +140,8 @@ export function useRotationTimer(
     setElapsedSeconds(0);
   }, []);
 
-  const timeLimitReached = timelimit > 0 && elapsedSeconds >= timelimit * 60;
+  const timeLimitReached =
+    timelimit > 0 && elapsedSeconds >= timelimit * 60 - EARLY_FIRE_SECONDS;
   const fragLimitReached = fraglimit > 0 && currentFrags >= fraglimit;
 
   return {

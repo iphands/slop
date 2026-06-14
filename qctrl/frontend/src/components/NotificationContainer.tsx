@@ -1,15 +1,13 @@
-interface Notification {
-  id: string;
-  type: 'info' | 'success' | 'error';
-  message: string;
-}
+import { useNotifications } from '../hooks/useNotifications';
 
-interface NotificationContainerProps {
-  notifications: Notification[];
-  onDismiss: (id: string) => void;
-}
+/**
+ * Renders the global notification stack. Consumes the shared notification
+ * store directly, so it takes no props and should be mounted exactly once
+ * (inside the NotificationsProvider at the app root).
+ */
+export function NotificationContainer() {
+  const { notifications, removeNotification } = useNotifications();
 
-export function NotificationContainer({ notifications, onDismiss }: NotificationContainerProps) {
   if (notifications.length === 0) return null;
 
   return (
@@ -27,7 +25,7 @@ export function NotificationContainer({ notifications, onDismiss }: Notification
           <span className="text-white text-sm">{notification.message}</span>
           <button
             type="button"
-            onClick={() => onDismiss(notification.id)}
+            onClick={() => removeNotification(notification.id)}
             className="text-white hover:text-gray-200 text-sm font-medium"
           >
             ×

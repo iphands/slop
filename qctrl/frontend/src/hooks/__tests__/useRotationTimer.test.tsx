@@ -118,7 +118,7 @@ describe('useRotationTimer', () => {
     expect(result.current.timeLimitReached).toBe(false);
   });
 
-  it('detects frag limit reached', async () => {
+  it('does not auto-trigger rotation on frag limit (server owns frag rotation)', async () => {
     const statusWithFragLimit: StatusResponse = {
       map: 'q2dm1',
       players: [
@@ -145,16 +145,12 @@ describe('useRotationTimer', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
+    // Frag limit is still detected for display purposes...
     expect(result.current.fragLimitReached).toBe(true);
-    expect(onTrigger).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'frag_limit',
-        details: expect.objectContaining({
-          frags: 25,
-          fraglimit: 20,
-        }),
-      })
-    );
+    // ...but qctrl no longer auto-rotates on it. The server handles
+    // frag-triggered rotation via sv_maplist, since qctrl can't reliably
+    // preempt the server's same-frame end-of-match logic.
+    expect(onTrigger).not.toHaveBeenCalled();
   });
 
   it('resets timer on map change', async () => {
