@@ -1,7 +1,20 @@
+# Rust build output
+/target/
+/target-*/
+
+# Cargo
+**/*.rs.bk
+
+# Vendored reference trees (cloned, not authored)
+/vendor/
+
+# Sisyphus / local tooling
 /.sisyphus
-/frontend/node_modules
-/frontend/playwright-report
-/frontend/test-results
-/target
-/target-host
-/vendor
+
+# Editor / OS cruft
+/.idea/
+/.vscode/
+*.swp
+.DS_Store
+
+# NOTE: Cargo.lock stays COMMITTED — qbots ships binaries.
