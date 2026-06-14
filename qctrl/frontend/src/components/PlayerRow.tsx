@@ -12,7 +12,7 @@ export function PlayerRow({ player }: PlayerRowProps) {
         <div className="flex-1">
           <div className="font-medium">{player.name}</div>
           <div className="text-sm text-gray-400">
-            Score: {player.score} | Ping: {player.ping}ms
+            Score: {player.score} | Ping: {player.ping}ms | {player.address}
           </div>
         </div>
         <PlayerActions player={player} />

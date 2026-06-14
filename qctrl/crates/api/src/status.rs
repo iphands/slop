@@ -149,21 +149,26 @@ pub fn parse_status_output(output: &str) -> Result<StatusResponse, StatusParseEr
 
 /// Parse a single player line from status output.
 fn parse_player_line(line: &str) -> Option<Player> {
-    // Format: "num score address name ping"
-    // Example: " 0    15   192.168.1.100:27  PlayerName     45"
+    // q2pro format: "num score ping name lastmsg address qport"
+    // Example: " 0    15    45  PlayerName     0  192.168.1.100:27  27"
+    // Minimum: num(0) + score(1) + ping(2) + name(3) + lastmsg(4) + address(5) + qport(6) = 7 fields
 
     let parts: Vec<&str> = line.split_whitespace().collect();
-    if parts.len() < 5 {
+    if parts.len() < 7 {
         return None;
     }
 
     let client_num = i32::from_str(parts[0]).ok()?;
     let score = i32::from_str(parts[1]).ok()?;
-    let address = parts[2].to_string();
-    let ping = i32::from_str(parts[parts.len() - 1]).ok()?;
-
-    // Name is everything between address and ping
-    let name = parts[3..parts.len() - 1].join(" ");
+    let ping = i32::from_str(parts[2]).ok()?;
+    
+    // Address is at position 5 (0-indexed), before qport
+    let address = parts[5].to_string();
+    
+    // Name is everything between ping (index 2) and lastmsg (index 4)
+    // So name is at index 3, but could contain spaces
+    // lastmsg is at index 4, address at 5, qport at 6
+    let name = parts[3].to_string();
 
     Some(Player {
         client_num,
@@ -196,15 +201,16 @@ mod tests {
 
     #[test]
     fn test_parse_status_output() {
+        // q2pro format: num score ping name lastmsg address qport
         let output = r#"
 --- server status ----------------------------------------------------------------
  rate loss    checks   mss  port    client            idletm   ping
     0.0    0.0       0   512   27015 192.168.1.100:27910    0.0     45
     0.0    0.0       0   512   27015 192.168.1.101:27910    0.0     78
 
- num score address              name            ping
-   0    15   192.168.1.100:27   PlayerOne      45
-   1     8   192.168.1.101:27   PlayerTwo      78
+ num score ping   name            lastmsg address              qport
+   0    15    45   PlayerOne           0  192.168.1.100:27     27
+   1     8    78   PlayerTwo           0  192.168.1.101:27     27
 ---------------------------------------------------------------------------
 map              : q2dm1
 \dmflags\256\timelimit\20\fraglimit\50
@@ -215,8 +221,11 @@ map              : q2dm1
         assert_eq!(result.players.len(), 2);
         assert_eq!(result.players[0].name, "PlayerOne");
         assert_eq!(result.players[0].score, 15);
+        assert_eq!(result.players[0].ping, 45);
+        assert_eq!(result.players[0].address, "192.168.1.100:27");
         assert_eq!(result.players[1].name, "PlayerTwo");
         assert_eq!(result.players[1].score, 8);
+        assert_eq!(result.players[1].ping, 78);
     }
 
     #[test]
