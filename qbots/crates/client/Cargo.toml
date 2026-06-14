@@ -6,3 +6,4 @@ edition.workspace = true
 [dependencies]
 bytes = "1"
 q2proto = { path = "../q2proto" }
+tokio = { version = "1", features = ["net", "time", "macros", "rt"] }

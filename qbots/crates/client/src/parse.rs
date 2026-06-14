@@ -71,6 +71,17 @@ impl ConfigStrings {
     pub fn get(&self, index: usize) -> Option<&str> {
         self.slots.get(index).map(String::as_str)
     }
+
+    /// Store a configstring by index (out of range is dropped).
+    pub fn set(&mut self, index: usize, value: impl Into<String>) {
+        if index >= MAX_CONFIGSTRINGS {
+            return;
+        }
+        if index >= self.slots.len() {
+            self.slots.resize_with(index + 1, String::new);
+        }
+        self.slots[index] = value.into();
+    }
 }
 
 /// One parsed `svc_*` message.
