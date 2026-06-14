@@ -1,7 +1,7 @@
 # Wire Codec (q2proto) — Tracker
 
 ## Overview
-- Status: 0% complete
+- Status: 100% complete — DONE (2026-06-14)
 - Start date: 2026-06-14
 - Plan: `02_wire_codec_q2proto.md`
 - Depends on: Plan 01 (workspace must exist + compile)
@@ -17,9 +17,9 @@
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: Reader/Writer primitives | `q2proto/src/{reader,writer}.rs` | pending | port `movemsg.c`; `bytes` dep |
-| 2 | T2: opcodes + flags | `q2proto/src/ops.rs` | pending | `common.h:199–300` |
-| 3 | T3: usercmd delta | `q2proto/src/usercmd.rs` | pending | `movemsg.c:644/1181` |
-| 4 | T4: InfoString | `q2proto/src/infostring.rs` | pending | `shared/shared.c` Info_* |
-| 5 | T5: OOB framing | `q2proto/src/oob.rs` | pending | `0xff×4` + tokenizer |
-| 6 | T6: round-trip tests | `q2proto/tests/` | pending | + gold vector (deferred) |
+| 1 | T1: Reader/Writer primitives | `q2proto/src/{reader,writer}.rs` | done | ported `movemsg.c`; `bytes` dep; bytedirs extracted verbatim |
+| 2 | T2: opcodes + flags | `q2proto/src/ops.rs` | done | `common.h:185-323`; SvcOp/ClcOp + CM_/PS_/SND_/U_ |
+| 3 | T3: usercmd delta | `q2proto/src/usercmd.rs` | done | `movemsg.c:644/1181`; 4 round-trip tests |
+| 4 | T4: InfoString | `q2proto/src/infostring.rs` | done | `shared/shared.c` Info_*; 8 tests |
+| 5 | T5: OOB framing | `q2proto/src/oob.rs` | done | `0xff×4` + quote-aware tokenizer |
+| 6 | T6: round-trip tests | `q2proto/tests/codec.rs` | done | 4 e2e tests; 34 total green; gold vector deferred to Plan 03 T8 |
