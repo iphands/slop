@@ -11,6 +11,10 @@
 /// Q2 network protocol version (`common.h:185`).
 pub const PROTOCOL_VERSION: i32 = 34;
 
+/// Frames kept buffered for delta decoding (`common.h:195`).
+pub const UPDATE_BACKUP: usize = 16;
+pub const UPDATE_MASK: usize = UPDATE_BACKUP - 1;
+
 // =============================== server → client ===============================
 
 /// Server→client message opcodes. Ports `enum svc_ops_e` (`common.h:199`).
