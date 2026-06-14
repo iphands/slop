@@ -6,7 +6,9 @@
 //! See `AGENTS.md` and `context/plans/completed/03_connection_client.md`.
 
 pub mod netchan;
+pub mod parse;
 pub mod userinfo;
 
 pub use netchan::Netchan;
+pub use parse::{parse_message, ConfigStrings, ServerData, SvcEvent, MAX_CONFIGSTRINGS};
 pub use userinfo::Userinfo;
