@@ -12,19 +12,23 @@
 //! later tasks of Plan 02. See `AGENTS.md` and `context/plans/02_wire_codec_q2proto.md`.
 
 pub mod bytedirs;
+pub mod entitystate;
 pub mod error;
 pub mod infostring;
 pub mod oob;
 pub mod ops;
+pub mod playerstate;
 pub mod reader;
 pub mod usercmd;
 pub mod writer;
 
 pub use bytedirs::{BYTEDIRS, NUM_VERTEX_NORMALS};
+pub use entitystate::EntityState;
 pub use error::DecodeError;
 pub use infostring::InfoString;
 pub use oob::{is_oob, oob_payload, tokenize, write_oob, OOB_MARKER, OOB_PREFIX};
 pub use ops::{ClcOp, SvcOp, PROTOCOL_VERSION};
+pub use playerstate::{PlayerState, PmoveState, MAX_STATS};
 pub use reader::Reader;
 pub use usercmd::Usercmd;
 pub use writer::Writer;
