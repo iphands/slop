@@ -95,3 +95,38 @@ it. The FSM transitions to Hunt with the last-known position.
 - qbots: `crates/brain/src/los.rs` (`has_los`, `has_los_player`, `eye_origin`)
 - qbots: `crates/brain/src/combat.rs` (`select_target_entity`, `sight_grace_remaining`)
 - qbots: `crates/qbots/src/main.rs` (nav-to-enemy LOS gate, Plan 11 T4)
+
+---
+
+# Two divergent stuck detectors + blind reverse caused stall grinding
+
+## Problem
+qbots had **two independent stuck detectors** that disagreed:
+1. `NavigationDriver.stuck_ticks` in `nav.rs`: flagged stuck at `<16u` movement over 30 ticks
+   (3 s), called `is_stuck()`.
+2. `stuck_frames` counter in `bot_task` (`main.rs`): flagged stuck at `<1u` movement over 50
+   ticks (5 s) — only logged a warning, never acted.
+
+Both had wrong thresholds (Eraser uses **4u / 1s**). When `nav.is_stuck()` fired, the recovery
+was a blind view-relative reverse (`mv.move_forward(-1.0)`): this backed the bot *toward
+whatever wall it was facing*, then `force_replan` re-ran A* to the **same** goal on the **same**
+wedged route. The bot would stall against geometry for 8 s, briefly reverse into the same wall,
+and re-wedge — in an infinite loop on tight corners. There was also no lateral scan: if a gap
+existed 45° to the side, the bot would never find it.
+
+## Fix / How to avoid
+Unify into a single `StuckDetector` (in `brain::recover`) with **4u deadband on a 1s cadence**
+matching Eraser's `botRoamFindBestDirection` reference. Return a typed `StuckLevel { None, Mild,
+Hard }` and escalate: Mild → jump (clear step/ledge); Hard → back off + `force_replan` (but
+only when `!engaging`, to avoid abandoning a live duel). Add a **6-direction fan-out hull trace**
+(`find_best_direction`) to pick a clear yaw when no nav node is near. Replace the view-relative
+reverse with a **world-space lateral strafe** (decomposed via `move_from_world_dir` so it stays
+correct even when view yaw is on an enemy). Hull traces for the fan-out use `HULL_MINS/HULL_MAXS`
+matching the player bounding box, lifted by `STEPSIZE=24` to clear ground clutter. Wall-ahead
+check uses a 32u forward probe to distinguish "step/ledge" (Jump) from "solid wall" (Strafe).
+
+## Sources
+- qbots: `crates/brain/src/recover.rs` (`StuckDetector`, `find_best_direction`, `Recovery`)
+- qbots: `crates/brain/src/nav.rs` (removed `stuck_ticks`/`is_stuck`; `force_replan` kept)
+- qbots: `crates/qbots/src/main.rs` (Plan 13 T4 steering step 6)
+- vendor: `vendor/Quake2BotArchive/research/bots/eraser.md` (§3 stuck/give-up; §9 fan-out)
