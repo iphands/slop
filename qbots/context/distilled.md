@@ -162,3 +162,44 @@ read-only; only per-node edge weights breathe.
 - **CPU**: one tokio task per bot; shared read-only `Arc<NavGraph>` is the
   multiplier. Per-tick overlay alloc is `node_count` floats/bot (~few KB at 10 Hz)
   — fine at this scale; reuse a buffer if pushing past ~32 bots.
+
+## Movement-quality root causes (diagnosed 2026-06-15, pre-Plan 10)
+Bots move poorly in 3D — bumping walls, facing wrong way while advancing, rotating
+in one spot, not chasing players. **NOT** a wire/`delta_angles` bug (that's fixed —
+`move_ctrl.rs` subtracts `delta_angles`; combat aim also routes through `build_cmd`
+→ `angle_short`, so both axes are corrected). The bugs are in the **steering layer**:
+
+1. **No LOS anywhere.** `view.nearest_enemy(90°)` (`perception.rs:266`) filters by FOV
+   cone only — **no BSP trace**. `CombatDriver::select_target_entity` and `FSM::transition`
+   both call it, and nav-to-enemy uses the target's raw origin. → bots chase/shoot/walk
+   at enemies *through walls*. Fix → Plan 11.
+2. **Waypoint orbiting.** `next_waypoint_direction` aims at the raw current node
+   (`nav.rs:177`); advance gate is 3D-Euclidean `dist<64` (`nav.rs:195`) — no Z-aware
+   threshold, no look-ahead, no arrive. A node the bot can't close to 64u (Z lip, off-edge
+   drift) → it circles the node and `atan2(dir)` spins every tick = "rotating in one spot".
+   Fix → Plan 12.
+3. **No turn-rate limit.** `mv.look_at` snaps yaw each tick (`main.rs:573/631/652`);
+   Q2 imposes **no** server-side turn cap (client sends absolute `cmd.angles`,
+   `PM_SetAngles` `pmove.c:1255`), so snaps *work* but look inhuman and feed the orbit
+   jitter. Eraser uses `M_ChangeYaw` (`yaw_speed` clamp). Fix → Plan 12.
+4. **Blind stuck recovery.** `move_forward(-1.0)+jump+replan` (`main.rs:681-687`) reverses
+   into whatever's behind; no strafe, no fan-out (Eraser `botRoamFindBestDirection`
+   7-dir fan unported). Two divergent stuck detectors: `nav.rs` `<16u`/30t and
+   `main.rs` `<1u`/50t. Fix → Plan 13.
+5. **Aim-yaw == move-yaw.** One `mv.yaw` couples facing to movement; engaging means
+   walking straight at the enemy (view-relative `forwardmove`), can't circle-strafe.
+   Fix → Plan 12.
+6. **Grid-zigzag paths.** Spacing-64 uniform grid (`main.rs:1007`), no funnel/string-pull
+   smoothing → stair-step paths, corner clip, slow elapsed time. Fix → Plan 14 (deferred).
+
+**Measurement gap**: no per-frame telemetry exists. Plan 10 adds `spawn-to-spawn` /
+`spawn-to-weapon` harnesses that record pos/yaw/pitch/vel/speed/waypoint/wall-bumps/
+wrong-turns/hindered/facing-vs-move-delta/elapsed → `./logs/<scenario>/<ts>.<bot>.log`.
+Elapsed time is the headline ability metric. Constraints: no cheating (no clip/overspeed/
+wallhack) — bots must achieve speed *through better control*, not physics violation.
+
+**Physics oracle** (`vendor/yquake2/src/common/pmove.c`): `pm_maxspeed=300`,
+`pm_accelerate=10`, `pm_friction=6`, `pm_stopspeed=100`, jump `+=270`, air-accel `0`
+default; `wishvel=forward*fmove+right*smove`, `wishspeed` clamped to `pm_maxspeed`
+(no sqrt(2) diagonal clamp). `forwardmove/sidemove` are ±400-scale but capped by maxspeed.
+`STEPSIZE`: Q2 `18` vs Eraser `24` (verify which the live server uses before tuning steps).
