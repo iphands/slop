@@ -22,6 +22,7 @@ use tokio::net::UdpSocket;
 use brain::nav::NavGoal;
 use brain::perception::Worldview;
 use brain::recorder::{CmWallProbe, MovementRecorder, Sample, WallProbe};
+use brain::recover::{Recovery, RecoveryAction};
 use brain::steer::{move_from_world_dir, Steering};
 use brain::{MovementController, MovementIntent, NavigationDriver};
 use client::{Conn, ConnState};
@@ -127,6 +128,7 @@ pub async fn run_scenario(
     let mut move_ctrl = MovementController::new();
     let mut steering = Steering::new(3.0); // mid-skill for scenario runs
     let mut nav_driver = NavigationDriver::new(Arc::clone(&graph));
+    let mut recovery = Recovery::new();
     let mut last_serverframe: Option<i32> = None;
     let shutdown = Shutdown::new();
     let _signals = spawn_signal_listener(shutdown.clone());
@@ -244,6 +246,38 @@ pub async fn run_scenario(
                                 .map(|pt| Steering::arrive_scale((pt - pos).length()))
                                 .unwrap_or(1.0);
                             let (fwd, side) = move_from_world_dir(world_move_dir, view_yaw, true);
+                            
+                            // Stuck recovery (mirrors main.rs:790-825).
+                            let has_nav_target = nav_driver.pursue_target(pos).is_some();
+                            let rec_action = recovery.evaluate(
+                                pos,
+                                dt,
+                                Some(&cm),
+                                view_yaw,
+                                has_nav_target,
+                                false, // never engaging in scenario mode
+                            );
+                            match rec_action {
+                                RecoveryAction::None => {}
+                                RecoveryAction::Jump => {
+                                    mv.jump();
+                                }
+                                RecoveryAction::Strafe { dir } => {
+                                    mv.move_side(dir);
+                                }
+                                RecoveryAction::BackOffThenRepath => {
+                                    mv.move_forward(-0.5);
+                                    nav_driver.force_replan();
+                                }
+                                RecoveryAction::UseHeading(yaw) => {
+                                    let r = yaw.to_radians();
+                                    let free_dir = Vec3::new(r.cos(), r.sin(), 0.0);
+                                    let (hfwd, hside) = move_from_world_dir(free_dir, view_yaw, true);
+                                    mv.move_forward(hfwd);
+                                    mv.move_side(hside);
+                                }
+                            }
+                            
                             if fwd > 0.0 || side.abs() > 0.0 {
                                 mv.look_at(view_yaw, 0.0);
                                 mv.move_forward(fwd * arrive);
