@@ -7,6 +7,7 @@ use crate::combat::CombatDecision;
 use crate::nav::NavGoal;
 use crate::perception::Worldview;
 use glam::Vec3;
+use world::CollisionModel;
 
 /// Behavior states for the bot.
 #[derive(Debug, Clone, PartialEq)]
@@ -32,10 +33,12 @@ pub struct BehaviorIntent {
 }
 
 impl BehaviorState {
-    /// Tick the FSM based on current worldview. Returns movement intent.
-    pub fn tick(&mut self, view: &Worldview) -> BehaviorIntent {
+    /// Tick the FSM based on current worldview. Returns movement intent. `los` is
+    /// the collision model for the Roam→Engage "enemy in sight" gate (Plan 11): when
+    /// `None` it degrades to FOV-only sighting.
+    pub fn tick(&mut self, view: &Worldview, los: Option<&CollisionModel>) -> BehaviorIntent {
         // Check transitions first
-        self.transition(view);
+        self.transition(view, los);
 
         // Execute current state - extract values to avoid borrow issues
         match self {
@@ -56,7 +59,7 @@ impl BehaviorState {
         }
     }
 
-    fn transition(&mut self, view: &Worldview) {
+    fn transition(&mut self, view: &Worldview, los: Option<&CollisionModel>) {
         // Low health → Flee (highest priority)
         if view.is_low_health_with_threshold(30) {
             *self = Self::Flee;
@@ -83,8 +86,12 @@ impl BehaviorState {
             }
         }
 
-        // Enemy in sight → Engage
-        let nearest = view.nearest_enemy(90.0);
+        // Enemy in sight → Engage. Trace-gated when geometry is available (Plan 11)
+        // so a bot doesn't flip to Engage on an enemy behind a wall.
+        let nearest = match los {
+            Some(cm) => view.nearest_visible_enemy(cm, 90.0),
+            None => view.nearest_enemy(90.0),
+        };
         tracing::debug!(
             "FSM transition check: state={:?}, nearest_enemy={:?}, enemy_count={}",
             self,

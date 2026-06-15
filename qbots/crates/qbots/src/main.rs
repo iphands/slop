@@ -359,6 +359,9 @@ pub(crate) async fn bot_task(
     let mut move_ctrl = MovementController::new();
     let mut skill = BotSkill::default();
     let mut nav_driver: Option<NavigationDriver> = None;
+    // Collision model the nav graph was built from — for LOS gating (Plan 11) and
+    // reactive wall probes (Plan 13). Set when the map loads.
+    let mut collision: Option<Arc<world::CollisionModel>> = None;
     let mut roam_nodes: Vec<usize> = Vec::new();
     let mut roam_idx: usize = 0;
     let mut map_loaded = false;
@@ -453,6 +456,7 @@ pub(crate) async fn bot_task(
                                 roam_nodes = map_nav.roam_nodes.clone();
                                 nav_driver =
                                     Some(NavigationDriver::new(Arc::clone(&map_nav.graph)));
+                                collision = Some(Arc::clone(&map_nav.cm));
                                 heatmap_obs = Some(brain::HeatmapObserver::new(
                                     Arc::clone(&map_nav.graph),
                                     name,
@@ -566,7 +570,8 @@ pub(crate) async fn bot_task(
                         // Health tracking is done above, before creating the view
                         // No need to call view.detect_damage() here
                         let jitter = (ticks as f32) * 0.1;
-                        let combat_dec = combat.evaluate(&view, &skill, jitter);
+                        let combat_dec =
+                            combat.evaluate(&view, &skill, jitter, collision.as_deref());
 
                         // Pass combat target to FSM for navigation goal
                         let fsm_intent = if let Some(target) = combat_dec.target_entity {
@@ -592,7 +597,7 @@ pub(crate) async fn bot_task(
                                 should_pickup: None,
                             }
                         } else {
-                            fsm.tick(&view)
+                            fsm.tick(&view, collision.as_deref())
                         };
 
                         let mut mv = MovementIntent::new();

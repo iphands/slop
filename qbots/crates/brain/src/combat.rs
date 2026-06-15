@@ -13,6 +13,7 @@ use crate::aim::{aim_direction, aim_hitscan, JitterRng};
 use crate::perception::{EntityClass, Worldview};
 use crate::skill::BotSkill;
 use crate::weapons::{self, Weapon};
+use world::CollisionModel;
 
 /// Frames to hold on a target before considering a switch (~0.5s at 10 Hz),
 /// preventing thrashing when enemies pop in/out of PVS. (Eraser "target stability".)
@@ -93,15 +94,19 @@ impl CombatDriver {
     }
 
     /// Evaluate combat state and produce a decision. `skill` drives aim jitter
-    /// (accuracy rating), reaction delay, and combat gating.
+    /// (accuracy rating), reaction delay, and combat gating. `los` is the collision
+    /// model for line-of-sight gating (Plan 11); when `None` (geometry not loaded —
+    /// e.g. before the nav graph builds, or in unit tests) targeting degrades to
+    /// FOV-only, which the recorder's `phantom_target` flag will surface.
     pub fn evaluate(
         &mut self,
         view: &Worldview,
         skill: &BotSkill,
         jitter_seed: f32,
+        los: Option<&CollisionModel>,
     ) -> CombatDecision {
         let prev_target = self.current_target;
-        let target_num = self.select_target_entity(view);
+        let target_num = self.select_target_entity(view, los);
 
         let Some(num) = target_num else {
             self.frames_since_shot += 1;
@@ -185,7 +190,11 @@ impl CombatDriver {
         }
     }
 
-    fn select_target_entity(&mut self, view: &Worldview) -> Option<i32> {
+    fn select_target_entity(
+        &mut self,
+        view: &Worldview,
+        los: Option<&CollisionModel>,
+    ) -> Option<i32> {
         if let Some(target_num) = self.current_target {
             if self.lock_frames_remaining > 0
                 && view.enemies().any(|e| e.entity_number == target_num)
@@ -195,7 +204,12 @@ impl CombatDriver {
             }
         }
 
-        if let Some(t) = view.nearest_enemy(90.0) {
+        // Trace-gated nearest enemy when geometry is available; else FOV-only.
+        let nearest = match los {
+            Some(cm) => view.nearest_visible_enemy(cm, 90.0),
+            None => view.nearest_enemy(90.0),
+        };
+        if let Some(t) = nearest {
             self.current_target = Some(t.entity_number);
             self.lock_frames_remaining = TARGET_LOCK_FRAMES;
             return Some(t.entity_number);
@@ -291,7 +305,7 @@ mod tests {
         let frame = Frame::default();
         let config = ConfigStrings::default();
         let view = crate::perception::Worldview::from_frame(&frame, &config, 0);
-        let decision = driver.evaluate(&view, &BotSkill::default(), 0.0);
+        let decision = driver.evaluate(&view, &BotSkill::default(), 0.0, None);
         assert!(!decision.should_fire);
         assert!(decision.target_entity.is_none());
         assert!(decision.weapon_request.is_none());

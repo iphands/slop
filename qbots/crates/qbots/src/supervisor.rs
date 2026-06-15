@@ -23,6 +23,10 @@ pub use crate::stats::FleetStats;
 #[derive(Clone)]
 pub struct MapNav {
     pub graph: Arc<world::NavGraph>,
+    /// The collision model the graph was built from — retained so the tick can run
+    /// line-of-sight traces (Plan 11) and reactive wall probes (Plan 13) without
+    /// rebuilding it.
+    pub cm: Arc<world::CollisionModel>,
     pub roam_nodes: Vec<usize>,
 }
 
@@ -69,7 +73,7 @@ fn build_map_nav(cfg: &Config, map: &str) -> Option<MapNav> {
             return None;
         }
     };
-    let cm = world::CollisionModel::from_bsp(&bsp);
+    let cm = Arc::new(world::CollisionModel::from_bsp(&bsp));
     let m = bsp.models.first().expect("bsp has models");
     let t0 = std::time::Instant::now();
     let g = world::NavGraph::generate(&cm, (m.mins, m.maxs), 64.0);
@@ -84,6 +88,7 @@ fn build_map_nav(cfg: &Config, map: &str) -> Option<MapNav> {
     );
     Some(MapNav {
         graph: Arc::new(g),
+        cm,
         roam_nodes: largest,
     })
 }

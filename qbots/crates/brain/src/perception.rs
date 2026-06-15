@@ -280,6 +280,36 @@ impl Worldview {
             })
     }
 
+    /// The nearest enemy within FOV **with an unobstructed line of sight** (Plan 11).
+    /// Same as [`Self::nearest_enemy`] but additionally requires a clear BSP trace
+    /// from our eye to the enemy's chest/feet, so a wall between us and a target
+    /// disqualifies it. `cm` is the collision model the nav graph was built from.
+    pub fn nearest_visible_enemy(
+        &self,
+        cm: &world::CollisionModel,
+        fov_degrees: f32,
+    ) -> Option<&PerceivedEntity> {
+        let eye = crate::los::eye_origin(self.self_state.origin.into());
+        self.enemies()
+            .filter(|e| self.in_fov(e.origin, fov_degrees))
+            .filter(|e| crate::los::has_los_player(cm, eye, e.origin.into()))
+            .min_by(|a, b| {
+                let da = (a.origin - self.self_state.origin).length_squared();
+                let db = (b.origin - self.self_state.origin).length_squared();
+                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+            })
+    }
+
+    /// Is `target` within the view FOV cone? (Factored out of `nearest_enemy`.)
+    fn in_fov(&self, target: Vec3, fov_degrees: f32) -> bool {
+        let origin = self.self_state.origin;
+        let dir = target - origin;
+        if dir.length_squared() < 1e-6 {
+            return true;
+        }
+        self.forward_vector().dot(dir.normalize()) > fov_degrees.to_radians().cos()
+    }
+
     /// Convert view angles to a forward direction vector.
     fn forward_vector(&self) -> Vec3 {
         let yaw = self.self_state.angles.y.to_radians();
@@ -429,6 +459,51 @@ mod tests {
     fn test_stale_threshold() {
         const { assert!(STALE_THRESHOLD > 0) };
         const { assert!(STALE_THRESHOLD <= 20) }; // Reasonable decay
+    }
+
+    /// LOS-gated selection (Plan 11): the nearer enemy is behind a wall, the
+    /// farther one is in the open → `nearest_visible_enemy` picks the open one,
+    /// while FOV-only `nearest_enemy` picks the nearer walled one. Self faces yaw
+    /// 135° so both enemies sit inside a 90° FOV cone.
+    #[test]
+    fn nearest_visible_enemy_skips_walled_picks_open() {
+        use q2proto::{EntityState, Frame};
+        // Wall at x=0 (x<0 solid). Self at (100,0,0) facing 135° (-x,+y).
+        let cm = world::CollisionModel::half_space([1.0, 0.0, 0.0], 0.0);
+        let mut frame = Frame::default();
+        frame.playerstate.pmove.origin = [(100.0 * 8.0) as i16, 0, 0];
+        frame.playerstate.viewangles = [0.0, 135.0, 0.0];
+        frame.entities = vec![
+            // Nearer (~144u), but across the wall → no LOS.
+            EntityState {
+                number: 2,
+                origin: [-20.0, 80.0, 0.0],
+                modelindex: 255,
+                ..Default::default()
+            },
+            // Farther (~171u), but in the open (same x>0 side as us) → clear LOS.
+            EntityState {
+                number: 3,
+                origin: [40.0, 160.0, 0.0],
+                modelindex: 255,
+                ..Default::default()
+            },
+        ];
+        let cs = ConfigStrings::default();
+        let view = Worldview::from_frame(&frame, &cs, 0);
+
+        // FOV-only: the nearer walled enemy is "nearest".
+        let near = view.nearest_enemy(90.0).expect("an enemy");
+        assert_eq!(near.entity_number, 2);
+
+        // LOS-gated: the walled enemy is filtered out → the open one is chosen.
+        let vis = view
+            .nearest_visible_enemy(&cm, 90.0)
+            .expect("a visible enemy");
+        assert_eq!(
+            vis.entity_number, 3,
+            "open enemy chosen over the nearer walled one"
+        );
     }
 
     #[test]
