@@ -151,8 +151,7 @@ impl CombatDriver {
                 if should_fire {
                     tracing::info!(
                         target = t.entity_number,
-                        distance = "{:.1}",
-                        distance,
+                        distance = %format!("{:.1}", distance),
                         weapon = ?self.desired_weapon,
                         "shooting at player"
                     );

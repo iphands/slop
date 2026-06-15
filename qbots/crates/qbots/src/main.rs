@@ -400,10 +400,15 @@ async fn run_brain_bot_with_shutdown(
                                 }
                             }
 
-                            // Stuck recovery: jump to break free; nav replans next tick.
+                            // Stuck recovery: back off the obstacle (reverse is view-relative,
+                            // so we pull away from whatever we're facing) + jump, then force a
+                            // fresh route so we don't re-wedge on the same node. Pure jump
+                            // recovery leaves the bot creeping against geometry for tens of s.
                             if nav.is_stuck() {
-                                tracing::debug!(?pos, "stuck — jumping to recover");
+                                tracing::debug!(?pos, "stuck — backing off + jump");
+                                mv.move_forward(-1.0);
                                 mv.jump();
+                                nav_driver.as_mut().unwrap().force_replan();
                                 nav_driver.as_mut().unwrap().reset_stuck();
                             }
                         } else if !combat_dec.should_fire {

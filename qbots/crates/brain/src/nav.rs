@@ -161,6 +161,15 @@ impl NavigationDriver {
         self.is_stuck
     }
 
+    /// Force the next `set_goal` to replan from scratch, even if the goal is
+    /// unchanged. Call after clearing an obstacle so the bot doesn't re-attempt
+    /// the same wedged waypoint.
+    pub fn force_replan(&mut self) {
+        self.current_path.clear();
+        self.current_waypoint = None;
+        self.last_goal_node = None;
+    }
+
     pub fn reset_stuck(&mut self) {
         self.stuck_ticks = 0;
         self.is_stuck = false;
