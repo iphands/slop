@@ -22,6 +22,7 @@ use tokio::net::UdpSocket;
 use brain::nav::NavGoal;
 use brain::perception::Worldview;
 use brain::recorder::{CmWallProbe, MovementRecorder, Sample, WallProbe};
+use brain::steer::{move_from_world_dir, Steering};
 use brain::{MovementController, MovementIntent, NavigationDriver};
 use client::{Conn, ConnState};
 use q2proto::Usercmd;
@@ -106,7 +107,9 @@ pub async fn run_scenario(
 
     // 4. Brain primitives + recorder scaffolding.
     let mut move_ctrl = MovementController::new();
+    let mut steering = Steering::new(3.0); // mid-skill for scenario runs
     let mut nav_driver = NavigationDriver::new(Arc::clone(&graph));
+    let mut last_serverframe: Option<i32> = None;
     let shutdown = Shutdown::new();
     let _signals = spawn_signal_listener(shutdown.clone());
 
@@ -189,13 +192,44 @@ pub async fn run_scenario(
                             // Drive nav to the goal — no combat.
                             nav_driver.update(pos);
                             nav_driver.set_goal(NavGoal::Position(Vec3::from(goal)), pos);
+
+                            // dt from observed serverframe delta (clamped).
+                            let current_sf = frame.serverframe;
+                            let dt = if let Some(prev_sf) = last_serverframe {
+                                ((current_sf - prev_sf).max(0) as f32 * 0.1).clamp(0.02, 0.3)
+                            } else {
+                                0.1
+                            };
+                            last_serverframe = Some(current_sf);
+
                             let mut mv = MovementIntent::new();
                             let mut intent_forward = 0.0;
-                            if let Some(dir) = nav_driver.next_waypoint_direction(pos) {
-                                let yaw = dir.y.atan2(dir.x).to_degrees();
-                                mv.look_at(yaw, 0.0);
-                                mv.move_forward(1.0);
-                                intent_forward = 1.0;
+
+                            // Steer via pursue_target (T3 look-ahead) with face-then-go.
+                            let pursue_pos = nav_driver.pursue_target(pos);
+                            let (ideal_yaw, world_move_dir) = if let Some(pt) = pursue_pos {
+                                let delta = pt - pos;
+                                if delta.length_squared() > 1.0 {
+                                    let yaw = delta.y.atan2(delta.x).to_degrees();
+                                    let dir = Vec3::new(delta.x, delta.y, 0.0).normalize_or_zero();
+                                    (yaw, dir)
+                                } else {
+                                    (steering.view_yaw(), Vec3::ZERO)
+                                }
+                            } else {
+                                (steering.view_yaw(), Vec3::ZERO)
+                            };
+
+                            let view_yaw = steering.change_yaw(ideal_yaw, dt);
+                            let arrive = pursue_pos
+                                .map(|pt| Steering::arrive_scale((pt - pos).length()))
+                                .unwrap_or(1.0);
+                            let (fwd, side) = move_from_world_dir(world_move_dir, view_yaw, true);
+                            if fwd > 0.0 || side.abs() > 0.0 {
+                                mv.look_at(view_yaw, 0.0);
+                                mv.move_forward(fwd * arrive);
+                                mv.move_side(side * arrive);
+                                intent_forward = fwd * arrive;
                             }
                             move_ctrl.set_delta_angles(frame.playerstate.pmove.delta_angles);
                             let cmd = move_ctrl.build_cmd(mv);

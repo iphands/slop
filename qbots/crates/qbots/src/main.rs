@@ -602,7 +602,6 @@ pub(crate) async fn bot_task(
                                 tracing::trace!("combat target override: target={} pos={:?}", target, target_pos);
                                 BehaviorIntent {
                                     nav_goal: Some(NavGoal::Entity(target_pos)),
-                                    combat_decision: Some(combat_dec),
                                     should_pickup: None,
                                 }
                             } else {
@@ -720,25 +719,46 @@ pub(crate) async fn bot_task(
                             mv.look_at(view_yaw, ideal_pitch);
 
                             // ── 3. World move direction + face-then-go mode ───────────────
+                            // T5 circle-strafe: when Engage + LOS holds, separate aim (view_yaw →
+                            // enemy) from walk (radial ± tangential). Eraser: combat 1 = no strafe.
+                            let is_engage_los = combat_dec.should_fire
+                                || matches!(fsm, BehaviorState::Engage { .. });
+                            let strafe_weight =
+                                if is_engage_los && skill.combat() > 1.5 { 0.7 } else { 0.0 };
+
                             let (world_move_dir, face_then_go) =
                                 if let Some((d, dir)) = enemy_dist_dir {
                                     if d < BACKUP_DIST {
                                         // Back away from enemy while keeping aim on them.
                                         let away =
                                             Vec3::new(-dir.x, -dir.y, 0.0).normalize_or_zero();
-                                        (away, false)
+                                        // Add tangential even while backing (keeps bot moving).
+                                        let tan = Vec3::new(-dir.y, dir.x, 0.0)
+                                            * steering.strafe_tick(dt)
+                                            * strafe_weight;
+                                        ((away + tan).normalize_or_zero(), false)
                                     } else if d < IDEAL_DIST {
-                                        (Vec3::ZERO, false) // hold
+                                        // Hold ideal distance — pure circle-strafe tangentially.
+                                        let tan = Vec3::new(-dir.y, dir.x, 0.0)
+                                            * steering.strafe_tick(dt);
+                                        (tan.normalize_or_zero() * strafe_weight, false)
                                     } else {
-                                        // Chase via nav look-ahead.
-                                        let dir = nav
+                                        // Chase via nav look-ahead + light tangential strafe.
+                                        let nav_dir = nav
                                             .pursue_target(pos)
                                             .map(|pt| {
                                                 let d = pt - pos;
                                                 Vec3::new(d.x, d.y, 0.0).normalize_or_zero()
                                             })
                                             .unwrap_or(Vec3::ZERO);
-                                        (dir, true)
+                                        if strafe_weight > 0.0 {
+                                            let tan = Vec3::new(-dir.y, dir.x, 0.0)
+                                                * steering.strafe_tick(dt)
+                                                * strafe_weight;
+                                            ((nav_dir + tan).normalize_or_zero(), false)
+                                        } else {
+                                            (nav_dir, true)
+                                        }
                                     }
                                 } else {
                                     // Roaming: follow path look-ahead.

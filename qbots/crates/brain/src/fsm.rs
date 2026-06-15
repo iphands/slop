@@ -2,8 +2,11 @@
 //!
 //! Drives navigation and combat based on current state. Transitions are
 //! triggered by worldview conditions (low health, enemy in sight, item nearby).
+//!
+//! **Single source of truth for aim/move**: `BehaviorIntent.combat_decision` is always
+//! `None`; the caller (`bot_task`) derives aim exclusively from `CombatDriver::evaluate`.
+//! The FSM only sets `nav_goal` (where to walk) and `should_pickup`. (Plan 12 T6)
 
-use crate::combat::CombatDecision;
 use crate::nav::NavGoal;
 use crate::perception::Worldview;
 use glam::Vec3;
@@ -24,12 +27,12 @@ pub enum BehaviorState {
     Pickup { item_entity: i32 },
 }
 
-/// Movement intent from the FSM (combines nav goal + combat decision).
+/// Navigation intent from the FSM. Combat aim/fire is always derived from
+/// `CombatDriver::evaluate` in `bot_task` — not from the FSM (Plan 12 T6).
 #[derive(Debug, Clone)]
 pub struct BehaviorIntent {
     pub nav_goal: Option<NavGoal>,
-    pub combat_decision: Option<CombatDecision>,
-    pub should_pickup: Option<i32>, // Entity number to pickup
+    pub should_pickup: Option<i32>,
 }
 
 impl BehaviorState {
@@ -150,7 +153,6 @@ impl BehaviorState {
 
         BehaviorIntent {
             nav_goal: goal,
-            combat_decision: None,
             should_pickup: None,
         }
     }
@@ -159,7 +161,6 @@ impl BehaviorState {
         if let Some(pos) = last_enemy_pos {
             BehaviorIntent {
                 nav_goal: Some(NavGoal::Position(pos)),
-                combat_decision: None,
                 should_pickup: None,
             }
         } else {
@@ -170,17 +171,9 @@ impl BehaviorState {
 
     fn engage(&self, view: &Worldview, target_entity: i32) -> BehaviorIntent {
         let target = view.entities().find(|e| e.entity_number == target_entity);
-
+        // Aim/fire is derived from CombatDriver::evaluate in bot_task, not here.
         BehaviorIntent {
-            // Chase the target while firing.
             nav_goal: target.map(|t| NavGoal::Entity(t.origin)),
-            combat_decision: target.map(|_| CombatDecision {
-                should_fire: true,
-                aim_yaw: 0.0,
-                aim_pitch: 0.0,
-                target_entity: Some(target_entity),
-                weapon_request: None,
-            }),
             should_pickup: None,
         }
     }
@@ -193,15 +186,13 @@ impl BehaviorState {
 
         BehaviorIntent {
             nav_goal: goal,
-            combat_decision: None,
             should_pickup: None,
         }
     }
 
     fn pickup(&self, _item_entity: i32) -> BehaviorIntent {
         BehaviorIntent {
-            nav_goal: None, // Already near item
-            combat_decision: None,
+            nav_goal: None,
             should_pickup: Some(_item_entity),
         }
     }
