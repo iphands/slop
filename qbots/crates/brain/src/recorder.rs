@@ -10,6 +10,29 @@
 //! Detectors reuse the existing [`world::CollisionModel::trace`] via the
 //! [`WallProbe`] trait (production = [`CmWallProbe`]; tests stub it), so no new
 //! physics is introduced.
+//!
+//! # Log schema (`dump()`)
+//!
+//! Written to `./logs/<scenario>/<unix_ts>.<bot>.log`, one token per column,
+//! single-space separated and fully positional (so `awk '{print $4,$5,$6}'` etc.
+//! works). `#`-prefixed lines are metadata; the rest are frame rows:
+//!
+//! ```text
+//! # qbots movement log  scenario=<s>  bot=<name>  map=<map>  goal=(x,y,z)
+//! # goal_classname=<cls>  started=<ISO8601>
+//! # t frame x y z vx vy vz speed yaw pitch move_yaw face_delta wp wpd flags
+//! <t> <frame> <x> <y> <z> <vx> <vy> <vz> <speed> <yaw> <pitch> <move_yaw> <face_delta> <wp> <wpd> <flags>
+//! ...
+//! # SUMMARY reached=<0|1> elapsed=<s> distance=<u> mean_speed=<u/s> max_speed=<u/s> bumps=<n> wrong_turns=<n> hindered_frames=<n>
+//! ```
+//!
+//! Columns: `t` elapsed seconds; `frame` serverframe; `x y z` origin;
+//! `vx vy vz` velocity (u/s); `speed` `|horizontal velocity|`; `yaw pitch` view
+//! angles (deg); `move_yaw` velocity-heading yaw (`nan` when ~still);
+//! `face_delta` `|yaw − move_yaw|` (0 when still); `wp` current waypoint index
+//! (`-` if none); `wpd` 3D distance to it (`-`); `flags` a char run — `B` wall
+//! bump, `W` wrong turn, `H` hindered, `A` airborne, `.` none. The `SUMMARY` line
+//! is the headline: it is what Plans 11–14 must beat.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -667,6 +690,83 @@ mod tests {
         let elapsed = regex_capture(summary, "elapsed=");
         assert_eq!(reached.as_deref(), Some("0")); // not reached yet
         assert!(elapsed.is_some(), "elapsed parses");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The full documented schema round-trips: both `#` header lines are present,
+    /// the column header names every positional field, a frame row has the right
+    /// token count, and the SUMMARY line carries every headline metric.
+    #[test]
+    fn dump_matches_documented_schema() {
+        let probe: Arc<dyn WallProbe> = Arc::new(ClearProbe);
+        let mut r = rec(probe, [1000.0, 0.0, 0.0]);
+        r.sample(Sample {
+            t_secs: 0.1,
+            frame: 1,
+            origin: [30.0, 0.0, 0.0],
+            velocity: [300.0, 0.0, 0.0],
+            view_yaw: 0.0,
+            view_pitch: 0.0,
+            grounded: true,
+            waypoint: Some(0),
+            waypoint_pos: Some([1000.0, 0.0, 0.0]),
+            intent_forward: 1.0,
+        });
+        let dir = std::env::temp_dir().join(format!("qbots-schema-{}", std::process::id()));
+        let path = dir.join("run.qb0.log");
+        r.dump(&path).expect("dump ok");
+        let text = std::fs::read_to_string(&path).expect("read back");
+        let lines: Vec<&str> = text.lines().collect();
+
+        // Two metadata header lines, then the column header.
+        assert!(lines[0].starts_with("# qbots movement log  scenario="));
+        assert!(lines[1].starts_with("# goal_classname="));
+        let cols = lines[2]
+            .trim_start_matches("# ")
+            .split_whitespace()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            cols,
+            vec![
+                "t",
+                "frame",
+                "x",
+                "y",
+                "z",
+                "vx",
+                "vy",
+                "vz",
+                "speed",
+                "yaw",
+                "pitch",
+                "move_yaw",
+                "face_delta",
+                "wp",
+                "wpd",
+                "flags"
+            ],
+            "column header names every positional field"
+        );
+
+        // The one frame row has exactly that many tokens (16 columns).
+        let row = lines[3].split_whitespace().collect::<Vec<_>>();
+        assert_eq!(row.len(), 16, "frame row has 16 positional columns");
+
+        // SUMMARY line carries every headline metric.
+        let summary = lines.last().expect("a SUMMARY line exists");
+        assert!(summary.starts_with("# SUMMARY"));
+        for key in [
+            "reached=",
+            "elapsed=",
+            "distance=",
+            "mean_speed=",
+            "max_speed=",
+            "bumps=",
+            "wrong_turns=",
+            "hindered_frames=",
+        ] {
+            assert!(summary.contains(key), "SUMMARY has {key}");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
