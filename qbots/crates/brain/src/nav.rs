@@ -18,6 +18,21 @@ const DEGEN_FACTOR: f32 = 5.0;
 /// Only apply the degeneracy guard past this straight-line distance, so a tiny
 /// goal (where the ratio is meaningless) can't trigger it.
 const DEGEN_MIN_STRAIGHT: f32 = 256.0;
+/// Look-ahead distance for `pursue_target`: steer at a point this far ahead along
+/// the path instead of the raw next node. Cuts corners + reduces grid zig.
+pub const LOOKAHEAD: f32 = 96.0;
+/// Z-aware waypoint-reach threshold (horizontal). Eraser uses `horiz < 12` +
+/// `|dz| < 16`; we loosen slightly for the coarser 64-unit nav graph.
+const WP_REACH_HORIZ: f32 = 16.0;
+/// Z-aware waypoint-reach threshold (vertical). Larger than Eraser to tolerate step
+/// heights on ledges and ramps where the bot's XY is already past the node.
+const WP_REACH_DZ: f32 = 24.0;
+/// Orbit watchdog: if the bot stays within this horizontal radius of the current
+/// waypoint for `ORBIT_FRAMES` ticks without reaching it, force-advance to the next
+/// node. Kills "rotating in one spot" when the node is unreachable by 1-2 u.
+const ORBIT_RADIUS: f32 = 80.0;
+/// Ticks close to the current waypoint before we force-advance (1.5 s at 10 Hz).
+const ORBIT_FRAMES: u32 = 15;
 
 #[derive(Debug, Clone)]
 pub enum NavGoal {
@@ -45,6 +60,9 @@ pub struct NavigationDriver {
     /// edge leaving node `n` costs `base + overlay[n]`. Set each tick from the
     /// heatmap (`W_d·danger − W_p·popularity`); `None` = unweighted routing.
     risk_overlay: Option<Vec<f32>>,
+    /// Consecutive ticks inside `ORBIT_RADIUS` of the current waypoint without
+    /// reaching it. Drives the orbit-timeout force-advance (Plan 12 T3).
+    near_wp_ticks: u32,
 }
 
 impl NavigationDriver {
@@ -60,6 +78,7 @@ impl NavigationDriver {
             goal_age_ticks: 0,
             goal_abandoned: false,
             risk_overlay: None,
+            near_wp_ticks: 0,
         }
     }
 
@@ -185,14 +204,68 @@ impl NavigationDriver {
         })
     }
 
+    /// Look-ahead pursuit target: a point `LOOKAHEAD` units ahead along the current path
+    /// from `from`, or the final goal node if the remaining path is shorter. Steer toward
+    /// this instead of the raw next waypoint to smooth corners and reduce grid zig.
+    ///
+    /// Returns `None` if there is no active path.
+    pub fn pursue_target(&self, from: Vec3) -> Option<Vec3> {
+        let wp_idx = self.current_waypoint?;
+        let start_idx = self.current_path.iter().position(|&w| w == wp_idx)?;
+
+        let mut remaining = LOOKAHEAD;
+        let mut prev = from;
+
+        for &node_idx in &self.current_path[start_idx..] {
+            let node_pos = Vec3::from(self.nav_graph.nodes[node_idx]);
+            let seg_len = (node_pos - prev).length();
+            if seg_len >= remaining {
+                let t = remaining / seg_len;
+                return Some(prev + (node_pos - prev) * t);
+            }
+            remaining -= seg_len;
+            prev = node_pos;
+        }
+
+        // Path shorter than LOOKAHEAD — return the final node.
+        let last = *self.current_path.last()?;
+        Some(Vec3::from(self.nav_graph.nodes[last]))
+    }
+
     pub fn update(&mut self, position: Vec3) -> bool {
         self.goal_abandoned = false;
 
         if let Some(wp_idx) = self.current_waypoint {
             let wp_pos = Vec3::from(self.nav_graph.nodes[wp_idx]);
-            let dist = (wp_pos - position).length();
+            let delta_xy = (wp_pos - position).truncate();
+            let horiz = delta_xy.length();
+            let dz = (wp_pos.z - position.z).abs();
 
-            if dist < 64.0 {
+            // Z-aware reach: looser than plain 3D distance so steps and ramps
+            // don't cause the bot to orbit a node it's already passed laterally.
+            // Eraser uses horiz < 12 && |dz| < 16; we relax for the 64-unit graph.
+            let reached = horiz < WP_REACH_HORIZ && dz < WP_REACH_DZ;
+
+            // Orbit watchdog: if the bot circles within ORBIT_RADIUS without
+            // reaching, force-advance after ORBIT_FRAMES ticks.
+            let orbit_force = if horiz < ORBIT_RADIUS {
+                self.near_wp_ticks += 1;
+                self.near_wp_ticks >= ORBIT_FRAMES
+            } else {
+                self.near_wp_ticks = 0;
+                false
+            };
+
+            if reached || orbit_force {
+                if orbit_force && !reached {
+                    tracing::debug!(
+                        horiz,
+                        dz,
+                        near_wp_ticks = self.near_wp_ticks,
+                        "orbit-timeout: force-advancing past waypoint"
+                    );
+                }
+                self.near_wp_ticks = 0;
                 // Reached a waypoint — reset the give-up clock and advance.
                 self.goal_age_ticks = 0;
                 let current_idx = self.current_path.iter().position(|&w| w == wp_idx);
@@ -218,6 +291,7 @@ impl NavigationDriver {
                     self.current_waypoint = None;
                     self.last_goal_node = None;
                     self.goal_age_ticks = 0;
+                    self.near_wp_ticks = 0;
                     self.goal_abandoned = true;
                 }
             }

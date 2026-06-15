@@ -1,7 +1,12 @@
-//! Unit tests for `brain::steer` — T1 and T2 of Plan 12.
+//! Unit tests for `brain::steer` and `brain::nav` — Plan 12 T1, T2, T3.
 
-use brain::steer::{move_from_world_dir, view_forward, view_right, Steering, YAW_SPEED_BASE};
+use brain::nav::{NavGoal, NavigationDriver, LOOKAHEAD};
+use brain::steer::{
+    move_from_world_dir, view_forward, view_right, Steering, ARRIVE_RADIUS, YAW_SPEED_BASE,
+};
 use glam::Vec3;
+use std::sync::Arc;
+use world::NavGraph;
 
 // ── T1: change_yaw ────────────────────────────────────────────────────────────
 
@@ -206,4 +211,168 @@ fn view_right_yaw_zero_is_minus_y_strafe() {
     let r = view_right(0.0);
     assert!(r.x.abs() < 0.001);
     assert!((r.y + 1.0).abs() < 0.001);
+}
+
+// ── T3: arrive_scale ─────────────────────────────────────────────────────────
+
+#[test]
+fn arrive_scale_outside_radius_is_one() {
+    assert_eq!(Steering::arrive_scale(ARRIVE_RADIUS + 1.0), 1.0);
+    assert_eq!(Steering::arrive_scale(1000.0), 1.0);
+}
+
+#[test]
+fn arrive_scale_at_half_radius_is_half() {
+    let scale = Steering::arrive_scale(ARRIVE_RADIUS / 2.0);
+    assert!((scale - 0.5).abs() < 0.01, "expected 0.5, got {scale}");
+}
+
+#[test]
+fn arrive_scale_very_close_clamps_to_min() {
+    // Close to 0 distance → clamps to ARRIVE_MIN (0.25), not 0.
+    let scale = Steering::arrive_scale(1.0);
+    assert!(
+        scale >= 0.25,
+        "arrive_scale should clamp to at least 0.25, got {scale}"
+    );
+    assert!(
+        scale < 0.1 + 0.25,
+        "should be close to minimum at 1 unit distance, got {scale}"
+    );
+}
+
+// ── T3: pursue_target ─────────────────────────────────────────────────────────
+
+/// Build a linear nav graph: nodes at 0, 100, 200, 300 on the X axis.
+fn linear_graph() -> Arc<NavGraph> {
+    Arc::new(NavGraph::from_raw(
+        vec![
+            [0.0, 0.0, 0.0],
+            [100.0, 0.0, 0.0],
+            [200.0, 0.0, 0.0],
+            [300.0, 0.0, 0.0],
+        ],
+        vec![
+            vec![(1, 100.0)],
+            vec![(0, 100.0), (2, 100.0)],
+            vec![(1, 100.0), (3, 100.0)],
+            vec![(2, 100.0)],
+        ],
+    ))
+}
+
+#[test]
+fn pursue_target_returns_lookahead_point_on_path() {
+    let g = linear_graph();
+    let mut nav = NavigationDriver::new(Arc::clone(&g));
+    // Start at node 0 (0,0,0), drive to node 3 (300,0,0).
+    nav.set_goal(NavGoal::Waypoint(3), Vec3::ZERO);
+
+    let from = Vec3::new(0.0, 0.0, 0.0);
+    let target = nav
+        .pursue_target(from)
+        .expect("should have a pursue target");
+    // LOOKAHEAD = 96. Path: 0→100→200→300. First segment is 100 units long.
+    // At 96 units along the 0→100 segment, we get (96, 0, 0).
+    assert!(
+        (target.x - LOOKAHEAD).abs() < 1.0,
+        "expected x≈{LOOKAHEAD}, got {}",
+        target.x
+    );
+    assert!(target.y.abs() < 0.01);
+}
+
+#[test]
+fn pursue_target_crosses_segment_boundary() {
+    let g = linear_graph();
+    let mut nav = NavigationDriver::new(Arc::clone(&g));
+    nav.set_goal(NavGoal::Waypoint(3), Vec3::ZERO);
+
+    // Advance: bot is now at node 1 (100,0,0), current waypoint = 1.
+    nav.update(Vec3::new(0.0, 0.0, 0.0)); // advance to node 1? No: 100u away, not reached yet
+                                          // Force the current_waypoint to node 2 by simulating arrival at node 1.
+    let from = Vec3::new(90.0, 0.0, 0.0); // close to node 1 but not arrived
+
+    // Now: current_waypoint = 1, LOOKAHEAD = 96 from (90, 0, 0).
+    // Distance to node 1 (100, 0, 0) = 10. Remaining = 86. Then to node 2 = 100u.
+    // Total seg: 10 + 86 → target at (186, 0, 0).
+    let target = nav.pursue_target(from).expect("should have target");
+    assert!(
+        (target.x - (90.0 + LOOKAHEAD)).abs() < 2.0,
+        "expected x≈{}, got {}",
+        90.0 + LOOKAHEAD,
+        target.x
+    );
+}
+
+#[test]
+fn pursue_target_returns_final_goal_when_path_shorter_than_lookahead() {
+    // Graph with just 2 nodes, 10 units apart — shorter than LOOKAHEAD.
+    let g = Arc::new(NavGraph::from_raw(
+        vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
+        vec![vec![(1, 10.0)], vec![(0, 10.0)]],
+    ));
+    let mut nav = NavigationDriver::new(Arc::clone(&g));
+    nav.set_goal(NavGoal::Waypoint(1), Vec3::ZERO);
+
+    let target = nav.pursue_target(Vec3::ZERO).expect("target");
+    // Path shorter than LOOKAHEAD → returns the final node at (10, 0, 0).
+    assert!(
+        (target.x - 10.0).abs() < 0.1,
+        "should return final node x=10, got {}",
+        target.x
+    );
+}
+
+// ── T3: orbit-timeout node advance ───────────────────────────────────────────
+
+#[test]
+fn orbit_timeout_advances_after_n_ticks_near_waypoint() {
+    // A two-node graph. Bot starts right at the start node (which it can't "reach"
+    // by the strict Z-aware gate since it's at the same position and update skips
+    // advancing for the start node). We'll use a 3-node graph and hover near node 1.
+    let g = Arc::new(NavGraph::from_raw(
+        vec![
+            [0.0, 0.0, 0.0],
+            [50.0, 0.0, 0.0], // node 1 — orbit around this
+            [200.0, 0.0, 0.0],
+        ],
+        vec![
+            vec![(1, 50.0)],
+            vec![(0, 50.0), (2, 150.0)],
+            vec![(1, 150.0)],
+        ],
+    ));
+    let mut nav = NavigationDriver::new(Arc::clone(&g));
+    nav.set_goal(NavGoal::Waypoint(2), Vec3::ZERO);
+
+    // Simulate hovering at (55, 5, 0) — inside ORBIT_RADIUS=80 of node 1 (50,0,0)
+    // but outside the Z-aware reach gate (horiz=~7 but dz=0, WP_REACH_HORIZ=16 — actually
+    // that would reach it! Use a position that stays outside the strict gate.
+    // horiz to node 1 = sqrt(30² + 0²) = 30 > WP_REACH_HORIZ=16 → not reached.
+    let hover_pos = Vec3::new(20.0, 0.0, 0.0); // 30u horizontal from node 1 at (50,0,0)
+
+    // The nav driver starts at node 0's path; first advance to node 1:
+    // Position at (0,0,0) is the start — set_goal commits to node 1 as current_waypoint.
+    assert_eq!(nav.current_waypoint(), Some(1));
+
+    // Hover near node 1 for ORBIT_FRAMES ticks — should force-advance to node 2.
+    const ORBIT_FRAMES: u32 = 15;
+    let mut advanced = false;
+    for tick in 0..=ORBIT_FRAMES {
+        nav.update(hover_pos);
+        if nav.current_waypoint() == Some(2) {
+            advanced = true;
+            // Should have forced advance at tick ORBIT_FRAMES (15th tick, 0-indexed).
+            assert!(
+                tick >= ORBIT_FRAMES - 1,
+                "advanced too early at tick {tick}"
+            );
+            break;
+        }
+    }
+    assert!(
+        advanced,
+        "orbit-timeout should have force-advanced past node 1"
+    );
 }
