@@ -7,9 +7,14 @@ mod config;
 
 use std::net::SocketAddr;
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use config::Config;
+use q2proto::Usercmd;
+use tokio::net::UdpSocket;
+use tokio::time;
 
 #[derive(Parser)]
 #[command(
@@ -78,6 +83,196 @@ async fn resolve_addr(addr: &str) -> Result<SocketAddr, String> {
             .ok_or_else(|| format!("no addresses found for '{addr}'")),
         Err(e) => Err(format!("can't resolve '{addr}': {e}")),
     }
+}
+
+/// Connect a single bot and drive it with the full brain (FSM + nav + combat).
+async fn run_brain_bot(
+    addr: SocketAddr,
+    name: &str,
+    qport: u16,
+    cfg: &Config,
+) -> std::io::Result<()> {
+    use brain::fsm::BehaviorState;
+    use brain::perception::Worldview;
+    use brain::{
+        BotSkill, CombatDriver, MovementController, MovementIntent, NavGoal, NavigationDriver,
+    };
+    use client::{Conn, ConnState};
+
+    let sock = UdpSocket::bind("0.0.0.0:0").await?;
+    sock.connect(addr).await?;
+    let mut conn = Conn::new(addr, name, qport);
+
+    if let Some(pkt) = conn.start() {
+        sock.send(&pkt).await?;
+    }
+
+    let mut buf = vec![0u8; 4096];
+    let mut ticker = time::interval(Duration::from_millis(100));
+    let mut ticks: u32 = 0;
+
+    let mut fsm = BehaviorState::Roam;
+    let mut combat = CombatDriver::new();
+    let mut move_ctrl = MovementController::new();
+    let skill = BotSkill::default();
+    let mut nav_driver: Option<NavigationDriver> = None;
+    let mut roam_nodes: Vec<usize> = Vec::new();
+    let mut roam_idx: usize = 0;
+    let mut map_loaded = false;
+
+    loop {
+        tokio::select! {
+            res = sock.recv(&mut buf) => {
+                let n = res?;
+                if let Some(pkt) = conn.on_recv(&buf[..n]) {
+                    let _ = sock.send(&pkt).await;
+                }
+                if conn.state() == ConnState::Disconnected {
+                    break;
+                }
+
+            }
+
+            _ = ticker.tick() => {
+                ticks = ticks.wrapping_add(1);
+
+                // Clone what we need before any mutable borrow.
+                let (frame_opt, cs) = (conn.frame.clone(), conn.configstrings().clone());
+                let state = conn.state();
+                let playernum = conn.serverdata.as_ref().map(|sd| sd.playernum).unwrap_or(0);
+
+                // Lazy-load nav graph from CS_MODELS+1 (index 33 = "maps/q2dm7.bsp").
+                // CS_NAME in svc_serverdata is the display name, not the filename.
+                // Configstrings arrive over multiple packets so we retry each tick.
+                if !map_loaded && state == ConnState::Active {
+                    if let Some(bsp_path) = cs.get(33) {
+                        if !bsp_path.is_empty() {
+                            let bsp_path = bsp_path.to_owned();
+                            let map = bsp_path
+                                .strip_prefix("maps/")
+                                .unwrap_or(&bsp_path)
+                                .strip_suffix(".bsp")
+                                .unwrap_or(&bsp_path)
+                                .to_owned();
+                            map_loaded = true;
+                            eprintln!("qbots: BSP={bsp_path}  building nav graph for '{map}'…");
+                            match world::Bsp::load(&cfg.paths.baseq2, &map) {
+                                Ok(bsp) => {
+                                    let cm = world::CollisionModel::from_bsp(&bsp);
+                                    let m = bsp.models.first().expect("bsp has models");
+                                    let t0 = std::time::Instant::now();
+                                    let g =
+                                        world::NavGraph::generate(&cm, (m.mins, m.maxs), 64.0);
+                                    let comps = g.components();
+                                    let largest = comps.into_iter().next().unwrap_or_default();
+                                    eprintln!(
+                                        "qbots: nav ready: {} nodes / {} edges  largest={} ({} ms)",
+                                        g.node_count(),
+                                        g.edge_count(),
+                                        largest.len(),
+                                        t0.elapsed().as_millis()
+                                    );
+                                    roam_nodes = largest;
+                                    nav_driver = Some(NavigationDriver::new(Arc::new(g)));
+                                }
+                                Err(e) => {
+                                    eprintln!("qbots: nav load failed: {e}  (no nav)");
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let cmd = if state == ConnState::Active {
+                    if let Some(frame) = frame_opt {
+                        let view = Worldview::from_frame(&frame, &cs, playernum);
+                        let fsm_intent = fsm.tick(&view);
+                        let jitter = (ticks as f32) * 0.1;
+                        let combat_dec =
+                            combat.evaluate(&view, skill.aim_jitter_factor(), jitter);
+
+                        let mut mv = MovementIntent::new();
+
+                        // Aim + fire when we have a target.
+                        if combat_dec.should_fire {
+                            mv.look_at(combat_dec.aim_yaw, combat_dec.aim_pitch);
+                            mv.attack();
+                        }
+
+                        // Navigation: set FSM goal or cycle roam waypoints.
+                        let pos = view.self_state().origin;
+                        if let Some(nav) = nav_driver.as_mut() {
+                            nav.update(pos);
+
+                            let goal = if let Some(g) = fsm_intent.nav_goal {
+                                g
+                            } else if !roam_nodes.is_empty() {
+                                if ticks.is_multiple_of(50) {
+                                    // Advance to a well-spread roam target (skip ~1/7 of nodes).
+                                    roam_idx = (roam_idx + roam_nodes.len() / 7 + 1)
+                                        % roam_nodes.len();
+                                }
+                                NavGoal::Waypoint(roam_nodes[roam_idx])
+                            } else {
+                                NavGoal::Position(pos)
+                            };
+                            nav.set_goal(goal, pos);
+
+                            if let Some(dir) = nav.next_waypoint_direction(pos) {
+                                if !combat_dec.should_fire {
+                                    let yaw = dir.y.atan2(dir.x).to_degrees();
+                                    let pitch =
+                                        (-dir.z).atan2(dir.x.hypot(dir.y)).to_degrees();
+                                    mv.look_at(yaw, pitch);
+                                }
+                                mv.move_forward(400.0);
+                            }
+
+                            if nav.is_stuck() {
+                                mv.jump();
+                            }
+                        } else if !combat_dec.should_fire {
+                            mv.move_forward(200.0);
+                            if ticks.is_multiple_of(20) {
+                                mv.jump();
+                            }
+                        }
+
+                        let mut cmd = move_ctrl.build_cmd(mv);
+                        cmd.impulse = combat_dec.impulse.unwrap_or(0);
+                        cmd
+                    } else {
+                        Usercmd::default()
+                    }
+                } else {
+                    Usercmd::default()
+                };
+
+                if let Some(pkt) = conn.transmit_cmd(&cmd) {
+                    let _ = sock.send(&pkt).await;
+                }
+
+                if ticks.is_multiple_of(10) {
+                    match conn.frame.as_ref() {
+                        Some(f) => {
+                            let o = f.playerstate.pmove.origin_f32();
+                            eprintln!(
+                                "qbots: {:?} frame={} ents={} origin=({:.1},{:.1},{:.1}) fsm={fsm:?}",
+                                conn.state(),
+                                f.serverframe,
+                                f.entities.len(),
+                                o[0],
+                                o[1],
+                                o[2],
+                            );
+                        }
+                        None => eprintln!("qbots: {:?} (no frame yet)", conn.state()),
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[tokio::main]
@@ -341,7 +536,7 @@ async fn main() -> ExitCode {
                 }
             };
             println!("qbots: connecting '{name}' to {addr} (qport {qport})…  Ctrl-C to stop.");
-            match client::run(addr, &name, qport).await {
+            match run_brain_bot(addr, &name, qport, &cfg).await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     eprintln!("qbots: {e}");

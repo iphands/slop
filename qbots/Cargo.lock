@@ -228,8 +228,11 @@ dependencies = [
 name = "qbots"
 version = "0.1.0"
 dependencies = [
+ "brain",
  "clap",
  "client",
+ "glam",
+ "q2proto",
  "serde",
  "serde_yaml",
  "tokio",
