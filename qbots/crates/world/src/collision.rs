@@ -187,6 +187,65 @@ impl CollisionModel {
         self.point_contents(p) & MASK_SOLID != 0
     }
 
+    /// The simplest possible collision world: a single solid **half-space**. The
+    /// front side of `plane` (where `normal·p >= dist`) is empty; the back side is
+    /// a `CONTENTS_SOLID` brush. Useful for tests/debug that need "a wall" without
+    /// building BSP geometry — e.g. a line-of-sight trace that should be clear on
+    /// one side and blocked through the plane.
+    pub fn half_space(normal: [f32; 3], dist: f32) -> Self {
+        let typ = if normal[1] == 0.0 && normal[2] == 0.0 {
+            0 // PLANE_X
+        } else if normal[0] == 0.0 && normal[2] == 0.0 {
+            1 // PLANE_Y
+        } else if normal[0] == 0.0 && normal[1] == 0.0 {
+            2 // PLANE_Z
+        } else {
+            3 // PLANE_ANYX-ish general
+        };
+        let signbits = (0..3).fold(0u8, |b, j| if normal[j] < 0.0 { b | (1 << j) } else { b });
+        let planes = vec![Plane {
+            normal,
+            dist,
+            typ,
+            signbits,
+        }];
+        // Root node splits on plane 0: front → empty leaf 0, back → solid leaf 1.
+        let nodes = vec![Node {
+            plane: 0,
+            children: [-1, -2],
+        }];
+        let leafs = vec![
+            Leaf {
+                contents: 0,
+                cluster: 0,
+                firstleafbrush: 0,
+                numleafbrushes: 0,
+            },
+            Leaf {
+                contents: CONTENTS_SOLID,
+                cluster: -1,
+                firstleafbrush: 0,
+                numleafbrushes: 1,
+            },
+        ];
+        let brushsides = vec![BrushSide { plane: 0 }];
+        let brushes = vec![BrushCol {
+            firstside: 0,
+            numsides: 1,
+            contents: CONTENTS_SOLID,
+        }];
+        let leafbrushes = vec![0u16];
+        Self {
+            planes,
+            nodes,
+            leafs,
+            brushes,
+            brushsides,
+            leafbrushes,
+            headnode: 0,
+        }
+    }
+
     /// `CM_LeafCluster` — the PVS cluster of the leaf containing `p` (-1 if none).
     pub fn point_cluster(&self, p: &[f32; 3]) -> i16 {
         let leaf = self.point_leafnum(p, self.headnode);
@@ -690,5 +749,47 @@ mod tests {
         );
         // headnode = leaf 0 (solid) everywhere → startsolid.
         assert!(t.startsolid || t.fraction == 1.0);
+    }
+
+    /// A half-space wall at x=0 (x<0 solid): rays on the empty side are clear,
+    /// rays crossing into x<0 are blocked. The geometry every LOS test needs.
+    #[test]
+    fn half_space_blocks_across_the_plane() {
+        let w = CollisionModel::half_space([1.0, 0.0, 0.0], 0.0);
+        // Both points in the empty front (x>0) → unobstructed.
+        let clear = w.trace(
+            &[50.0, 0.0, 0.0],
+            &[100.0, 0.0, 0.0],
+            &[0.0; 3],
+            &[0.0; 3],
+            MASK_SOLID,
+        );
+        assert!(
+            (clear.fraction - 1.0).abs() < 1e-4,
+            "clear ray, got {}",
+            clear.fraction
+        );
+        assert!(!clear.startsolid);
+
+        // Crossing the plane into the solid back (target x<0) → stops at x≈0.
+        let blocked = w.trace(
+            &[50.0, 0.0, 0.0],
+            &[-50.0, 0.0, 0.0],
+            &[0.0; 3],
+            &[0.0; 3],
+            MASK_SOLID,
+        );
+        assert!(blocked.fraction < 1.0, "should hit the wall");
+        assert!(
+            (blocked.fraction - 0.5).abs() < 1e-3,
+            "stops at the plane, got {}",
+            blocked.fraction
+        );
+        // The blocking plane's normal points into the empty side (toward +x).
+        assert!(blocked.plane.normal[0] > 0.0);
+
+        // A point behind the plane is solid.
+        assert!(w.is_solid(&[-10.0, 0.0, 0.0]));
+        assert!(!w.is_solid(&[10.0, 0.0, 0.0]));
     }
 }

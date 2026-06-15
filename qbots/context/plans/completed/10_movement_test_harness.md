@@ -1,6 +1,6 @@
 # Plan 10 — Movement Test Harness (`spawn-to-spawn` / `spawn-to-weapon`)
 
-> **Status**: pending
+> **Status**: done
 > **Created**: 2026-06-15
 > **Depends on**: Plan 09 (fleet/CLI/supervisor)
 > **Goal**: Ship two CLI scenarios that drive one bot along a known route and dump a structured per-frame log, so movement quality (pathing accuracy + elapsed time) becomes *measurable* — the lens for Plans 11–14.

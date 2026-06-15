@@ -12,6 +12,7 @@ pub mod danger;
 pub mod fsm;
 pub mod heatmap;
 pub mod items;
+pub mod los;
 pub mod move_ctrl;
 pub mod nav;
 pub mod observed;

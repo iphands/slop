@@ -1,7 +1,7 @@
 # Plan 11 — Honest LOS Perception — Tracker
 
 ## Overview
-- Status: 0% complete
+- Status: 17% complete
 - Start date: 2026-06-15
 - Goal: bots only target/fire-at/chase/navigate-to enemies they can actually see
 
@@ -23,7 +23,7 @@
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: `los.rs` — `has_los` / `has_los_player` / `eye_origin` + tests | `brain/src/los.rs`, `brain/src/lib.rs`, `brain/tests/los.rs` | pending | |
+| 1 | T1: `los.rs` — `has_los` / `has_los_player` / `eye_origin` + tests | `brain/src/los.rs`, `brain/src/lib.rs` | done | + `world::CollisionModel::half_space` test fixture; 4 los tests + 1 half_space test green; clippy clean |
 | 2 | T2: `nearest_visible_enemy` + wire combat/FSM callers | `brain/src/perception.rs`, `brain/src/combat.rs`, `brain/src/fsm.rs` | pending | signature: pass `&LosChecker` |
 | 3 | T2b: ensure `Arc<CollisionModel>` available in tick | `qbots/src/supervisor.rs` / `MapNav` | pending | Open Q1 |
 | 4 | T3: sight hysteresis (`SIGHT_GRACE_FRAMES=2`) | `brain/src/combat.rs` | pending | |
