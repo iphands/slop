@@ -195,7 +195,7 @@ pub fn select_best_weapon(_current_weapon: Weapon, ammo: &[i32; 32], distance: f
 /// Returns true if a better weapon is available than the current one.
 pub fn should_switch_weapon(current_weapon: Weapon, ammo: &[i32; 32], distance: f32) -> bool {
     let best = select_best_weapon(current_weapon, ammo, distance);
-    best != current_weapon && score_weapon(best, ammo[best.ammo_index()].max(0), distance) > 0.0
+    best != current_weapon && score_weapon(best, ammo[best.ammo_index()], distance) > 0.0
 }
 
 #[cfg(test)]

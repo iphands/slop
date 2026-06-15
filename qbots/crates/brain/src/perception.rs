@@ -96,6 +96,8 @@ impl Worldview {
         // Parse entities
         let mut entities: Vec<PerceivedEntity> = Vec::new();
         for entity_state in &frame.entities {
+            // TODO: Get self entity number from playernum (passed via ServerData)
+            // For now, assume entity 1 is self (Q2 convention: 0=world, 1=first player)
             let class = if entity_state.number == 1 {
                 EntityClass::SelfPlayer
             } else {
@@ -106,22 +108,23 @@ impl Worldview {
             };
 
             let origin = Vec3::from(entity_state.origin);
-            let prev = entities.iter().find(|e| e.entity_number == entity_state.number);
+            let prev = entities
+                .iter()
+                .find(|e| e.entity_number == entity_state.number);
 
             let perceived = PerceivedEntity {
                 entity_number: entity_state.number,
                 class,
                 origin,
-                velocity: prev
-                    .and_then(|p| {
-                        if p.last_seen_frame == frame.serverframe - 1 {
-                            let dt = 0.1; // Assume 10 Hz
-                            let delta = origin - p.origin;
-                            Some(delta / dt)
-                        } else {
-                            None
-                        }
-                    }),
+                velocity: prev.and_then(|p| {
+                    if p.last_seen_frame == frame.serverframe - 1 {
+                        let dt = 0.1; // Assume 10 Hz
+                        let delta = origin - p.origin;
+                        Some(delta / dt)
+                    } else {
+                        None
+                    }
+                }),
                 angles: Vec3::from(entity_state.angles),
                 health: if class != EntityClass::SelfPlayer {
                     None // Only self has health in playerstate
@@ -187,15 +190,17 @@ impl Worldview {
     pub fn nearest_enemy(&self, fov_degrees: f32) -> Option<&PerceivedEntity> {
         let fov_radians = fov_degrees.to_radians();
         let forward = self.forward_vector();
-        
+        let origin = self.self_state.origin;
+
         self.enemies()
             .filter(|e| {
-                let direction = (e.origin - self.self_state.origin).normalize();
+                let direction = (e.origin - origin).normalize();
                 forward.dot(direction) > fov_radians.cos()
             })
-            .min_by_key(|e| {
-                let dist = (e.origin - self.self_state.origin).length_squared();
-                dist as i32
+            .min_by(|a, b| {
+                let da = (a.origin - origin).length_squared();
+                let db = (b.origin - origin).length_squared();
+                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
             })
     }
 
@@ -209,11 +214,7 @@ impl Worldview {
     pub fn items_in_range(&self, range: f32) -> Vec<&PerceivedEntity> {
         let range_sq = range * range;
         self.items()
-            .filter(|e| {
-                (e.origin - self.self_state.origin)
-                    .length_squared()
-                    < range_sq
-            })
+            .filter(|e| (e.origin - self.self_state.origin).length_squared() < range_sq)
             .collect()
     }
 
@@ -230,9 +231,8 @@ impl Worldview {
     /// Check if any enemy is within range (early exit, no allocation).
     pub fn enemy_in_range(&self, range: f32) -> bool {
         let range_sq = range * range;
-        self.enemies().any(|e| {
-            (e.origin - self.self_state.origin).length_squared() < range_sq
-        })
+        self.enemies()
+            .any(|e| (e.origin - self.self_state.origin).length_squared() < range_sq)
     }
 
     /// Get health percentage (0-100). Useful for decision thresholds.
@@ -247,12 +247,12 @@ impl Worldview {
 
     /// Find nearest item by type.
     pub fn nearest_item(&self, class: EntityClass) -> Option<&PerceivedEntity> {
-        self.items()
-            .filter(|e| e.class == class)
-            .min_by_key(|e| {
-                let dist = (e.origin - self.self_state.origin).length_squared();
-                dist as i32
-            })
+        let origin = self.self_state.origin;
+        self.items().filter(|e| e.class == class).min_by(|a, b| {
+            let da = (a.origin - origin).length_squared();
+            let db = (b.origin - origin).length_squared();
+            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        })
     }
 
     /// Check if the worldview is fresh (not dropped frames).
@@ -306,8 +306,14 @@ mod tests {
     #[test]
     fn test_classify_model() {
         assert_eq!(classify_model("item_health"), Some(EntityClass::ItemHealth));
-        assert_eq!(classify_model("weapon_shotgun"), Some(EntityClass::ItemWeapon));
-        assert_eq!(classify_model("quad_damage"), Some(EntityClass::ItemPowerup));
+        assert_eq!(
+            classify_model("weapon_shotgun"),
+            Some(EntityClass::ItemWeapon)
+        );
+        assert_eq!(
+            classify_model("quad_damage"),
+            Some(EntityClass::ItemPowerup)
+        );
         assert_eq!(classify_model("unknown"), None);
     }
 

@@ -7,7 +7,12 @@ use crate::perception::{EntityClass, Worldview};
 use crate::weapons::{self, Weapon};
 
 /// Frames to hold on a target before considering a switch.
+/// 5 frames (~0.5s at 10 Hz) prevents thrashing when enemies pop in/out of PVS.
+/// Based on Eraser's "target stability" heuristic.
 const TARGET_LOCK_FRAMES: u32 = 5;
+
+/// Minimum frames between shots (fire rate limiter).
+const FIRE_RATE_COOLDOWN_FRAMES: u32 = 2;
 
 /// Combat decision for one frame.
 #[derive(Debug, Clone, Copy)]
@@ -56,10 +61,7 @@ impl CombatDriver {
         let target_num = self.select_target_entity(view);
 
         if let Some(num) = target_num {
-            let target = view
-                .entities()
-                .find(|e| e.entity_number == num)
-                .or_else(|| view.entities().find(|e| e.entity_number == num));
+            let target = view.entities().find(|e| e.entity_number == num);
 
             if let Some(t) = target {
                 let distance = (t.origin - view.self_state().origin).length();
@@ -148,7 +150,7 @@ impl CombatDriver {
     }
 
     fn should_fire(&self, view: &Worldview, distance: f32) -> bool {
-        if self.frames_since_shot < 2 {
+        if self.frames_since_shot < FIRE_RATE_COOLDOWN_FRAMES {
             return false;
         }
 
