@@ -257,6 +257,13 @@ impl CombatDriver {
     pub fn target_entity(&self) -> Option<i32> {
         self.current_target
     }
+
+    /// Drop the current target (e.g. after the give-up watchdog abandons a stale
+    /// chase). Next tick re-selects a fresh target if one is visible.
+    pub fn clear_target(&mut self) {
+        self.current_target = None;
+        self.lock_frames_remaining = 0;
+    }
 }
 
 impl Default for CombatDriver {

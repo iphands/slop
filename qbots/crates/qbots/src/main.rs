@@ -382,6 +382,15 @@ pub(crate) async fn bot_task(
                         if let Some(nav) = nav_driver.as_mut() {
                             nav.update(pos);
 
+                            // Give-up watchdog: if we've chased this goal too long
+                            // without reaching a waypoint, abandon the current
+                            // combat target so we stop re-issuing the same stale
+                            // position and fall back to roaming.
+                            if nav.goal_abandoned() {
+                                combat.clear_target();
+                                fsm = BehaviorState::Roam;
+                            }
+
                             let goal = if let Some(g) = fsm_intent.nav_goal {
                                 g
                             } else if !roam_nodes.is_empty() {

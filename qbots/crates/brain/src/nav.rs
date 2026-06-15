@@ -6,6 +6,11 @@ use world::NavGraph;
 
 const STUCK_THRESHOLD_TICKS: i32 = 30;
 const STUCK_MIN_MOVEMENT: f32 = 16.0;
+/// Hard cap on pursuing a single goal without reaching a waypoint. At 10 Hz
+/// this is ~8 s — past it we abandon the goal (Eraser's 4 s give-up is tighter,
+/// but we tolerate the slow nav-graph routing). Prevents infinite stale-enemy
+/// chases. (`eraser.md` §3 give-up watchdog.)
+const GOAL_GIVEUP_TICKS: i32 = 80;
 
 #[derive(Debug, Clone)]
 pub enum NavGoal {
@@ -24,6 +29,11 @@ pub struct NavigationDriver {
     last_position: Option<Vec3>,
     stuck_ticks: i32,
     is_stuck: bool,
+    /// Ticks since the current goal was set without reaching a waypoint. Drives
+    /// the give-up watchdog.
+    goal_age_ticks: i32,
+    /// True for one tick after the watchdog abandons a stale goal.
+    goal_abandoned: bool,
 }
 
 impl NavigationDriver {
@@ -36,6 +46,8 @@ impl NavigationDriver {
             last_position: None,
             stuck_ticks: 0,
             is_stuck: false,
+            goal_age_ticks: 0,
+            goal_abandoned: false,
         }
     }
 
@@ -102,6 +114,8 @@ impl NavigationDriver {
             self.current_path[0]
         };
         self.current_waypoint = Some(first);
+        self.goal_age_ticks = 0;
+        self.goal_abandoned = false;
     }
 
     pub fn current_waypoint(&self) -> Option<usize> {
@@ -120,12 +134,15 @@ impl NavigationDriver {
     }
 
     pub fn update(&mut self, position: Vec3) -> bool {
+        self.goal_abandoned = false;
+
         if let Some(wp_idx) = self.current_waypoint {
             let wp_pos = Vec3::from(self.nav_graph.nodes[wp_idx]);
             let dist = (wp_pos - position).length();
 
             if dist < 64.0 {
-                // Advance to the next node in the stored path.
+                // Reached a waypoint — reset the give-up clock and advance.
+                self.goal_age_ticks = 0;
                 let current_idx = self.current_path.iter().position(|&w| w == wp_idx);
                 if let Some(idx) = current_idx {
                     if idx + 1 < self.current_path.len() {
@@ -136,6 +153,20 @@ impl NavigationDriver {
                         self.last_goal_node = None;
                         return true;
                     }
+                }
+            } else {
+                // Still pursuing — age the goal toward the give-up cap.
+                self.goal_age_ticks += 1;
+                if self.goal_age_ticks > GOAL_GIVEUP_TICKS {
+                    tracing::debug!(
+                        age = self.goal_age_ticks,
+                        "goal give-up: abandoning stale goal"
+                    );
+                    self.current_path.clear();
+                    self.current_waypoint = None;
+                    self.last_goal_node = None;
+                    self.goal_age_ticks = 0;
+                    self.goal_abandoned = true;
                 }
             }
         }
@@ -155,6 +186,13 @@ impl NavigationDriver {
         self.last_position = Some(position);
 
         false
+    }
+
+    /// True for one tick after the give-up watchdog abandoned a stale goal. The
+    /// caller can use this to fall back to roaming instead of re-issuing the same
+    /// (unreachable) goal.
+    pub fn goal_abandoned(&self) -> bool {
+        self.goal_abandoned
     }
 
     pub fn is_stuck(&self) -> bool {
