@@ -53,7 +53,7 @@ export function Logs() {
 
   useEffect(() => {
     if (!paused && endRef.current) {
-      endRef.current.scrollIntoView({ behavior: 'smooth' });
+      endRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, [logs, paused]);
 
@@ -65,7 +65,7 @@ export function Logs() {
     }
   };
 
-  const filteredLogs = logs;
+  const filteredLogs = [...logs].reverse();
 
   return (
     <div className="flex flex-col h-screen">

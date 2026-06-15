@@ -440,11 +440,12 @@ async fn rcon_execute(
                 .log_stream
                 .broadcast("INFO", &format!("Executing: {}", payload.command));
             
-            // Truncate long responses to prevent log flooding
-            let display_output = if output.len() > 500 {
-                format!("{}... (truncated {} chars)", &output[..500], output.len() - 500)
+            let cleaned_output = output.replace('\0', "").trim().to_string();
+            
+            let display_output = if cleaned_output.len() > 500 {
+                format!("{}... (truncated {} chars)", &cleaned_output[..500], cleaned_output.len() - 500)
             } else {
-                output.clone()
+                cleaned_output
             };
             
             state
