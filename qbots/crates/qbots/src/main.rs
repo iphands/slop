@@ -47,11 +47,19 @@ enum Cmd {
     Trace { map: String },
     /// Show PVS info for a map (cluster at the center + how many clusters it sees).
     Pvs { map: String },
+    /// Generate the nav graph for a map and find a corner-to-corner path.
+    Nav { map: String },
 }
 
 /// A per-process default qport (distinct across concurrent bot processes).
 fn default_qport() -> u16 {
     (std::process::id() & 0xFFFF) as u16
+}
+
+/// Squared 3D distance (for nearest-waypoint comparisons).
+fn dist2(a: &[f32; 3], b: &[f32; 3]) -> f32 {
+    let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
 }
 
 /// Resolve `host[:port]` to a socket address via DNS lookup. Hostnames (e.g.
@@ -198,6 +206,85 @@ async fn main() -> ExitCode {
                         cluster,
                         p.count_visible(cluster)
                     );
+                }
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("qbots: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Cmd::Nav { map } => match world::Bsp::load(&cfg.paths.baseq2, &map) {
+            Ok(bsp) => {
+                let cm = world::CollisionModel::from_bsp(&bsp);
+                let m = bsp.models.first().expect("bsp has models");
+                let bounds = (m.mins, m.maxs);
+
+                let t0 = std::time::Instant::now();
+                let g = world::NavGraph::generate(&cm, bounds, 64.0);
+                println!(
+                    "{}: nav graph  {} nodes / {} edges  (spacing 64, {} ms)",
+                    map,
+                    g.node_count(),
+                    g.edge_count(),
+                    t0.elapsed().as_millis(),
+                );
+
+                // Diagnose connectivity, then find a path inside the largest component.
+                let cz = (m.mins[2] + m.maxs[2]) * 0.5;
+                let start = g.nearest(&[m.mins[0] + 200.0, m.mins[1] + 200.0, cz]);
+                let goal = g.nearest(&[m.maxs[0] - 200.0, m.maxs[1] - 200.0, cz]);
+                let comps = g.components();
+                let largest = comps.first().map(|c| c.len()).unwrap_or(0);
+                println!("  {} components; largest = {} nodes", comps.len(), largest);
+
+                let (s, go) = match (start, goal, comps.first()) {
+                    // corner-to-corner worked
+                    (Some(a), Some(b), _) if g.path(a, b).is_some() => (a, b),
+                    // multi-level: path across the largest connected component instead
+                    (Some(a), _, Some(comp)) => {
+                        let far = comp
+                            .iter()
+                            .copied()
+                            .max_by(|&x, &y| {
+                                dist2(&g.nodes[x], &g.nodes[a])
+                                    .total_cmp(&dist2(&g.nodes[y], &g.nodes[a]))
+                            })
+                            .unwrap_or(a);
+                        println!("  (corners split across levels — pathing inside the largest component)");
+                        (a, far)
+                    }
+                    _ => {
+                        println!("  couldn't find waypoints");
+                        return ExitCode::SUCCESS;
+                    }
+                };
+
+                let t0 = std::time::Instant::now();
+                match g.path(s, go) {
+                    Some(path) => {
+                        let len: f32 = path
+                            .windows(2)
+                            .map(|w| {
+                                let a = g.nodes[w[0]];
+                                let b = g.nodes[w[1]];
+                                ((a[0] - b[0]).powi(2)
+                                    + (a[1] - b[1]).powi(2)
+                                    + (a[2] - b[2]).powi(2))
+                                .sqrt()
+                            })
+                            .sum();
+                        println!(
+                            "  path {}→{}: {} hops / {} nodes, {:.0} units  ({} ms)",
+                            s,
+                            go,
+                            path.len() - 1,
+                            path.len(),
+                            len,
+                            t0.elapsed().as_millis(),
+                        );
+                    }
+                    None => println!("  no path {}→{} (unreachable)", s, go),
                 }
                 ExitCode::SUCCESS
             }

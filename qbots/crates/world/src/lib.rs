@@ -6,6 +6,7 @@
 
 pub mod bsp;
 pub mod collision;
+pub mod navgraph;
 pub mod pak;
 pub mod vis;
 
@@ -16,5 +17,6 @@ pub use collision::{
     CollisionModel, Trace, CONTENTS_LAVA, CONTENTS_SLIME, CONTENTS_SOLID, CONTENTS_WATER,
     CONTENTS_WINDOW, MASK_SOLID, MASK_WATER,
 };
+pub use navgraph::{NavGraph, HULL_MAXS, HULL_MINS};
 pub use pak::Pak;
 pub use vis::Pvs;
