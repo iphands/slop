@@ -234,15 +234,21 @@ async fn main() -> ExitCode {
                 let cz = (m.mins[2] + m.maxs[2]) * 0.5;
                 let start = g.nearest(&[m.mins[0] + 200.0, m.mins[1] + 200.0, cz]);
                 let comps = g.components();
-                
+
                 // Guard against empty nav graph
-                let largest = comps.first().expect("nav graph must have at least one component");
+                let largest = comps
+                    .first()
+                    .expect("nav graph must have at least one component");
                 if largest.is_empty() {
                     println!("  no walkable nodes in nav graph");
                     return ExitCode::SUCCESS;
                 }
-                
-                println!("  {} components; largest = {} nodes", comps.len(), largest.len());
+
+                println!(
+                    "  {} components; largest = {} nodes",
+                    comps.len(),
+                    largest.len()
+                );
 
                 // Pick a start node from the largest component
                 let s = if let Some(start) = start {
@@ -260,8 +266,7 @@ async fn main() -> ExitCode {
                     .iter()
                     .copied()
                     .max_by(|&x, &y| {
-                        dist2(&g.nodes[x], &g.nodes[s])
-                            .total_cmp(&dist2(&g.nodes[y], &g.nodes[s]))
+                        dist2(&g.nodes[x], &g.nodes[s]).total_cmp(&dist2(&g.nodes[y], &g.nodes[s]))
                     })
                     .expect("largest component must have nodes");
 

@@ -64,7 +64,8 @@ impl BehaviorState {
         }
 
         // Item nearby → Pickup
-        if let Some(item) = view.nearest_item(crate::perception::EntityClass::ItemHealth)
+        if let Some(item) = view
+            .nearest_item(crate::perception::EntityClass::ItemHealth)
             .or_else(|| view.nearest_item(crate::perception::EntityClass::ItemArmor))
         {
             let dist = (item.origin - view.self_state().origin).length();
@@ -134,9 +135,7 @@ impl BehaviorState {
 
     fn engage(&self, view: &Worldview, target_entity: i32) -> BehaviorIntent {
         // Find target in worldview
-        let target = view
-            .entities()
-            .find(|e| e.entity_number == target_entity);
+        let target = view.entities().find(|e| e.entity_number == target_entity);
 
         BehaviorIntent {
             nav_goal: None, // Stay in place, aim and fire

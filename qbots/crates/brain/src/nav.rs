@@ -44,7 +44,9 @@ impl NavigationDriver {
         };
 
         if let Some(target) = target_waypoint {
-            let nearest = self.nav_graph.nearest(&[from_position.x, from_position.y, from_position.z]);
+            let nearest =
+                self.nav_graph
+                    .nearest(&[from_position.x, from_position.y, from_position.z]);
             if let Some(start) = nearest {
                 if let Some(path) = self.nav_graph.path(start, target) {
                     self.current_path = path;

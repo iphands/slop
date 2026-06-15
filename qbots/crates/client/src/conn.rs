@@ -109,16 +109,15 @@ impl Conn {
                     return Some(oob_line(&line));
                 }
             }
-            Some("client_connect") => {
+            Some("client_connect") if self.netchan.is_none() => {
                 // Netchan up; queue the reliable `new`. (Dup client_connect is ignored.)
-                if self.netchan.is_none() {
-                    let mut nc = Netchan::new(self.qport);
-                    nc.message_mut().write_u8(ClcOp::Stringcmd.into());
-                    nc.message_mut().write_string("new");
-                    self.netchan = Some(nc);
-                    self.state = ConnState::Connected;
-                }
+                let mut nc = Netchan::new(self.qport);
+                nc.message_mut().write_u8(ClcOp::Stringcmd.into());
+                nc.message_mut().write_string("new");
+                self.netchan = Some(nc);
+                self.state = ConnState::Connected;
             }
+            Some("client_connect") => {}
             Some("print") => {
                 // `print\n<message>` — informational; not fatal.
             }

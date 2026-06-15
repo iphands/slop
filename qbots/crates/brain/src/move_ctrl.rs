@@ -118,12 +118,18 @@ impl MovementController {
         cmd
     }
 
-    /// Convert degrees to Q2 angle format (signed short, -180 to 180).
+    /// Convert degrees to Q2 angle format (signed short).
+    /// Q2 reads these back as: `short_value * (360.0 / 65536.0)`.
+    /// Mapping: 0°→0, 90°→16384, 180°→-32768, 270°→-16384.
     fn deg_to_short(&self, deg: f32) -> i16 {
-        // Q2 uses 16-bit angles where 360 degrees = 65536
-        // So 1 degree = 65536 / 360 ≈ 182.04
-        let normalized = deg % 360.0;
-        ((normalized * 65536.0 / 360.0) as i32) as i16
+        let normalized = deg.rem_euclid(360.0); // [0, 360)
+        let raw = (normalized * 65536.0 / 360.0) as i32; // [0, 65536)
+                                                         // Map to signed i16: [0,32768) stays positive, [32768,65536) wraps negative
+        if raw >= 32768 {
+            (raw - 65536) as i16
+        } else {
+            raw as i16
+        }
     }
 
     /// Get the last command sent.
@@ -144,7 +150,7 @@ mod tests {
 
     #[test]
     fn test_movement_intent_creation() {
-        let mut intent = MovementIntent::new();
+        let intent = MovementIntent::new();
         assert_eq!(intent.forward, 0.0);
         assert_eq!(intent.side, 0.0);
         assert!(!intent.attack);
@@ -169,6 +175,10 @@ mod tests {
         assert_eq!(controller.deg_to_short(0.0), 0);
         assert_eq!(controller.deg_to_short(90.0), 16384);
         assert_eq!(controller.deg_to_short(-90.0), -16384);
+        assert_eq!(controller.deg_to_short(270.0), -16384); // equivalent to -90°
+        assert_eq!(controller.deg_to_short(180.0), -32768); // wraps to i16 min
+        assert_eq!(controller.deg_to_short(360.0), 0); // full circle
+        assert_eq!(controller.deg_to_short(-360.0), 0); // full circle negative
     }
 
     #[test]
