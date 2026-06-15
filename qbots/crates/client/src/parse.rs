@@ -7,7 +7,7 @@
 //! delta decoder). The caller stops at the first `Unhandled` — enough to reach the
 //! "bot connected" milestone while staying alive via `clc_move`.
 
-use q2proto::{DecodeError, Reader, SvcOp};
+use q2proto::{DecodeError, EntityState, Reader, SvcOp};
 
 /// Total configstring slots (computed from the CS_* chain in `shared.h:1193-1210`):
 /// `CS_GENERAL(1568) + MAX_GENERAL(512) = 2080`.
@@ -151,9 +151,17 @@ pub fn parse_message(r: &mut Reader) -> Result<SvcEvent, DecodeError> {
                 value,
             }
         }
-        // Everything else (sound, baseline, frame, …) is out of scope for the handshake.
+        SvcOp::Spawnbaseline => {
+            // Parse and discard: the bot gets all entity state from game frames.
+            // We still need to advance the cursor so we don't miss the "precache"
+            // stufftext that comes after the last baseline batch.
+            let null = EntityState::default();
+            let (number, bits) = EntityState::parse_bits(r)?;
+            EntityState::read_delta(r, &null, number, bits)?;
+            SvcEvent::Nop
+        }
+        // Sound, frame, and other non-handshake ops stop the parse loop.
         other => {
-            // Rewind past the opcode byte so callers know we stopped right after it.
             let _ = other;
             SvcEvent::Unhandled(raw)
         }

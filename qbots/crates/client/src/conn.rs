@@ -83,12 +83,32 @@ impl Conn {
         if is_oob(packet) {
             return self.on_oob(oob_payload(packet).unwrap_or(&[]));
         }
+        // Peek at the reliable bit (bit 31 of w1 in LE = MSB of byte 3) before process
+        // consumes the packet's sequence state. See netchan.rs wire-format comment.
+        let has_reliable = packet.len() >= 4 && (packet[3] >> 7) != 0;
         // In-band netchan packet — let the channel validate + strip the header.
         let netchan = self.netchan.as_mut()?;
         let payload = netchan.process(packet)?;
         // netchan.process borrows &mut self.netchan; we must finish that borrow before
         // touching self again, so parse out of a local reader over the payload slice.
-        self.on_payload(payload)
+        // Reconnect is the only on_payload case that returns a packet (getchallenge OOB).
+        let oob_reply = self.on_payload(payload);
+        if oob_reply.is_some() {
+            return oob_reply;
+        }
+        // Immediately ACK server reliables: YamagiQ2 drives configstrings via reliable
+        // "cmd configstrings N K" stufftexts and the bot must reply quickly. Waiting for
+        // the 100ms ticker risks the server retransmitting the same reliable, which
+        // toggles incoming_reliable_sequence back — defeating the ACK. Standard Q2
+        // clients send clc_move on every server frame, so we do the same: flush any
+        // pending stringcmds (e.g. the next "configstrings N K" request or "begin N")
+        // along with the ack.
+        if has_reliable {
+            let nc = self.netchan.as_mut()?;
+            Some(nc.transmit(&[]))
+        } else {
+            None
+        }
     }
 
     fn on_oob(&mut self, payload: &[u8]) -> Option<Bytes> {
@@ -132,21 +152,34 @@ impl Conn {
             match parse_message(&mut r) {
                 Ok(SvcEvent::ServerData(sd)) => {
                     self.serverdata = Some(sd.clone());
-                    if !self.begin_queued {
-                        if let Some(nc) = self.netchan.as_mut() {
-                            nc.message_mut().write_u8(ClcOp::Stringcmd.into());
-                            nc.message_mut()
-                                .write_string(&format!("begin {}", sd.servercount));
-                            self.begin_queued = true;
-                        }
-                    }
-                    // We've queued `begin`; the server will spawn us.
+                    // YamagiQ2 sends "cmd configstrings N 0" in this same reliable block.
+                    // We respond via StuffText handling and only send "begin" on "precache".
                     self.state = ConnState::Active;
                 }
                 Ok(SvcEvent::ConfigString { index, value }) => {
                     self.configstrings.set(index, value);
                 }
-                Ok(SvcEvent::StuffText(_)) => {} // precache etc. — we already sent begin
+                Ok(SvcEvent::StuffText(s)) => {
+                    if let Some(server_cmd) = s.strip_prefix("cmd ") {
+                        // "cmd X" = forward X to the server as a reliable stringcmd.
+                        // YamagiQ2 drives configstring pulling with "cmd configstrings N K".
+                        if let Some(nc) = self.netchan.as_mut() {
+                            nc.message_mut().write_u8(ClcOp::Stringcmd.into());
+                            nc.message_mut().write_string(server_cmd);
+                        }
+                    } else if s.starts_with("precache") && !self.begin_queued {
+                        // Server finished sending configstrings + baselines; spawn us.
+                        if let Some(sd) = &self.serverdata {
+                            let servercount = sd.servercount;
+                            if let Some(nc) = self.netchan.as_mut() {
+                                nc.message_mut().write_u8(ClcOp::Stringcmd.into());
+                                nc.message_mut().write_string(&format!("begin {servercount}"));
+                                self.begin_queued = true;
+                            }
+                        }
+                    }
+                    // Other stufftext ("kick", "cmd startdlights", etc.) is ignored.
+                }
                 Ok(SvcEvent::Print { .. }) | Ok(SvcEvent::Nop) => {}
                 Ok(SvcEvent::Disconnect) => {
                     self.state = ConnState::Disconnected;
@@ -200,11 +233,31 @@ impl Conn {
         self.state
     }
 
+    /// Access the current configstrings table.
+    pub fn configstrings(&self) -> &ConfigStrings {
+        &self.configstrings
+    }
+
     /// Our player's world-space origin from the most recent frame, if any.
     pub fn self_origin(&self) -> Option<[f32; 3]> {
         self.frame
             .as_ref()
             .map(|f| f.playerstate.pmove.origin_f32())
+    }
+
+    /// Build and transmit a move frame with the provided usercmd.
+    /// Pre-active: flushes the reliable queue with an empty payload.
+    /// Active: sends `clc_move` with the given command (sent 3× as Q2 expects).
+    pub fn transmit_cmd(&mut self, cmd: &Usercmd) -> Option<Bytes> {
+        let payload: Vec<u8> = if self.state == ConnState::Active {
+            let serverframe = self.frame.as_ref().map(|f| f.serverframe).unwrap_or(-1);
+            let seq = self.netchan.as_ref()?.outgoing_sequence();
+            build_clc_move(serverframe, [cmd, cmd, cmd], seq)
+        } else {
+            Vec::new()
+        };
+        let nc = self.netchan.as_mut()?;
+        Some(nc.transmit(&payload))
     }
 }
 
@@ -331,15 +384,32 @@ mod tests {
         // header(8) + qport(2) + reliable payload (Stringcmd 1B + "new\0" 4B)
         assert!(frame.len() >= 15);
 
-        // 5. server sends svc_serverdata → we queue "begin" and go Active.
-        let pkt = server_frame(1, 1, &serverdata_payload());
+        // 5. server sends svc_serverdata + stufftext "cmd configstrings 4242 0".
+        // YamagiQ2 drives configstring pulling via stufftext; "begin" is queued only
+        // when "precache" stufftext arrives (not immediately on serverdata).
+        let mut sd_payload = serverdata_payload().to_vec();
+        let mut w = q2proto::Writer::new();
+        w.write_u8(SvcOp::Stufftext.into());
+        w.write_string("cmd configstrings 4242 0\n");
+        sd_payload.extend_from_slice(&w.freeze());
+        let pkt = server_frame(1, 1, &sd_payload);
         c.on_recv(&pkt);
         assert_eq!(c.state(), ConnState::Active);
         let sd = c.serverdata.as_ref().unwrap();
         assert_eq!(sd.servercount, 4242);
         assert_eq!(sd.levelname, "q2dm1");
+        // "begin" is NOT yet queued (waiting for "precache").
+        assert!(!c.begin_queued, "begin must not be queued before precache");
 
-        // 6. next keepalive → a frame carrying the reliable "begin".
+        // 6. server later sends stufftext "precache 4242" → "begin 4242" is queued.
+        let mut w2 = q2proto::Writer::new();
+        w2.write_u8(SvcOp::Stufftext.into());
+        w2.write_string("precache 4242\n");
+        let pkt2 = server_frame(2, 1, &w2.freeze());
+        c.on_recv(&pkt2);
+        assert!(c.begin_queued, "begin queued after precache");
+
+        // 7. next keepalive → a frame carrying the reliable "begin".
         let frame2 = c.keepalive().expect("frame");
         assert!(frame2.len() >= 10);
     }
