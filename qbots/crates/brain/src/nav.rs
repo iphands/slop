@@ -2,7 +2,7 @@
 
 use glam::Vec3;
 use std::sync::Arc;
-use world::{CollisionModel, NavGraph};
+use world::{CollisionModel, EdgeKind, NavGraph};
 
 /// Hard cap on pursuing a single goal without reaching a waypoint. At 10 Hz
 /// this is ~8 s — past it we abandon the goal (Eraser's 4 s give-up is tighter,
@@ -59,6 +59,8 @@ pub struct NavigationDriver {
     /// Consecutive ticks inside `ORBIT_RADIUS` of the current waypoint without
     /// reaching it. Drives the orbit-timeout force-advance (Plan 12 T3).
     near_wp_ticks: u32,
+    /// Most recently completed waypoint (Plan 14 T2: jump-edge detection).
+    prev_waypoint: Option<usize>,
 }
 
 impl NavigationDriver {
@@ -73,6 +75,7 @@ impl NavigationDriver {
             goal_abandoned: false,
             risk_overlay: None,
             near_wp_ticks: 0,
+            prev_waypoint: None,
         }
     }
 
@@ -187,6 +190,18 @@ impl NavigationDriver {
         self.current_waypoint
     }
 
+    /// True when the current path edge (prev_waypoint → current_waypoint) is a
+    /// jump link (Plan 14 T2). Call this after `update()` to decide whether to
+    /// press jump. Safe to call always — returns `false` when no path is active.
+    pub fn current_edge_is_jump(&self) -> bool {
+        match (self.prev_waypoint, self.current_waypoint) {
+            (Some(from), Some(to)) => {
+                matches!(self.nav_graph.edge_kind(from, to), EdgeKind::Jump { .. })
+            }
+            _ => false,
+        }
+    }
+
     pub fn next_waypoint_direction(&self, from_position: Vec3) -> Option<Vec3> {
         self.current_waypoint.and_then(|wp_idx| {
             let wp_pos = Vec3::from(self.nav_graph.nodes[wp_idx]);
@@ -265,9 +280,11 @@ impl NavigationDriver {
                 let current_idx = self.current_path.iter().position(|&w| w == wp_idx);
                 if let Some(idx) = current_idx {
                     if idx + 1 < self.current_path.len() {
+                        self.prev_waypoint = Some(wp_idx);
                         self.current_waypoint = Some(self.current_path[idx + 1]);
                     } else {
                         // Reached the goal; allow set_goal to plan a new one.
+                        self.prev_waypoint = None;
                         self.current_waypoint = None;
                         self.last_goal_node = None;
                         return true;

@@ -822,6 +822,11 @@ pub(crate) async fn bot_task(
                                     mv.move_side(hside);
                                 }
                             }
+
+                            // ── 7. Jump-edge activation (Plan 14 T2) ─────────────────────
+                            if nav.current_edge_is_jump() {
+                                mv.jump();
+                            }
                         } else if !combat_dec.should_fire {
                             // No nav graph loaded yet — just walk forward.
                             mv.move_forward(1.0);

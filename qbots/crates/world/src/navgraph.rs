@@ -5,7 +5,7 @@
 //! player-box trace, then A* over the graph.
 
 use std::cmp::{Ordering, Reverse};
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use crate::collision::{CollisionModel, MASK_SOLID, MASK_WATER};
 
@@ -18,10 +18,22 @@ const STEP: f32 = 24.0;
 /// drive an edge to zero/negative (Plan 08 T3).
 const EPS: f32 = 1.0;
 
+/// The kind of an edge in the nav graph (Plan 14 T2).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EdgeKind {
+    /// Normal walk/ground-movement edge.
+    Walk,
+    /// Ledge-drop jump edge: the bot should press jump + forward when leaving
+    /// the source node. `launch_yaw` is the world-space yaw (degrees) to face.
+    Jump { launch_yaw: f32 },
+}
+
 /// A navigation graph: waypoints (bot-origin positions) + LOS-checked edges.
 pub struct NavGraph {
     pub nodes: Vec<[f32; 3]>,
-    adj: Vec<Vec<(usize, f32)>>, // (neighbor index, edge cost)
+    adj: Vec<Vec<(usize, f32)>>,         // (neighbor index, edge cost)
+    jump_edges: HashSet<(usize, usize)>, // (from, to) pairs that are jump edges
+    jump_yaws: HashMap<(usize, usize), f32>, // launch_yaw per jump edge
 }
 
 impl NavGraph {
@@ -70,7 +82,12 @@ impl NavGraph {
             }
         }
 
-        NavGraph { nodes, adj }
+        NavGraph {
+            nodes,
+            adj,
+            jump_edges: HashSet::new(),
+            jump_yaws: HashMap::new(),
+        }
     }
 
     pub fn node_count(&self) -> usize {
@@ -89,7 +106,12 @@ impl NavGraph {
             adj.len(),
             "nodes and adjacency vectors must have equal length"
         );
-        Self { nodes, adj }
+        Self {
+            nodes,
+            adj,
+            jump_edges: HashSet::new(),
+            jump_yaws: HashMap::new(),
+        }
     }
 
     /// Connected components (BFS). Useful for diagnosing multi-level fragmentation.
@@ -292,7 +314,7 @@ impl NavGraph {
         if spawns.is_empty() {
             return (0, 0);
         }
-        let largest: std::collections::HashSet<usize> = self
+        let largest: HashSet<usize> = self
             .components()
             .into_iter()
             .next()
@@ -304,6 +326,103 @@ impl NavGraph {
             .filter(|sp| self.nearest(sp).is_some_and(|i| largest.contains(&i)))
             .count();
         (connected, spawns.len())
+    }
+
+    /// Detect ledge-drop jump links (Plan 14 T2). Conservative: downward jumps only
+    /// (height drop > STEP, < MAX_FALL=256). For each node A, probes in 8 directions
+    /// at `spacing * 1.5`; if a lower floor is found AND the nearest sampled node B
+    /// is within `STEP * 2` of the landing point AND no walk-edge already exists,
+    /// adds a `Jump { launch_yaw }` edge A→B and records it. Returns the count added.
+    ///
+    /// Call after `generate()` (+ optional `seed_spawns()`). The resulting edges are
+    /// safe to traverse — Q2 ignores jump while airborne, so holding jump while
+    /// approaching a ledge harmlessly fires once on landing.
+    pub fn detect_jump_edges(&mut self, cm: &CollisionModel, spacing: f32) -> usize {
+        const MAX_FALL: f32 = 256.0;
+        const D: f32 = std::f32::consts::FRAC_1_SQRT_2;
+        const DIRS: [(f32, f32); 8] = [
+            (1.0, 0.0),
+            (-1.0, 0.0),
+            (0.0, 1.0),
+            (0.0, -1.0),
+            (D, D),
+            (-D, D),
+            (D, -D),
+            (-D, -D),
+        ];
+        let zero = [0.0f32; 3];
+        let probe_dist = spacing * 1.5;
+        let mut added = 0;
+        let n = self.nodes.len();
+
+        for a in 0..n {
+            let an = self.nodes[a];
+            for (dx, dy) in DIRS {
+                let px = an[0] + dx * probe_dist;
+                let py = an[1] + dy * probe_dist;
+
+                // Down-trace from above probe to below A - MAX_FALL.
+                let top = [px, py, an[2] + 200.0];
+                let bot = [px, py, an[2] - MAX_FALL];
+                let down = cm.trace(&top, &bot, &zero, &zero, MASK_SOLID);
+                if down.fraction >= 1.0 || down.startsolid {
+                    continue; // no floor below
+                }
+                let floor_z = down.endpos[2];
+                let drop = an[2] - floor_z;
+                if !(STEP..=MAX_FALL).contains(&drop) {
+                    continue; // not a meaningful downward ledge
+                }
+                let landing = [px, py, floor_z + 24.0];
+
+                // Find the nearest sampled node B at the landing site.
+                let Some(b) = self.nearest(&landing) else {
+                    continue;
+                };
+                let bn = self.nodes[b];
+                if b == a {
+                    continue;
+                }
+                // B must be close to landing horizontally and within height band.
+                let dx2 = (bn[0] - landing[0]).powi(2) + (bn[1] - landing[1]).powi(2);
+                if dx2 > (STEP * 2.0).powi(2) {
+                    continue;
+                }
+
+                // Skip if a walk edge already exists.
+                if self.adj[a].iter().any(|&(nb, _)| nb == b) {
+                    continue;
+                }
+                // Skip if jump edge already recorded.
+                if self.jump_edges.contains(&(a, b)) {
+                    continue;
+                }
+
+                // Ensure the first half of the path from A to B is clear (no wall).
+                let t = cm.trace(&an, &bn, &zero, &zero, MASK_SOLID);
+                if t.startsolid || t.fraction < 0.4 {
+                    continue;
+                }
+
+                let launch_yaw = dy.atan2(dx).to_degrees();
+                let cost = dist(&an, &bn);
+                self.adj[a].push((b, cost));
+                self.jump_edges.insert((a, b));
+                self.jump_yaws.insert((a, b), launch_yaw);
+                added += 1;
+            }
+        }
+        added
+    }
+
+    /// Returns the [`EdgeKind`] of edge `(from, to)`. Returns `Walk` if the
+    /// edge is not in the jump-edge set (or doesn't exist).
+    pub fn edge_kind(&self, from: usize, to: usize) -> EdgeKind {
+        if let Some(&launch_yaw) = self.jump_yaws.get(&(from, to)) {
+            EdgeKind::Jump { launch_yaw }
+        } else {
+            EdgeKind::Walk
+        }
     }
 
     /// Sum of base edge costs along a node path (diagnostics / degeneracy check).
@@ -428,29 +547,29 @@ mod tests {
     /// Two waypoints on flat ground, connected; A* finds the direct path.
     #[test]
     fn path_between_neighbors() {
-        let g = NavGraph {
-            nodes: vec![[0.0, 0.0, 0.0], [64.0, 0.0, 0.0], [128.0, 0.0, 0.0]],
-            adj: vec![vec![(1, 64.0)], vec![(0, 64.0), (2, 64.0)], vec![(1, 64.0)]],
-        };
+        let g = NavGraph::from_raw(
+            vec![[0.0, 0.0, 0.0], [64.0, 0.0, 0.0], [128.0, 0.0, 0.0]],
+            vec![vec![(1, 64.0)], vec![(0, 64.0), (2, 64.0)], vec![(1, 64.0)]],
+        );
         let path = g.path(0, 2).unwrap();
         assert_eq!(path, vec![0, 1, 2]);
     }
 
     #[test]
     fn unreachable_returns_none() {
-        let g = NavGraph {
-            nodes: vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]],
-            adj: vec![vec![], vec![]], // no edges
-        };
+        let g = NavGraph::from_raw(
+            vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]],
+            vec![vec![], vec![]], // no edges
+        );
         assert!(g.path(0, 1).is_none());
     }
 
     #[test]
     fn nearest_picks_closest() {
-        let g = NavGraph {
-            nodes: vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]],
-            adj: vec![vec![], vec![]],
-        };
+        let g = NavGraph::from_raw(
+            vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]],
+            vec![vec![], vec![]],
+        );
         assert_eq!(g.nearest(&[95.0, 0.0, 0.0]), Some(1));
         assert_eq!(g.nearest(&[5.0, 0.0, 0.0]), Some(0));
     }
@@ -615,6 +734,34 @@ mod tests {
         let (connected, total) = g.spawns_in_largest_component(&[[1.0, 0.0, 0.0]]);
         assert_eq!(total, 1);
         assert_eq!(connected, 1, "spawn maps to some component");
+    }
+
+    /// detect_jump_edges creates a ledge-drop edge where a height-gapped pair
+    /// of nodes has no walk edge (height diff > STEP).
+    #[test]
+    fn detect_jump_edges_adds_ledge_drop() {
+        // half_space([0,0,1], 0): t = p.z - 0 = p.z; front (z>0) = EMPTY, back (z<0) = SOLID.
+        // This gives a floor surface at z=0 for all x,y.
+        let cm = CollisionModel::half_space([0.0, 0.0, 1.0], 0.0);
+        // Node A is on a ledge at z=100; node B is on the floor at z=24.
+        // Height diff = 76 > STEP=24 → no walk edge was added.
+        let mut g = NavGraph::from_raw(
+            vec![
+                [0.0, 0.0, 100.0], // 0: A — ledge
+                [96.0, 0.0, 24.0], // 1: B — floor below (96u away, 76u drop)
+            ],
+            vec![vec![], vec![]],
+        );
+        let added = g.detect_jump_edges(&cm, 64.0);
+        assert!(added >= 1, "expected ≥1 jump edge, got {added}");
+        // The A→B edge should be tagged as Jump.
+        assert!(
+            matches!(g.edge_kind(0, 1), EdgeKind::Jump { .. }),
+            "A→B must be a Jump edge"
+        );
+        // No symmetric walk edge should exist (only a one-way jump down).
+        // Walk edge A→B: if present, would be walk. Jump edge is in jump_edges set.
+        // We just verify edge_kind for the pair we added.
     }
 
     /// Path of length ≤2 is returned unchanged.
