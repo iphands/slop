@@ -103,3 +103,43 @@ Reaches "test connected" / "test entered the game" on a real yquake2 server:
 - The server only sends entities in the viewer's PVS — so this both explains what we see
   and is a cheap LOS pre-filter. True LOS still needs `trace` (T2) — PVS over-approximates.
 - **VERIFIED on q2dm1**: 925 clusters; center (cluster 553) sees 336 of them.
+
+## Danger/popularity heatmap nav overlay (Plan 08)
+A per-bot runtime cost overlay on the **static** BSP nav graph (the realistic
+external-client analog of Eraser's withheld dynamic-route engine — novel; Eraser
+owns the world so has no "observation" to learn from at runtime). Topology is
+read-only; only per-node edge weights breathe.
+
+- **Cost model**: A\* edge cost `cur→nb = (base_len + overlay[cur]).max(EPS)`,
+  `EPS=1`. Overlay = `W_d·danger − W_p·popularity`. `src`-gated (you pay/credit
+  a node's weight to *leave* it). Reachability unchanged → `None` iff unweighted.
+- **Signals** (all PVS-honest — we fear/credit only places we've located):
+  - self death/damage (health-detected) → our own node, highest confidence. A
+    death bumps danger `DANGER_BUMP_DEATH=1.0` and forces a replan.
+  - enemy presence → popularity EMA toward 1 at each visible enemy's nearest
+    node; cools via uniform `decay`.
+  - obituary `svc_print` → victim's last-known node, **only if observed within
+    `PLAYER_NODE_TTL` (~2 s)**; self/unobserved/stale victims are no-ops.
+- **Decay**: danger `*= exp(-dt/TAU_DANGER)`, `TAU_DANGER=45 s`; popularity `*=
+  exp(-dt/TAU_POP)`, `TAU_POP=90 s` (slower — busy-lane vs just-died-here).
+  Danger capped `DANGER_MAX=8`.
+- **Per-skill weights** (`BotSkill::heatmap_weights`): `W_danger = 30 + skill*12`
+  (0→30, 10→150; skilled = risk-averse); `W_pop` = 8/20/40 for
+  Conservative/Balanced/Aggressive (aggressive seeks hot lanes).
+- **Desperate fallback**: if a weighted path is `>5×` the straight-line distance
+  (region all-hot), re-query unweighted (drop `W_d`). Below `256 u` straight-line
+  the guard is skipped (ratio meaningless for tiny goals).
+- **PVS-honesty**: obituary victim resolution matches known player names at word
+  boundaries (`find_name`); names come from `CS_PLAYERSKINS=1312` (derived:
+  `CS_MODELS(32)+256·5`; validated vs `MAX_CONFIGSTRINGS=2080`). Self-death via
+  health, not the obituary (exact origin, no double-count).
+- **Composes with Plan 07 T3** tactical dodge by construction: strategic (this)
+  picks path/goal; tactical overrides a frame to dodge an imminent rocket.
+- **Verification**: `crates/brain/tests/heatmap_pipeline.rs` deterministically
+  proves repeated deaths at a chokepoint flip the route to a detour, decay
+  (~TAU_DANGER) restores the direct route, and high-skill detours after one
+  death where low-skill does not. Gravitation proven at the pathfinding level
+  (`world` `path_weighted` unit test). **Live-server confirmation deferred** —
+  `noir.lan:27910` was down at 2026-06-15; the per-tick `snapshot()` debug log
+  (`total_danger`/`max_danger`/`hot_nodes`) is wired to confirm it live once the
+  server is back.

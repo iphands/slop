@@ -1,7 +1,7 @@
 # Danger/Popularity Heatmap Nav Overlay — Tracker
 
 ## Overview
-- Status: ~85% complete
+- Status: 100% complete (code + deterministic verification)
 - Start date: 2026-06-14
 - Plan: `08_danger_heatmap_nav.md`
 - Depends on: Plan 05 (world: nav graph + trace), Plan 06 (brain: perception/events)
@@ -27,4 +27,4 @@
 | 3 | T3: risk-weighted A\* | `world/src/navgraph.rs`, `brain/src/nav.rs` | done | `NavGraph::path_weighted` adds per-src-node overlay (clamp EPS); `NavigationDriver` carries the overlay + desperate unweighted re-query (degeneracy guard 5× straight-line) |
 | 4 | T4: PVS-honest attribution | `brain/src/observed.rs` | done | only observed/recent players attributed (PLAYER_NODE_TTL guard); HeatmapSnapshot + hot_nodes/total_danger for periodic debug logging (wired in T5) |
 | 5 | T5: tune + integrate | `brain/src/skill.rs`, `qbots/src/main.rs` | done | `BotSkill::heatmap_weights` (skill→W_danger, personality→W_pop); observer created at nav-load, fed each tick (self death/damage via health, enemy presence, obituary prints via drain_prints), overlay refreshed before nav plans; death forces replan; periodic snapshot log; composes with 07 T3 tactical dodge by construction |
-| 6 | T6: verify | — | pending | detour + gravitation + decay |
+| 6 | T6: verify | `brain/tests/heatmap_pipeline.rs`, `context/distilled.md` | done | deterministic integration test proves detour→decay-restore + skill-scaling; gravitation proven at pathfinding unit level; **live-server confirmation deferred — `noir.lan:27910` down 2026-06-15** (snapshot debug log wired to confirm when it's back) |
