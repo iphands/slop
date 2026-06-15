@@ -137,20 +137,39 @@ After completing each task:
 3. If any warnings remain, fix them before marking the task done.
 4. **Never mark a task `done` while compiler warnings are outstanding.**
 
-### Rule B — Commit at every task boundary OR MORE FREQUENLTY
+### Rule B — Commit at every task boundary OR MORE FREQUENTLY
 
-1. Make a commit **at the end of every task** — no exceptions! You can make smaller commits too. DO NOT WAIT UNTIL A FULL PLAN IS COMPLETE TO COMMIT (commit ealy and often)
+**CRITICAL: YOU MUST COMMIT AT EVERY TASK COMPLETION. DO NOT WAIT.**
+
+1. Make a commit **at the end of every task** — no exceptions! You can make smaller commits too. **DO NOT WAIT UNTIL A FULL PLAN IS COMPLETE TO COMMIT** (commit early and often).
 2. Intermediate commits within a task are encouraged for logical checkpoints.
 3. Commit message format: `task(TN): <short description>` where `TN` is the plan task number.
    - Example: `task(T1): fix bone mesh pre-translation placement`
    - Example: `task(T2): apply Y/Z coordinate flip to renderer`
 4. The commit for a task must include only the changes for that task — do not batch multiple tasks into one commit unless they are inseparable.
+5. **YOU MUST COMMIT BEFORE MARKING ANY TASK COMPLETE.** If you haven't committed, you haven't finished.
 
 NOTE: YOU MUST make sure that linting, auto formating and (in rust) cargo clippy is run before every commit
 NOTE: Fix all warnings before each commit
 NOTE: All unit tests must pass before each commit!
 
-**MANDITORY** bake commit reminders into the plan TODO / Task lists!
+**MANDATORY** bake commit reminders into the plan TODO / Task lists!
+
+### Rule C — Move completed plans to `completed/` directory
+
+**CRITICAL: WHEN A PLAN IS 100% COMPLETE, MOVE IT TO `completed/` IMMEDIATELY.**
+
+1. When a plan and its tracker reach 100% completion (all tasks done, all verification passed):
+   ```bash
+   git mv context/plans/NN_name.md context/plans/completed/NN_name.md
+   git mv context/plans/NN_name_tracker.md context/plans/completed/NN_name_tracker.md
+   ```
+2. Update `SERIES.md` to mark the plan **done** if not already marked.
+3. **DO NOT LEAVE COMPLETED PLANS IN THE ACTIVE `context/plans/` DIRECTORY.**
+4. If a plan is partially complete (some tasks done, some pending), **DO NOT MOVE IT**.
+5. **Before starting a new plan, verify that the previous plan is either moved to `completed/` or marked as deferred/blocked in SERIES.md.**
+
+**FAILURE TO MOVE COMPLETED PLANS IS A VIOLATION OF THESE RULES.**
 
 ---
 

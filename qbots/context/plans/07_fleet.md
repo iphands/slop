@@ -156,3 +156,14 @@ Record fleet-tuning notes in `context/distilled.md`.
 - [ ] T4: distinct qports; no `maxclients` overflow; no connectionless flood detected.
 - [ ] T5: `run`/`connect-one`/`status` all work from the CLI.
 - [ ] T6: 8–16 bots run several minutes — all up, frags accumulating, no kicks.
+
+---
+
+> **⚠️ CRITICAL REMINDERS ⚠️**
+> 
+> - **COMMIT AT EVERY TASK COMPLETION** — Format: `task(TN): <description>`. DO NOT WAIT!
+> - **FIX ALL WARNINGS BEFORE EACH COMMIT** — `cargo clippy -- -D warnings` must pass.
+> - **RUN ALL TESTS BEFORE EACH COMMIT** — `cargo test` must pass.
+> - **MOVE COMPLETED PLANS TO `completed/` IMMEDIATELY** — When 100% done, `git mv` to `completed/`.
+> - **NEVER batch multiple tasks into one commit** — One task per commit, always.
+> - **RE-RULES.md BEFORE EACH TASK** — Re-read RULES.md at the start of every task to stay on track.

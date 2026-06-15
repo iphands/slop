@@ -173,3 +173,14 @@ tuning notes (sampling density, edge distance) in `context/distilled.md`.
 - [ ] T4: nav graph edges all pass LOS; A* returns a connected path spawn→weapon.
 - [ ] T5: world loaded once into `Arc`, reused across reconnects; missing map degrades gracefully.
 - [ ] T6: full check passes on `q2dm1`; tuning notes recorded in `distilled.md`.
+
+---
+
+> **⚠️ CRITICAL REMINDERS ⚠️**
+> 
+> - **COMMIT AT EVERY TASK COMPLETION** — Format: `task(TN): <description>`. DO NOT WAIT!
+> - **FIX ALL WARNINGS BEFORE EACH COMMIT** — `cargo clippy -- -D warnings` must pass.
+> - **RUN ALL TESTS BEFORE EACH COMMIT** — `cargo test` must pass.
+> - **MOVE COMPLETED PLANS TO `completed/` IMMEDIATELY** — When 100% done, `git mv` to `completed/`.
+> - **NEVER batch multiple tasks into one commit** — One task per commit, always.
+> - **RE-RULES.md BEFORE EACH TASK** — Re-read RULES.md at the start of every task to stay on track.

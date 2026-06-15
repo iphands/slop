@@ -173,3 +173,14 @@ Tune skill params; log FSM transitions. Record tuning findings in `context/disti
 - [ ] T5: FSM transitions are logged and sensible (no thrash between Roam/Hunt/Engage).
 - [ ] T6: skill 0 misses more than skill 10 on the same target (range check).
 - [ ] T7: single bot navigates, picks up items, and scores frags over a multi-minute run.
+
+---
+
+> **⚠️ CRITICAL REMINDERS ⚠️**
+> 
+> - **COMMIT AT EVERY TASK COMPLETION** — Format: `task(TN): <description>`. DO NOT WAIT!
+> - **FIX ALL WARNINGS BEFORE EACH COMMIT** — `cargo clippy -- -D warnings` must pass.
+> - **RUN ALL TESTS BEFORE EACH COMMIT** — `cargo test` must pass.
+> - **MOVE COMPLETED PLANS TO `completed/` IMMEDIATELY** — When 100% done, `git mv` to `completed/`.
+> - **NEVER batch multiple tasks into one commit** — One task per commit, always.
+> - **RE-RULES.md BEFORE EACH TASK** — Re-read RULES.md at the start of every task to stay on track.

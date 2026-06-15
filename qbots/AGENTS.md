@@ -244,12 +244,32 @@ This repo already has a rigorous plan system. **Use it:**
   green, **`cargo fmt`** applied — *before every commit*. (qbots RULES.md Rule A is
   authoritative and stricter; defer to it.)
 - If the build breaks, **fix it first.** Do not claim "done" on broken code.
-
 ### 5. Commits
+
+**CRITICAL: COMMIT AT EVERY TASK COMPLETION. DO NOT WAIT.**
+
 - Small, frequent, one task per commit. Format: `task(TN): <description>`
   (e.g. `task(T3): port MSG_WriteDeltaUsercmd to q2proto`).
+- **YOU MUST COMMIT BEFORE MARKING ANY TASK COMPLETE.** If you haven't committed, you haven't finished.
+- Intermediate commits within a task are encouraged for logical checkpoints.
+- **NEVER batch multiple tasks into one commit** unless they are truly inseparable.
+- **Fix all warnings and ensure tests pass BEFORE every commit.**
 - Never push — the human pushes after review. No co-author trailers unless asked.
   *(Global rule, `~/.claude/CLAUDE.md`.)*
+
+### 5a. Move Completed Plans to `completed/`
+
+**CRITICAL: WHEN A PLAN IS 100% COMPLETE, MOVE IT TO `completed/` IMMEDIATELY.**
+
+- When a plan and its tracker reach 100% completion:
+  ```bash
+  git mv context/plans/NN_name.md context/plans/completed/NN_name.md
+  git mv context/plans/NN_name_tracker.md context/plans/completed/NN_name_tracker.md
+  ```
+- Update `SERIES.md` to mark the plan **done**.
+- **DO NOT LEAVE COMPLETED PLANS IN THE ACTIVE `context/plans/` DIRECTORY.**
+- **Before starting a new plan, verify that the previous plan is either moved to `completed/` or marked as deferred/blocked in SERIES.md.**
+- **FAILURE TO MOVE COMPLETED PLANS IS A VIOLATION OF THESE RULES.**
 
 ### 6. Tooling
 - **No `tmp/` scripts.** Every helper is a binary in `crates/tools/` (e.g.
