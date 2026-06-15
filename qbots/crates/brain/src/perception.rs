@@ -174,10 +174,15 @@ impl Worldview {
         if self.prev_health == 0 {
             // First frame, just initialize
             self.prev_health = self.self_state.health;
+            tracing::debug!("health initialized to {}", self.prev_health);
             return None;
         }
 
         let delta = self.self_state.health - self.prev_health;
+
+        if delta != 0 {
+            tracing::trace!("health changed: {} -> {} (delta={})", self.prev_health, self.self_state.health, delta);
+        }
 
         if delta < 0 {
             // Damage taken
@@ -372,7 +377,7 @@ mod tests {
 
     #[test]
     fn test_stale_threshold() {
-        assert!(STALE_THRESHOLD > 0);
-        assert!(STALE_THRESHOLD <= 20); // Reasonable decay
+        const { assert!(STALE_THRESHOLD > 0) };
+        const { assert!(STALE_THRESHOLD <= 20) }; // Reasonable decay
     }
 }

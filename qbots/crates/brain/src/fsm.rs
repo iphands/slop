@@ -84,13 +84,25 @@ impl BehaviorState {
         }
 
         // Enemy in sight → Engage
-        if let Some(enemy) = view.nearest_enemy(90.0) {
+        let nearest = view.nearest_enemy(90.0);
+        tracing::debug!(
+            "FSM transition check: state={:?}, nearest_enemy={:?}, enemy_count={}",
+            self,
+            nearest.as_ref().map(|e| e.entity_number),
+            view.enemies().count()
+        );
+        
+        if let Some(enemy) = nearest {
             let distance = (enemy.origin - view.self_state().origin).length();
             tracing::info!(
                 target = enemy.entity_number,
                 distance = "{:.1}",
                 distance,
                 "seeing enemy"
+            );
+            tracing::debug!(
+                "FSM transition: {:?} → Engage (target={}, distance={:.1})",
+                self, enemy.entity_number, distance
             );
             *self = Self::Engage {
                 target_entity: enemy.entity_number,

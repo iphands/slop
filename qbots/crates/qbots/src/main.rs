@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use config::Config;
+use glam::Vec3;
 
 #[derive(Parser)]
 #[command(
@@ -145,11 +146,10 @@ async fn run_brain_bot_with_shutdown(
     qport: u16,
     cfg: &Config,
 ) -> std::io::Result<()> {
-    use brain::fsm::BehaviorState;
+    use brain::fsm::{BehaviorIntent, BehaviorState};
+    use brain::nav::NavGoal;
     use brain::perception::Worldview;
-    use brain::{
-        BotSkill, CombatDriver, MovementController, MovementIntent, NavGoal, NavigationDriver,
-    };
+    use brain::{BotSkill, CombatDriver, MovementController, MovementIntent, NavigationDriver};
     use client::{Conn, ConnState};
     use q2proto::Usercmd;
     use std::time::Duration;
@@ -176,6 +176,10 @@ async fn run_brain_bot_with_shutdown(
     let mut roam_nodes: Vec<usize> = Vec::new();
     let mut roam_idx: usize = 0;
     let mut map_loaded = false;
+    let mut last_position: Option<Vec3> = None;
+    let mut stuck_frames: u32 = 0;
+    const STUCK_WARNING_FRAMES: u32 = 50;
+    let mut last_health: Option<i32> = None; // Track health across frames for damage detection
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .map_err(|e| std::io::Error::other(format!("failed to create SIGTERM handler: {e}")))?;
@@ -202,6 +206,37 @@ async fn run_brain_bot_with_shutdown(
                 let (frame_opt, cs) = (conn.frame.clone(), conn.configstrings().clone());
                 let state = conn.state();
                 let playernum = conn.serverdata.as_ref().map(|sd| sd.playernum).unwrap_or(0);
+                
+                // Track health across frames for damage detection
+                if let Some(ref frame) = frame_opt {
+                    let view = Worldview::from_frame(&frame, &cs, playernum);
+                    let current_health = view.self_state().health;
+                    if current_health > 0 {
+                        if let Some(prev) = last_health {
+                            if prev > 0 && current_health < prev {
+                                let damage = prev - current_health;
+                                tracing::info!(
+                                    health_before = prev,
+                                    health_after = current_health,
+                                    damage = damage,
+                                    "being hit"
+                                );
+                                if current_health <= 0 {
+                                    tracing::error!(health = 0, "bot death detected");
+                                }
+                            } else if current_health > prev && prev > 0 {
+                                let healed = current_health - prev;
+                                tracing::debug!(
+                                    health_before = prev,
+                                    health_after = current_health,
+                                    healed = healed,
+                                    "health restored"
+                                );
+                            }
+                        }
+                        last_health = Some(current_health);
+                    }
+                }
 
                 if !map_loaded && state == ConnState::Active {
                     if let Some(bsp_path) = cs.get(33) {
@@ -244,12 +279,59 @@ async fn run_brain_bot_with_shutdown(
 
                 let cmd = if state == ConnState::Active {
                     if let Some(frame) = frame_opt {
-                        let mut view = Worldview::from_frame(&frame, &cs, playernum);
-                        view.detect_damage(); // Log damage/death events
-                        let fsm_intent = fsm.tick(&view);
+                        let view = Worldview::from_frame(&frame, &cs, playernum);
+                        
+                        // Detect damage before creating worldview (need previous health)
+                        let current_health = view.self_state().health;
+                        if let Some(prev) = last_health.as_mut() {
+                            if *prev > 0 && current_health < *prev {
+                                let damage = *prev - current_health;
+                                tracing::info!(
+                                    health_before = *prev,
+                                    health_after = current_health,
+                                    damage = damage,
+                                    "being hit"
+                                );
+                                if current_health <= 0 {
+                                    tracing::error!(health = 0, "bot death detected");
+                                }
+                            } else if current_health > *prev && *prev > 0 {
+                                let healed = current_health - *prev;
+                                tracing::debug!(
+                                    health_before = *prev,
+                                    health_after = current_health,
+                                    healed = healed,
+                                    "health restored"
+                                );
+                            }
+                        }
+                        last_health = Some(current_health);
+                        
+                        // Health tracking is done above, before creating the view
+                        // No need to call view.detect_damage() here
                         let jitter = (ticks as f32) * 0.1;
                         let combat_dec =
                             combat.evaluate(&view, skill.aim_jitter_factor(), jitter);
+
+                        // Pass combat target to FSM for navigation goal
+                        let fsm_intent = if let Some(target) = combat_dec.target_entity {
+                            // Override FSM goal to chase combat target
+                            let target_pos = view.entities()
+                                .find(|e| e.entity_number == target)
+                                .map(|e| e.origin)
+                                .unwrap_or(view.self_state().origin);
+                            tracing::debug!(
+                                "combat target override: target={} pos={:?}",
+                                target, target_pos
+                            );
+                            BehaviorIntent {
+                                nav_goal: Some(NavGoal::Entity(target_pos)),
+                                combat_decision: Some(combat_dec),
+                                should_pickup: None,
+                            }
+                        } else {
+                            fsm.tick(&view)
+                        };
 
                         let mut mv = MovementIntent::new();
 
@@ -273,16 +355,44 @@ async fn run_brain_bot_with_shutdown(
                             } else {
                                 NavGoal::Position(pos)
                             };
-                            nav.set_goal(goal, pos);
+                            
+                            // Debug: log nav goal when combat target is active
+                            if combat_dec.target_entity.is_some() {
+                                tracing::debug!(
+                                    "nav goal: {:?}, current_waypoint={:?}, path_len={}",
+                                    goal,
+                                    nav.current_waypoint(),
+                                    nav.path_length()
+                                );
+                            }
+                            
+                            nav.set_goal(goal.clone(), pos);
 
+                            // Always compute movement direction (even when shooting)
                             if let Some(dir) = nav.next_waypoint_direction(pos) {
+                                let yaw = dir.y.atan2(dir.x).to_degrees();
+                                let pitch =
+                                    (-dir.z).atan2(dir.x.hypot(dir.y)).to_degrees();
+                                
+                                // Only override look direction if not shooting
                                 if !combat_dec.should_fire {
-                                    let yaw = dir.y.atan2(dir.x).to_degrees();
-                                    let pitch =
-                                        (-dir.z).atan2(dir.x.hypot(dir.y)).to_degrees();
                                     mv.look_at(yaw, pitch);
                                 }
                                 mv.move_forward(400.0);
+                                
+                                // Debug: log movement when engaging
+                                if matches!(fsm, BehaviorState::Engage { .. }) {
+                                    tracing::debug!(
+                                        "engaging: moving dir=({:.1},{:.1},{:.1}) yaw={:.1}°",
+                                        dir.x, dir.y, dir.z, yaw
+                                    );
+                                } else if combat_dec.target_entity.is_some() {
+                                    // Log movement even when not in Engage state but has combat target
+                                    tracing::debug!(
+                                        "combat target active: moving dir=({:.1},{:.1},{:.1}) yaw={:.1}° pos={:?}",
+                                        dir.x, dir.y, dir.z, yaw, pos
+                                    );
+                                }
                             } else if !combat_dec.should_fire {
                                 mv.move_forward(200.0);
                             }
@@ -315,6 +425,27 @@ async fn run_brain_bot_with_shutdown(
                     match conn.frame.as_ref() {
                         Some(f) => {
                             let o = f.playerstate.pmove.origin_f32();
+                            let pos = Vec3::from(o);
+
+                            if let Some(last_pos) = last_position {
+                                let movement = (pos - last_pos).length();
+                                if movement < 1.0 {
+                                    stuck_frames += 1;
+                                    if stuck_frames >= STUCK_WARNING_FRAMES {
+                                        tracing::error!(
+                                            "BOT STUCK! Position unchanged for 5+ seconds  pos=({:.1},{:.1},{:.1})  fsm={:?}  frames={}",
+                                            o[0], o[1], o[2],
+                                            fsm,
+                                            stuck_frames
+                                        );
+                                        stuck_frames = 0;
+                                    }
+                                } else {
+                                    stuck_frames = 0;
+                                }
+                            }
+                            last_position = Some(pos);
+
                             tracing::debug!(
                                 state = ?conn.state(),
                                 frame = f.serverframe,

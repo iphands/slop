@@ -44,11 +44,18 @@ impl NavigationDriver {
     pub fn set_goal(&mut self, goal: NavGoal, from_position: Vec3) {
         let target_waypoint = match goal {
             NavGoal::Waypoint(idx) => Some(idx),
-            NavGoal::Position(pos) => self.nav_graph.nearest(&[pos.x, pos.y, pos.z]),
-            NavGoal::Entity(pos) => self.nav_graph.nearest(&[pos.x, pos.y, pos.z]),
+            NavGoal::Position(pos) => {
+                tracing::debug!("nav goal Position({:.1},{:.1},{:.1})", pos.x, pos.y, pos.z);
+                self.nav_graph.nearest(&[pos.x, pos.y, pos.z])
+            }
+            NavGoal::Entity(pos) => {
+                tracing::debug!("nav goal Entity({:.1},{:.1},{:.1})", pos.x, pos.y, pos.z);
+                self.nav_graph.nearest(&[pos.x, pos.y, pos.z])
+            }
         };
 
         let Some(target) = target_waypoint else {
+            tracing::warn!("nav goal: no reachable waypoint found");
             return;
         };
 
@@ -66,6 +73,7 @@ impl NavigationDriver {
         };
 
         if let Some(path) = self.nav_graph.path(start, target) {
+            tracing::debug!("nav path found: {} nodes", path.len());
             self.commit_path(path);
         } else {
             // Different components: path within start's component toward target.
@@ -76,6 +84,7 @@ impl NavigationDriver {
                     return;
                 }
             }
+            tracing::warn!("nav path not found from {} to {}", start, target);
             self.current_path.clear();
             self.current_waypoint = None;
         }
@@ -182,14 +191,14 @@ mod tests {
 
     #[test]
     fn test_stuck_threshold() {
-        assert!(STUCK_THRESHOLD_TICKS > 0);
-        assert!(STUCK_THRESHOLD_TICKS < 100);
+        const { assert!(STUCK_THRESHOLD_TICKS > 0) };
+        const { assert!(STUCK_THRESHOLD_TICKS < 100) };
     }
 
     #[test]
     fn test_stuck_min_movement() {
-        assert!(STUCK_MIN_MOVEMENT > 0.0);
-        assert!(STUCK_MIN_MOVEMENT < 128.0);
+        const { assert!(STUCK_MIN_MOVEMENT > 0.0) };
+        const { assert!(STUCK_MIN_MOVEMENT < 128.0) };
     }
 
     #[test]
