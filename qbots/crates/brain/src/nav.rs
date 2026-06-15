@@ -11,6 +11,13 @@ const STUCK_MIN_MOVEMENT: f32 = 16.0;
 /// but we tolerate the slow nav-graph routing). Prevents infinite stale-enemy
 /// chases. (`eraser.md` §3 give-up watchdog.)
 const GOAL_GIVEUP_TICKS: i32 = 80;
+/// Desperate-requery guard (Plan 08 T3): if a risk-weighted path is more than
+/// this many × the straight-line distance, the whole region is hot and we drop
+/// the overlay rather than pay an absurd detour ("desperate re-query with W_d=0").
+const DEGEN_FACTOR: f32 = 5.0;
+/// Only apply the degeneracy guard past this straight-line distance, so a tiny
+/// goal (where the ratio is meaningless) can't trigger it.
+const DEGEN_MIN_STRAIGHT: f32 = 256.0;
 
 #[derive(Debug, Clone)]
 pub enum NavGoal {
@@ -34,6 +41,10 @@ pub struct NavigationDriver {
     goal_age_ticks: i32,
     /// True for one tick after the watchdog abandons a stale goal.
     goal_abandoned: bool,
+    /// Per-node additive cost overlay for risk-weighted A\* (Plan 08 T3): each
+    /// edge leaving node `n` costs `base + overlay[n]`. Set each tick from the
+    /// heatmap (`W_d·danger − W_p·popularity`); `None` = unweighted routing.
+    risk_overlay: Option<Vec<f32>>,
 }
 
 impl NavigationDriver {
@@ -48,7 +59,21 @@ impl NavigationDriver {
             is_stuck: false,
             goal_age_ticks: 0,
             goal_abandoned: false,
+            risk_overlay: None,
         }
+    }
+
+    /// Install the risk overlay consumed by the next `set_goal` (Plan 08 T3).
+    /// Build it from the heatmap as `W_d·danger − W_p·popularity`. Cheap to call
+    /// every tick — `set_goal` only re-runs A\* when the goal changes.
+    pub fn set_risk_overlay(&mut self, overlay: Vec<f32>) {
+        self.risk_overlay = Some(overlay);
+    }
+
+    /// Drop the risk overlay, returning to unweighted routing. Use as the
+    /// "desperate re-query" when danger-routing wedges the bot (stuck recovery).
+    pub fn clear_risk_overlay(&mut self) {
+        self.risk_overlay = None;
     }
 
     /// Set (or update) the navigation goal. Replans the A* path only when the goal
@@ -84,14 +109,13 @@ impl NavigationDriver {
             return;
         };
 
-        if let Some(path) = self.nav_graph.path(start, target) {
-            tracing::debug!("nav path found: {} nodes", path.len());
+        if let Some(path) = self.plan_path(start, target) {
             self.commit_path(path);
         } else {
             // Different components: path within start's component toward target.
             let target_pos = self.nav_graph.nodes[target];
             if let Some(alt) = self.nav_graph.nearest_reachable_from(start, &target_pos) {
-                if let Some(path) = self.nav_graph.path(start, alt) {
+                if let Some(path) = self.plan_path(start, alt) {
                     self.commit_path(path);
                     return;
                 }
@@ -100,6 +124,34 @@ impl NavigationDriver {
             self.current_path.clear();
             self.current_waypoint = None;
         }
+    }
+
+    /// Plan a path `start → target`, applying the risk overlay (Plan 08 T3) with
+    /// a desperate fallback: weighted A\* first; if that yields no path or a
+    /// degenerate (absurdly long) detour — the whole region is hot — re-query
+    /// with the overlay dropped ("desperate re-query with W_d=0").
+    fn plan_path(&self, start: usize, target: usize) -> Option<Vec<usize>> {
+        // No overlay → plain unweighted A*.
+        let Some(overlay) = self.risk_overlay.as_deref() else {
+            return self.nav_graph.path(start, target);
+        };
+        let path = self.nav_graph.path_weighted(start, target, overlay)?;
+        // Degeneracy guard.
+        let straight = Vec3::from(self.nav_graph.nodes[start])
+            .distance(Vec3::from(self.nav_graph.nodes[target]));
+        if straight > DEGEN_MIN_STRAIGHT {
+            let len = self.nav_graph.path_len(&path);
+            if len > straight * DEGEN_FACTOR {
+                tracing::debug!(
+                    straight,
+                    len,
+                    "risk-weighted path degenerate; retrying unweighted"
+                );
+                return self.nav_graph.path(start, target);
+            }
+        }
+        tracing::debug!("nav path found (weighted): {} nodes", path.len());
+        Some(path)
     }
 
     /// Store the path and set the first *meaningful* waypoint (skip the start node,
@@ -252,5 +304,46 @@ mod tests {
     fn test_stuck_action_variants() {
         let action = StuckAction::Jump;
         assert_eq!(action, StuckAction::Jump);
+    }
+
+    #[test]
+    fn risk_overlay_detours_driver_around_danger() {
+        use std::sync::Arc;
+        // Diamond: 0=A 1=B 2=C 3=D. A→C direct via B (200), longer via D (282).
+        let g = Arc::new(NavGraph::from_raw(
+            vec![
+                [0.0, 0.0, 0.0],
+                [0.0, 100.0, 0.0],
+                [0.0, 200.0, 0.0],
+                [100.0, 100.0, 0.0],
+            ],
+            vec![
+                vec![(1, 100.0), (3, 141.0)],
+                vec![(0, 100.0), (2, 100.0)],
+                vec![(1, 100.0), (3, 141.0)],
+                vec![(0, 141.0), (2, 141.0)],
+            ],
+        ));
+        let mut nav = NavigationDriver::new(Arc::clone(&g));
+
+        // No overlay → A→C routes via B (waypoint 1).
+        nav.set_goal(NavGoal::Waypoint(2), Vec3::new(0.0, 0.0, 0.0));
+        assert_eq!(nav.current_waypoint(), Some(1), "unweighted picks B");
+
+        // Danger at B → replan routes via D (waypoint 3).
+        nav.set_risk_overlay(vec![0.0, 1000.0, 0.0, 0.0]);
+        nav.force_replan();
+        nav.set_goal(NavGoal::Waypoint(2), Vec3::new(0.0, 0.0, 0.0));
+        assert_eq!(nav.current_waypoint(), Some(3), "danger at B detours via D");
+
+        // Dropping the overlay restores the direct route.
+        nav.clear_risk_overlay();
+        nav.force_replan();
+        nav.set_goal(NavGoal::Waypoint(2), Vec3::new(0.0, 0.0, 0.0));
+        assert_eq!(
+            nav.current_waypoint(),
+            Some(1),
+            "cleared overlay returns to B"
+        );
     }
 }

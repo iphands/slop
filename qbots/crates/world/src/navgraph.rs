@@ -14,6 +14,9 @@ pub const HULL_MINS: [f32; 3] = [-16.0, -16.0, -24.0];
 pub const HULL_MAXS: [f32; 3] = [16.0, 16.0, 32.0];
 /// Max walkable height delta between adjacent waypoints (a "step").
 const STEP: f32 = 24.0;
+/// Minimum edge cost in the weighted pathfinder, so a popularity overlay can't
+/// drive an edge to zero/negative (Plan 08 T3).
+const EPS: f32 = 1.0;
 
 /// A navigation graph: waypoints (bot-origin positions) + LOS-checked edges.
 pub struct NavGraph {
@@ -151,6 +154,39 @@ impl NavGraph {
 
     /// A* path from node `start` to `goal` (node indices), or `None` if unreachable.
     pub fn path(&self, start: usize, goal: usize) -> Option<Vec<usize>> {
+        self.path_inner(start, goal, |_| 0.0)
+    }
+
+    /// A* path from `start` to `goal` with a per-node **additive cost overlay**
+    /// added to each edge leaving a node (Plan 08 T3): edge cost `cur→nb` =
+    /// `(base_cost + overlay[cur]).max(EPS)`. A positive overlay (danger) makes a
+    /// node costly to leave → routes around it; a negative overlay (popularity)
+    /// makes it cheap → gravitates toward it. Reachability is unchanged (the
+    /// overlay never removes an edge), so this returns `None` iff [`Self::path`].
+    ///
+    /// The heuristic stays Euclidean distance (a base-cost lower bound); with a
+    /// negative overlay it may be inadmissible, yielding a slightly suboptimal
+    /// path — acceptable, since we *want* the popularity bias to show through.
+    pub fn path_weighted(&self, start: usize, goal: usize, overlay: &[f32]) -> Option<Vec<usize>> {
+        self.path_inner(start, goal, |cur| overlay.get(cur).copied().unwrap_or(0.0))
+    }
+
+    /// Sum of base edge costs along a node path (diagnostics / degeneracy check).
+    pub fn path_len(&self, path: &[usize]) -> f32 {
+        path.windows(2)
+            .map(|w| dist(&self.nodes[w[0]], &self.nodes[w[1]]))
+            .sum()
+    }
+
+    /// A* core shared by [`Self::path`] and [`Self::path_weighted`]. `add(cur)`
+    /// is the per-source-node additive overlay for the edge leaving `cur`
+    /// (0.0 for the unweighted path).
+    fn path_inner<F: Fn(usize) -> f32>(
+        &self,
+        start: usize,
+        goal: usize,
+        add: F,
+    ) -> Option<Vec<usize>> {
         if start == goal {
             return Some(vec![start]);
         }
@@ -173,11 +209,12 @@ impl NavGraph {
                 continue;
             }
             closed[cur] = true;
+            let overlay = add(cur);
             for &(nb, cost) in &self.adj[cur] {
                 if closed[nb] {
                     continue;
                 }
-                let ng = g[cur] + cost;
+                let ng = g[cur] + (cost + overlay).max(EPS);
                 if ng < g[nb] {
                     g[nb] = ng;
                     came[nb] = Some(cur);
@@ -281,5 +318,64 @@ mod tests {
         };
         assert_eq!(g.nearest(&[95.0, 0.0, 0.0]), Some(1));
         assert_eq!(g.nearest(&[5.0, 0.0, 0.0]), Some(0));
+    }
+
+    /// Two equal-ish routes A→C: direct via B, longer via D. The unweighted path
+    /// picks the shorter (A-B-C).
+    fn diamond_graph() -> NavGraph {
+        // 0=A(0,0,0) 1=B(0,100,0) 2=C(0,200,0) 3=D(100,100,0)
+        NavGraph::from_raw(
+            vec![
+                [0.0, 0.0, 0.0],
+                [0.0, 100.0, 0.0],
+                [0.0, 200.0, 0.0],
+                [100.0, 100.0, 0.0],
+            ],
+            vec![
+                vec![(1, 100.0), (3, 141.0)], // A → B, D
+                vec![(0, 100.0), (2, 100.0)], // B → A, C
+                vec![(1, 100.0), (3, 141.0)], // C → B, D
+                vec![(0, 141.0), (2, 141.0)], // D → A, C
+            ],
+        )
+    }
+
+    #[test]
+    fn unweighted_picks_shorter_route() {
+        let g = diamond_graph();
+        let path = g.path(0, 2).unwrap();
+        assert_eq!(path, vec![0, 1, 2], "unweighted A→C goes A-B-C (200 < 282)");
+    }
+
+    #[test]
+    fn weighted_detours_around_dangerous_node() {
+        let g = diamond_graph();
+        // Make B (node 1) deadly → the A-B-C route is penalized, A-D-C wins.
+        let overlay = vec![0.0, 1000.0, 0.0, 0.0];
+        let path = g.path_weighted(0, 2, &overlay).unwrap();
+        assert_eq!(path, vec![0, 3, 2], "danger at B routes via D");
+    }
+
+    #[test]
+    fn weighted_gravitates_to_popular_node() {
+        let g = diamond_graph();
+        // Make B (node 1) very popular (negative overlay → cheap to leave) so
+        // A-B-C is preferred even though A-D-C was equal/shorter in base length.
+        let overlay = vec![0.0, -1000.0, 0.0, 0.0];
+        let path = g.path_weighted(0, 2, &overlay).unwrap();
+        assert_eq!(
+            path,
+            vec![0, 1, 2],
+            "popularity at B pulls the route through B"
+        );
+    }
+
+    #[test]
+    fn weighted_unreachable_stays_none() {
+        let g = NavGraph::from_raw(
+            vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]],
+            vec![vec![], vec![]],
+        );
+        assert!(g.path_weighted(0, 1, &[0.0, 0.0]).is_none());
     }
 }

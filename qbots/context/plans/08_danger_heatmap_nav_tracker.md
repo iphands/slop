@@ -1,7 +1,7 @@
 # Danger/Popularity Heatmap Nav Overlay — Tracker
 
 ## Overview
-- Status: ~35% complete
+- Status: ~55% complete
 - Start date: 2026-06-14
 - Plan: `08_danger_heatmap_nav.md`
 - Depends on: Plan 05 (world: nav graph + trace), Plan 06 (brain: perception/events)
@@ -24,7 +24,7 @@
 |---|------|---------------|--------|-------|
 | 1 | T1: event ingestion | `brain/src/observed.rs` | done | obituary→victim last-known node (word-boundary match); presence from enemy deltas; self death/damage via health; conn surfaces svc_print |
 | 2 | T2: heatmap + decay | `brain/src/heatmap.rs` | done | exp danger decay, EMA popularity (+ independent TAU_POP decay), budgeted |
-| 3 | T3: risk-weighted A\* | `brain/src/nav.rs` | pending | `cost = base + W_d·danger − W_p·pop` |
+| 3 | T3: risk-weighted A\* | `world/src/navgraph.rs`, `brain/src/nav.rs` | done | `NavGraph::path_weighted` adds per-src-node overlay (clamp EPS); `NavigationDriver` carries the overlay + desperate unweighted re-query (degeneracy guard 5× straight-line) |
 | 4 | T4: PVS-honest attribution | `brain/src/observed.rs` | in-progress | only observed/recent players attributed (PLAYER_NODE_TTL); debug overlay pending |
 | 5 | T5: tune + integrate | `brain/src/{lib,skill}.rs` | pending | skill-derived weights; composes with 07 T3 |
 | 6 | T6: verify | — | pending | detour + gravitation + decay |
