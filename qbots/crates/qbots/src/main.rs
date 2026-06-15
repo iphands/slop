@@ -323,6 +323,7 @@ pub(crate) async fn bot_task(
     use brain::fsm::{BehaviorIntent, BehaviorState};
     use brain::nav::NavGoal;
     use brain::perception::Worldview;
+    use brain::steer::{move_from_world_dir, Steering};
     use brain::{
         BotSkill, CombatDriver, DangerDriver, MovementController, MovementIntent, NavigationDriver,
     };
@@ -358,6 +359,7 @@ pub(crate) async fn bot_task(
     let danger = DangerDriver::new();
     let mut move_ctrl = MovementController::new();
     let mut skill = BotSkill::default();
+    let mut steering = Steering::new(skill.combat());
     let mut nav_driver: Option<NavigationDriver> = None;
     // Collision model the nav graph was built from — for LOS gating (Plan 11) and
     // reactive wall probes (Plan 13). Set when the map loads.
@@ -366,6 +368,7 @@ pub(crate) async fn bot_task(
     let mut roam_idx: usize = 0;
     let mut map_loaded = false;
     let mut last_position: Option<Vec3> = None;
+    let mut last_serverframe: Option<i32> = None;
     let mut stuck_frames: u32 = 0;
     const STUCK_WARNING_FRAMES: u32 = 50;
     let mut last_health: Option<i32> = None; // Track health across frames for damage detection
@@ -614,11 +617,21 @@ pub(crate) async fn bot_task(
                         let mut mv = MovementIntent::new();
 
                         if combat_dec.should_fire {
-                            mv.look_at(combat_dec.aim_yaw, combat_dec.aim_pitch);
                             mv.attack();
                         }
 
                         let pos = view.self_state().origin;
+
+                        // Measured frame delta for turn-rate limiting (Open Q1, Plan 12).
+                        let current_sf = frame.serverframe;
+                        let dt = if let Some(prev_sf) = last_serverframe {
+                            let sf_delta = (current_sf - prev_sf).max(0) as f32;
+                            (sf_delta * 0.1).clamp(0.02, 0.3)
+                        } else {
+                            0.1
+                        };
+                        last_serverframe = Some(current_sf);
+
                         if let Some(nav) = nav_driver.as_mut() {
                             nav.update(pos);
 
@@ -656,78 +669,109 @@ pub(crate) async fn bot_task(
 
                             nav.set_goal(goal, pos);
 
-                            // Ideal-distance combat (Eraser `BOT_IDEAL_DIST_FROM_ENEMY=160`):
-                            // when we can see our target, hold at ~160u and back up below 80u
-                            // instead of charging point-blank into a losing duel. Facing the
-                            // enemy makes `forwardmove` relative to them (back-up = away).
+                            // Ideal-distance combat constants (Eraser BOT_IDEAL_DIST_FROM_ENEMY).
                             const IDEAL_DIST: f32 = 160.0;
                             const BACKUP_DIST: f32 = 80.0;
-                            let mut enemy_dist: Option<f32> = None;
-                            if let Some(target) = combat_dec.target_entity {
-                                if let Some(enemy) =
-                                    view.entities().find(|e| e.entity_number == target)
-                                {
-                                    let to_enemy = enemy.origin - pos;
-                                    let d = to_enemy.length();
-                                    enemy_dist = Some(d);
-                                    if d < IDEAL_DIST && !combat_dec.should_fire {
-                                        let yaw = to_enemy.y.atan2(to_enemy.x).to_degrees();
-                                        mv.look_at(yaw, 0.0);
-                                    }
-                                }
-                            }
 
-                            // Walk along the nav path. The graph routes around walls, so trust
-                            // its direction. While firing we keep facing the enemy (forwardmove is
-                            // view-relative, so we chase what we aim at); otherwise turn toward the
-                            // next waypoint. Movement intent is [-1,1]; build_cmd scales to speed.
-                            // Ideal-distance overrides the forward amount when engaging close.
-                            let forward = match enemy_dist {
-                                Some(d) if d < BACKUP_DIST => -1.0, // back up off the enemy
-                                Some(d) if d < IDEAL_DIST => 0.0,   // hold at range
-                                _ => 1.0,                            // advance (close or roam)
+                            // Resolve enemy position + distance (if we have a target in view).
+                            let enemy_dist_dir: Option<(f32, Vec3)> =
+                                combat_dec.target_entity.and_then(|t| {
+                                    view.entities()
+                                        .find(|e| e.entity_number == t)
+                                        .map(|enemy| {
+                                            let to = enemy.origin - pos;
+                                            let d = to.length();
+                                            let dir = if d > 1.0 { to / d } else { Vec3::X };
+                                            (d, dir)
+                                        })
+                                });
+
+                            // ── 1. Ideal view yaw (priority: fire-aim > enemy-face > path) ──
+                            let (ideal_yaw, ideal_pitch) = if combat_dec.should_fire {
+                                (combat_dec.aim_yaw, combat_dec.aim_pitch)
+                            } else if let Some((d, dir)) = enemy_dist_dir {
+                                if d < IDEAL_DIST {
+                                    // Face enemy while in ideal-distance range.
+                                    let yaw = dir.y.atan2(dir.x).to_degrees();
+                                    (yaw, 0.0)
+                                } else {
+                                    // Far from enemy — steer along the path toward them.
+                                    nav.pursue_target(pos)
+                                        .filter(|pt| (pt - pos).length_squared() > 1.0)
+                                        .map(|pt| {
+                                            let d = pt - pos;
+                                            (d.y.atan2(d.x).to_degrees(), 0.0)
+                                        })
+                                        .unwrap_or((steering.view_yaw(), 0.0))
+                                }
+                            } else {
+                                // No combat: steer along the path.
+                                nav.pursue_target(pos)
+                                    .filter(|pt| (pt - pos).length_squared() > 1.0)
+                                    .map(|pt| {
+                                        let d = pt - pos;
+                                        (d.y.atan2(d.x).to_degrees(), 0.0)
+                                    })
+                                    .unwrap_or((steering.view_yaw(), 0.0))
                             };
 
-                            if forward != 0.0 || combat_dec.target_entity.is_none() {
-                                if let Some(dir) = nav.next_waypoint_direction(pos) {
-                                    let yaw = dir.y.atan2(dir.x).to_degrees();
-                                    let pitch = (-dir.z).atan2(dir.x.hypot(dir.y)).to_degrees();
-                                    if !combat_dec.should_fire && !matches!(enemy_dist, Some(d) if d < IDEAL_DIST) {
-                                        mv.look_at(yaw, pitch);
-                                    }
-                                    mv.move_forward(forward);
-                                } else if forward != 0.0 {
-                                    // No nav path but moving: head straight at the enemy if visible.
-                                    if let Some(target) = combat_dec.target_entity {
-                                        if let Some(enemy) =
-                                            view.entities().find(|e| e.entity_number == target)
-                                        {
-                                            let to_enemy = enemy.origin - pos;
-                                            if to_enemy.length() > 10.0 {
-                                                let dir = to_enemy.normalize();
-                                                let yaw = dir.y.atan2(dir.x).to_degrees();
-                                                let pitch =
-                                                    (-dir.z).atan2(dir.x.hypot(dir.y)).to_degrees();
-                                                if !combat_dec.should_fire {
-                                                    mv.look_at(yaw, pitch);
-                                                }
-                                                mv.move_forward(forward);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            // ── 2. Rate-limit the yaw turn toward ideal ───────────────────
+                            let view_yaw = steering.change_yaw(ideal_yaw, dt);
+                            mv.look_at(view_yaw, ideal_pitch);
 
-                            // Stuck recovery: back off the obstacle (reverse is view-relative,
-                            // so we pull away from whatever we're facing) + jump, then force a
-                            // fresh route so we don't re-wedge on the same node. Pure jump
-                            // recovery leaves the bot creeping against geometry for tens of s.
+                            // ── 3. World move direction + face-then-go mode ───────────────
+                            let (world_move_dir, face_then_go) =
+                                if let Some((d, dir)) = enemy_dist_dir {
+                                    if d < BACKUP_DIST {
+                                        // Back away from enemy while keeping aim on them.
+                                        let away =
+                                            Vec3::new(-dir.x, -dir.y, 0.0).normalize_or_zero();
+                                        (away, false)
+                                    } else if d < IDEAL_DIST {
+                                        (Vec3::ZERO, false) // hold
+                                    } else {
+                                        // Chase via nav look-ahead.
+                                        let dir = nav
+                                            .pursue_target(pos)
+                                            .map(|pt| {
+                                                let d = pt - pos;
+                                                Vec3::new(d.x, d.y, 0.0).normalize_or_zero()
+                                            })
+                                            .unwrap_or(Vec3::ZERO);
+                                        (dir, true)
+                                    }
+                                } else {
+                                    // Roaming: follow path look-ahead.
+                                    let dir = nav
+                                        .pursue_target(pos)
+                                        .map(|pt| {
+                                            let d = pt - pos;
+                                            Vec3::new(d.x, d.y, 0.0).normalize_or_zero()
+                                        })
+                                        .unwrap_or(Vec3::ZERO);
+                                    (dir, true)
+                                };
+
+                            // ── 4. Arrive throttle (slows near final goal) ────────────────
+                            let arrive = nav
+                                .pursue_target(pos)
+                                .map(|pt| brain::steer::Steering::arrive_scale((pt - pos).length()))
+                                .unwrap_or(1.0);
+
+                            // ── 5. Decompose into view-relative (forward, side) ───────────
+                            let (fwd, side) =
+                                move_from_world_dir(world_move_dir, view_yaw, face_then_go);
+                            mv.move_forward(fwd * arrive);
+                            mv.move_side(side * arrive);
+
+                            // Stuck recovery: back off + jump; force a fresh route so we don't
+                            // re-wedge on the same node.
                             if nav.is_stuck() {
                                 tracing::debug!(?pos, "stuck — backing off + jump");
                                 mv.move_forward(-1.0);
                                 mv.jump();
-                                nav_driver.as_mut().unwrap().force_replan();
-                                nav_driver.as_mut().unwrap().reset_stuck();
+                                nav.force_replan();
+                                nav.reset_stuck();
                             }
                         } else if !combat_dec.should_fire {
                             // No nav graph loaded yet — just walk forward.

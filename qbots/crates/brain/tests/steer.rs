@@ -4,6 +4,7 @@ use brain::nav::{NavGoal, NavigationDriver, LOOKAHEAD};
 use brain::steer::{
     move_from_world_dir, view_forward, view_right, Steering, ARRIVE_RADIUS, YAW_SPEED_BASE,
 };
+
 use glam::Vec3;
 use std::sync::Arc;
 use world::NavGraph;
@@ -13,7 +14,7 @@ use world::NavGraph;
 #[test]
 fn change_yaw_shortest_arc_positive() {
     // From 0°, ideal = +179°. Shortest arc = +179 (not -181).
-    let mut s = Steering::new(0);
+    let mut s = Steering::new(1.0); // combat_skill=1 → 720°/s base
     let dt = 1.0; // 1 s → max_step = YAW_SPEED_BASE
     let result = s.change_yaw(179.0, dt);
     // At 720 dps and 1 s dt, full 179° is reachable in one step.
@@ -23,7 +24,7 @@ fn change_yaw_shortest_arc_positive() {
 #[test]
 fn change_yaw_shortest_arc_negative() {
     // From 0°, ideal = -179°. Shortest arc = -179 (not +181).
-    let mut s = Steering::new(0);
+    let mut s = Steering::new(1.0);
     let result = s.change_yaw(-179.0, 1.0);
     assert!(
         (result - (-179.0)).abs() < 0.01,
@@ -34,7 +35,7 @@ fn change_yaw_shortest_arc_negative() {
 #[test]
 fn change_yaw_shortest_arc_chooses_small_side() {
     // From 0°, ideal = +181°. The shortest arc is −179° (go left), not +181°.
-    let mut s = Steering::new(0);
+    let mut s = Steering::new(1.0);
     let result = s.change_yaw(181.0, 1.0);
     // After 1s at 720 dps, we step -179° from 0 → should land near -179.
     assert!(
@@ -47,7 +48,7 @@ fn change_yaw_shortest_arc_chooses_small_side() {
 #[test]
 fn change_yaw_clamps_at_yaw_speed_times_dt() {
     // With dt = 0.1 and YAW_SPEED_BASE = 720, max step = 72°.
-    let mut s = Steering::new(0);
+    let mut s = Steering::new(1.0); // combat=1 → yaw_speed=720
     let dt = 0.1;
     // Ideal is 90° away (unambiguous positive arc) — should step exactly 72°.
     let result = s.change_yaw(90.0, dt);
@@ -61,7 +62,7 @@ fn change_yaw_clamps_at_yaw_speed_times_dt() {
 #[test]
 fn change_yaw_never_overshoots_ideal() {
     // Small remaining diff — must not overshoot.
-    let mut s = Steering::new(0);
+    let mut s = Steering::new(1.0);
     s.set_view_yaw(89.5);
     let result = s.change_yaw(90.0, 0.1); // only 0.5° remaining, max step = 72°
     assert!((result - 90.0).abs() < 0.01, "overshot: got {result}");
@@ -72,8 +73,10 @@ fn change_yaw_skill_scaling_monotonic() {
     // Higher combat skill → faster turn per dt. Compare magnitudes (direction can vary).
     let dt = 0.1;
     let ideal = 90.0; // unambiguous +90° arc
-    let deltas: Vec<f32> = (0u8..=4)
-        .map(|skill| {
+                      // Combat skills in [1.0, 5.0] — each level adds YAW_SPEED_PER_LEVEL.
+    let deltas: Vec<f32> = [1.0f32, 2.0, 3.0, 4.0, 5.0]
+        .iter()
+        .map(|&skill| {
             let mut s = Steering::new(skill);
             s.change_yaw(ideal, dt).abs()
         })
@@ -93,13 +96,13 @@ fn change_yaw_skill_scaling_monotonic() {
 #[test]
 fn change_yaw_wraps_at_180() {
     // Accumulating yaw past 180° should wrap rather than growing unbounded.
-    let mut s = Steering::new(4); // fast turn
-                                  // Do many small steps pushing past 180°.
+    let mut s = Steering::new(5.0); // combat=5 → fast turn
+                                    // Do many small steps pushing past 180°.
     for _ in 0..20 {
         s.change_yaw(360.0, 0.1);
     }
     let yaw = s.view_yaw();
-    assert!(yaw >= -180.0 && yaw < 180.0, "yaw out of range: {yaw}");
+    assert!((-180.0..180.0).contains(&yaw), "yaw out of range: {yaw}");
 }
 
 // ── T2: move_from_world_dir ───────────────────────────────────────────────────

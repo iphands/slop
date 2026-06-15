@@ -31,9 +31,12 @@ pub struct Steering {
 }
 
 impl Steering {
-    /// Create a new controller. `combat_skill` ∈ [0, 4] scales the turn rate.
-    pub fn new(combat_skill: u8) -> Self {
-        let yaw_speed_dps = YAW_SPEED_BASE + combat_skill as f32 * YAW_SPEED_PER_LEVEL;
+    /// Create a new controller. `combat_skill_f` is the Eraser combat rating ∈ [1.0, 5.0].
+    /// `YAW_SPEED_BASE + (combat_skill_f − 1) × YAW_SPEED_PER_LEVEL`
+    /// → combat 1 = 720°/s, combat 5 = 1200°/s.
+    pub fn new(combat_skill_f: f32) -> Self {
+        let level = (combat_skill_f - 1.0).max(0.0);
+        let yaw_speed_dps = YAW_SPEED_BASE + level * YAW_SPEED_PER_LEVEL;
         Self {
             view_yaw: 0.0,
             yaw_speed_dps,
