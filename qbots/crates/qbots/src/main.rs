@@ -78,6 +78,47 @@ impl tracing_subscriber::fmt::time::FormatTime for ElapsedFormatter {
     }
 }
 
+/// Abbreviate tracing level to single letter: T, D, I, W, E
+fn abbreviate_level(level: tracing::Level) -> &'static str {
+    match level {
+        tracing::Level::TRACE => "T",
+        tracing::Level::DEBUG => "D",
+        tracing::Level::INFO => "I",
+        tracing::Level::WARN => "W",
+        tracing::Level::ERROR => "E",
+    }
+}
+
+/// Custom event formatter that abbreviates levels to single letters
+#[derive(Clone)]
+struct AbbreviatedFormat {
+    start_time: Instant,
+}
+
+impl<S, N> tracing_subscriber::fmt::format::FormatEvent<S, N> for AbbreviatedFormat
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+    N: for<'a> tracing_subscriber::fmt::format::FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        ctx: &tracing_subscriber::fmt::FmtContext<'_, S, N>,
+        mut writer: tracing_subscriber::fmt::format::Writer<'_>,
+        event: &tracing::Event<'_>,
+    ) -> std::fmt::Result {
+        let elapsed = self.start_time.elapsed();
+        let secs = elapsed.as_secs();
+        let millis = elapsed.subsec_millis();
+        write!(writer, "{secs:04}.{millis:03} ")?;
+
+        let meta = event.metadata();
+        write!(writer, "{} ", abbreviate_level(*meta.level()))?;
+
+        ctx.field_format().format_fields(writer.by_ref(), event)?;
+        writeln!(writer)
+    }
+}
+
 /// Resolve `host[:port]` to a socket address via DNS lookup. Hostnames (e.g.
 /// `noir.lan`), `IP:port`, and bare IPs (defaulting port to 27910) all work.
 async fn resolve_addr(addr: &str) -> Result<SocketAddr, String> {
@@ -313,14 +354,14 @@ async fn run_brain_bot_with_shutdown(
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    // Initialize tracing subscriber with elapsed time formatting
+    // Initialize tracing subscriber with elapsed time formatting and abbreviated levels
     let start_time = Instant::now();
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .with_timer(ElapsedFormatter(start_time))
         .with_target(false)
         .with_thread_ids(false)
-        .with_level(true)
+        .event_format(AbbreviatedFormat { start_time })
         .init();
 
     let cli = Cli::parse();
