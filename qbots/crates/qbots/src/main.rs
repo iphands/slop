@@ -169,6 +169,11 @@ pub(crate) async fn bot_task(
     use tokio::net::UdpSocket;
     use tokio::time;
 
+    // Attribute every event in this task to the bot name so fleet logs are
+    // per-bot filterable (Plan 09 T3).
+    let span = tracing::info_span!("bot", %name, qport);
+    let _enter = span.enter();
+
     let sock = UdpSocket::bind("0.0.0.0:0").await?;
     sock.connect(addr).await?;
     let mut conn = Conn::new(addr, name, qport);

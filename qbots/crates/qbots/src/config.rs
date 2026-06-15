@@ -40,6 +40,9 @@ pub struct Fleet {
     pub reconnect: bool,
     /// Max reconnect attempts before giving up (0 = unlimited).
     pub max_reconnects: u32,
+    /// Hard cap on bots spawned, regardless of `count`. Guards against exceeding
+    /// the server's `maxclients` (leave headroom for humans). 0 = no cap.
+    pub max_bots: usize,
 }
 
 impl Default for Fleet {
@@ -51,6 +54,7 @@ impl Default for Fleet {
             connect_stagger_ms: 250,
             reconnect: true,
             max_reconnects: 0,
+            max_bots: 0,
         }
     }
 }

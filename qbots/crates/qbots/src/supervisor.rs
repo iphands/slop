@@ -144,17 +144,27 @@ struct Reconnect {
 /// staggered connects, reconnect-on-disconnect with backoff. Returns when all
 /// bot tasks have exited (typically after shutdown is requested).
 pub async fn run_fleet(cfg: Arc<Config>, addr: SocketAddr) -> std::io::Result<()> {
-    let count = cfg.fleet.count;
-    let stagger = cfg.fleet.connect_stagger_ms;
-    let reconnect = Reconnect {
-        enabled: cfg.fleet.reconnect,
-        max_attempts: cfg.fleet.max_reconnects,
-    };
+    // Apply the maxclients guard: never spawn more than `max_bots` (leave slots
+    // for humans). 0 = uncapped.
+    let mut count = cfg.fleet.count;
+    if cfg.fleet.max_bots > 0 && count > cfg.fleet.max_bots {
+        tracing::warn!(
+            requested = count,
+            cap = cfg.fleet.max_bots,
+            "clamping fleet size to max_bots (server maxclients headroom)"
+        );
+        count = cfg.fleet.max_bots;
+    }
 
     if count == 0 {
         tracing::error!("fleet.count is 0 — nothing to run (use `connect-one` for a single bot)");
         return Ok(());
     }
+    let stagger = cfg.fleet.connect_stagger_ms;
+    let reconnect = Reconnect {
+        enabled: cfg.fleet.reconnect,
+        max_attempts: cfg.fleet.max_reconnects,
+    };
 
     let nav_cache = NavCache::new();
     let shutdown = Shutdown::new();
@@ -176,9 +186,25 @@ pub async fn run_fleet(cfg: Arc<Config>, addr: SocketAddr) -> std::io::Result<()
         time::sleep(Duration::from_millis(stagger)).await;
     }
 
+    // Periodic fleet heartbeat (liveness + count). Per-bot events carry the bot
+    // name via the `bot` tracing span, so individual bots are filterable in logs.
+    let sd = shutdown.clone();
+    let status = tokio::spawn(async move {
+        let mut interval = time::interval(Duration::from_secs(30));
+        interval.tick().await; // skip immediate first tick
+        loop {
+            interval.tick().await;
+            tracing::info!(total = count, "fleet heartbeat");
+            if sd.requested() {
+                break;
+            }
+        }
+    });
+
     for t in tasks {
         let _ = t.await;
     }
+    status.abort();
     tracing::info!("fleet exited");
     Ok(())
 }
