@@ -444,7 +444,7 @@ pub(crate) async fn bot_task(
                                 fsm = BehaviorState::Engage { target_entity: target };
                             }
 
-                            tracing::debug!(
+                            tracing::trace!(
                                 "combat target override: target={} pos={:?}",
                                 target, target_pos
                             );

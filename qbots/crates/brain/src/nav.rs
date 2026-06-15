@@ -82,11 +82,11 @@ impl NavigationDriver {
         let target_waypoint = match goal {
             NavGoal::Waypoint(idx) => Some(idx),
             NavGoal::Position(pos) => {
-                tracing::debug!("nav goal Position({:.1},{:.1},{:.1})", pos.x, pos.y, pos.z);
+                tracing::trace!("nav goal Position({:.1},{:.1},{:.1})", pos.x, pos.y, pos.z);
                 self.nav_graph.nearest(&[pos.x, pos.y, pos.z])
             }
             NavGoal::Entity(pos) => {
-                tracing::debug!("nav goal Entity({:.1},{:.1},{:.1})", pos.x, pos.y, pos.z);
+                tracing::trace!("nav goal Entity({:.1},{:.1},{:.1})", pos.x, pos.y, pos.z);
                 self.nav_graph.nearest(&[pos.x, pos.y, pos.z])
             }
         };
