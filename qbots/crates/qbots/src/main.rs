@@ -5,6 +5,8 @@
 
 mod config;
 
+use std::time::Instant;
+
 use std::net::SocketAddr;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -63,6 +65,18 @@ fn dist2(a: &[f32; 3], b: &[f32; 3]) -> f32 {
     d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
 }
 
+/// Custom elapsed time formatter for tracing (seconds.nanoseconds from startup).
+struct ElapsedFormatter(Instant);
+
+impl tracing_subscriber::fmt::time::FormatTime for ElapsedFormatter {
+    fn format_time(&self, w: &mut tracing_subscriber::fmt::format::Writer<'_>) -> std::fmt::Result {
+        let elapsed = self.0.elapsed();
+        let secs = elapsed.as_secs();
+        let nanos = elapsed.subsec_nanos();
+        write!(w, "{secs}.{nanos:03}")
+    }
+}
+
 /// Resolve `host[:port]` to a socket address via DNS lookup. Hostnames (e.g.
 /// `noir.lan`), `IP:port`, and bare IPs (defaulting port to 27910) all work.
 async fn resolve_addr(addr: &str) -> Result<SocketAddr, String> {
@@ -81,7 +95,6 @@ async fn resolve_addr(addr: &str) -> Result<SocketAddr, String> {
     }
 }
 
-
 /// Wrapper that adds signal handling for graceful shutdown.
 /// Sends a disconnect packet before teardown when SIGINT/SIGTERM received.
 async fn run_brain_bot_with_shutdown(
@@ -97,10 +110,10 @@ async fn run_brain_bot_with_shutdown(
     };
     use client::{Conn, ConnState};
     use q2proto::Usercmd;
+    use std::time::Duration;
     use tokio::net::UdpSocket;
     use tokio::time;
-    use std::time::Duration;
-    
+
     let sock = UdpSocket::bind("0.0.0.0:0").await?;
     sock.connect(addr).await?;
     let mut conn = Conn::new(addr, name, qport);
@@ -121,12 +134,12 @@ async fn run_brain_bot_with_shutdown(
     let mut roam_nodes: Vec<usize> = Vec::new();
     let mut roam_idx: usize = 0;
     let mut map_loaded = false;
-    
+
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .map_err(|e| std::io::Error::other(format!("failed to create SIGTERM handler: {e}")))?;
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .map_err(|e| std::io::Error::other(format!("failed to create SIGINT handler: {e}")))?;
-    
+
     let mut shutting_down = false;
 
     loop {
@@ -140,7 +153,7 @@ async fn run_brain_bot_with_shutdown(
                     break;
                 }
             }
-            
+
             _ = ticker.tick() => {
                 ticks = ticks.wrapping_add(1);
 
@@ -159,7 +172,7 @@ async fn run_brain_bot_with_shutdown(
                                 .unwrap_or(&bsp_path)
                                 .to_owned();
                             map_loaded = true;
-                            eprintln!("qbots: BSP={bsp_path}  building nav graph for '{map}'…");
+                            tracing::info!("BSP={bsp_path}  building nav graph for '{map}'…");
                             match world::Bsp::load(&cfg.paths.baseq2, &map) {
                                 Ok(bsp) => {
                                     let cm = world::CollisionModel::from_bsp(&bsp);
@@ -169,8 +182,8 @@ async fn run_brain_bot_with_shutdown(
                                         world::NavGraph::generate(&cm, (m.mins, m.maxs), 64.0);
                                     let comps = g.components();
                                     let largest = comps.into_iter().next().unwrap_or_default();
-                                    eprintln!(
-                                        "qbots: nav ready: {} nodes / {} edges  largest={} ({} ms)",
+                                    tracing::info!(
+                                        "nav ready: {} nodes / {} edges  largest={} ({} ms)",
                                         g.node_count(),
                                         g.edge_count(),
                                         largest.len(),
@@ -180,7 +193,7 @@ async fn run_brain_bot_with_shutdown(
                                     nav_driver = Some(NavigationDriver::new(Arc::new(g)));
                                 }
                                 Err(e) => {
-                                    eprintln!("qbots: nav load failed: {e}  (no nav)");
+                                    tracing::warn!("nav load failed: {e}  (no nav)");
                                 }
                             }
                         }
@@ -189,7 +202,8 @@ async fn run_brain_bot_with_shutdown(
 
                 let cmd = if state == ConnState::Active {
                     if let Some(frame) = frame_opt {
-                        let view = Worldview::from_frame(&frame, &cs, playernum);
+                        let mut view = Worldview::from_frame(&frame, &cs, playernum);
+                        view.detect_damage(); // Log damage/death events
                         let fsm_intent = fsm.tick(&view);
                         let jitter = (ticks as f32) * 0.1;
                         let combat_dec =
@@ -259,31 +273,30 @@ async fn run_brain_bot_with_shutdown(
                     match conn.frame.as_ref() {
                         Some(f) => {
                             let o = f.playerstate.pmove.origin_f32();
-                            eprintln!(
-                                "qbots: {:?} frame={} ents={} origin=({:.1},{:.1},{:.1}) fsm={fsm:?}",
-                                conn.state(),
-                                f.serverframe,
-                                f.entities.len(),
-                                o[0],
-                                o[1],
-                                o[2],
+                            tracing::debug!(
+                                state = ?conn.state(),
+                                frame = f.serverframe,
+                                ents = f.entities.len(),
+                                "origin=({:.1},{:.1},{:.1}) fsm={:?}",
+                                o[0], o[1], o[2],
+                                fsm
                             );
                         }
-                        None => eprintln!("qbots: {:?} (no frame yet)", conn.state()),
+                        None => tracing::debug!(state = ?conn.state(), "(no frame yet)"),
                     }
                 }
             }
-            
+
             _ = sigterm.recv(), if !shutting_down => {
-                eprintln!("qbots: received SIGTERM, shutting down...");
+                tracing::info!("received SIGTERM, shutting down...");
                 shutting_down = true;
             }
             _ = sigint.recv(), if !shutting_down => {
-                eprintln!("qbots: received SIGINT, shutting down...");
+                tracing::info!("received SIGINT, shutting down...");
                 shutting_down = true;
             }
         }
-        
+
         if shutting_down && conn.state() == ConnState::Active {
             if let Some(pkt) = conn.disconnect() {
                 let _ = sock.send(&pkt).await;
@@ -299,12 +312,22 @@ async fn run_brain_bot_with_shutdown(
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // Initialize tracing subscriber with elapsed time formatting
+    let start_time = Instant::now();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_timer(ElapsedFormatter(start_time))
+        .with_target(false)
+        .with_thread_ids(false)
+        .with_level(true)
+        .init();
+
     let cli = Cli::parse();
 
     let cfg = match Config::load(&cli.config) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("qbots: config: {e}");
+            tracing::error!("config: {e}");
             return ExitCode::FAILURE;
         }
     };
@@ -317,25 +340,25 @@ async fn main() -> ExitCode {
             let addr = match resolve_addr(&addr_str).await {
                 Ok(a) => a,
                 Err(e) => {
-                    eprintln!("qbots: {e}");
+                    tracing::error!("{e}");
                     return ExitCode::FAILURE;
                 }
             };
-            println!("qbots: connecting '{name}' to {addr} (qport {qport})…  Ctrl-C to stop.");
-            
+            tracing::info!("connecting '{name}' to {addr} (qport {qport})…  Ctrl-C to stop.");
+
             // Set up signal handling for graceful shutdown
             match run_brain_bot_with_shutdown(addr, &name, qport, &cfg).await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
-                    eprintln!("qbots: {e}");
+                    tracing::error!("{e}");
                     ExitCode::FAILURE
                 }
             }
         }
         Cmd::Config => {
-            println!("server      : {}", cfg.server_addr());
-            println!("server_cfg  : {}", cfg.paths.server_cfg.display());
-            println!("baseq2      : {}", cfg.paths.baseq2.display());
+            tracing::info!("server      : {}", cfg.server_addr());
+            tracing::info!("server_cfg  : {}", cfg.paths.server_cfg.display());
+            tracing::info!("baseq2      : {}", cfg.paths.baseq2.display());
             let maps_dir = cfg.paths.baseq2.join("maps");
             match std::fs::read_dir(&maps_dir) {
                 Ok(entries) => {
@@ -343,13 +366,13 @@ async fn main() -> ExitCode {
                         .filter_map(Result::ok)
                         .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("bsp"))
                         .count();
-                    println!("maps        : {n} .bsp files in {}", maps_dir.display());
+                    tracing::info!("maps        : {n} .bsp files in {}", maps_dir.display());
                 }
-                Err(e) => println!("maps        : can't read {}: {e}", maps_dir.display()),
+                Err(e) => tracing::info!("maps        : can't read {}: {e}", maps_dir.display()),
             }
             let q2dm1 = cfg.map_bsp("q2dm1");
             let exists = q2dm1.exists();
-            println!(
+            tracing::info!(
                 "q2dm1.bsp   : {} ({})",
                 q2dm1.display(),
                 if exists { "found" } else { "MISSING" }
@@ -365,7 +388,7 @@ async fn main() -> ExitCode {
                     (m.mins[1] + m.maxs[1]) * 0.5,
                     (m.mins[2] + m.maxs[2]) * 0.5,
                 ];
-                println!(
+                tracing::info!(
                     "{}: bounds [{:.0},{:.0},{:.0}]..[{:.0},{:.0},{:.0}]  center=({:.0},{:.0},{:.0})",
                     map,
                     m.mins[0],
@@ -378,7 +401,7 @@ async fn main() -> ExitCode {
                     center[1],
                     center[2]
                 );
-                println!(
+                tracing::info!(
                     "  point_contents(center) = {:#x}  is_solid={}",
                     cm.point_contents(&center),
                     cm.is_solid(&center)
@@ -404,7 +427,7 @@ async fn main() -> ExitCode {
                         center[2],
                     ];
                     let t = cm.trace(&center, &end, &[0.0; 3], &[0.0; 3], world::MASK_SOLID);
-                    println!(
+                    tracing::info!(
                         "  dir ({:+.1},{:+.1}): frac={:.3}  hit at {:.0} units  {}",
                         dir[0],
                         dir[1],
@@ -416,7 +439,7 @@ async fn main() -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(e) => {
-                eprintln!("qbots: {e}");
+                tracing::error!("{e}");
                 ExitCode::FAILURE
             }
         },
@@ -425,8 +448,8 @@ async fn main() -> ExitCode {
                 let cm = world::CollisionModel::from_bsp(&bsp);
                 let pvs = world::Pvs::from_lump(bsp.vis.clone());
                 match &pvs {
-                    Some(p) => println!("{}: {} clusters", map, p.numclusters()),
-                    None => println!("{}: no PVS lump", map),
+                    Some(p) => tracing::info!("{}: {} clusters", map, p.numclusters()),
+                    None => tracing::info!("{}: no PVS lump", map),
                 }
                 let m = bsp.models.first().expect("bsp has models");
                 let center = [
@@ -435,12 +458,15 @@ async fn main() -> ExitCode {
                     (m.mins[2] + m.maxs[2]) * 0.5,
                 ];
                 let cluster = cm.point_cluster(&center);
-                println!(
+                tracing::info!(
                     "  center ({:.0},{:.0},{:.0}) → cluster {}",
-                    center[0], center[1], center[2], cluster
+                    center[0],
+                    center[1],
+                    center[2],
+                    cluster
                 );
                 if let Some(p) = &pvs {
-                    println!(
+                    tracing::info!(
                         "  clusters visible from {}: {}",
                         cluster,
                         p.count_visible(cluster)
@@ -449,7 +475,7 @@ async fn main() -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(e) => {
-                eprintln!("qbots: {e}");
+                tracing::error!("{e}");
                 ExitCode::FAILURE
             }
         },
@@ -461,7 +487,7 @@ async fn main() -> ExitCode {
 
                 let t0 = std::time::Instant::now();
                 let g = world::NavGraph::generate(&cm, bounds, 64.0);
-                println!(
+                tracing::info!(
                     "{}: nav graph  {} nodes / {} edges  (spacing 64, {} ms)",
                     map,
                     g.node_count(),
@@ -479,11 +505,11 @@ async fn main() -> ExitCode {
                     .first()
                     .expect("nav graph must have at least one component");
                 if largest.is_empty() {
-                    println!("  no walkable nodes in nav graph");
+                    tracing::info!("  no walkable nodes in nav graph");
                     return ExitCode::SUCCESS;
                 }
 
-                println!(
+                tracing::info!(
                     "  {} components; largest = {} nodes",
                     comps.len(),
                     largest.len()
@@ -510,7 +536,7 @@ async fn main() -> ExitCode {
                     .expect("largest component must have nodes");
 
                 if s == farthest {
-                    println!("  only one node in largest component");
+                    tracing::info!("  only one node in largest component");
                     return ExitCode::SUCCESS;
                 }
 
@@ -528,7 +554,7 @@ async fn main() -> ExitCode {
                                 .sqrt()
                             })
                             .sum();
-                        println!(
+                        tracing::info!(
                             "  path (in largest): {}→{}: {} hops / {} nodes, {:.0} units  ({} ms)",
                             s,
                             farthest,
@@ -538,18 +564,18 @@ async fn main() -> ExitCode {
                             t0.elapsed().as_millis(),
                         );
                     }
-                    None => println!("  no path in largest component (this is a bug!)"),
+                    None => tracing::info!("  no path in largest component (this is a bug!)"),
                 }
                 ExitCode::SUCCESS
             }
             Err(e) => {
-                eprintln!("qbots: {e}");
+                tracing::error!("{e}");
                 ExitCode::FAILURE
             }
         },
         Cmd::BspInfo { map } => match world::Bsp::load(&cfg.paths.baseq2, &map) {
             Ok(bsp) => {
-                println!(
+                tracing::info!(
                     "{}: v{} | {} planes, {} nodes, {} leafs, {} brushes, {} brushsides, {} leafbrushes, {} models",
                     map,
                     bsp.version,
@@ -564,7 +590,7 @@ async fn main() -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(e) => {
-                eprintln!("qbots: {e}");
+                tracing::error!("{e}");
                 ExitCode::FAILURE
             }
         },
