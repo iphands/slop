@@ -13,7 +13,7 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 | **06** | Brain (`brain`) | 05 | done | perceive → navigate → fight → **single bot scores frags** (verified live 2026-06-15) |
 | **07** | Eraser-derived brain enhancements | 06 | done | port Eraser's combat aim/lead/jitter, weapon-select, projectile danger dodge, skill/personality (`distilled/eraser.md`) → **bots fight like Eraser** (verified: 6 frags/30s, 3-bot fleet). RL-retreat deferred (enemy weapon not on wire). |
 | **08** | Danger/popularity heatmap nav | 05, 06 | done | runtime risk overlay on the static nav graph (novel — Eraser can't) → **route around death-traps, toward hot lanes** (deterministic integration test verifies detour→decay-restore + skill-scaling; live confirm deferred — server down 2026-06-15) |
-| **09** | Fleet (`qbots` bin) | 06 | in-progress | T1-T5 done; fleet verified at 3-bot scale live (shared nav, stagger, no kicks). Full 8-16 run deferred. |
+| **09** | Fleet (`qbots` bin) | 06 | done | roster config, supervisor (shared nav cache, stagger, reconnect/backoff, graceful shutdown), per-bot logging, rate-safe pacing, `run`/`connect-one`/`status` CLI → **8-bot fleet verified live** (qb0-qb7 connected, frags accumulating, no kicks; `qbots status` OOB lens) |
 
 **Milestones**
 - After **03**: a bot connects and shows in the server's player list.

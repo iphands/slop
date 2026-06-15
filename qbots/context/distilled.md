@@ -139,7 +139,26 @@ read-only; only per-node edge weights breathe.
   proves repeated deaths at a chokepoint flip the route to a detour, decay
   (~TAU_DANGER) restores the direct route, and high-skill detours after one
   death where low-skill does not. Gravitation proven at the pathfinding level
-  (`world` `path_weighted` unit test). **Live-server confirmation deferred** —
-  `noir.lan:27910` was down at 2026-06-15; the per-tick `snapshot()` debug log
-  (`total_danger`/`max_danger`/`hot_nodes`) is wired to confirm it live once the
-  server is back.
+  (`world` `path_weighted` unit test). **Live-server confirmation pending** — the
+  server was reachable (UDP) but the running 8-bot fleet used pre-heatmap code, so
+  the new overlay wasn't live-exercised; the per-tick `snapshot()` debug log
+  (`total_danger`/`max_danger`/`hot_nodes`) is wired to confirm it next time the
+  new binary runs against a game.
+
+## Fleet (`qbots` binary — Plan 09, VERIFIED LIVE 8 bots)
+- **`qbots status`** is the verification lens: connectionless OOB
+  `\xff\xff\xff\xffstatus\n` → server replies `\xff\xff\xff\xffprint\n` +
+  `SV_StatusString()` (infostring line, then `<frags> <ping> "<name>"` per
+  client). Parser in `qbots/src/status.rs` (unit-tested). Note: this server's
+  serverinfo exposes `maxclients` (25) but not `map` — the field is `None`
+  though players are clearly mid-game; don't treat a missing `map` as "no map".
+- **8-bot fleet verified live** (qb0-qb7, 2026-06-15): all connected over a ~2 min
+  run, frags accumulating (4 bots scored in a 40 s window), no kicks, 10/25
+  maxclients. Stagger `connect_stagger_ms=250` is enough — no connectionless
+  flood / IP ban. qport scheme `qport_base + i` (28000+i) keeps bots distinct.
+- **Reconnect**: per-bot exponential backoff 1 s → 15 s cap, `max_reconnects`
+  (0=unlimited). Nav graph cached once per map in `NavCache` (built under a lock,
+  shared as `Arc`); a build failure degrades a bot to nav-less, not a crash.
+- **CPU**: one tokio task per bot; shared read-only `Arc<NavGraph>` is the
+  multiplier. Per-tick overlay alloc is `node_count` floats/bot (~few KB at 10 Hz)
+  — fine at this scale; reuse a buffer if pushing past ~32 bots.
