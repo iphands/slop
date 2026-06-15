@@ -5,9 +5,10 @@
 //! `config.yaml`. The fleet supervisor + per-bot task live in [`supervisor`].
 
 mod config;
+mod status;
 mod supervisor;
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use std::net::SocketAddr;
 use std::process::ExitCode;
@@ -53,6 +54,13 @@ enum Cmd {
     },
     /// Print the loaded config (server + paths + fleet) and exit.
     Config,
+    /// Query the server's connectionless `status` (map + player list). The fleet
+    /// verification lens — confirms bots are connected and fragging (Plan 09).
+    Status {
+        /// Server address (defaults to config's server).
+        #[arg(long)]
+        addr: Option<String>,
+    },
     /// Load + dump a BSP (planes/nodes/leafs/brushes counts) from the configured baseq2.
     BspInfo { map: String },
     /// Build the collision model for a map and fire test rays from its center.
@@ -126,6 +134,27 @@ where
         ctx.field_format().format_fields(writer.by_ref(), event)?;
         writeln!(writer)
     }
+}
+
+/// Send a connectionless `status` query and parse the reply (Plan 09). Times out
+/// after 2 s — a down server or a dropped packet must not hang the CLI.
+async fn query_status(addr: SocketAddr) -> std::io::Result<status::StatusReport> {
+    use tokio::net::UdpSocket;
+    let sock = UdpSocket::bind("0.0.0.0:0").await?;
+    sock.connect(addr).await?;
+    sock.send(b"\xff\xff\xff\xffstatus\n").await?;
+    let mut buf = vec![0u8; 4096];
+    let n = tokio::time::timeout(Duration::from_secs(2), sock.recv(&mut buf))
+        .await
+        .map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::TimedOut, "status query timed out")
+        })??;
+    status::parse_status_response(&buf[..n]).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "unparseable status response",
+        )
+    })
 }
 
 /// Resolve `host[:port]` to a socket address via DNS lookup. Hostnames (e.g.
@@ -726,6 +755,37 @@ async fn main() -> ExitCode {
                 if exists { "found" } else { "MISSING" }
             );
             ExitCode::SUCCESS
+        }
+        Cmd::Status { addr } => {
+            let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
+            let addr = match resolve_addr(&addr_str).await {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::error!("{e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            match query_status(addr).await {
+                Ok(rep) => {
+                    tracing::info!(
+                        map = ?rep.map,
+                        maxclients = ?rep.maxclients,
+                        players = rep.player_count(),
+                        "server status"
+                    );
+                    // Frag leaders first.
+                    let mut players = rep.players;
+                    players.sort_by(|a, b| b.score.cmp(&a.score));
+                    for p in &players {
+                        tracing::info!("{:>4}  {:>4}ms  {}", p.score, p.ping, p.name);
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    tracing::error!("status query failed: {e}");
+                    ExitCode::FAILURE
+                }
+            }
         }
         Cmd::Trace { map } => match world::Bsp::load(&cfg.paths.baseq2, &map) {
             Ok(bsp) => {
