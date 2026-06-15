@@ -10,7 +10,7 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 | **03** | Connection (`client`) | 02 | done | handshake + netchan + spawn → **bot connects & enters the game** (verified live) |
 | **04** | Frame loop & movement | 03 | done | decode frames + real `Usercmd`s → **bot walks** (verified live; T5 pmove deferred) |
 | **05** | World model (`world`) | 04 | done | `.bsp` parse → trace + PVS + nav graph (T1-T4 verified; T5 deferred) |
-| **06** | Brain (`brain`) | 05 | in-progress | perceive → navigate → fight → **single bot scores frags** |
+| **06** | Brain (`brain`) | 05 | done | perceive → navigate → fight → **single bot scores frags** (verified live 2026-06-15) |
 | **07** | Eraser-derived brain enhancements | 06 | pending | port Eraser's combat aim/lead/jitter, weapon-select, projectile danger dodge, skill/personality (`distilled/eraser.md`) → **bots fight like Eraser** |
 | **08** | Danger/popularity heatmap nav | 05, 06 | pending | runtime risk overlay on the static nav graph (novel — Eraser can't) → **route around death-traps, toward hot lanes** |
 | **09** | Fleet (`qbots` bin) | 06 | pending | N supervised bots, staggered, logged, rate-safe (07 & 08 optional quality layers) |

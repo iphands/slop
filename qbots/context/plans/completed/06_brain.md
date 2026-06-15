@@ -1,6 +1,6 @@
 # Plan 06 — Brain (`brain`)
 
-> **Status**: pending
+> **Status**: done
 > **Created**: 2026-06-14
 > **Depends on**: Plan 05 (world: trace + nav graph)
 > **Goal**: A behavior + combat + navigation brain that turns per-frame perception into
