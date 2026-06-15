@@ -25,7 +25,7 @@ pub struct Paths {
 }
 
 /// Fleet roster — describes N bots spawned by `qbots run` (Plan 09).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct Fleet {
     /// Number of bots to spawn.

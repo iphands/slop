@@ -1,9 +1,11 @@
 //! # qbots — external Quake 2 bot client fleet
 //!
-//! CLI entry point. `connect-one` connects a single bot and keeps it alive; the fleet
-//! runner lands in Plan 07. Server address and on-disk Q2 paths come from `config.yaml`.
+//! CLI entry point. `connect-one` connects a single bot and keeps it alive; `run`
+//! launches the full fleet (Plan 09). Server address and on-disk Q2 paths come from
+//! `config.yaml`. The fleet supervisor + per-bot task live in [`supervisor`].
 
 mod config;
+mod supervisor;
 
 use std::time::Instant;
 
@@ -43,7 +45,13 @@ enum Cmd {
         #[arg(long)]
         qport: Option<u16>,
     },
-    /// Print the loaded config (server + paths) and exit.
+    /// Launch the full bot fleet from the config's `[fleet]` roster.
+    Run {
+        /// Server address (defaults to config's server).
+        #[arg(long)]
+        addr: Option<String>,
+    },
+    /// Print the loaded config (server + paths + fleet) and exit.
     Config,
     /// Load + dump a BSP (planes/nodes/leafs/brushes counts) from the configured baseq2.
     BspInfo { map: String },
@@ -140,11 +148,16 @@ async fn resolve_addr(addr: &str) -> Result<SocketAddr, String> {
 
 /// Wrapper that adds signal handling for graceful shutdown.
 /// Sends a disconnect packet before teardown when SIGINT/SIGTERM received.
-async fn run_brain_bot_with_shutdown(
+/// One bot's connection → frames → brain loop. Shares the nav graph via
+/// `nav_cache` (built once per map across the whole fleet) and exits when
+/// `shutdown` is requested or the connection drops.
+pub(crate) async fn bot_task(
     addr: SocketAddr,
     name: &str,
     qport: u16,
     cfg: &Config,
+    nav_cache: &supervisor::NavCache,
+    shutdown: &supervisor::Shutdown,
 ) -> std::io::Result<()> {
     use brain::fsm::{BehaviorIntent, BehaviorState};
     use brain::nav::NavGoal;
@@ -182,14 +195,19 @@ async fn run_brain_bot_with_shutdown(
     let mut last_health: Option<i32> = None; // Track health across frames for damage detection
     let mut last_frags: Option<i32> = None; // Track frags for kill detection
 
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .map_err(|e| std::io::Error::other(format!("failed to create SIGTERM handler: {e}")))?;
-    let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
-        .map_err(|e| std::io::Error::other(format!("failed to create SIGINT handler: {e}")))?;
-
-    let mut shutting_down = false;
-
     loop {
+        if shutdown.requested() {
+            if conn.state() == ConnState::Active {
+                if let Some(pkt) = conn.disconnect() {
+                    let _ = sock.send(&pkt).await;
+                    let _ = sock.send(&pkt).await;
+                    let _ = sock.send(&pkt).await;
+                }
+                time::sleep(Duration::from_millis(100)).await;
+            }
+            return Ok(());
+        }
+
         tokio::select! {
             res = sock.recv(&mut buf) => {
                 let n = res?;
@@ -197,7 +215,8 @@ async fn run_brain_bot_with_shutdown(
                     let _ = sock.send(&pkt).await;
                 }
                 if conn.state() == ConnState::Disconnected {
-                    break;
+                    tracing::info!("disconnected");
+                    return Ok(());
                 }
             }
 
@@ -250,29 +269,12 @@ async fn run_brain_bot_with_shutdown(
                                 .unwrap_or(&bsp_path)
                                 .to_owned();
                             map_loaded = true;
-                            tracing::info!("BSP={bsp_path}  building nav graph for '{map}'…");
-                            match world::Bsp::load(&cfg.paths.baseq2, &map) {
-                                Ok(bsp) => {
-                                    let cm = world::CollisionModel::from_bsp(&bsp);
-                                    let m = bsp.models.first().expect("bsp has models");
-                                    let t0 = std::time::Instant::now();
-                                    let g =
-                                        world::NavGraph::generate(&cm, (m.mins, m.maxs), 64.0);
-                                    let comps = g.components();
-                                    let largest = comps.into_iter().next().unwrap_or_default();
-                                    tracing::info!(
-                                        "nav ready: {} nodes / {} edges  largest={} ({} ms)",
-                                        g.node_count(),
-                                        g.edge_count(),
-                                        largest.len(),
-                                        t0.elapsed().as_millis()
-                                    );
-                                    roam_nodes = largest;
-                                    nav_driver = Some(NavigationDriver::new(Arc::new(g)));
-                                }
-                                Err(e) => {
-                                    tracing::warn!("nav load failed: {e}  (no nav)");
-                                }
+                            tracing::info!(map, bsp = %bsp_path, "loading nav graph");
+                            // Shared across the fleet: built once per map, reused as Arc.
+                            if let Some(map_nav) = nav_cache.get_or_build(cfg, &map) {
+                                roam_nodes = map_nav.roam_nodes.clone();
+                                nav_driver =
+                                    Some(NavigationDriver::new(Arc::clone(&map_nav.graph)));
                             }
                         }
                     }
@@ -522,28 +524,8 @@ async fn run_brain_bot_with_shutdown(
                     }
                 }
             }
-
-            _ = sigterm.recv(), if !shutting_down => {
-                tracing::info!("received SIGTERM, shutting down...");
-                shutting_down = true;
-            }
-            _ = sigint.recv(), if !shutting_down => {
-                tracing::info!("received SIGINT, shutting down...");
-                shutting_down = true;
-            }
-        }
-
-        if shutting_down && conn.state() == ConnState::Active {
-            if let Some(pkt) = conn.disconnect() {
-                let _ = sock.send(&pkt).await;
-                let _ = sock.send(&pkt).await;
-                let _ = sock.send(&pkt).await;
-            }
-            time::sleep(Duration::from_millis(100)).await;
-            break;
         }
     }
-    Ok(())
 }
 
 #[tokio::main]
@@ -582,8 +564,28 @@ async fn main() -> ExitCode {
             };
             tracing::info!("connecting '{name}' to {addr} (qport {qport})…  Ctrl-C to stop.");
 
-            // Set up signal handling for graceful shutdown
-            match run_brain_bot_with_shutdown(addr, &name, qport, &cfg).await {
+            match supervisor::run_single(&cfg, addr, &name, qport).await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    tracing::error!("{e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Cmd::Run { addr } => {
+            if !cfg.fleet.enabled() {
+                tracing::error!("no fleet configured — set [fleet].count in config.yaml");
+                return ExitCode::FAILURE;
+            }
+            let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
+            let addr = match resolve_addr(&addr_str).await {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::error!("{e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            match supervisor::run_fleet(Arc::new(cfg), addr).await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     tracing::error!("{e}");
@@ -595,6 +597,12 @@ async fn main() -> ExitCode {
             tracing::info!("server      : {}", cfg.server_addr());
             tracing::info!("server_cfg  : {}", cfg.paths.server_cfg.display());
             tracing::info!("baseq2      : {}", cfg.paths.baseq2.display());
+            tracing::info!(
+                "fleet       : {} bots (prefix '{}', qport {}+)",
+                cfg.fleet.count,
+                cfg.fleet.name_prefix,
+                cfg.fleet.qport_base
+            );
             let maps_dir = cfg.paths.baseq2.join("maps");
             match std::fs::read_dir(&maps_dir) {
                 Ok(entries) => {
