@@ -315,11 +315,18 @@ async fn run_brain_bot_with_shutdown(
 
                         // Pass combat target to FSM for navigation goal
                         let fsm_intent = if let Some(target) = combat_dec.target_entity {
-                            // Override FSM goal to chase combat target
+                            // Force FSM into Engage state and set nav goal to chase combat target
                             let target_pos = view.entities()
                                 .find(|e| e.entity_number == target)
                                 .map(|e| e.origin)
                                 .unwrap_or(view.self_state().origin);
+                            
+                            // Update FSM state to Engage if not already
+                            if !matches!(fsm, BehaviorState::Engage { .. }) {
+                                tracing::debug!("forcing FSM into Engage state (target={})", target);
+                                *fsm = BehaviorState::Engage { target_entity: target };
+                            }
+                            
                             tracing::debug!(
                                 "combat target override: target={} pos={:?}",
                                 target, target_pos
