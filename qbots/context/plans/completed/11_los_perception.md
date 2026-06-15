@@ -1,6 +1,6 @@
 # Plan 11 — Honest Line-of-Sight Perception
 
-> **Status**: pending
+> **Status**: done
 > **Created**: 2026-06-15
 > **Depends on**: Plan 10 (recorder confirms phantom-chase symptom in baseline logs)
 > **Goal**: Bots only react to (target, fire at, chase, navigate toward) enemies they can
