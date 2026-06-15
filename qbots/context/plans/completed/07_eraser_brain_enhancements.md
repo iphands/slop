@@ -1,6 +1,6 @@
 # Plan 07 — Eraser-Derived Brain Enhancements (combat / danger / skill)
 
-> **Status**: pending
+> **Status**: done
 > **Created**: 2026-06-14
 > **Depends on**: Plan 06 (brain skeleton — perceive/navigate/fight/FSM)
 > **Goal**: Port Eraser v1.01's battle-tested combat aim/lead/jitter, weapon selection, projectile danger

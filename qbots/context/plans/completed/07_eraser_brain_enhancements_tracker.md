@@ -1,7 +1,7 @@
 # Eraser-Derived Brain Enhancements — Tracker
 
 ## Overview
-- Status: ~30% — T1 done; T2/T5/T6 partial; T3/T4/T7 pending.
+- Status: 100% — T1-T6 done; T7 verified live (6 frags in 30s, 3-bot fleet). RL-retreat deferred (enemy weapon not visible on the wire).
 - Depends on: Plan 06 (brain skeleton)
 - Exit criterion: a single qbot frags with Eraser-grade aim/dodge/skill — hitscan+projectile aim connects,
   `combat>=4` bots dodge visible rockets/grenades, skill tiers visibly differ, auto-skill drifts, give-up/stuck fire.
@@ -19,9 +19,9 @@
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
 | 1 | T1: combat aim/lead/jitter | `brain/src/{combat,aim}.rs` | done | per-weapon lead (RL/HB/GL/BFG), `(5−acc)/5*2` jitter, ±15° pitch; 10 tests |
-| 2 | T2: fire timing + weapon select | `brain/src/weapons.rs` | partial | weapon select reworked in plan 06 (use stringcmd); fire-interval/reaction/lockout pending |
-| 3 | T3: danger avoidance | `brain/src/danger.rs` | pending | rocket(>=4)/grenade dodge, `botJumpAvoidEnt` on BSP |
-| 4 | T4: skill/personality config | `brain/src/skill.rs` | pending | 7-field, `AdjustRatingsToSkill`, auto-skill |
-| 5 | T5: FSM give-up/stuck/engage | `brain/src/{fsm,nav}.rs` | partial | **ideal-distance done** (hold 160u, back up <80u); 2s/4s give-up + RL-retreat pending |
-| 6 | T6: fix Eraser gaps | `brain/src/{items,weapons}.rs` | partial | BFG lead dist/400 done (T1); powerup values + camping pending |
-| 7 | T7: verify | — | pending | frags + dodge + skill tiers |
+| 2 | T2: fire timing + weapon select | `brain/src/{combat,weapons}.rs` | done | per-weapon fire_interval_secs, reaction delay, 0.9s switch lockout; 5 fire-gate tests |
+| 3 | T3: danger avoidance | `brain/src/danger.rs` | done | rocket(>=4)/grenade dodge, perpendicular strafe+jump; 5 tests |
+| 4 | T4: skill/personality config | `brain/src/skill.rs` | done | Ratings + AdjustRatingsToSkill + on_kill/on_death auto-skill + quad_freak/camper; 3 tests |
+| 5 | T5: FSM give-up/stuck/engage | `brain/src/{fsm,nav}.rs` | done | ideal-distance + 80-tick goal give-up watchdog; **RL-retreat deferred** (enemy weapon not on wire) |
+| 6 | T6: fix Eraser gaps | `brain/src/{items,weapons}.rs` | done | BFG lead dist/400; explicit powerup item values + best_item_goal; first-cut camping; 3 tests |
+| 7 | T7: verify | — | done | **3-bot fleet, 30s: 6 frags, 46 shots, 21 stuck recoveries, nav shared, no kicks** |

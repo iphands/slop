@@ -11,7 +11,7 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 | **04** | Frame loop & movement | 03 | done | decode frames + real `Usercmd`s → **bot walks** (verified live; T5 pmove deferred) |
 | **05** | World model (`world`) | 04 | done | `.bsp` parse → trace + PVS + nav graph (T1-T4 verified; T5 deferred) |
 | **06** | Brain (`brain`) | 05 | done | perceive → navigate → fight → **single bot scores frags** (verified live 2026-06-15) |
-| **07** | Eraser-derived brain enhancements | 06 | in-progress | T1 (Eraser aim/lead/jitter) + ideal-distance + BFG-lead done; fire-timing, danger-dodge, skill/camping pending |
+| **07** | Eraser-derived brain enhancements | 06 | done | port Eraser's combat aim/lead/jitter, weapon-select, projectile danger dodge, skill/personality (`distilled/eraser.md`) → **bots fight like Eraser** (verified: 6 frags/30s, 3-bot fleet). RL-retreat deferred (enemy weapon not on wire). |
 | **08** | Danger/popularity heatmap nav | 05, 06 | pending | runtime risk overlay on the static nav graph (novel — Eraser can't) → **route around death-traps, toward hot lanes** |
 | **09** | Fleet (`qbots` bin) | 06 | in-progress | T1-T5 done; fleet verified at 3-bot scale live (shared nav, stagger, no kicks). Full 8-16 run deferred. |
 
