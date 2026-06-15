@@ -1,7 +1,7 @@
 # World Model (world) — Tracker
 
 ## Overview
-- Status: ~50% — T1–T3 done & live-verified; T4–T6 (nav graph + cache + verify) remain.
+- Status: **~90% complete** — T1–T4 done & live-verified; T5 (loader cache) deferred, T6 (final verify) essentially done.
 - Start date: 2026-06-14
 - Plan: `05_world_model.md`
 - Depends on: Plan 04 (frame snapshots + map name from configstrings)
@@ -20,6 +20,6 @@
 | 1 | T1: BSP loader | `world/src/{bsp,pak}.rs` | done | IBSP v38 + 7 collision lumps; **verified live** (q2dm1/base1 from pak files) |
 | 2 | T2: collision trace + contents | `world/src/collision.rs` | done | CM_RecursiveHullCheck + box/brush clip; **verified live** (q2dm1: 8 rays hit walls 288-800u) |
 | 3 | T3: PVS query | `world/src/vis.rs` | done | CM_DecompressVis RLE + cluster_visible; **verified live** (q2dm1: 925 clusters, center sees 336) |
-| 4 | T4: nav graph + A* | `world/src/navgraph.rs` | done | auto-gen from BSP; 1067 nodes/7708 edges on q2dm1; pathfinding works (18 hops, 1497u) |
-| 5 | T5: discovery + cache | `world/src/loader.rs` | pending | `Arc<World>`, file hash — not yet implemented; BSP loading works inline in main.rs |
-| 6 | T6: verify on q2dm1 | — | in_progress | trace/vis/nav all green; pathfinding verified |
+| 4 | T4: nav graph + A* | `world/src/navgraph.rs` | done | auto-gen from BSP; 1067 nodes/7708 edges; pathfinding works (34 hops, 2812u) |
+| 5 | T5: discovery + cache | `world/src/loader.rs` | deferred | `Arc<World>`, file hash — not critical; BSP loading works inline in main.rs |
+| 6 | T6: verify on q2dm1 | — | done | trace/vis/nav all green; pathfinding verified; ready for brain integration |
