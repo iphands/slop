@@ -1,0 +1,6 @@
+server:
+  host: 127.0.0.1
+  port: 27910
+paths:
+  server_cfg: /tmp/server.cfg
+  baseq2: ./vendor
