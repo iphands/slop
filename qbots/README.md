@@ -10,8 +10,9 @@ of a socket. It sees only the protocol traffic, so it rebuilds the world itself:
 codec, the connection handshake, frame decoding, and — the genuinely novel part — a `.bsp`
 collision model + navigation graph parsed locally.
 
-> Status: **connect → perceive the world → walk**, all verified live against a Yamagi Q2
-> server. World model + brain + fleet are in progress. See `context/plans/SERIES.md`.
+> Status: **connect → perceive → walk** verified live against Yamagi Q2. World model (`.bsp`
+> parse + trace + PVS + nav graph) complete. Brain (combat AI) and fleet (N bots) in progress.
+> See `context/plans/SERIES.md` for the full roadmap.
 
 ---
 
@@ -53,9 +54,9 @@ collision model + navigation graph parsed locally.
 The binary takes a `--config` (default `config.yaml`) and a subcommand:
 
 ```bash
-qbots config              # print server + paths, count loose maps, check q2dm1.bsp
-qbots bsp-info q2dm1      # load a BSP and print geometry counts
-qbots connect-one --name test   # connect a bot; uses config's server (no --addr needed)
+qbots config              # print server + paths, validate config
+qbots bsp-info <map>      # load a BSP (loose or from pak) and print geometry counts
+qbots connect-one --name <botname>  # connect a single bot to the server
 ```
 
 (With `cargo`: prefix each with `cargo run -p qbots -- `, e.g.
@@ -65,9 +66,9 @@ qbots connect-one --name test   # connect a bot; uses config's server (no --addr
 
 ## Testing what's implemented
 
-### Plan 05 / T1 — the BSP loader (`bsp-info`)
+### BSP loader (`bsp-info`) — World Model
 
-This verifies the world crate reads real maps — loose or from `.pak` archives — and parses
+Verifies the `world` crate reads maps from loose `.bsp` files or `.pak` archives and parses
 the collision lumps correctly.
 
 ```bash
@@ -75,44 +76,37 @@ qbots bsp-info q2dm1
 # q2dm1: v38 | 2408 planes, 2246 nodes, 2250 leafs, 960 brushes, 6802 brushsides, 3745 leafbrushes, 3 models
 ```
 
-Try a few sources to confirm the pak logic:
+Try different sources to confirm pak loading:
 
-| Map | Where it lives | Command |
-|-----|----------------|---------|
+| Map | Location | Command |
+|-----|----------|---------|
 | `q2dm1` | `pak1.pak` (stock DM) | `qbots bsp-info q2dm1` |
 | `base1` | `pak0.pak` (stock SP) | `qbots bsp-info base1` |
-| any custom map | `maps/<name>.bsp` (loose) | `qbots bsp-info <name>` |
+| custom map | `maps/<name>.bsp` (loose) | `qbots bsp-info <name>` |
 
-Expected: a `v38` line with non-zero counts and no error. A map not found → `map 'x' not
-found loose or in any pak under …`. `qbots config` reports whether `q2dm1.bsp` resolves
-(it'll say `MISSING` as a loose file because it's inside `pak1.pak` — that's expected; the
-loader finds it in the pak).
+Expected: a `v38` line with non-zero geometry counts. Missing map → `map 'x' not found
+loose or in any pak under ...`. The loader searches `pak0.pak` through `pak9.pak` in order.
 
-### Plan 03 — connection (`connect-one`)
+### Connection (`connect-one`)
 
 ```bash
 qbots connect-one --name test_001
 ```
 
 Watch the server logs: `test_001 connected` → `test_001 entered the game`. The bot appears
-in `rcon status`. Ctrl-C to stop.
+in `rcon status`. Ctrl-C to disconnect.
 
-### Plan 04 — perception + movement
+### Frame loop & movement
 
-```bash
-qbots connect-one --name test_002
-```
-
-A heartbeat prints every ~1 s once active:
+Once connected, the bot receives server frames and can send movement commands:
 
 ```
 qbots: Active frame=724532 ents=25 origin=(1512.0,-24.0,546.0)
 ```
 
-- `frame` ticks up (~10 Hz) → server frames are decoding.
-- `ents` → how many world entities are in the bot's PVS.
-- `origin` → the bot's world position. Once it starts **changing**, the `clc_move`
-  movement + checksum are accepted and the bot is walking.
+- `frame` ticks up (~10 Hz) → server frames decoding successfully.
+- `ents` → world entities visible in the bot's PVS.
+- `origin` → bot's world position. When this changes, the bot is walking.
 
 ---
 
@@ -120,34 +114,37 @@ qbots: Active frame=724532 ents=25 origin=(1512.0,-24.0,546.0)
 
 ```text
 qbots/
-├── AGENTS.md                 # architecture, protocol notes, constraints (read me)
+├── AGENTS.md                 # architecture, protocol, constraints (read first)
 ├── README.md                 # this file
-├── config.example.yaml       # copy to config.yaml
+├── config.example.yaml       # template → copy to config.yaml
 ├── justfile                  # build gate (fmt/clippy/test/build)
 ├── context/
-│   ├── plans/                # numbered plans + trackers; SERIES.md = dependency chain
-│   └── distilled.md          # confirmed protocol/format facts
+│   ├── plans/                # numbered plans + trackers; SERIES.md = dependencies
+│   ├── distilled.md          # protocol/format facts (read before new work)
+│   └── pitfalls.md           # bugs/gotchas (read before new work)
 ├── vendor/                   # READ-ONLY reference (yquake2 source, bot archive)
 └── crates/
     ├── q2proto/              # wire codec: MSG_*, usercmd delta, InfoString, OOB, frames
-    ├── client/               # connection FSM + netchan + frame loop + movement
-    ├── world/                # .bsp / .pak loader → (T2 trace, T3 PVS, T4 nav graph)
-    ├── brain/                # AI (planned)
-    ├── qbots/                # the binary (CLI)
-    └── tools/                # reusable utilities (planned)
+    ├── world/                # .bsp/.pak loader → collision trace + PVS + nav graph
+    ├── client/               # connection FSM + netchan + frame parsing + movement
+    ├── brain/                # combat AI (aim/lead/weapon-select + navigation)
+    ├── qbots/                # binary: CLI, config, spawn N bots
+    └── tools/                # reusable utilities (pcap-decode, bsp-dump, etc.)
 ```
 
 ## How it's built
 
-- Each non-trivial change follows a plan in `context/plans/` (format in `RULES.md`),
+- Every non-trivial change follows a plan in `context/plans/` (format in `RULES.md`),
   committed task-by-task as `task(TN): …`.
-- The wire format is ported **verbatim** from `vendor/yquake2/src/` — source lines are
-  cited in the code and in `context/distilled.md`.
-- The full gate (`just all`) must stay green; clippy treats warnings as errors.
+- Wire format ported **verbatim** from `vendor/yquake2/src/` — source lines cited in code
+  and `context/distilled.md`.
+- Full gate (`just all`) must stay green; clippy treats warnings as errors.
+- Small, frequent commits. Move completed plans to `context/plans/completed/`.
 
 ## Further reading
 
-- `AGENTS.md` — the big-picture architecture and the key constraint (external ≠ gamecode).
-- `context/plans/SERIES.md` — the plan dependency chain + milestones.
-- `context/distilled.md` — confirmed protocol/format facts (handshake, netchan, frames,
-  `clc_move` checksum, BSP/pak layout).
+- `AGENTS.md` — big-picture architecture and the key constraint (external ≠ gamecode).
+- `context/plans/SERIES.md` — plan dependency chain + milestones.
+- `context/distilled.md` — protocol/format facts (handshake, netchan, frames, `clc_move`
+  checksum, BSP/pak layout, collision/PVS).
+- `context/pitfalls.md` — bugs and gotchas, especially multi-attempt fixes.
