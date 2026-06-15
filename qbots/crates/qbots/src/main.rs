@@ -203,6 +203,11 @@ pub(crate) async fn bot_task(
     let mut last_health: Option<i32> = None; // Track health across frames for damage detection
     let mut last_frags: Option<i32> = None; // Track frags for kill detection
 
+    // Plan 08: per-bot danger/popularity heatmap observer + the origin we were
+    // at last time we were alive (death attribution, before the respawn teleport).
+    let mut heatmap_obs: Option<brain::HeatmapObserver> = None;
+    let mut last_alive_pos: Option<Vec3> = None;
+
     loop {
         if shutdown.requested() {
             if conn.state() == ConnState::Active {
@@ -283,6 +288,10 @@ pub(crate) async fn bot_task(
                                 roam_nodes = map_nav.roam_nodes.clone();
                                 nav_driver =
                                     Some(NavigationDriver::new(Arc::clone(&map_nav.graph)));
+                                heatmap_obs = Some(brain::HeatmapObserver::new(
+                                    Arc::clone(&map_nav.graph),
+                                    name,
+                                ));
                             }
                         }
                     }
@@ -303,6 +312,10 @@ pub(crate) async fn bot_task(
                                     damage = damage,
                                     "being hit"
                                 );
+                                // Plan 08: we're under fire here — mark the node dangerous.
+                                if let Some(obs) = heatmap_obs.as_mut() {
+                                    obs.on_self_damage(view.self_state().origin);
+                                }
                                 if current_health <= 0 {
                                     tracing::error!(health = 0, "bot death detected");
                                     // Respawn resets us to the spawn loadout (Blaster)
@@ -311,6 +324,16 @@ pub(crate) async fn bot_task(
                                     combat.on_respawn();
                                     // Eraser auto-skill: ease down after a death.
                                     skill.on_death();
+                                    // Plan 08: record where we died (highest-confidence
+                                    // danger) and force a replan so the new path avoids it.
+                                    let death_pos = last_alive_pos
+                                        .unwrap_or(view.self_state().origin);
+                                    if let Some(obs) = heatmap_obs.as_mut() {
+                                        obs.on_self_death(death_pos);
+                                    }
+                                    if let Some(nav) = nav_driver.as_mut() {
+                                        nav.force_replan();
+                                    }
                                 }
                             } else if current_health > *prev && *prev > 0 {
                                 let healed = current_health - *prev;
@@ -323,6 +346,9 @@ pub(crate) async fn bot_task(
                             }
                         }
                         last_health = Some(current_health);
+                        if current_health > 0 {
+                            last_alive_pos = Some(view.self_state().origin);
+                        }
 
                         // Detect frags via STAT_FRAGS (server increments on kill).
                         let current_frags = view.self_state().frags;
@@ -333,6 +359,37 @@ pub(crate) async fn bot_task(
                             }
                         }
                         last_frags = Some(current_frags);
+
+                        // Plan 08 heatmap: observe this frame (presence + obituary
+                        // prints), advance decay, and refresh the risk overlay the
+                        // nav driver consumes when it next plans a goal. This is the
+                        // strategic layer; the tactical projectile dodge (below)
+                        // composes by overriding movement for a single frame.
+                        if let Some(obs) = heatmap_obs.as_mut() {
+                            const HEATMAP_DT: f32 = 0.1; // 10 Hz client tick
+                            obs.tick(HEATMAP_DT);
+                            obs.sample_presence(&view, &cs, HEATMAP_DT, frame.serverframe);
+                            for text in conn.drain_prints() {
+                                obs.on_print(&text, name, frame.serverframe);
+                            }
+                            let (w_danger, w_pop) = skill.heatmap_weights();
+                            let overlay = obs.cost_overlay(w_danger, w_pop);
+                            if let Some(nav) = nav_driver.as_mut() {
+                                nav.set_risk_overlay(overlay);
+                            }
+                            // Periodic "danger map" snapshot at debug level (T4).
+                            if ticks.is_multiple_of(50) {
+                                let snap = obs.snapshot(4);
+                                if snap.total_danger > 0.0 {
+                                    tracing::debug!(
+                                        total_danger = snap.total_danger,
+                                        max_danger = snap.max_danger,
+                                        hot = ?snap.hot_nodes,
+                                        "heatmap overlay"
+                                    );
+                                }
+                            }
+                        }
 
                         // Feed the server's delta_angles into the movement controller so
                         // build_cmd can subtract it — without this, every aim/move direction

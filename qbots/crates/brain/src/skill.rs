@@ -186,6 +186,22 @@ impl BotSkill {
         let skill_bonus = self.skill as u32 / 2;
         base + skill_bonus
     }
+
+    /// Per-skill heatmap cost-overlay weights `(W_danger, W_popularity)` (Plan 08
+    /// T5). Higher skill → more danger-averse (larger `W_danger`: a skilled bot
+    /// reads the kill-zone and routes around it); aggressive personality → seeks
+    /// hot lanes (larger `W_popularity`). Units match nav edge costs (Quake units).
+    pub fn heatmap_weights(&self) -> (f32, f32) {
+        // Danger avoidance ramps with skill (0 → 30, 10 → 150).
+        let w_danger = 30.0 + self.skill as f32 * 12.0;
+        // Popularity pull scales with aggression personality.
+        let w_pop = match self.personality {
+            Personality::Conservative => 8.0,
+            Personality::Balanced => 20.0,
+            Personality::Aggressive => 40.0,
+        };
+        (w_danger, w_pop)
+    }
 }
 
 /// Skill registry for multiple bots.
@@ -298,6 +314,17 @@ mod tests {
         let low = BotSkill::new(0, Personality::Balanced);
         let high = BotSkill::new(10, Personality::Balanced);
         assert!(high.target_switch_hesitation() >= low.target_switch_hesitation());
+    }
+
+    #[test]
+    fn heatmap_weights_scale_with_skill_and_personality() {
+        let low = BotSkill::new(0, Personality::Conservative);
+        let high = BotSkill::new(10, Personality::Aggressive);
+        let (ld, lp) = low.heatmap_weights();
+        let (hd, hp) = high.heatmap_weights();
+        assert!(hd > ld, "high skill weights danger more");
+        assert!(hp > lp, "aggressive weights popularity more");
+        assert!(ld > 0.0 && lp > 0.0);
     }
 
     #[test]
