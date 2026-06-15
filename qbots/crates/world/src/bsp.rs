@@ -3,6 +3,7 @@
 //! Parses the header + the collision-relevant lumps (planes/nodes/leafs/brushes/
 //! brushsides/leafbrushes/models) into typed arrays. Visibility/areas/nav land in T2–T4.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use q2proto::{DecodeError, Reader};
@@ -14,6 +15,7 @@ pub const BSP_VERSION: i32 = 38;
 pub const NUM_LUMPS: usize = 19;
 
 // Lump indices (`files.h:273`).
+const LUMP_ENTITIES: usize = 0;
 const LUMP_PLANES: usize = 1;
 const LUMP_VISIBILITY: usize = 3;
 const LUMP_NODES: usize = 4;
@@ -22,6 +24,11 @@ const LUMP_LEAFBRUSHES: usize = 10;
 const LUMP_MODELS: usize = 13;
 const LUMP_BRUSHES: usize = 14;
 const LUMP_BRUSHSIDES: usize = 15;
+
+/// DM spawn classname (`g_spawn.c`).
+const SPAWN_DEATHMATCH: &str = "info_player_deathmatch";
+/// Single-player start, used as a spawn fallback on maps short on DM spawns.
+const SPAWN_START: &str = "info_player_start";
 
 #[derive(Debug, Clone, Copy)]
 pub struct Lump {
@@ -88,6 +95,40 @@ pub struct Model {
     pub headnode: i32,
 }
 
+/// A parsed map entity from `LUMP_ENTITIES` — the text block of
+/// `{ "classname" "..." "origin" "x y z" ... }` entries (`g_spawn.c:G_ParseEntity`).
+/// `classname` is mirrored out of `fields` for convenience filtering.
+#[derive(Debug, Clone)]
+pub struct BspEntity {
+    pub classname: String,
+    /// Every quoted `"key" "value"` pair in the entity (classname included).
+    pub fields: HashMap<String, String>,
+}
+
+impl BspEntity {
+    /// Parse the `"origin" "x y z"` triplet, if present and well-formed.
+    pub fn origin(&self) -> Option<[f32; 3]> {
+        let v = self.fields.get("origin")?;
+        let mut it = v.split_ascii_whitespace();
+        let x = it.next()?.parse::<f32>().ok()?;
+        let y = it.next()?.parse::<f32>().ok()?;
+        let z = it.next()?.parse::<f32>().ok()?;
+        Some([x, y, z])
+    }
+
+    /// Parse the `"angle" "deg"` yaw, if present.
+    pub fn angle(&self) -> Option<f32> {
+        self.fields.get("angle")?.trim().parse::<f32>().ok()
+    }
+}
+
+/// A deathmatch spawn point (`info_player_deathmatch`): origin + facing yaw.
+#[derive(Debug, Clone, Copy)]
+pub struct SpawnPoint {
+    pub origin: [f32; 3],
+    pub angle: Option<f32>,
+}
+
 /// A parsed BSP — header + the collision structures.
 pub struct Bsp {
     pub version: i32,
@@ -100,6 +141,8 @@ pub struct Bsp {
     pub models: Vec<Model>,
     /// Raw visibility (PVS) lump: `dvis_t` header + RLE-compressed bitvectors.
     pub vis: Vec<u8>,
+    /// Parsed `LUMP_ENTITIES` text block → map entities (spawns, items, weapons).
+    pub entities: Vec<BspEntity>,
 }
 
 impl Bsp {
@@ -148,6 +191,8 @@ impl Bsp {
         let leafbrushes = parse_leafbrushes(slice(LUMP_LEAFBRUSHES)?).map_err(|e| e.to_string())?;
         let models = parse_models(slice(LUMP_MODELS)?).map_err(|e| e.to_string())?;
         let vis = slice(LUMP_VISIBILITY).unwrap_or(&[]).to_vec();
+        // `LUMP_ENTITIES` is a NUL-terminated text block; missing/empty → no entities.
+        let entities = parse_entities(slice(LUMP_ENTITIES).unwrap_or(&[]));
 
         Ok(Self {
             version,
@@ -159,6 +204,7 @@ impl Bsp {
             leafbrushes,
             models,
             vis,
+            entities,
         })
     }
 
@@ -187,6 +233,103 @@ impl Bsp {
             baseq2.display()
         ))
     }
+
+    /// All entities whose `classname` matches, in file order.
+    pub fn find_class(&self, classname: &str) -> Vec<&BspEntity> {
+        self.entities
+            .iter()
+            .filter(|e| e.classname == classname)
+            .collect()
+    }
+
+    /// DM spawn points (`info_player_deathmatch`), falling back to
+    /// `info_player_start` when a map has no DM spawns. Only entities with a
+    /// parseable origin count.
+    pub fn spawn_points(&self) -> Vec<SpawnPoint> {
+        let mut out = collect_spawns(self, SPAWN_DEATHMATCH);
+        if out.is_empty() {
+            out = collect_spawns(self, SPAWN_START);
+        }
+        out
+    }
+}
+
+fn collect_spawns(bsp: &Bsp, classname: &str) -> Vec<SpawnPoint> {
+    bsp.find_class(classname)
+        .iter()
+        .filter_map(|e| {
+            e.origin().map(|origin| SpawnPoint {
+                origin,
+                angle: e.angle(),
+            })
+        })
+        .collect()
+}
+
+/// Parse the `LUMP_ENTITIES` text block into entities. The format is a sequence
+/// of `{ "key" "value" ... }` groups (`g_spawn.c:G_ParseEntity`, tokenized like
+/// `COM_Parse`). Unknown/garbage bytes between groups are skipped.
+fn parse_entities(raw: &[u8]) -> Vec<BspEntity> {
+    let text = std::str::from_utf8(raw).unwrap_or("");
+    let tokens = tokenize_entities(text);
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        if tokens[i] == "{" {
+            i += 1;
+            let mut fields = HashMap::new();
+            while i < tokens.len() && tokens[i] != "}" {
+                let key = tokens[i].clone();
+                i += 1;
+                // A value is the next token that isn't a brace; a key with no
+                // value (e.g. a stray `"classname"`) is dropped, matching Q2.
+                if i < tokens.len() && tokens[i] != "{" && tokens[i] != "}" {
+                    fields.insert(key, tokens[i].clone());
+                    i += 1;
+                }
+            }
+            if i < tokens.len() {
+                i += 1; // consume '}'
+            }
+            let classname = fields.get("classname").cloned().unwrap_or_default();
+            out.push(BspEntity { classname, fields });
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Tokenize entity text into `{`, `}`, and the contents of quoted strings.
+/// Mirrors `COM_Parse`'s string handling for the keys/values we care about.
+fn tokenize_entities(s: &str) -> Vec<String> {
+    let bytes = s.as_bytes();
+    let mut toks = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == b'{' || c == b'}' {
+            toks.push((c as char).to_string());
+            i += 1;
+        } else if c == b'"' {
+            i += 1;
+            let start = i;
+            while i < bytes.len() && bytes[i] != b'"' {
+                i += 1;
+            }
+            let val = std::str::from_utf8(&bytes[start..i])
+                .unwrap_or("")
+                .to_string();
+            toks.push(val);
+            if i < bytes.len() {
+                i += 1; // closing quote
+            }
+        } else {
+            // Whitespace / comments / stray bytes between tokens — skip.
+            i += 1;
+        }
+    }
+    toks
 }
 
 // ---- lump parsers (field-by-field via the codec; counts follow from lump size) ----
@@ -394,5 +537,105 @@ mod tests {
     #[test]
     fn rejects_bad_magic() {
         assert!(Bsp::from_bytes(b"XXXXrest").is_err());
+    }
+
+    #[test]
+    fn parse_entities_round_trips_spawns_and_weapons() {
+        let block = br#"
+        {
+        "classname" "info_player_deathmatch"
+        "origin" "512 -128 24"
+        "angle" "90"
+        }
+        {
+        "classname" "info_player_deathmatch"
+        "origin" "-256 0 24"
+        }
+        {
+        "classname" "weapon_rocketlauncher"
+        "origin" "0 1024 40"
+        "spawnflags" "1"
+        }
+        "#;
+        let ents = parse_entities(block);
+        assert_eq!(ents.len(), 3);
+
+        // find_class + origin/angle helpers.
+        let spawns = ents
+            .iter()
+            .filter(|e| e.classname == "info_player_deathmatch")
+            .collect::<Vec<_>>();
+        assert_eq!(spawns.len(), 2);
+        assert_eq!(spawns[0].origin(), Some([512.0, -128.0, 24.0]));
+        assert_eq!(spawns[0].angle(), Some(90.0));
+        // second spawn has no angle.
+        assert_eq!(spawns[1].angle(), None);
+
+        let rl = ents
+            .iter()
+            .find(|e| e.classname == "weapon_rocketlauncher")
+            .expect("RL entity present");
+        assert_eq!(rl.origin(), Some([0.0, 1024.0, 40.0]));
+        assert_eq!(rl.fields.get("spawnflags").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn parse_entities_ignores_garbage_between_groups() {
+        // Stray text / a key with no value must not corrupt parsing.
+        let block = b"junk { \"classname\" \"light\" \"origin\" \"1 2 3\" } more junk { \"classname\" \"misc_teleporter\" }";
+        let ents = parse_entities(block);
+        assert_eq!(ents.len(), 2);
+        assert_eq!(ents[0].classname, "light");
+        assert_eq!(ents[1].classname, "misc_teleporter");
+    }
+
+    /// A real BSP's entities round-trip through `Bsp::from_bytes` (via the
+    /// entities lump slot) and the `spawn_points()` / `find_class()` helpers.
+    #[test]
+    fn bsp_exposes_spawn_points_and_find_class() {
+        let mut buf = minimal_bsp();
+        // minimal_bsp never writes LUMP_ENTITIES; overwrite its slot with a real
+        // entities block so `from_bytes` parses it.
+        let block = br#"{
+"classname" "info_player_deathmatch"
+"origin" "10 20 30"
+}
+{
+"classname" "weapon_rocketlauncher"
+"origin" "100 200 300"
+}"#;
+        let lump_pos = 8; // magic(4)+version(4) → first lump entry
+        let ofs = buf.len() as i32;
+        buf.extend_from_slice(block);
+        let base = lump_pos + LUMP_ENTITIES * 8;
+        buf[base..base + 4].copy_from_slice(&ofs.to_le_bytes());
+        buf[base + 4..base + 8].copy_from_slice(&(block.len() as i32).to_le_bytes());
+
+        let bsp = Bsp::from_bytes(&buf).unwrap();
+        let spawns = bsp.spawn_points();
+        assert_eq!(spawns.len(), 1);
+        assert_eq!(spawns[0].origin, [10.0, 20.0, 30.0]);
+
+        let rl = bsp.find_class("weapon_rocketlauncher");
+        assert_eq!(rl.len(), 1);
+        assert_eq!(rl[0].origin(), Some([100.0, 200.0, 300.0]));
+    }
+
+    #[test]
+    fn spawn_points_fall_back_to_info_player_start() {
+        let block = br#"
+        { "classname" "info_player_start" "origin" "5 6 7" }
+        { "classname" "weapon_shotgun" "origin" "1 1 1" }
+        "#;
+        let ents = parse_entities(block);
+        // Mirror spawn_points() logic on a parsed vec: no DM spawns → use start.
+        let has_dm = ents.iter().any(|e| e.classname == "info_player_deathmatch");
+        assert!(!has_dm);
+        let starts = ents
+            .iter()
+            .filter(|e| e.classname == "info_player_start")
+            .collect::<Vec<_>>();
+        assert_eq!(starts.len(), 1);
+        assert_eq!(starts[0].origin(), Some([5.0, 6.0, 7.0]));
     }
 }

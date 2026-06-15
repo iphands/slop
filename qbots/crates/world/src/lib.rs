@@ -11,7 +11,8 @@ pub mod pak;
 pub mod vis;
 
 pub use bsp::{
-    Brush, BrushSide, Bsp, Header, Leaf, Lump, Model, Node, Plane as BspPlane, NUM_LUMPS,
+    Brush, BrushSide, Bsp, BspEntity, Header, Leaf, Lump, Model, Node, Plane as BspPlane,
+    SpawnPoint, NUM_LUMPS,
 };
 pub use collision::{
     CollisionModel, Trace, CONTENTS_LAVA, CONTENTS_SLIME, CONTENTS_SOLID, CONTENTS_WATER,

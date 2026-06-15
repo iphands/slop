@@ -1,7 +1,7 @@
 # Plan 10 — Movement Test Harness — Tracker
 
 ## Overview
-- Status: 0% complete
+- Status: 20% complete
 - Start date: 2026-06-15
 - Goal: measurable movement quality (`spawn-to-spawn` / `spawn-to-weapon` → structured log)
 
@@ -25,7 +25,7 @@ Run against the **current** steering code (pre-Plans 11–14). These numbers are
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: parse `LUMP_ENTITIES` + `spawn_points()` + `find_class()` | `world/src/bsp.rs`, `world/src/lib.rs` | pending | |
+| 1 | T1: parse `LUMP_ENTITIES` + `spawn_points()` + `find_class()` | `world/src/bsp.rs`, `world/src/lib.rs` | done | 4 new tests green; clippy clean |
 | 2 | T2: `MovementRecorder` + detectors + unit tests | `brain/src/recorder.rs`, `brain/src/lib.rs`, `brain/tests/recorder.rs` | pending | |
 | 3 | T3: log format + `dump()` + schema doc | `brain/src/recorder.rs` | pending | |
 | 4 | T4: `SpawnToSpawn` / `SpawnToWeapon` CLI + `scenario.rs` + `scenario_mode` in `bot_task` | `qbots/src/main.rs`, `qbots/src/scenario.rs` | pending | |
