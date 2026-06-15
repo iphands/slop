@@ -63,3 +63,17 @@ Reaches "test connected" / "test entered the game" on a real yquake2 server:
   to `w1` (i.e. the pre-increment value).
 - Timing: 3 usercmds × `msec=33` ≈ 99 ms per 100 ms heartbeat ≈ realtime. Observed the bot
   walk at ~100 u/s with `forwardmove=400`; yaw 0 ⇒ forward ≈ −X here.
+
+## BSP / pak loading (VERIFIED LIVE)
+- Q2 BSP = IBSP magic + version **38** + 19 lumps (`dheader_t`, `files.h:294`). Lumps:
+  `{i32 fileofs, i32 filelen}`.
+- `.pak` format (`files.h:30`): header `[b"PACK", dirofs, dirlen]` + dir of 64-byte
+  `dpackfile_t` `[name[56], filepos, filelen]`. Stock DM maps (`q2dm1`…`q2dm8`) are in
+  **pak1.pak**; single-player maps in pak0. Loader searches `pak0..9` ascending.
+- Collision structs: `dplane_t`(20B) `dnode_t`(28B) `dleaf_t`(28B) `dbrush_t`(12B)
+  `dbrushside_t`(4B) `dmodel_t`(48B); `leafbrushes` are `u16`. Node children: leafs encoded
+  as `-(leaf+1)`.
+- `q2proto::Reader` (LE codec) parses all structs; `Reader` has no `read_u16` — read as
+  `i16` then `as u16` (bit-correct for unsigned values).
+- Verified counts (real maps): q2dm1 = 2408 planes / 2250 leafs / 960 brushes; base1 =
+  8558 planes; 007_facility = 5020 planes.

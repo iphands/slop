@@ -1,7 +1,7 @@
 # World Model (world) — Tracker
 
 ## Overview
-- Status: 0% complete
+- Status: ~15% — T1 done & live-verified; T2–T6 (trace/PVS/nav) remain.
 - Start date: 2026-06-14
 - Plan: `05_world_model.md`
 - Depends on: Plan 04 (frame snapshots + map name from configstrings)
@@ -17,7 +17,7 @@
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: BSP loader | `world/src/{bsp,lumps}.rs` | pending | `files.h:273/299` |
+| 1 | T1: BSP loader | `world/src/{bsp,pak}.rs` | done | IBSP v38 + 7 collision lumps; **verified live** (q2dm1/base1/loose parse) |
 | 2 | T2: collision trace + contents | `world/src/collision.rs` | pending | port `collision.c` CM_* |
 | 3 | T3: PVS query | `world/src/vis.rs` | pending | `collision.c:282` |
 | 4 | T4: nav graph + A* | `world/src/{navgraph,pathfind}.rs` | pending | auto-gen from BSP |
