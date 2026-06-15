@@ -166,4 +166,4 @@ Record fleet-tuning notes in `context/distilled.md`.
 > - **RUN ALL TESTS BEFORE EACH COMMIT** — `cargo test` must pass.
 > - **MOVE COMPLETED PLANS TO `completed/` IMMEDIATELY** — When 100% done, `git mv` to `completed/`.
 > - **NEVER batch multiple tasks into one commit** — One task per commit, always.
-> - **Reread RULES.md BEFORE EACH TASK** — Re-read RULES.md at the start of every task to stay on track.
+> - **Reread RULES.md AFTER EACH TASK** — Re-read RULES.md at the end of every task to stay on track.
