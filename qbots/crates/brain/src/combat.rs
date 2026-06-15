@@ -9,7 +9,7 @@
 //! is server-driven), so we request optimistically and the server grants it
 //! only if we own the weapon.
 
-use crate::aim::{aim_hitscan, aim_projectile};
+use crate::aim::{aim_direction, aim_hitscan, JitterRng};
 use crate::perception::{EntityClass, Worldview};
 use crate::weapons::{self, Weapon};
 
@@ -109,17 +109,22 @@ impl CombatDriver {
 
         let weapon = self.held_weapon;
 
+        // `skill` here is a 0-1 jitter factor (1=max miss, 0=perfect). Map to
+        // Eraser's 1-5 accuracy (5=perfect). Seed a deterministic jitter RNG.
+        let accuracy = (5.0 - skill * 4.0).clamp(1.0, 5.0);
+        let mut rng = JitterRng::new(jitter_seed.to_bits());
+
         let (yaw, pitch) = if weapon.is_hitscan() {
             aim_hitscan(
                 view.self_state().origin,
                 t.origin,
                 t.velocity,
-                skill,
-                jitter_seed,
+                weapon,
+                accuracy,
+                &mut rng,
             )
         } else {
-            let proj_speed = weapon.projectile_speed().unwrap_or(500.0);
-            aim_projectile(view.self_state().origin, t.origin, t.velocity, proj_speed)
+            aim_direction(view.self_state().origin, t.origin, t.velocity, weapon)
         };
 
         let should_fire = self.should_fire(weapon, distance);
