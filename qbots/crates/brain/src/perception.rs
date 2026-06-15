@@ -16,6 +16,8 @@ const STAT_HEALTH: usize = 1;
 #[allow(dead_code)]
 const STAT_AMMO: usize = 3;
 const STAT_ARMOR: usize = 5;
+/// `STAT_FRAGS` — our frag count (`hud.c`). Incremented by the server on kills.
+const STAT_FRAGS: usize = 14;
 
 /// How many frames an entity can be unseen before marked stale.
 const STALE_THRESHOLD: i32 = 10; // ~1 second at 10 Hz
@@ -61,6 +63,7 @@ pub struct SelfState {
     pub angles: Vec3,
     pub health: i32,
     pub armor: i32,
+    pub frags: i32,
     pub ammo: [i32; 32],
     pub weapon: i32,
     pub flags: u32,
@@ -328,6 +331,7 @@ impl SelfState {
             angles: Vec3::from(ps.viewangles),
             health: ps.stats[STAT_HEALTH] as i32,
             armor: ps.stats[STAT_ARMOR] as i32,
+            frags: ps.stats[STAT_FRAGS] as i32,
             ammo: ps.stats.map(|s| s as i32),
             weapon: ps.gunindex,
             flags: ps.pmove.pm_flags as u32,

@@ -180,6 +180,7 @@ async fn run_brain_bot_with_shutdown(
     let mut stuck_frames: u32 = 0;
     const STUCK_WARNING_FRAMES: u32 = 50;
     let mut last_health: Option<i32> = None; // Track health across frames for damage detection
+    let mut last_frags: Option<i32> = None; // Track frags for kill detection
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .map_err(|e| std::io::Error::other(format!("failed to create SIGTERM handler: {e}")))?;
@@ -310,6 +311,15 @@ async fn run_brain_bot_with_shutdown(
                             }
                         }
                         last_health = Some(current_health);
+
+                        // Detect frags via STAT_FRAGS (server increments on kill).
+                        let current_frags = view.self_state().frags;
+                        if let Some(prev) = last_frags {
+                            if current_frags > prev {
+                                tracing::info!(frags = current_frags, gained = current_frags - prev, "*** FRAG ***");
+                            }
+                        }
+                        last_frags = Some(current_frags);
 
                         // Feed the server's delta_angles into the movement controller so
                         // build_cmd can subtract it — without this, every aim/move direction
