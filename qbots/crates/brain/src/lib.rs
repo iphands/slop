@@ -8,9 +8,11 @@
 
 pub mod perception;
 pub mod nav;
+pub mod move_ctrl;
 
 pub use perception::{EntityClass, PerceivedEntity, SelfState, Worldview};
 pub use nav::{NavGoal, NavigationDriver, StuckAction};
+pub use move_ctrl::{MovementController, MovementIntent};
 
 #[cfg(test)]
 mod tests {
