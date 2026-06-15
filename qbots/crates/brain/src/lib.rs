@@ -6,6 +6,10 @@
 //!
 //! See `AGENTS.md` and `context/plans/06_brain.md`.
 
+pub mod perception;
+
+pub use perception::{EntityClass, PerceivedEntity, SelfState, Worldview};
+
 #[cfg(test)]
 mod tests {
     #[test]

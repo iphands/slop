@@ -4,3 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+q2proto = { path = "../q2proto" }
+client = { path = "../client" }
+world = { path = "../world" }
+glam = "0.29"

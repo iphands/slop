@@ -82,6 +82,17 @@ impl ConfigStrings {
         }
         self.slots[index] = value.into();
     }
+
+    /// Iterate over all (index, value) pairs.
+    pub fn iter(&self) -> impl Iterator<Item = (usize, &str)> {
+        self.slots.iter().enumerate().filter_map(|(i, s)| {
+            if s.is_empty() {
+                None
+            } else {
+                Some((i, s.as_str()))
+            }
+        })
+    }
 }
 
 /// One parsed `svc_*` message.
