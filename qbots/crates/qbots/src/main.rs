@@ -162,7 +162,9 @@ pub(crate) async fn bot_task(
     use brain::fsm::{BehaviorIntent, BehaviorState};
     use brain::nav::NavGoal;
     use brain::perception::Worldview;
-    use brain::{BotSkill, CombatDriver, MovementController, MovementIntent, NavigationDriver};
+    use brain::{
+        BotSkill, CombatDriver, DangerDriver, MovementController, MovementIntent, NavigationDriver,
+    };
     use client::{Conn, ConnState};
     use q2proto::Usercmd;
     use std::time::Duration;
@@ -188,6 +190,7 @@ pub(crate) async fn bot_task(
 
     let mut fsm = BehaviorState::Roam;
     let mut combat = CombatDriver::new();
+    let danger = DangerDriver::new();
     let mut move_ctrl = MovementController::new();
     let mut skill = BotSkill::default();
     let mut nav_driver: Option<NavigationDriver> = None;
@@ -479,6 +482,23 @@ pub(crate) async fn bot_task(
                         // on the next transmit_cmd below.
                         if let Some(req) = combat_dec.weapon_request {
                             conn.queue_stringcmd(&format!("use {}", req.0.name()));
+                        }
+
+                        // Tactical override: dodge an incoming projectile. This is
+                        // frame-scale and takes precedence over nav/engage intent.
+                        // The dodge direction (world space) is projected onto the
+                        // bot's right vector → a view-relative `side` strafe so we
+                        // keep facing the target while stepping off the line.
+                        let dodge = danger.evaluate(&view, skill.combat());
+                        if dodge.is_active() {
+                            tracing::debug!(?dodge.strafe_dir, jump = dodge.jump, "dodging projectile");
+                            let yaw_rad = mv.yaw.to_radians();
+                            let right = Vec3::new(yaw_rad.sin(), -yaw_rad.cos(), 0.0);
+                            mv.side = dodge.strafe_dir.dot(right).clamp(-1.0, 1.0);
+                            mv.forward = 0.0;
+                            if dodge.jump {
+                                mv.jump();
+                            }
                         }
 
                         move_ctrl.build_cmd(mv)

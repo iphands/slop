@@ -8,6 +8,7 @@
 
 pub mod aim;
 pub mod combat;
+pub mod danger;
 pub mod fsm;
 pub mod move_ctrl;
 pub mod nav;
@@ -16,6 +17,7 @@ pub mod skill;
 pub mod weapons;
 
 pub use combat::{CombatDecision, CombatDriver};
+pub use danger::{DangerDriver, DodgeAction};
 pub use move_ctrl::{MovementController, MovementIntent};
 pub use nav::{NavGoal, NavigationDriver, StuckAction};
 pub use perception::{EntityClass, PerceivedEntity, SelfState, Worldview};

@@ -228,6 +228,11 @@ impl Worldview {
         self.entities.iter()
     }
 
+    /// Iterate mutably over all entities (test helpers / classification fixes).
+    pub fn entities_mut(&mut self) -> impl Iterator<Item = &mut PerceivedEntity> {
+        self.entities.iter_mut()
+    }
+
     /// Iterate over enemy players.
     pub fn enemies(&self) -> impl Iterator<Item = &PerceivedEntity> {
         self.entities
