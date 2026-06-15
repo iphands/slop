@@ -88,21 +88,20 @@ impl BehaviorState {
         // State-specific transitions when no enemy is visible
         match self {
             Self::Hunt { last_enemy_pos } => {
-                // If we have a last known position, keep hunting
-                // If None, transition to Roam
                 if last_enemy_pos.is_none() {
                     *self = Self::Roam;
                 }
-                // else: stay in Hunt, no change needed
             }
-            Self::Engage { .. } | Self::Flee | Self::Pickup { .. } => {
-                // These states will be handled by their priority checks above
-                // If we reach here, we're in one of these and no higher-priority
-                // transition triggered, so stay put
+            Self::Engage { target_entity } => {
+                // Enemy left FOV — remember last-known position and Hunt.
+                let last_pos = view
+                    .entities()
+                    .find(|e| e.entity_number == *target_entity)
+                    .map(|e| e.origin);
+                *self = Self::Hunt { last_enemy_pos: last_pos };
             }
-            Self::Roam => {
-                // Already roaming, no change needed
-            }
+            Self::Flee | Self::Pickup { .. } => {}
+            Self::Roam => {}
         }
     }
 
@@ -134,14 +133,14 @@ impl BehaviorState {
     }
 
     fn engage(&self, view: &Worldview, target_entity: i32) -> BehaviorIntent {
-        // Find target in worldview
         let target = view.entities().find(|e| e.entity_number == target_entity);
 
         BehaviorIntent {
-            nav_goal: None, // Stay in place, aim and fire
+            // Chase the target while firing.
+            nav_goal: target.map(|t| NavGoal::Entity(t.origin)),
             combat_decision: target.map(|_| CombatDecision {
                 should_fire: true,
-                aim_yaw: 0.0, // Will be set by combat module
+                aim_yaw: 0.0,
                 aim_pitch: 0.0,
                 target_entity: Some(target_entity),
                 impulse: None,
