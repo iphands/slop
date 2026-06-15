@@ -1,0 +1,3019 @@
+ ▐▛███▜▌   Claude Code v2.1.177
+▝▜█████▛▘  glm-5.2 · API Usage Billing
+  ▘▘ ▝▝    ~/prog/slop/qbots
+
+
+❯ /clear                                                                        
+
+❯ See ./context/plans starting with plan 10 and continuing until 14 ... work on 
+  each plan. MAKE SURE you follow the ./context/plans/RULES.md                  
+  Force yourself to re-read RULES.md before finishing a plan and check list     
+  that all rules are met                                                        
+
+  Thought for 5s (ctrl+o to expand)
+
+● I'll start by reading the plan system rules and the relevant plans.
+
+  Thought for 5s, read 2 files (ctrl+o to expand)
+
+● Let me read plans 10-14 and check the plans directory structure.
+
+  Thought for 3s, read 2 files, listed 1 directory (ctrl+o to expand)
+
+● Now let me read plans 11-14 and their trackers.
+
+  Thought for 22s, read 8 files (ctrl+o to expand)
+
+● I've read all 5 plans and RULES.md. Let me note the key structural facts
+  before diving in:
+
+  - Plan 14 is explicitly deferred (status in metadata + SERIES.md). Its tracker
+  says "Do not start until Plan 10 baseline + Plans 11–13 are landed and 
+  measured." I'll respect that gate.
+  - Plans 10–13 are pending and form a dependency chain: 10 (measurement) → 11
+  (LOS) → 12 (steering) → 13 (recovery). Each has a T5 "live run against a real 
+  server" task — I can do all the code+unit-test work (T1–T4) but T5 needs a
+  live Q2 server which I can't guarantee.
+  - RULES.md Rule A/B/C: build clean + clippy clean + tests pass + commit every 
+  task + move completed plans to completed/.
+
+  Let me set up tracking and explore the actual codebase to verify the plans'
+  file/line references still hold.
+
+  Thought for 5s, searched for 1 pattern (ctrl+o to expand)
+
+● Let me establish a clean baseline build and read the key files for Plan 10 in
+  parallel.
+
+● Bash(cargo build 2>&1 | tail -20 && echo "===CLIPPY===" && cargo clippy
+      --all-targets 2>&1 | tail -15)
+  ⎿     Compiling qbots v0.1.0 (/home/iphands/prog/slop/qbots/crates/qbots)
+         Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.20
+     s
+     … +11 lines (ctrl+o to expand)
+  ⎿  (timeout 5m)
+
+  Thought for 4s (ctrl+o to expand)
+
+● Baseline is green. Let me set up high-level task tracking, then read the key
+  files for Plan 10.
+
+● Now let me read the key Plan 10 files: bsp.rs, the world lib.rs, and the brain
+  lib.rs.
+
+  Thought for 3s, read 1 file (ctrl+o to expand)
+
+● Now let me read the world lib.rs, collision.rs, and navgraph.rs to understand
+  the trace API and hull constants.
+
+  Thought for 13s, read 4 files (ctrl+o to expand)
+
+● Now the central main.rs and the brain nav.rs/move_ctrl.rs. Let me read them.
+
+  Thought for 5s, read 1 file (ctrl+o to expand)
+
+● Let me read supervisor.rs and nav.rs to understand the connect handshake and
+  nav driver.
+
+  Thought for 9s, read 1 file (ctrl+o to expand)
+
+● Now the brain nav.rs and move_ctrl.rs — needed for Plan 10's scenario wiring
+  and the recorder.
+
+  Thought for 35s, read 2 files (ctrl+o to expand)
+● I now understand the scaffolding. Let me read the remaining brain modules I'll
+  need for Plans 10–11: perception.rs, combat.rs, and fsm.rs.
+
+  Thought for 36s, read 1 file (ctrl+o to expand)
+
+● Let me read the client Conn API and q2proto playerstate (for PMF grounded
+  flags the recorder needs).
+
+  Thought for 7s, read 1 file (ctrl+o to expand)
+
+● Let me check the q2proto playerstate for the grounded flag and viewoffset,
+  then start implementing Plan 10 T1.
+
+  Thought for 51s, searched for 2 patterns, read 1 file (ctrl+o to expand)
+
+● I now have full context. Let me implement Plan 10 T1 — parse the BSP entities
+  lump. First, the bsp.rs changes:
+
+● Update(crates/world/src/bsp.rs)
+  ⎿  Added 6 lines
+      14  pub const NUM_LUMPS: usize = 19;
+      15  
+      16  // Lump indices (`files.h:273`).
+      17 +const LUMP_ENTITIES: usize = 0;                                
+      18  const LUMP_PLANES: usize = 1;
+      19  const LUMP_VISIBILITY: usize = 3;
+      20  const LUMP_NODES: usize = 4;
+     ...
+      24  const LUMP_BRUSHES: usize = 14;
+      25  const LUMP_BRUSHSIDES: usize = 15;
+      26  
+      27 +/// DM spawn classname (`g_spawn.c`).                          
+      28 +const SPAWN_DEATHMATCH: &str = "info_player_deathmatch";       
+      29 +/// Single-player start, used as a spawn fallback on maps short
+         + on DM spawns.                                                 
+      30 +const SPAWN_START: &str = "info_player_start";                 
+      31 +                                                               
+      32  #[derive(Debug, Clone, Copy)]
+      33  pub struct Lump {
+      34      pub ofs: i32,
+
+● Now add the BspEntity/SpawnPoint types after the Model struct:
+
+● Update(crates/world/src/bsp.rs)
+  ⎿  Added 34 lines
+       94      pub headnode: i32,
+       95  }
+       96  
+       97 +/// A parsed map entity from `LUMP_ENTITIES` — the text block 
+          +of                                                            
+       98 +/// `{ "classname" "..." "origin" "x y z" ... }` entries (`g_s
+          +pawn.c:G_ParseEntity`).                                       
+       99 +/// `classname` is mirrored out of `fields` for convenience fi
+          +ltering.                                                      
+      100 +#[derive(Debug, Clone)]                                       
+      101 +pub struct BspEntity {                                        
+      102 +    pub classname: String,                                    
+      103 +    /// Every quoted `"key" "value"` pair in the entity (class
+          +name included).                                               
+      104 +    pub fields: HashMap<String, String>,                      
+      105 +}                                                             
+      106 +                                                              
+      107 +impl BspEntity {                                              
+      108 +    /// Parse the `"origin" "x y z"` triplet, if present and w
+          +ell-formed.                                                   
+      109 +    pub fn origin(&self) -> Option<[f32; 3]> {                
+      110 +        let v = self.fields.get("origin")?;                   
+      111 +        let mut it = v.split_ascii_whitespace();              
+      112 +        let x = it.next()?.parse::<f32>().ok()?;              
+      113 +        let y = it.next()?.parse::<f32>().ok()?;              
+      114 +        let z = it.next()?.parse::<f32>().ok()?;              
+      115 +        Some([x, y, z])                                       
+      116 +    }                                                         
+      117 +                                                              
+      118 +    /// Parse the `"angle" "deg"` yaw, if present.            
+      119 +    pub fn angle(&self) -> Option<f32> {                      
+      120 +        self.fields.get("angle")?.trim().parse::<f32>().ok()  
+      121 +    }                                                         
+      122 +}                                                             
+      123 +                                                              
+      124 +/// A deathmatch spawn point (`info_player_deathmatch`): origi
+          +n + facing yaw.                                               
+      125 +#[derive(Debug, Clone, Copy)]                                 
+      126 +pub struct SpawnPoint {                                       
+      127 +    pub origin: [f32; 3],                                     
+      128 +    pub angle: Option<f32>,                                   
+      129 +}                                                             
+      130 +                                                              
+      131  /// A parsed BSP — header + the collision structures.
+      132  pub struct Bsp {
+      133      pub version: i32,
+
+  Thought for 7s (ctrl+o to expand)
+
+● Add the HashMap import and the entities field + parsing + helpers:
+
+● Update(crates/world/src/bsp.rs)
+  ⎿  Added 1 line
+      3  //! Parses the header + the collision-relevant lumps (planes/nod
+         es/leafs/brushes/
+      4  //! brushsides/leafbrushes/models) into typed arrays. Visibility
+         /areas/nav land in T2–T4.
+      5  
+      6 +use std::collections::HashMap;                                  
+      7  use std::path::Path;
+      8  
+      9  use q2proto::{DecodeError, Reader};
+
+● Update(crates/world/src/bsp.rs)
+  ⎿  Added 2 lines
+      141      pub models: Vec<Model>,
+      142      /// Raw visibility (PVS) lump: `dvis_t` header + RLE-compr
+           essed bitvectors.
+      143      pub vis: Vec<u8>,
+      144 +    /// Parsed `LUMP_ENTITIES` text block → map entities (spaw
+          +ns, items, weapons).                                          
+      145 +    pub entities: Vec<BspEntity>,                             
+      146  }
+      147  
+      148  impl Bsp {
+
+● Now parse the entities lump in from_bytes and add it to the returned struct:
+
+● Update(crates/world/src/bsp.rs)
+  ⎿  Added 3 lines
+      191          let leafbrushes = parse_leafbrushes(slice(LUMP_LEAFBRU
+           SHES)?).map_err(|e| e.to_string())?;
+      192          let models = parse_models(slice(LUMP_MODELS)?).map_err
+           (|e| e.to_string())?;
+      193          let vis = slice(LUMP_VISIBILITY).unwrap_or(&[]).to_vec
+           ();
+      194 +        // `LUMP_ENTITIES` is a NUL-terminated text block; mis
+          +sing/empty → no entities.                                     
+      195 +        let entities = parse_entities(slice(LUMP_ENTITIES).unw
+          +rap_or(&[]));                                                 
+      196  
+      197          Ok(Self {
+      198              version,
+     ...
+      204              leafbrushes,
+      205              models,
+      206              vis,
+      207 +            entities,                                         
+      208          })
+      209      }
+      210  
+
+● Now add the spawn_points() + find_class() methods to impl Bsp (after load),
+  and the parse_entities tokenizer:
+
+● Update(crates/world/src/bsp.rs)
+  ⎿  Added 97 lines
+      233              baseq2.display()
+      234          ))
+      235      }
+      236 +                                                              
+      237 +    /// All entities whose `classname` matches, in file order.
+      238 +    pub fn find_class(&self, classname: &str) -> Vec<&BspEntit
+          +y> {                                                          
+      239 +        self.entities                                         
+      240 +            .iter()                                           
+      241 +            .filter(|e| e.classname == classname)             
+      242 +            .collect()                                        
+      243 +    }                                                         
+      244 +                                                              
+      245 +    /// DM spawn points (`info_player_deathmatch`), falling ba
+          +ck to                                                         
+      246 +    /// `info_player_start` when a map has no DM spawns. Only 
+          +entities with a                                               
+      247 +    /// parseable origin count.                               
+      248 +    pub fn spawn_points(&self) -> Vec<SpawnPoint> {           
+      249 +        let mut out = collect_spawns(self, SPAWN_DEATHMATCH); 
+      250 +        if out.is_empty() {                                   
+      251 +            out = collect_spawns(self, SPAWN_START);          
+      252 +        }                                                     
+      253 +        out                                                   
+      254 +    }                                                         
+      255  }
+      256  
+      257 +fn collect_spawns(bsp: &Bsp, classname: &str) -> Vec<SpawnPoin
+          +t> {                                                          
+      258 +    bsp.find_class(classname)                                 
+      259 +        .iter()                                               
+      260 +        .filter_map(|e| {                                     
+      261 +            e.origin().map(|origin| SpawnPoint {              
+      262 +                origin,                                       
+      263 +                angle: e.angle(),                             
+      264 +            })                                                
+      265 +        })                                                    
+      266 +        .collect()                                            
+      267 +}                                                             
+      268 +                                                              
+      269 +/// Parse the `LUMP_ENTITIES` text block into entities. The fo
+          +rmat is a sequence                                            
+      270 +/// of `{ "key" "value" ... }` groups (`g_spawn.c:G_ParseEntit
+          +y`, tokenized like                                            
+      271 +/// `COM_Parse`). Unknown/garbage bytes between groups are ski
+          +pped.                                                         
+      272 +fn parse_entities(raw: &[u8]) -> Vec<BspEntity> {             
+      273 +    let text = std::str::from_utf8(raw).unwrap_or("");        
+      274 +    let tokens = tokenize_entities(text);                     
+      275 +    let mut out = Vec::new();                                 
+      276 +    let mut i = 0;                                            
+      277 +    while i < tokens.len() {                                  
+      278 +        if tokens[i] == "{" {                                 
+      279 +            i += 1;                                           
+      280 +            let mut fields = HashMap::new();                  
+      281 +            while i < tokens.len() && tokens[i] != "}" {      
+      282 +                let key = tokens[i].clone();                  
+      283 +                i += 1;                                       
+      284 +                // A value is the next token that isn't a brac
+          +e; a key with no                                              
+      285 +                // value (e.g. a stray `"classname"`) is dropp
+          +ed, matching Q2.                                              
+      286 +                if i < tokens.len() && tokens[i] != "{" && tok
+          +ens[i] != "}" {                                               
+      287 +                    fields.insert(key, tokens[i].clone());    
+      288 +                    i += 1;                                   
+      289 +                }                                             
+      290 +            }                                                 
+      291 +            if i < tokens.len() {                             
+      292 +                i += 1; // consume '}'                        
+      293 +            }                                                 
+      294 +            let classname = fields.get("classname").cloned().u
+          +nwrap_or_default();                                           
+      295 +            out.push(BspEntity { classname, fields });        
+      296 +        } else {                                              
+      297 +            i += 1;                                           
+      298 +        }                                                     
+      299 +    }                                                         
+      300 +    out                                                       
+      301 +}                                                             
+      302 +                                                              
+      303 +/// Tokenize entity text into `{`, `}`, and the contents of qu
+          +oted strings.                                                 
+      304 +/// Mirrors `COM_Parse`'s string handling for the keys/values 
+          +we care about.                                                
+      305 +fn tokenize_entities(s: &str) -> Vec<String> {                
+      306 +    let bytes = s.as_bytes();                                 
+      307 +    let mut toks = Vec::new();                                
+      308 +    let mut i = 0;                                            
+      309 +    while i < bytes.len() {                                   
+      310 +        let c = bytes[i];                                     
+      311 +        if c == b'{' || c == b'}' {                           
+      312 +            toks.push((c as char).to_string());               
+      313 +            i += 1;                                           
+      314 +        } else if c == b'"' {                                 
+      315 +            i += 1;                                           
+      316 +            let start = i;                                    
+      317 +            while i < bytes.len() && bytes[i] != b'"' {       
+      318 +                i += 1;                                       
+      319 +            }                                                 
+      320 +            let val = std::str::from_utf8(&bytes[start..i])   
+      321 +                .unwrap_or("")                                
+      322 +                .to_string();                                 
+      323 +            toks.push(val);                                   
+      324 +            if i < bytes.len() {                              
+      325 +                i += 1; // closing quote                      
+      326 +            }                                                 
+      327 +        } else {                                              
+      328 +            // Whitespace / comments / stray bytes between tok
+          +ens — skip.                                                   
+      329 +            i += 1;                                           
+      330 +        }                                                     
+      331 +    }                                                         
+      332 +    toks                                                      
+      333 +}                                                             
+      334 +                                                              
+      335  // ---- lump parsers (field-by-field via the codec; counts fol
+           low from lump size) ----
+      336  
+      337  fn parse_planes(buf: &[u8]) -> Result<Vec<Plane>, DecodeError>
+            {
+
+● Now add unit tests for the entity parser in the existing test module:
+
+● Update(crates/world/src/bsp.rs)
+  ⎿  Added 100 lines
+      538      fn rejects_bad_magic() {
+      539          assert!(Bsp::from_bytes(b"XXXXrest").is_err());
+      540      }
+      541 +                                                              
+      542 +    #[test]                                                   
+      543 +    fn parse_entities_round_trips_spawns_and_weapons() {      
+      544 +        let block = br#"                                      
+      545 +        {                                                     
+      546 +        "classname" "info_player_deathmatch"                  
+      547 +        "origin" "512 -128 24"                                
+      548 +        "angle" "90"                                          
+      549 +        }                                                     
+      550 +        {                                                     
+      551 +        "classname" "info_player_deathmatch"                  
+      552 +        "origin" "-256 0 24"                                  
+      553 +        }                                                     
+      554 +        {                                                     
+      555 +        "classname" "weapon_rocketlauncher"                   
+      556 +        "origin" "0 1024 40"                                  
+      557 +        "spawnflags" "1"                                      
+      558 +        }                                                     
+      559 +        "#;                                                   
+      560 +        let ents = parse_entities(block);                     
+      561 +        assert_eq!(ents.len(), 3);                            
+      562 +                                                              
+      563 +        // find_class + origin/angle helpers.                 
+      564 +        let spawns = ents                                     
+      565 +            .iter()                                           
+      566 +            .filter(|e| e.classname == "info_player_deathmatch
+          +")                                                            
+      567 +            .collect::<Vec<_>>();                             
+      568 +        assert_eq!(spawns.len(), 2);                          
+      569 +        assert_eq!(spawns[0].origin(), Some([512.0, -128.0, 24
+          +.0]));                                                        
+      570 +        assert_eq!(spawns[0].angle(), Some(90.0));            
+      571 +        // second spawn has no angle.                         
+      572 +        assert_eq!(spawns[1].angle(), None);                  
+      573 +                                                              
+      574 +        let rl = ents                                         
+      575 +            .iter()                                           
+      576 +            .find(|e| e.classname == "weapon_rocketlauncher") 
+      577 +            .expect("RL entity present");                     
+      578 +        assert_eq!(rl.origin(), Some([0.0, 1024.0, 40.0]));   
+      579 +        assert_eq!(rl.fields.get("spawnflags").map(String::as_
+          +str), Some("1"));                                             
+      580 +    }                                                         
+      581 +                                                              
+      582 +    #[test]                                                   
+      583 +    fn parse_entities_ignores_garbage_between_groups() {      
+      584 +        // Stray text / a key with no value must not corrupt p
+          +arsing.                                                       
+      585 +        let block = b"junk { \"classname\" \"light\" \"origin\
+          +" \"1 2 3\" } more junk { \"classname\" \"misc_teleporter\" }"
+          +;                                                             
+      586 +        let ents = parse_entities(block);                     
+      587 +        assert_eq!(ents.len(), 2);                            
+      588 +        assert_eq!(ents[0].classname, "light");               
+      589 +        assert_eq!(ents[1].classname, "misc_teleporter");     
+      590 +    }                                                         
+      591 +                                                              
+      592 +    /// A real BSP's entities round-trip through `Bsp::from_by
+          +tes` (via the                                                 
+      593 +    /// entities lump slot) and the `spawn_points()` / `find_c
+          +lass()` helpers.                                              
+      594 +    #[test]                                                   
+      595 +    fn bsp_exposes_spawn_points_and_find_class() {            
+      596 +        let mut buf = minimal_bsp();                          
+      597 +        // minimal_bsp never writes LUMP_ENTITIES; overwrite i
+          +ts slot with a real                                           
+      598 +        // entities block so `from_bytes` parses it.          
+      599 +        let block = br#"{                                     
+      600 +"classname" "info_player_deathmatch"                          
+      601 +"origin" "10 20 30"                                           
+      602  }
+      603 +{                                                             
+      604 +"classname" "weapon_rocketlauncher"                           
+      605 +"origin" "100 200 300"                                        
+      606 +}"#;                                                          
+      607 +        let lump_pos = 8; // magic(4)+version(4) → first lump 
+          +entry                                                         
+      608 +        let ofs = buf.len() as i32;                           
+      609 +        buf.extend_from_slice(block);                         
+      610 +        let base = lump_pos + LUMP_ENTITIES * 8;              
+      611 +        buf[base..base + 4].copy_from_slice(&ofs.to_le_bytes()
+          +);                                                            
+      612 +        buf[base + 4..base + 8].copy_from_slice(&(block.len() 
+          +as i32).to_le_bytes());                                       
+      613 +                                                              
+      614 +        let bsp = Bsp::from_bytes(&buf).unwrap();             
+      615 +        let spawns = bsp.spawn_points();                      
+      616 +        assert_eq!(spawns.len(), 1);                          
+      617 +        assert_eq!(spawns[0].origin, [10.0, 20.0, 30.0]);     
+      618 +                                                              
+      619 +        let rl = bsp.find_class("weapon_rocketlauncher");     
+      620 +        assert_eq!(rl.len(), 1);                              
+      621 +        assert_eq!(rl[0].origin(), Some([100.0, 200.0, 300.0])
+          +);                                                            
+      622 +    }                                                         
+      623 +                                                              
+      624 +    #[test]                                                   
+      625 +    fn spawn_points_fall_back_to_info_player_start() {        
+      626 +        let block = br#"                                      
+      627 +        { "classname" "info_player_start" "origin" "5 6 7" }  
+      628 +        { "classname" "weapon_shotgun" "origin" "1 1 1" }     
+      629 +        "#;                                                   
+      630 +        let ents = parse_entities(block);                     
+      631 +        // Mirror spawn_points() logic on a parsed vec: no DM 
+          +spawns → use start.                                           
+      632 +        let has_dm = ents.iter().any(|e| e.classname == "info_
+          +player_deathmatch");                                          
+      633 +        assert!(!has_dm);                                     
+      634 +        let starts = ents                                     
+      635 +            .iter()                                           
+      636 +            .filter(|e| e.classname == "info_player_start")   
+      637 +            .collect::<Vec<_>>();                             
+      638 +        assert_eq!(starts.len(), 1);                          
+      639 +        assert_eq!(starts[0].origin(), Some([5.0, 6.0, 7.0]));
+      640 +    }                                                         
+      641 +}                                                             
+
+● Now update the world lib.rs exports and run the world tests + clippy:
+
+● Update(crates/world/src/lib.rs)
+  ⎿  Added 2 lines, removed 1 line
+      11  pub mod vis;
+      12  
+      13  pub use bsp::{
+      14 -    Brush, BrushSide, Bsp, Header, Leaf, Lump, Model, Node, Pla
+         -ne as BspPlane, NUM_LUMPS,                                     
+      14 +    Brush, BrushSide, Bsp, BspEntity, Header, Leaf, Lump, Model
+         +, Node, Plane as BspPlane,                                     
+      15 +    SpawnPoint, NUM_LUMPS,                                     
+      16  };
+      17  pub use collision::{
+      18      CollisionModel, Trace, CONTENTS_LAVA, CONTENTS_SLIME, CONTE
+          NTS_SOLID, CONTENTS_WATER,
+
+● Bash(cargo test -p world 2>&1 | tail -30 && echo "===CLIPPY===" && cargo
+      clippy -p world --all-targets -- -D warnings 2>&1 | tail -20)
+  ⎿  running 19 tests
+     test bsp::tests::bsp_exposes_spawn_points_and_find_class ... ok
+     test bsp::tests::parse_entities_ignores_garbage_between_groups ... ok
+     … +30 lines (ctrl+o to expand)
+
+  Thought for 6s (ctrl+o to expand)
+
+● All tests pass, clippy clean. Let me run cargo fmt and verify the full
+  workspace still builds before committing T1:
+
+● Bash(cargo fmt && cargo build 2>&1 | tail -5)
+  ⎿     Compiling brain v0.1.0 (/home/iphands/prog/slop/qbots/crates/brain)
+        Compiling qbots v0.1.0 (/home/iphands/prog/slop/qbots/crates/qbots)
+         Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.61
+     s
+
+● Now update the tracker and commit T1:
+
+● Update(context/plans/10_movement_test_harness_tracker.md)
+  ⎿  Added 1 line, removed 1 line
+      1  # Plan 10 — Movement Test Harness — Tracker
+      2  
+      3  ## Overview
+      4 -- Status: 0% complete                                           
+      4 +- Status: 20% complete                                          
+      5  - Start date: 2026-06-15
+      6  - Goal: measurable movement quality (`spawn-to-spawn` / `spawn-t
+         o-weapon` → structured log)
+      7  
+
+● Update(context/plans/10_movement_test_harness_tracker.md)  ⎿  Added 1 line, removed 1 line
+      25  
+      26  | # | Task | File / Module | Status | Notes |
+      27  |---|------|---------------|--------|-------|
+      28 -| 1 | T1: parse `LUMP_ENTITIES` + `spawn_points()` + `find_clas
+         -s()` | `world/src/bsp.rs`, `world/src/lib.rs` | pending | |    
+      28 +| 1 | T1: parse `LUMP_ENTITIES` + `spawn_points()` + `find_clas
+         +s()` | `world/src/bsp.rs`, `world/src/lib.rs` | done | 4 new te
+         +sts green; clippy clean |                                      
+      29  | 2 | T2: `MovementRecorder` + detectors + unit tests | `brain/
+          src/recorder.rs`, `brain/src/lib.rs`, `brain/tests/recorder.rs`
+           | pending | |
+      30  | 3 | T3: log format + `dump()` + schema doc | `brain/src/recor
+          der.rs` | pending | |
+      31  | 4 | T4: `SpawnToSpawn` / `SpawnToWeapon` CLI + `scenario.rs` 
+          + `scenario_mode` in `bot_task` | `qbots/src/main.rs`, `qbots/s
+          rc/scenario.rs` | pending | |
+
+● Bash(git add -A && git status --short && echo "===COMMIT===" && git commit -q
+      -m "task(T1): parse BSP LUMP_ENTITIES + spawn_points/find_class helpers…)
+  ⎿  M  context/plans/10_movement_test_harness_tracker.md
+     M  crates/world/src/bsp.rs
+     M  crates/world/src/lib.rs
+     … +3 lines (ctrl+o to expand)
+
+  Thought for 1m 56s (ctrl+o to expand)
+
+● T1 committed. Now Plan 10 T2 — the MovementRecorder module. Let me create
+  crates/brain/src/recorder.rs:
+
+● Write(crates/brain/src/recorder.rs)
+  ⎿  Wrote 649 lines to crates/brain/src/recorder.rs
+          11–14.-frame movement recorder — the measurement lens for Plans
+       3 //! A scenario (`spawn-to-spawn` / `spawn-to-weapon`, Plan 10) f
+       4 //! per server frame; the recorder derives movement-quality sign
+         als from it and
+         serves* the samea structured log + a [`RunSummary`]. It only *ob
+          or teleports, so a the live bot drives — it never sets velocity
+       7 //! log showing sustained > ~320 u/s grounded speed is a physics
+       8 //! feature., not a
+      10 //! Detectors reuse the existing [`world::CollisionModel::trace`
+         ] via the
+     … +742 lines (ctrl+o to expand)
+
+  Thought for 6s (ctrl+o to expand)
+
+● Let me clean up the duplicated move_yaw computation in sample():
+
+● Update(crates/brain/src/recorder.rs)
+  ⎿  Added 1 line, removed 7 lines
+      203      pub fn sample(&mut self, s: Sample) {
+      204          let horiz_speed = (s.velocity[0] * s.velocity[0] + s.v
+           elocity[1] * s.velocity[1]).sqrt();
+      205  
+      206 -        let (move_yaw, facing_delta) = if horiz_speed >= STILL
+          -_SPEED {                                                      
+      207 -            let myaw = s.velocity[1].atan2(s.velocity[0]).to_d
+          -egrees();                                                     
+      208 -            (myaw.to_radians().atan(), 0.0) // placeholder; re
+          -al delta computed below                                       
+      209 -        } else {                                              
+      210 -            (f32::NAN, 0.0)                                   
+      211 -        };                                                    
+      212 -        // Recompute facing_delta cleanly (degrees, wrapped to
+          - ±180).                                                       
+      206 +        // Velocity heading yaw (NaN when ~still); facing erro
+          +r vs the view yaw.                                            
+      207          let move_yaw = if horiz_speed >= STILL_SPEED {
+      208              s.velocity[1].atan2(s.velocity[0]).to_degrees()
+      209          } else {
+
+● Now export recorder from brain/src/lib.rs and run tests + clippy:
+
+● Update(crates/brain/src/lib.rs)
+  ⎿  Added 1 line
+      16  pub mod nav;
+      17  pub mod observed;
+      18  pub mod perception;
+      19 +pub mod recorder;                                              
+      20  pub mod skill;
+      21  pub mod weapons;
+      22  
+
+● Bash(cargo test -p brain 2>&1 | tail -35)
+  ⎿  test skill::tests::flee_threshold_by_personality ... ok
+     test skill::tests::heatmap_weights_scale_with_skill_and_personality ..
+     . ok
+     … +31 lines (ctrl+o to expand)
+
+  Thought for 4s (ctrl+o to expand)
+
+● All 85 brain tests pass. Let me verify the recorder tests ran and run clippy:
+
+● Bash(cargo test -p brain recorder 2>&1 | grep -E "recorder::tests|test result"
+      | head -15; echo "===CLIPPY==="; cargo clippy -p brain --all-targets --
+      -D warnings 2>…)
+  ⎿  test recorder::tests::angle_delta_wraps_shortest_arc ... ok
+     test recorder::tests::distance_is_monotonic ... ok
+     test recorder::tests::bump_cooldown_throttles_sustained_grind ... ok
+     … +22 lines (ctrl+o to expand)
+
+  Thought for 4s (ctrl+o to expand)
+
+● Clippy found issues. Let me see all of them:
+
+● Bash(cargo clippy -p brain --all-targets -- -D warnings 2>&1 | grep -E
+      "^error|^warning|-->|help:" | head -40)
+  ⎿  error: returning the result of a `let` binding from a block
+        --> crates/brain/src/recorder.rs:424:5
+         = help: for further information visit https://rust-lang.github.io/
+     … +25 lines (ctrl+o to expand)
+
+  Thought for 14s (ctrl+o to expand)
+
+● Let me look at the specific lines clippy flagged:
+
+  Read 1 file (ctrl+o to expand)
+
+● Let me fix all 4 clippy issues:
+
+● Update(crates/brain/src/recorder.rs)
+  ⎿  Added 1 line, removed 2 lines
+      420  
+      421  /// Signed shortest-arc difference `target − current`, wrapped
+            to ±180°.
+      422  fn angle_delta_deg(current: f32, target: f32) -> f32 {
+      423 -    let diff = (target - current + 540.0).rem_euclid(360.0) - 
+          -180.0;                                                        
+      424 -    diff                                                      
+      423 +    (target - current + 540.0).rem_euclid(360.0) - 180.0      
+      424  }
+      425  
+      426  #[cfg(test)]
+
+● Update(crates/brain/src/recorder.rs)
+  ⎿  No matches found
+
+  Thought for 5s (ctrl+o to expand)
+
+● Now let me re-run clippy and tests:
+
+● Bash(cargo fmt && cargo clippy -p brain --all-targets -- -D warnings 2>&1 |
+      tail -8 && echo "===TESTS===" && cargo test -p brain recorder 2>&1 | grep
+      -E "test result…)
+  ⎿      Checking brain v0.1.0 (/home/iphands/prog/slop/qbots/crates/brain)
+         Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.84
+     s
+     … +5 lines (ctrl+o to expand)
+
+● Clippy clean, 7 recorder tests pass. Update tracker + commit T2:
+
+● Update(context/plans/10_movement_test_harness_tracker.md)
+  ⎿  Added 2 lines, removed 2 lines
+      26  | # | Task | File / Module | Status | Notes |
+      27  |---|------|---------------|--------|-------|
+      28  | 1 | T1: parse `LUMP_ENTITIES` + `spawn_points()` + `find_clas
+          s()` | `world/src/bsp.rs`, `world/src/lib.rs` | done | 4 new te
+          sts green; clippy clean |
+      29 -| 2 | T2: `MovementRecorder` + detectors + unit tests | `brain/
+         -src/recorder.rs`, `brain/src/lib.rs`, `brain/tests/recorder.rs`
+         - | pending | |                                                 
+      30 -| 3 | T3: log format + `dump()` + schema doc | `brain/src/recor
+         -der.rs` | pending | |                                          
+      29 +| 2 | T2: `MovementRecorder` + detectors + unit tests | `brain/
+         +src/recorder.rs`, `brain/src/lib.rs`, `brain/tests/recorder.rs`
+         + | done | 7 tests green; clippy clean; detectors via `WallProbe
+         +` trait (prod `CmWallProbe`, test stubs) |                     
+      30 +| 3 | T3: log format + `dump()` + schema doc | `brain/src/recor
+         +der.rs` | pending | dump() already writes header+rows+SUMMARY; 
+         +T3 = schema doc block + column polish |                        
+      31  | 4 | T4: `SpawnToSpawn` / `SpawnToWeapon` CLI + `scenario.rs` 
+          + `scenario_mode` in `bot_task` | `qbots/src/main.rs`, `qbots/s
+          rc/scenario.rs` | pending | |
+      32  | 5 | T4b: factor (or duplicate) connect handshake for reuse | 
+          `qbots/src/supervisor.rs` | pending | Open Q6 |
+      33  | 6 | T5: baseline runs + `.gitignore /logs/` + docs | `.gitign
+          ore`, `qbots/CLAUDE.md` | pending | fill Baseline table |
+
+● Update(context/plans/10_movement_test_harness_tracker.md)  ⎿  Added 1 line, removed 1 line
+      1  # Plan 10 — Movement Test Harness — Tracker
+      2  
+      3  ## Overview
+      4 -- Status: 20% complete                                          
+      4 +- Status: 35% complete                                          
+      5  - Start date: 2026-06-15
+      6  - Goal: measurable movement quality (`spawn-to-spawn` / `spawn-t
+         o-weapon` → structured log)
+      7  
+
+● Bash(git add -A && git commit -q -m "task(T2): MovementRecorder + per-frame
+      detectors + summary/dump…)
+  ⎿  c53e6823f task(T2): MovementRecorder + per-frame detectors + summary/d
+     ump
+
+  Thought for 9s (ctrl+o to expand)
+
+● T2 committed. Now Plan 10 T3 — finalize the log schema doc + a parse test. Let
+  me expand the module doc with the schema and add a parse test:
+
+● Update(crates/brain/src/recorder.rs)
+  ⎿  Error editing file
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(crates/brain/src/recorder.rs)
+  ⎿  Added 23 lines
+      10  //! Detectors reuse the existing [`world::CollisionModel::trace
+          `] via the
+      11  //! [`WallProbe`] trait (production = [`CmWallProbe`]; tests st
+          ub it), so no new
+      12  //! physics is introduced.
+      13 +//!                                                            
+      14 +//! # Log schema (`dump()`)                                    
+      15 +//!                                                            
+      16 +//! Written to `./logs/<scenario>/<unix_ts>.<bot>.log`, one tok
+         +en per column,                                                 
+      17 +//! single-space separated and fully positional (so `awk '{prin
+         +t $4,$5,$6}'` etc.                                             
+      18 +//! works). `#`-prefixed lines are metadata; the rest are frame
+         + rows:                                                         
+      19 +//!                                                            
+      20 +//! ```text                                                    
+      21 +//! # qbots movement log  scenario=<s>  bot=<name>  map=<map>  
+         +goal=(x,y,z)                                                   
+      22 +//! # goal_classname=<cls>  started=<ISO8601>                  
+      23 +//! # t frame x y z vx vy vz speed yaw pitch move_yaw face_delt
+         +a wp wpd flags                                                 
+      24 +//! <t> <frame> <x> <y> <z> <vx> <vy> <vz> <speed> <yaw> <pitch
+         +> <move_yaw> <face_delta> <wp> <wpd> <flags>                   
+      25 +//! ...                                                        
+      26 +//! # SUMMARY reached=<0|1> elapsed=<s> distance=<u> mean_speed
+         +=<u/s> max_speed=<u/s> bumps=<n> wrong_turns=<n> hindered_frame
+         +s=<n>                                                          
+      27 +//! ```                                                        
+      28 +//!                                                            
+      29 +//! Columns: `t` elapsed seconds; `frame` serverframe; `x y z` 
+         +origin;                                                        
+      30 +//! `vx vy vz` velocity (u/s); `speed` `|horizontal velocity|`;
+         + `yaw pitch` view                                              
+      31 +//! angles (deg); `move_yaw` velocity-heading yaw (`nan` when ~
+         +still);                                                        
+      32 +//! `face_delta` `|yaw − move_yaw|` (0 when still); `wp` curren
+         +t waypoint index                                               
+      33 +//! (`-` if none); `wpd` 3D distance to it (`-`); `flags` a cha
+         +r run — `B` wall                                               
+      34 +//! bump, `W` wrong turn, `H` hindered, `A` airborne, `.` none.
+         + The `SUMMARY` line                                            
+      35 +//! is the headline: it is what Plans 11–14 must beat.         
+      36  
+      37  use std::path::Path;
+      38  use std::sync::Arc;
+
+● Now add a schema-parse test that exercises header + a frame row + SUMMARY. Let
+  me find the dump test and add a companion:
+
+  Read 1 file (ctrl+o to expand)
+
+● Let me add a schema-parse test right after dump_writes_parseable_summary:
+
+● Update(crates/brain/src/recorder.rs)
+  ⎿  Added 54 lines
+      693          let _ = std::fs::remove_dir_all(&dir);
+      694      }
+      695  
+      696 +    /// The full documented schema round-trips: both `#` heade
+          +r lines are present,                                          
+      697 +    /// the column header names every positional field, a fram
+          +e row has the right                                           
+      698 +    /// token count, and the SUMMARY line carries every headli
+          +ne metric.                                                    
+      699      #[test]
+      700 +    fn dump_matches_documented_schema() {                     
+      701 +        let probe: Arc<dyn WallProbe> = Arc::new(ClearProbe); 
+      702 +        let mut r = rec(probe, [1000.0, 0.0, 0.0]);           
+      703 +        r.sample(Sample {                                     
+      704 +            t_secs: 0.1,                                      
+      705 +            frame: 1,                                         
+      706 +            origin: [30.0, 0.0, 0.0],                         
+      707 +            velocity: [300.0, 0.0, 0.0],                      
+      708 +            view_yaw: 0.0,                                    
+      709 +            view_pitch: 0.0,                                  
+      710 +            grounded: true,                                   
+      711 +            waypoint: Some(0),                                
+      712 +            waypoint_pos: Some([1000.0, 0.0, 0.0]),           
+      713 +            intent_forward: 1.0,                              
+      714 +        });                                                   
+      715 +        let dir = std::env::temp_dir().join(format!("qbots-sch
+          +ema-{}", std::process::id()));                                
+      716 +        let path = dir.join("run.qb0.log");                   
+      717 +        r.dump(&path).expect("dump ok");                      
+      718 +        let text = std::fs::read_to_string(&path).expect("read
+          + back");                                                      
+      719 +        let lines: Vec<&str> = text.lines().collect();        
+      720 +                                                              
+      721 +        // Two metadata header lines, then the column header. 
+      722 +        assert!(lines[0].starts_with("# qbots movement log  sc
+          +enario="));                                                   
+      723 +        assert!(lines[1].starts_with("# goal_classname="));   
+      724 +        let cols = lines[2].trim_start_matches("# ").split_whi
+          +tespace().collect::<Vec<_>>();                                
+      725 +        assert_eq!(                                           
+      726 +            cols,                                             
+      727 +            vec![                                             
+      728 +                "t", "frame", "x", "y", "z", "vx", "vy", "vz",
+          + "speed", "yaw", "pitch",                                     
+      729 +                "move_yaw", "face_delta", "wp", "wpd", "flags"
+      730 +            ],                                                
+      731 +            "column header names every positional field"      
+      732 +        );                                                    
+      733 +                                                              
+      734 +        // The one frame row has exactly that many tokens (16 
+          +columns).                                                     
+      735 +        let row = lines[3].split_whitespace().collect::<Vec<_>
+          +>();                                                          
+      736 +        assert_eq!(row.len(), 16, "frame row has 16 positional
+          + columns");                                                   
+      737 +                                                              
+      738 +        // SUMMARY line carries every headline metric.        
+      739 +        let summary = lines.last().expect("a SUMMARY line exis
+          +ts");                                                         
+      740 +        assert!(summary.starts_with("# SUMMARY"));            
+      741 +        for key in [                                          
+      742 +            "reached=", "elapsed=", "distance=", "mean_speed="
+          +, "max_speed=", "bumps=",                                     
+      743 +            "wrong_turns=", "hindered_frames=",               
+      744 +        ] {                                                   
+      745 +            assert!(summary.contains(key), "SUMMARY has {key}"
+          +);                                                            
+      746 +        }                                                     
+      747 +        let _ = std::fs::remove_dir_all(&dir);                
+      748 +    }                                                         
+      749 +                                                              
+      750 +    #[test]                                                   
+      751      fn angle_delta_wraps_shortest_arc() {
+      752          assert!((angle_delta_deg(0.0, 10.0) - 10.0).abs() < 1e
+           -3);
+      753          assert!(
+
+● Bash(cargo fmt && cargo test -p brain recorder 2>&1 | grep -E "test
+      result|FAILED|dump_matches" && echo "===CLIPPY===" && cargo clippy -p
+      brain --all-targets -- -D w…)
+  ⎿  test recorder::tests::dump_matches_documented_schema ... ok
+     test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 78 filtere
+     d out; finished in 0.00s
+     … +6 lines (ctrl+o to expand)
+
+● 8 recorder tests pass, clippy clean. Update tracker + commit T3:
+
+● Update(context/plans/10_movement_test_harness_tracker.md)
+  ⎿  Added 1 line, removed 1 line
+      27  |---|------|---------------|--------|-------|
+      28  | 1 | T1: parse `LUMP_ENTITIES` + `spawn_points()` + `find_clas
+          s()` | `world/src/bsp.rs`, `world/src/lib.rs` | done | 4 new te
+          sts green; clippy clean |
+      29  | 2 | T2: `MovementRecorder` + detectors + unit tests | `brain/
+          src/recorder.rs`, `brain/src/lib.rs`, `brain/tests/recorder.rs`
+           | done | 7 tests green; clippy clean; detectors via `WallProbe
+          ` trait (prod `CmWallProbe`, test stubs) |
+      30 -| 3 | T3: log format + `dump()` + schema doc | `brain/src/recor
+         -der.rs` | pending | dump() already writes header+rows+SUMMARY; 
+         -T3 = schema doc block + column polish |                        
+      30 +| 3 | T3: log format + `dump()` + schema doc | `brain/src/recor
+         +der.rs` | done | schema doc block + `dump_matches_documented_sc
+         +hema` test (16 cols + SUMMARY keys) |                          
+      31  | 4 | T4: `SpawnToSpawn` / `SpawnToWeapon` CLI + `scenario.rs` 
+          + `scenario_mode` in `bot_task` | `qbots/src/main.rs`, `qbots/s
+          rc/scenario.rs` | pending | |
+      32  | 5 | T4b: factor (or duplicate) connect handshake for reuse | 
+          `qbots/src/supervisor.rs` | pending | Open Q6 |
+      33  | 6 | T5: baseline runs + `.gitignore /logs/` + docs | `.gitign
+          ore`, `qbots/CLAUDE.md` | pending | fill Baseline table |
+
+● Bash(git add -A && git commit -q -m "task(T3): document recorder log schema +
+      schema-parse test…)
+  ⎿  a69c56e93 task(T3): document recorder log schema + schema-parse test
+
+  Thought for 1m 18s (ctrl+o to expand)
+
+● T3 committed. Now the big one — Plan 10 T4 (CLI + scenario runner). Let me
+  check config.rs and .gitignore first:
+
+  Thought for 18s, read 1 file (ctrl+o to expand)
+
+● Let me check the qbots Cargo.toml deps and the tools crate for any existing
+  timestamp/time usage:
+
+  Thought for 1m 17s, searched for 1 pattern (ctrl+o to expand)
+
+● time = "0.3" is available. Let me add recorder re-exports to brain's lib, then
+  write scenario.rs:
+
+● Update(crates/brain/src/lib.rs)
+  ⎿  Added 3 lines
+      27  pub use nav::{NavGoal, NavigationDriver, StuckAction};
+      28  pub use observed::{parse_obituary, HeatmapObserver, HeatmapSnap
+          shot, Obituary};
+      29  pub use perception::{EntityClass, PerceivedEntity, SelfState, W
+          orldview};
+      30 +pub use recorder::{                                            
+      31 +    CmWallProbe, FrameRecord, MovementRecorder, RunSummary, Sam
+         +ple, WallBump, WallProbe,                                      
+      32 +};                                                             
+      33  pub use skill::{BotSkill, Personality, SkillLevel, SkillRegistr
+          y};
+      34  pub use weapons::Weapon;
+      35  
+
+● Now write scenario.rs:
+
+● Write(crates/qbots/src/scenario.rs)
+  ⎿  Wrote 277 lines to crates/qbots/src/scenario.rs
+         nd record it.quality scenarios — drive one bot to a known goal a
+       3 //! Plan 10's measurement lens: `spawn-to-spawn` / `spawn-to-wea
+       4 //! bot like `connect-one`, but pin its nav goal to a scenario t
+         arget, **disable
+         r`]. The run stops ond every server frame to a [`MovementRecorde
+         n dumps a structuredled), a `max_secs` cap, or a disconnect, the
+       7 //! log + prints the SUMMARY line that Plans 11–14 must beat.
+       9 //! This deliberately reuses the brain's nav/steering primitives
+      10 //! duplicate combat/aim logic) — only the connect + tick scaffo
+         lding is mirrored
+     … +309 lines (ctrl+o to expand)
+
+  Thought for 9s (ctrl+o to expand)
+
+● The build_scenario_cmd helper got tangled (it lost access to bsp for
+  farthest-spawn resolution). Let me rewrite scenario.rs with the tick body
+  inlined cleanly:
+
+● Write(crates/qbots/src/scenario.rs)
+  ⎿  Added 209 lines, removed 108 lines
+      12  //! showing sustained > ~320 u/s grounded speed flags a physics
+           bug, not a feature.
+      13  
+      14  use std::net::SocketAddr;
+      15 -use std::path::Path;                                           
+      15  use std::process::ExitCode;
+      16  use std::sync::Arc;
+      17  use std::time::{Duration, Instant};
+     ...
+      20  use tokio::net::UdpSocket;
+      21  use tokio::time;
+      22  
+      23 +use brain::nav::NavGoal;                                       
+      24  use brain::perception::Worldview;
+      25  use brain::recorder::{CmWallProbe, MovementRecorder, Sample};
+      26  use brain::{MovementController, MovementIntent, NavigationDrive
+          r};
+      27 -use brain::nav::NavGoal;                                       
+      27  use client::{Conn, ConnState};
+      28  use q2proto::Usercmd;
+      29  
+     ...
+      51  
+      52  /// Run a movement scenario: connect one bot, drive it to `goal
+          `, record + dump.
+      53  /// Returns a process exit code: `SUCCESS` if the goal was reac
+          hed, `2` if the run
+      55 -/// ended without reaching it, `FAILURE` on a setup/IO error.  
+      54 +/// ended without reaching it, `FAILURE` on a setup error or if
+         + the bot never became                                          
+      55 +/// active (so no recorder exists).                            
+      56  pub async fn run_scenario(
+      57      cfg: &Config,
+      58      addr: SocketAddr,
+     ...
+      85          "scenario nav graph"
+      86      );
+      87  
+      88 -    // 2. Resolve the scenario label + goal origin. A weapon or
+         -igin is known up                                               
+      89 -    //    front; the farthest spawn can only be picked once we 
+         -know where we spawned.                                         
+      90 -    let (scenario_name, goal_origin, goal_label) = resolve_goal
+         -(&bsp, &map, &goal_kind)?;                                     
+      88 +    // 2. Resolve the scenario label + (when known up front) th
+         +e goal origin + the                                            
+      89 +    //    spawn origins for the lazy farthest-spawn pick. A wea
+         +pon origin is known                                            
+      90 +    //    now; the farthest spawn is picked once we know where 
+         +we spawned.                                                    
+      91 +    let (scenario_name, goal_origin, goal_label, spawn_origins)
+         + =                                                             
+      92 +        resolve_goal(&bsp, &map, &goal_kind)?;                 
+      93  
+      94      // 3. Connect the bot (the same handshake `connect-one` use
+          s).
+      95      let qport = crate::default_qport();
+     ...
+      101      }
+      102      tracing::info!(%name, %map, %addr, qport, "scenario bot co
+           nnected; driving to goal");
+      103  
+      102 -    // 4. Brain primitives + recorder. The recorder is created
+          - on the first active                                          
+      103 -    //    frame (so the farthest-spawn goal can use the real s
+          -pawn origin).                                                 
+      104 +    // 4. Brain primitives + recorder scaffolding.            
+      105      let mut move_ctrl = MovementController::new();
+      106      let mut nav_driver = NavigationDriver::new(Arc::clone(&gra
+           ph));
+      107      let shutdown = Shutdown::new();
+     ...
+      119      let mut ticker = time::interval(Duration::from_millis(100)
+           );
+      120      let start = Instant::now();
+      121      let mut goal_settle_start: Option<f32> = None;
+      121 -    // Farthest-spawn goal, resolved lazily once we have a fra
+          -me.                                                           
+      122 +    // Farthest-spawn goal, resolved lazily on the first activ
+          +e frame.                                                      
+      123      let mut resolved_goal: Option<[f32; 3]> = goal_origin;
+      124 +    let mut reached = false;                                  
+      125  
+      126      loop {
+      127          if shutdown.requested() {
+     ...
+      146              }
+      147  
+      148              _ = ticker.tick() => {
+      147 -                let cmd = build_scenario_cmd(                 
+      148 -                    &conn, &mut move_ctrl, &mut nav_driver, &g
+          -raph, &probe,                                                 
+      149 -                    &mut recorder, &scenario_name, &goal_label
+          -, name, &map,                                                 
+      150 -                    &started_iso, &mut resolved_goal, elapsed,
+          - &mut goal_settle_start,                                      
+      151 -                );                                            
+      149 +                let cmd = if conn.state() == ConnState::Active
+          + {                                                            
+      150 +                    let (frame_opt, cs) = (conn.frame.clone(),
+          + conn.configstrings().clone());                               
+      151 +                    frame_opt                                 
+      152 +                        .map(|frame| {                        
+      153 +                            let playernum =                   
+      154 +                                conn.serverdata.as_ref().map(|
+          +sd| sd.playernum).unwrap_or(0);                               
+      155 +                            let view = Worldview::from_frame(&
+          +frame, &cs, playernum);                                       
+      156 +                            let self_st = view.self_state();  
+      157 +                            let pos = self_st.origin;         
+      158 +                            let origin_arr = [pos.x, pos.y, po
+          +s.z];                                                         
+      159 +                                                              
+      160 +                            // Lazy goal resolution (farthest 
+          +spawn) once per run.                                          
+      161 +                            let goal = resolved_goal.unwrap_or
+          +_else(|| {                                                    
+      162 +                                let g = farthest_spawn(&spawn_
+          +origins, origin_arr);                                         
+      163 +                                resolved_goal = Some(g);      
+      164 +                                g                             
+      165 +                            });                               
+      166 +                            if recorder.is_none() {           
+      167 +                                recorder = Some(MovementRecord
+          +er::new(                                                      
+      168 +                                    Arc::clone(&probe),       
+      169 +                                    goal,                     
+      170 +                                    goal_label,               
+      171 +                                    &scenario_name,           
+      172 +                                    name,                     
+      173 +                                    &map,                     
+      174 +                                    &started_iso,             
+      175 +                                ));                           
+      176 +                            }                                 
+      177 +                                                              
+      178 +                            // Drive nav to the goal — no comb
+          +at.                                                           
+      179 +                            nav_driver.update(pos);           
+      180 +                            nav_driver.set_goal(NavGoal::Posit
+          +ion(Vec3::from(goal)), pos);                                  
+      181 +                            let mut mv = MovementIntent::new()
+          +;                                                             
+      182 +                            let mut intent_forward = 0.0;     
+      183 +                            if let Some(dir) = nav_driver.next
+          +_waypoint_direction(pos) {                                    
+      184 +                                let yaw = dir.y.atan2(dir.x).t
+          +o_degrees();                                                  
+      185 +                                mv.look_at(yaw, 0.0);         
+      186 +                                mv.move_forward(1.0);         
+      187 +                                intent_forward = 1.0;         
+      188 +                            }                                 
+      189 +                            move_ctrl.set_delta_angles(frame.p
+          +layerstate.pmove.delta_angles);                               
+      190 +                            let cmd = move_ctrl.build_cmd(mv);
+      191 +                                                              
+      192 +                            // Sample the recorder with this f
+          +rame's telemetry.                                             
+      193 +                            let (wp, wp_pos) = match nav_drive
+          +r.current_waypoint() {                                        
+      194 +                                Some(idx) => (Some(idx), graph
+          +.nodes.get(idx).copied()),                                    
+      195 +                                None => (None, None),         
+      196 +                            };                                
+      197 +                            let vel = self_st.velocity;       
+      198 +                            let grounded = self_st.flags & PMF
+          +_ON_GROUND != 0;                                              
+      199 +                            if let Some(rec) = recorder.as_mut
+          +() {                                                          
+      200 +                                rec.sample(Sample {           
+      201 +                                    t_secs: elapsed,          
+      202 +                                    frame: frame.serverframe, 
+      203 +                                    origin: origin_arr,       
+      204 +                                    velocity: [vel.x, vel.y, v
+          +el.z],                                                        
+      205 +                                    view_yaw: self_st.angles.y
+          +,                                                             
+      206 +                                    view_pitch: self_st.angles
+          +.x,                                                           
+      207 +                                    grounded,                 
+      208 +                                    waypoint: wp,             
+      209 +                                    waypoint_pos: wp_pos,     
+      210 +                                    intent_forward,           
+      211 +                                });                           
+      212 +                            }                                 
+      213 +                                                              
+      214 +                            // Goal-reach settle: hold within 
+          +GOAL_TOL for GOAL_SETTLE s.                                   
+      215 +                            let now_reached = dist3(origin_arr
+          +, goal) < GOAL_TOL;                                           
+      216 +                            if now_reached {                  
+      217 +                                goal_settle_start.get_or_inser
+          +t(elapsed);                                                   
+      218 +                            } else {                          
+      219 +                                goal_settle_start = None;     
+      220 +                            }                                 
+      221 +                            cmd                               
+      222 +                        })                                    
+      223 +                        .unwrap_or_default()                  
+      224 +                } else {                                      
+      225 +                    Usercmd::default()                        
+      226 +                };                                            
+      227 +                                                              
+      228                  if let Some(pkt) = conn.transmit_cmd(&cmd) {
+      229                      let _ = sock.send(&pkt).await;
+      230                  }
+      231                  if goal_settle_start.is_some_and(|s| elapsed -
+            s >= GOAL_SETTLE) {
+      232 +                    reached = true;                           
+      233                      tracing::info!("scenario: reached goal (se
+           ttled)");
+      234                      break;
+      235                  }
+     ...
+      245          }
+      246      }
+      247  
+      171 -    Ok(finalize(recorder.as_ref(), &scenario_name, name, unix_
+          -ts))                                                          
+      248 +    Ok(finalize(recorder.as_ref(), &scenario_name, name, unix_
+          +ts, reached))                                                 
+      249  }
+      250  
+      174 -/// Build this tick's usercmd + sample the recorder. Returns t
+          -he usercmd to send.                                           
+      175 -/// Pure-data borrowing makes the big select arm readable; all
+          - mutation is via the                                          
+      176 -/// `&mut` params.                                            
+      177 -#[allow(clippy::too_many_arguments)]                          
+      178 -fn build_scenario_cmd(                                        
+      179 -    conn: &Conn,                                              
+      180 -    move_ctrl: &mut MovementController,                       
+      181 -    nav_driver: &mut NavigationDriver,                        
+      182 -    graph: &Arc<world::NavGraph>,                             
+      183 -    probe: &Arc<CmWallProbe>,                                 
+      184 -    recorder: &mut Option<MovementRecorder>,                  
+      185 -    scenario_name: &str,                                      
+      186 -    goal_label: &str,                                         
+      187 -    name: &str,                                               
+      251 +/// Resolve the scenario name, goal origin (when known up fron
+          +t), goal label, and                                           
+      252 +/// the list of DM spawn origins (for the lazy farthest-spawn 
+          +pick).                                                        
+      253 +#[allow(clippy::type_complexity)]                             
+      254 +fn resolve_goal(                                              
+      255 +    bsp: &world::Bsp,                                         
+      256      map: &str,
+      189 -    started_iso: &str,                                        
+      190 -    resolved_goal: &mut Option<[f32; 3]>,                     
+      191 -    elapsed: f32,                                             
+      192 -    goal_settle_start: &mut Option<f32>,                      
+      193 -) -> Usercmd {                                                
+      194 -    if conn.state() != ConnState::Active {                    
+      195 -        return Usercmd::default();                            
+      257 +    goal_kind: &ScenarioGoal,                                 
+      258 +) -> std::io::Result<(String, Option<[f32; 3]>, String, Vec<[f
+          +32; 3]>)> {                                                   
+      259 +    let spawns = bsp.spawn_points();                          
+      260 +    let spawn_origins: Vec<[f32; 3]> = spawns.iter().map(|s| s
+          +.origin).collect();                                           
+      261 +    match goal_kind {                                         
+      262 +        ScenarioGoal::FarthestSpawn => {                      
+      263 +            if spawn_origins.is_empty() {                     
+      264 +                return Err(io_err(format!("map '{map}' has no 
+          +DM spawn points")));                                          
+      265 +            }                                                 
+      266 +            Ok((                                              
+      267 +                "spawn-to-spawn".to_string(),                 
+      268 +                None,                                         
+      269 +                "farthest_dm_spawn".to_string(),              
+      270 +                spawn_origins,                                
+      271 +            ))                                                
+      272 +        }                                                     
+      273 +        ScenarioGoal::Weapon(wname) => {                      
+      274 +            let cls = format!("weapon_{}", wname.to_ascii_lowe
+          +rcase());                                                     
+      275 +            let origin = bsp.find_class(&cls).first().and_then
+          +(|e| e.origin());                                             
+      276 +            let origin = match origin {                       
+      277 +                Some(o) => o,                                 
+      278 +                None => {                                     
+      279 +                    let mut avail: Vec<&str> = bsp            
+      280 +                        .entities                             
+      281 +                        .iter()                               
+      282 +                        .filter_map(|e| e.classname.strip_pref
+          +ix("weapon_"))                                                
+      283 +                        .collect();                           
+      284 +                    avail.sort();                             
+      285 +                    avail.dedup();                            
+      286 +                    return Err(io_err(format!(                
+      287 +                        "no '{cls}' on map '{map}'. available 
+          +weapons: {avail:?}"                                           
+      288 +                    )));                                      
+      289 +                }                                             
+      290 +            };                                                
+      291 +            Ok((                                              
+      292 +                "spawn-to-weapon".to_string(),                
+      293 +                Some(origin),                                 
+      294 +                cls,                                          
+      295 +                spawn_origins,                                
+      296 +            ))                                                
+      297 +        }                                                     
+      298      }
+      197 -    let (frame_opt, cs) = (conn.frame.clone(), conn.configstri
+          -ngs().clone());                                               
+      198 -    let Some(frame) = frame_opt else {                        
+      199 -        return Usercmd::default();                            
+      200 -    };                                                        
+      201 -    let playernum = conn.serverdata.as_ref().map(|sd| sd.playe
+          -rnum).unwrap_or(0);                                           
+      202 -    let view = Worldview::from_frame(&frame, &cs, playernum); 
+      203 -    let self_st = view.self_state();                          
+      204 -    let pos = self_st.origin;                                 
+      205 -    let origin_arr = [pos.x, pos.y, pos.z];                   
+      299 +}                                                             
+      300  
+      207 -    // Lazy goal resolution (farthest spawn) + recorder creati
+          -on, once per run.                                             
+      208 -    let goal = resolved_goal.unwrap_or_else(|| {              
+      209 -        // Pick the DM spawn farthest from our current origin.
+      210 -        let spawns = match world::Bsp::load_referenced_spawns(
+          -) {                                                           
+      211 -            Ok(_) => Vec::new(), // placeholder; replaced belo
+          -w from the preloaded bsp path                                 
+      212 -            Err(_) => Vec::new(),                             
+      213 -        };                                                    
+      214 -        // We don't carry the Bsp here; instead fall back to o
+          -ur own origin (the                                            
+      215 -        // scenario loop guarantees goal_origin/resolution hap
+          -pened for farthest                                            
+      216 -        // spawn via the closure in resolve_goal at connect ti
+          -me). Guard: origin.                                           
+      217 -        let _ = spawns;                                       
+      218 -        origin_arr                                            
+      219 -    });                                                       
+      220 -    if recorder.is_none() {                                   
+      221 -        *recorder = Some(MovementRecorder::new(               
+      222 -            Arc::clone(probe),                                
+      223 -            goal,                                             
+      224 -            goal_label,                                       
+      225 -            scenario_name,                                    
+      226 -            name,                                             
+      227 -            map,                                              
+      228 -            started_iso,                                      
+      229 -        ));                                                   
+      230 -    }                                                         
+      301 +/// The DM spawn origin farthest (3D) from `from`, or `from` i
+          +f there are none.                                             
+      302 +fn farthest_spawn(spawns: &[[f32; 3]], from: [f32; 3]) -> [f32
+          +; 3] {                                                        
+      303 +    spawns                                                    
+      304 +        .iter()                                               
+      305 +        .copied()                                             
+      306 +        .max_by(|a, b| dist3_sq(*a, from).total_cmp(&dist3_sq(
+          +*b, from)))                                                   
+      307 +        .unwrap_or(from)                                      
+      308 +}                                                             
+      309  
+      232 -    // Drive nav to the goal — no combat.                     
+      233 -    nav_driver.update(pos);                                   
+      234 -    nav_driver.set_goal(NavGoal::Position(Vec3::from(goal)), p
+          -os);                                                          
+      235 -    let mut mv = MovementIntent::new();                       
+      236 -    let mut intent_forward = 0.0;                             
+      237 -    if let Some(dir) = nav_driver.next_waypoint_direction(pos)
+          - {                                                            
+      238 -        let yaw = dir.y.atan2(dir.x).to_degrees();            
+      239 -        mv.look_at(yaw, 0.0);                                 
+      240 -        mv.move_forward(1.0);                                 
+      241 -        intent_forward = 1.0;                                 
+      242 -    }                                                         
+      243 -    move_ctrl.set_delta_angles(frame.playerstate.pmove.delta_a
+          -ngles);                                                       
+      244 -    let cmd = move_ctrl.build_cmd(mv);                        
+      245 -                                                              
+      246 -    // Sample the recorder with this frame's telemetry.       
+      247 -    let (wp, wp_pos) = match nav_driver.current_waypoint() {  
+      248 -        Some(idx) => (Some(idx), graph.nodes.get(idx).copied()
+          -),                                                            
+      249 -        None => (None, None),                                 
+      310 +/// Dump the recorder log + emit the SUMMARY line; map outcome
+          + → exit code.                                                 
+      311 +fn finalize(                                                  
+      312 +    recorder: Option<&MovementRecorder>,                      
+      313 +    scenario_name: &str,                                      
+      314 +    name: &str,                                               
+      315 +    unix_ts: u64,                                             
+      316 +    reached: bool,                                            
+      317 +) -> ExitCode {                                               
+      318 +    let Some(rec) = recorder else {                           
+      319 +        tracing::warn!("scenario ended before the bot became a
+          +ctive (no recorder)");                                        
+      320 +        return ExitCode::FAILURE;                             
+      321      };
+      251 -    let vel = self_st.velocity;                               
+      252 -    let grounded = self_st.flags & PMF_ON_GROUND != 0;        
+      253 -    if let Some(rec) = recorder.as_mut() {                    
+      254 -        rec.sample(Sample {                                   
+      255 -            t_secs: elapsed,                                  
+      256 -            frame: frame.serverframe,                         
+      257 -            origin: origin_arr,                               
+      258 -            velocity: [vel.x, vel.y, vel.z],                  
+      259 -            view_yaw: self_st.angles.y,                       
+      260 -            view_pitch: self_st.angles.x,                     
+      261 -            grounded,                                         
+      262 -            waypoint: wp,                                     
+      263 -            waypoint_pos: wp_pos,                             
+      264 -            intent_forward,                                   
+      265 -        });                                                   
+      322 +    let dir = std::path::Path::new("logs").join(scenario_name)
+          +;                                                             
+      323 +    let path = dir.join(format!("{unix_ts}.{name}.log"));     
+      324 +    if let Err(e) = rec.dump(&path) {                         
+      325 +        tracing::warn!("recorder dump failed: {e}");          
+      326 +    } else {                                                  
+      327 +        tracing::info!(path = %path.display(), "movement log w
+          +ritten");                                                     
+      328      }
+      267 -                                                              
+      268 -    // Goal-reach settle: hold within GOAL_TOL for GOAL_SETTLE
+          - seconds.                                                     
+      269 -    let reached = dist3(origin_arr, goal) < GOAL_TOL;         
+      329 +    let s = rec.summary();                                    
+      330 +    tracing::info!(                                           
+      331 +        reached = s.reached,                                  
+      332 +        elapsed = format!("{:.2}", s.elapsed_secs),           
+      333 +        distance = format!("{:.0}", s.distance),              
+      334 +        mean_speed = format!("{:.0}", s.mean_speed),          
+      335 +        max_speed = format!("{:.0}", s.max_speed),            
+      336 +        bumps = s.bumps,                                      
+      337 +        wrong_turns = s.wrong_turns,                          
+      338 +        hindered_frames = s.hindered_frames,                  
+      339 +        "SUMMARY",                                            
+      340 +    );                                                        
+      341      if reached {
+      271 -        goal_settle_start.get_or_insert(elapsed);             
+      342 +        ExitCode::SUCCESS                                     
+      343      } else {
+      273 -        *goal_settle_start = None;                            
+      344 +        // Exit code 2 = ran but did not reach the goal (disti
+          +nct from a setup error).                                      
+      345 +        ExitCode::from(2)                                     
+      346      }
+      347 +}                                                             
+      348  
+      276 -    cmd                                                       
+      349 +fn dist3(a: [f32; 3], b: [f32; 3]) -> f32 {                   
+      350 +    dist3_sq(a, b).sqrt()                                     
+      351  }
+      352 +                                                              
+      353 +fn dist3_sq(a: [f32; 3], b: [f32; 3]) -> f32 {                
+      354 +    let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];          
+      355 +    d[0] * d[0] + d[1] * d[1] + d[2] * d[2]                   
+      356 +}                                                             
+      357 +                                                              
+      358 +fn io_err(msg: String) -> std::io::Error {                    
+      359 +    std::io::Error::new(std::io::ErrorKind::Other, msg)       
+      360 +}                                                             
+      361 +                                                              
+      362 +#[cfg(test)]                                                  
+      363 +mod tests {                                                   
+      364 +    use super::*;                                             
+      365 +                                                              
+      366 +    #[test]                                                   
+      367 +    fn farthest_spawn_picks_the_distant_one() {               
+      368 +        let spawns = [[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [100
+          +0.0, 0.0, 0.0]];                                              
+      369 +        assert_eq!(farthest_spawn(&spawns, [0.0, 0.0, 0.0]), [
+          +1000.0, 0.0, 0.0]);                                           
+      370 +        // From the far end, the nearest-spawn (0,0,0) is now 
+          +farthest.                                                     
+      371 +        assert_eq!(farthest_spawn(&spawns, [900.0, 0.0, 0.0]),
+          + [0.0, 0.0, 0.0]);                                            
+      372 +    }                                                         
+      373 +                                                              
+      374 +    #[test]                                                   
+      375 +    fn farthest_spawn_empty_returns_from() {                  
+      376 +        assert_eq!(farthest_spawn(&[], [5.0, 6.0, 7.0]), [5.0,
+          + 6.0, 7.0]);                                                  
+      377 +    }                                                         
+      378 +}                                                             
+
+  Thought for 45s (ctrl+o to expand)
+
+● Now let me fix the reached field in finalize to use the settle-based reached
+  (consistent with exit code), and make DEFAULT_MAX_SECS pub(crate) so the CLI
+  references it:
+
+● Update(crates/qbots/src/scenario.rs)  ⎿  Added 1 line, removed 1 line
+      37  /// A reach only counts once held this long (filters fly-throug
+          h jitter).
+      38  const GOAL_SETTLE: f32 = 0.5;
+      39  /// Hard wall-clock cap on a scenario run.
+      40 -const DEFAULT_MAX_SECS: f32 = 30.0;                            
+      40 +pub(crate) const DEFAULT_MAX_SECS: f32 = 30.0;                 
+      41  /// Default map when `--map` is omitted.
+      42  const DEFAULT_MAP: &str = "q2dm1";
+      43  
+
+● Update(crates/qbots/src/scenario.rs)
+  ⎿  Added 1 line, removed 1 line
+      328      }
+      329      let s = rec.summary();
+      330      tracing::info!(
+      331 -        reached = s.reached,                                  
+      331 +        reached = reached,                                    
+      332          elapsed = format!("{:.2}", s.elapsed_secs),
+      333          distance = format!("{:.0}", s.distance),
+      334          mean_speed = format!("{:.0}", s.mean_speed),
+
+● Now wire up main.rs: module declaration, pub(crate) default_qport, the two Cmd
+  variants, and handlers:
+
+● Update(crates/qbots/src/main.rs)
+  ⎿  Added 1 line
+       5  //! `config.yaml`. The fleet supervisor + per-bot task live in 
+          [`supervisor`].
+       6  
+       7  mod config;
+       8 +mod scenario;                                                  
+       9  mod stats;
+      10  mod status;
+      11  mod supervisor;
+
+● Update(crates/qbots/src/main.rs)
+  ⎿  Added 1 line, removed 1 line
+      74  }
+      75  
+      76  /// A per-process default qport (distinct across concurrent bot
+           processes).
+      77 -fn default_qport() -> u16 {                                    
+      77 +pub(crate) fn default_qport() -> u16 {                         
+      78      (std::process::id() & 0xFFFF) as u16
+      79  }
+      80  
+
+● Now add the two Cmd variants:
+
+● Update(crates/qbots/src/main.rs)
+  ⎿  Added 27 lines
+       71      Pvs { map: String },
+       72      /// Generate the nav graph for a map and find a corner-to-
+           corner path.
+       73      Nav { map: String },
+       74 +    /// Drive one bot from spawn to the farthest DM spawn poin
+          +t; log movement; stop.                                        
+       75 +    /// The measurement lens for movement quality (Plan 10).  
+       76 +    SpawnToSpawn {                                            
+       77 +        /// Map to load (defaults to q2dm1 / the server's map)
+          +.                                                             
+       78 +        #[arg(long)]                                          
+       79 +        map: Option<String>,                                  
+       80 +        /// Server address (defaults to config's server).     
+       81 +        #[arg(long)]                                          
+       82 +        addr: Option<String>,                                 
+       83 +        /// Bot display name.                                 
+       84 +        #[arg(long)]                                          
+       85 +        name: Option<String>,                                 
+       86 +    },                                                        
+       87 +    /// Drive one bot from spawn to a named weapon's BSP origi
+          +n; log movement; stop.                                        
+       88 +    SpawnToWeapon {                                           
+       89 +        /// Weapon to reach, e.g. `rocketlauncher` (resolved a
+          +s `weapon_<name>`).                                           
+       90 +        weapon_name: String,                                  
+       91 +        /// Map to load (defaults to q2dm1 / the server's map)
+          +.                                                             
+       92 +        #[arg(long)]                                          
+       93 +        map: Option<String>,                                  
+       94 +        /// Server address (defaults to config's server).     
+       95 +        #[arg(long)]                                          
+       96 +        addr: Option<String>,                                 
+       97 +        /// Bot display name.                                 
+       98 +        #[arg(long)]                                          
+       99 +        name: Option<String>,                                 
+      100 +    },                                                        
+      101  }
+      102  
+      103  /// A per-process default qport (distinct across concurrent bo
+           t processes).
+
+● Now add the match arms + a shared run_scenario_cmd helper. Let me add the arms
+  after the Nav arm:
+
+● Update(crates/qbots/src/main.rs)
+  ⎿  Added 16 lines
+      1119                  ExitCode::FAILURE
+      1120              }
+      1121          },
+      1122 +        Cmd::SpawnToSpawn { map, addr, name } => {           
+      1123 +            run_scenario_cmd(&cfg, addr, name, map, scenario:
+           +:ScenarioGoal::FarthestSpawn).await                          
+      1124 +        }                                                    
+      1125 +        Cmd::SpawnToWeapon {                                 
+      1126 +            weapon_name,                                     
+      1127 +            map,                                             
+      1128 +            addr,                                            
+      1129 +            name,                                            
+      1130 +        } => run_scenario_cmd(                               
+      1131 +            &cfg,                                            
+      1132 +            addr,                                            
+      1133 +            name,                                            
+      1134 +            map,                                             
+      1135 +            scenario::ScenarioGoal::Weapon(weapon_name),     
+      1136 +        )                                                    
+      1137 +        .await,                                              
+      1138          Cmd::BspInfo { map } => match world::Bsp::load(&cfg.p
+            aths.baseq2, &map) {
+      1139              Ok(bsp) => {
+      1140                  tracing::info!(
+
+  Thought for 4s (ctrl+o to expand)
+
+● Now add the run_scenario_cmd helper just before main():
+
+● Update(crates/qbots/src/main.rs)
+  ⎿  Added 30 lines
+      799      }
+      800  }
+      801  
+      802 +/// Shared CLI plumbing for the two movement scenarios (Plan 1
+          +0): resolve the                                               
+      803 +/// server address + bot name, then hand off to [`scenario::ru
+          +n_scenario`] and map                                          
+      804 +/// its result to a process exit code.                        
+      805 +async fn run_scenario_cmd(                                    
+      806 +    cfg: &Config,                                             
+      807 +    addr: Option<String>,                                     
+      808 +    name: Option<String>,                                     
+      809 +    map: Option<String>,                                      
+      810 +    goal: scenario::ScenarioGoal,                             
+      811 +) -> ExitCode {                                               
+      812 +    let name = name.unwrap_or_else(|| "qbots".to_string());   
+      813 +    let addr_str = addr.unwrap_or_else(|| cfg.server_addr()); 
+      814 +    let addr = match resolve_addr(&addr_str).await {          
+      815 +        Ok(a) => a,                                           
+      816 +        Err(e) => {                                           
+      817 +            tracing::error!("{e}");                           
+      818 +            return ExitCode::FAILURE;                         
+      819 +        }                                                     
+      820 +    };                                                        
+      821 +    match scenario::run_scenario(cfg, addr, &name, map.as_dere
+          +f(), goal, scenario::DEFAULT_MAX_SECS)                        
+      822 +        .await                                                
+      823 +    {                                                         
+      824 +        Ok(code) => code,                                     
+      825 +        Err(e) => {                                           
+      826 +            tracing::error!("scenario: {e}");                 
+      827 +            ExitCode::FAILURE                                 
+      828 +        }                                                     
+      829 +    }                                                         
+      830 +}                                                             
+      831 +                                                              
+      832  #[tokio::main]
+      833  async fn main() -> ExitCode {
+      834      // Initialize tracing subscriber with elapsed time formatt
+           ing and abbreviated levels
+
+● Now add /logs/ to .gitignore and build:
+
+● Update(.gitignore)
+  ⎿  File must be read first
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(.gitignore)
+  ⎿  Added 3 lines
+       8  # Vendored reference trees (cloned, not authored)
+       9  /vendor/
+      10  
+      11 +# Movement-scenario logs (generated by `spawn-to-spawn`/`spawn-
+         +to-weapon`, Plan 10)                                           
+      12 +/logs/                                                         
+      13 +                                                               
+      14  # Sisyphus / local tooling
+      15  /.sisyphus
+      16  
+
+● Bash(cargo fmt && cargo build -p qbots 2>&1 | tail -25)
+  ⎿   14 + use time::format_description::well_known;
+         |
+     help: if you import `well_known`, refer to it directly
+     … +22 lines (ctrl+o to expand)
+
+  Thought for 57s (ctrl+o to expand)
+
+● Two fixes needed: the probe needs to be typed Arc<dyn WallProbe> for the
+  recorder, and the time formatting path is feature-gated. Let me fix both:
+
+● Update(crates/qbots/src/scenario.rs)
+  ⎿  Added 1 line, removed 1 line
+      22  
+      23  use brain::nav::NavGoal;
+      24  use brain::perception::Worldview;
+      25 -use brain::recorder::{CmWallProbe, MovementRecorder, Sample};  
+      25 +use brain::recorder::{CmWallProbe, MovementRecorder, Sample, Wa
+         +llProbe};                                                      
+      26  use brain::{MovementController, MovementIntent, NavigationDrive
+          r};
+      27  use client::{Conn, ConnState};
+      28  use q2proto::Usercmd;
+
+● Update(crates/qbots/src/scenario.rs)
+  ⎿  Added 12 lines, removed 4 lines
+      113  
+      114      let now = time::OffsetDateTime::now_utc();
+      115      let unix_ts = now.unix_timestamp().max(0) as u64;
+      116 -    let started_iso = now                                     
+      117 -        .format(&time::format_description::well_known::Rfc3339
+          -)                                                             
+      118 -        .unwrap_or_else(|_| "unknown".into());                
+      119 -    let probe = Arc::new(CmWallProbe::new(Arc::clone(&cm)));  
+      116 +    // Build the ISO-8601 label from components (avoids the ti
+          +me crate's                                                    
+      117 +    // feature-gated `format_description` path).              
+      118 +    let started_iso = format!(                                
+      119 +        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",               
+      120 +        now.year(),                                           
+      121 +        u8::from(now.month()),                                
+      122 +        now.day(),                                            
+      123 +        now.hour(),                                           
+      124 +        now.minute(),                                         
+      125 +        now.second(),                                         
+      126 +    );                                                        
+      127 +    let probe: Arc<dyn WallProbe> = Arc::new(CmWallProbe::new(
+          +Arc::clone(&cm)));                                            
+      128  
+      129      let mut recorder: Option<MovementRecorder> = None;
+      130      let mut buf = vec![0u8; 4096];
+
+● Bash(cargo build -p qbots 2>&1 | tail -20)
+  ⎿     Compiling qbots v0.1.0 (/home/iphands/prog/slop/qbots/crates/qbots)
+     error[E0433]: failed to resolve: could not find `OffsetDateTime` in `t
+     ime`
+     … +18 lines (ctrl+o to expand)
+
+  Thought for 22s (ctrl+o to expand)
+
+● The use tokio::time; is shadowing the external time crate. Let me remove that
+  alias and qualify the tokio calls:
+
+● Update(crates/qbots/src/scenario.rs)
+  ⎿  Removed 1 line
+      18  
+      19  use glam::Vec3;
+      20  use tokio::net::UdpSocket;
+      21 -use tokio::time;                                               
+      21  
+      22  use brain::nav::NavGoal;
+      23  use brain::perception::Worldview;
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Update(crates/qbots/src/scenario.rs)  ⎿  Added 1 line, removed 1 line
+      127  
+      128      let mut recorder: Option<MovementRecorder> = None;
+      129      let mut buf = vec![0u8; 4096];
+      130 -    let mut ticker = time::interval(Duration::from_millis(100)
+          -);                                                            
+      130 +    let mut ticker = tokio::time::interval(Duration::from_mill
+          +is(100));                                                     
+      131      let start = Instant::now();
+      132      let mut goal_settle_start: Option<f32> = None;
+      133      // Farthest-spawn goal, resolved lazily on the first activ
+           e frame.
+
+● Bash(cargo build -p qbots 2>&1 | tail -20)
+  ⎿  help: consider moving the expression out of the loop so it is only mov
+     ed once
+         |
+     … +18 lines (ctrl+o to expand)
+
+  Thought for 15s (ctrl+o to expand)
+
+● Bash(cargo build -p qbots 2>&1 | grep -E
+      "error\[|^error|-->|cannot|moved|borrow" | head -20)
+  ⎿  error[E0382]: use of moved value: `goal_label`
+        --> crates/qbots/src/scenario.rs:163:30
+         |                              ^^^^^^^ value moved into closure he
+     … +5 lines (ctrl+o to expand)
+
+  Thought for 9s (ctrl+o to expand)
+
+● goal_label (a String) is moved into the closure each iteration. Pass it by
+  reference:
+
+● Update(crates/qbots/src/scenario.rs)
+  ⎿  Added 1 line, removed 1 line
+      178                                  recorder = Some(MovementRecord
+           er::new(
+      179                                      Arc::clone(&probe),
+      180                                      goal,
+      181 -                                    goal_label,               
+      181 +                                    &goal_label,              
+      182                                      &scenario_name,
+      183                                      name,
+      184                                      &map,
+
+● Bash(cargo build -p qbots 2>&1 | tail -20)
+  ⎿     Compiling qbots v0.1.0 (/home/iphands/prog/slop/qbots/crates/qbots)
+         Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.06
+     s
+  ⎿  (timeout 3m)
+
+● Builds. Now run fmt + clippy + the scenario unit tests:
+
+● Bash(cargo fmt && cargo clippy -p qbots --all-targets -- -D warnings 2>&1 |
+      tail -25)
+  ⎿      Checking client v0.1.0 (/home/iphands/prog/slop/qbots/crates/clien
+     t)
+         Checking brain v0.1.0 (/home/iphands/prog/slop/qbots/crates/brain)
+     … +18 lines (ctrl+o to expand)
+
+● Update(crates/qbots/src/scenario.rs)
+  ⎿  Added 1 line, removed 1 line
+      373  }
+      374  
+      375  fn io_err(msg: String) -> std::io::Error {
+      376 -    std::io::Error::new(std::io::ErrorKind::Other, msg)       
+      376 +    std::io::Error::other(msg)                                
+      377  }
+      378  
+      379  #[cfg(test)]
+
+● Bash(cargo clippy -p qbots --all-targets -- -D warnings 2>&1 | tail -8 && echo
+      "===TESTS===" && cargo test -p qbots 2>&1 | grep -E "test
+      result|FAILED|scenario")
+  ⎿      Checking qbots v0.1.0 (/home/iphands/prog/slop/qbots/crates/qbots)
+         Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.43
+     s
+     … +5 lines (ctrl+o to expand)
+  ⎿  (timeout 3m)
+
+  Thought for 5s (ctrl+o to expand)
+
+● Clippy clean, 2 scenario tests pass. Let me run the full workspace
+  verification and confirm the new CLI subcommands exist:
+
+● Bash(cargo fmt --check && cargo clippy --workspace --all-targets -- -D
+      warnings 2>&1 | tail -4 && echo "===FULL TESTS===" && cargo test
+      --workspace 2>&1 | grep -E "t…)
+  ⎿      Checking tools v0.1.0 (/home/iphands/prog/slop/qbots/crates/tools)
+         Checking client v0.1.0 (/home/iphands/prog/slop/qbots/crates/clien
+     t)
+     … +18 lines (ctrl+o to expand)
+
+● Entire workspace: clippy clean (incl. -D warnings), fmt clean, all tests
+  green. Let me verify the new CLI subcommands wire up correctly:
+
+● Bash(cargo run -q -p qbots -- --help 2>&1 | grep -iE
+      "spawn-to|spawn-to-weapon" ; echo "===spawn-to-spawn help==="; cargo run
+      -q -p qbots -- spawn-to-spawn --help 2>…)
+  ⎿    spawn-to-spawn   Drive one bot from spawn to the farthest DM spawn p
+     oint; log movement; stop. The measurement lens for movement quality (P
+     lan 10)
+     … +16 lines (ctrl+o to expand)
+
+  Thought for 6s (ctrl+o to expand)
+
+● Both subcommands wired up. Let me update the tracker and commit T4:
+
+● Update(context/plans/10_movement_test_harness_tracker.md)
+  ⎿  Added 1 line, removed 1 line
+      1  # Plan 10 — Movement Test Harness — Tracker
+      2  
+      3  ## Overview
+      4 -- Status: 35% complete                                          
+      4 +- Status: 80% complete                                          
+      5  - Start date: 2026-06-15
+      6  - Goal: measurable movement quality (`spawn-to-spawn` / `spawn-t
+         o-weapon` → structured log)
+      7  
+
+● Update(context/plans/10_movement_test_harness_tracker.md)
+  ⎿  Added 3 lines, removed 3 lines
+      28  | 1 | T1: parse `LUMP_ENTITIES` + `spawn_points()` + `find_clas
+          s()` | `world/src/bsp.rs`, `world/src/lib.rs` | done | 4 new te
+          sts green; clippy clean |
+      29  | 2 | T2: `MovementRecorder` + detectors + unit tests | `brain/
+          src/recorder.rs`, `brain/src/lib.rs`, `brain/tests/recorder.rs`
+           | done | 7 tests green; clippy clean; detectors via `WallProbe
+          ` trait (prod `CmWallProbe`, test stubs) |
+      30  | 3 | T3: log format + `dump()` + schema doc | `brain/src/recor
+          der.rs` | done | schema doc block + `dump_matches_documented_sc
+          hema` test (16 cols + SUMMARY keys) |
+      31 -| 4 | T4: `SpawnToSpawn` / `SpawnToWeapon` CLI + `scenario.rs` 
+         -+ `scenario_mode` in `bot_task` | `qbots/src/main.rs`, `qbots/s
+         -rc/scenario.rs` | pending | |                                  
+      32 -| 5 | T4b: factor (or duplicate) connect handshake for reuse | 
+         -`qbots/src/supervisor.rs` | pending | Open Q6 |                
+      33 -| 6 | T5: baseline runs + `.gitignore /logs/` + docs | `.gitign
+         -ore`, `qbots/CLAUDE.md` | pending | fill Baseline table |      
+      31 +| 4 | T4: `SpawnToSpawn` / `SpawnToWeapon` CLI + `scenario.rs` 
+         ++ `scenario_mode` in `bot_task` | `qbots/src/main.rs`, `qbots/s
+         +rc/scenario.rs` | done | wrote a dedicated `scenario.rs` loop (
+         +mirrors connect+tick scaffolding, reuses brain primitives, NO `
+         +bot_task` munge). build+clippy clean; CLI help shows both subco
+         +mmands. live run is T5. |                                      
+      32 +| 5 | T4b: factor (or duplicate) connect handshake for reuse | 
+         +`qbots/src/supervisor.rs` | done | chose the duplicate path (Op
+         +en Q6) — `scenario.rs` mirrors the ~15-line `Conn` handshake + 
+         +`tokio::select!` recv/tick loop; brain logic is shared, not dup
+         +licated. |                                                     
+      33 +| 6 | T5: baseline runs + `.gitignore /logs/` + docs | `.gitign
+         +ore`, `qbots/CLAUDE.md` | pending | `/logs/` already gitignored
+         +; live baseline needs a server — fill Baseline table on next li
+         +ve run |                                                       
+
+● Bash(git add -A && git status --short && git commit -q -m "task(T4):
+      spawn-to-spawn / spawn-to-weapon CLI + scenario runner…)
+  ⎿  M  .gitignore
+     M  context/plans/10_movement_test_harness_tracker.md
+     M  crates/brain/src/lib.rs
+     … +4 lines (ctrl+o to expand)
+
+  Thought for 13s (ctrl+o to expand)
+
+● T4 committed. Now Plan 10 T5 — the live baseline. Let me check if a server is
+  configured/reachable:
+
+  Thought for 5s, listed 1 directory (ctrl+o to expand)
+
+● Bash(echo "=== baseq2 maps ==="; ls vendor/baseq2/maps/*.bsp 2>/dev/null |
+      head; ls vendor/baseq2/*.pak 2>/dev/null; echo "=== server reachable? (2s
+      timeout) ==="; t…)
+  ⎿  === baseq2 maps ===
+     vendor/baseq2/maps/007_facility.bsp
+     vendor/baseq2/maps/0wnt.bsp
+     … +15 lines (ctrl+o to expand)
+
+  Thought for 46s (ctrl+o to expand)
+● Server is reachable (2 players, noir.lan:27910) and baseq2 maps exist. The
+  status omits the map name, but the bot learns it from a configstring on
+  connect. Let me discover the server's current map via a brief connect-one (6s,
+  then it's killed):
+
+● Bash(timeout 8 cargo run -q -p qbots -- connect-one --name scout 2>&1 | grep
+      -iE "loading nav graph|map=|origin=" | head -5)
+  ⎿  0000.502 I loading nav graph map="q2dm1" bsp=maps/q2dm1.bsp
+     0000.703 I nav graph ready map="q2dm1" nodes=1067 edges=7708 largest=8
+     75 ms=50
+     … +6 lines (ctrl+o to expand)
+  ⎿  (timeout 2m)
+
+  Thought for 7s (ctrl+o to expand)
+
+● The server is on q2dm1 — exactly my scenario's default, so no map mismatch.
+  Let me run the spawn-to-spawn baseline (combat disabled in the scenario; 30s
+  cap):
+
+● Bash(timeout 45 cargo run -q -p qbots -- spawn-to-spawn --name qb0 2>&1 | grep
+      -iE "nav graph|connected|reached|max_secs|disconnected|SUMMARY|movement
+      log|weapon|no…)
+  ⎿  0000.192 I scenario nav graph map="q2dm1" nodes=1067 edges=7708
+     0000.193 I scenario bot connected; driving to goal name=qb0 map=q2dm1
+     addr=192.168.10.10:27910 qport=53726
+     … +7 lines (ctrl+o to expand)
+  ⎿  (timeout 1m)
+
+  Thought for 18s (ctrl+o to expand)
+
+● Baseline captured — and it's exactly the broken-movement symptom the plan
+  predicted: reached=false, mean_speed=33 u/s, 196/300 hindered frames, 26 wrong
+  turns, 18 bumps. Let me run spawn-to-weapon (rocketlauncher) too:
+
+● Bash(timeout 45 cargo run -q -p qbots -- spawn-to-weapon rocketlauncher --name
+      qb1 2>&1 | grep -iE "nav
+      graph|connected|reached|max_secs|SUMMARY|movement log|no '|av…)
+  ⎿  0000.194 I scenario nav graph map="q2dm1" nodes=1067 edges=7708
+     0000.194 I scenario bot connected; driving to goal name=qb1 map=q2dm1
+     addr=192.168.10.10:27910 qport=54474
+     … +6 lines (ctrl+o to expand)
+  ⎿  (timeout 1m)
+
+  Thought for 11s (ctrl+o to expand)
+
+● Both baselines captured. max_speed stays ≤300 (no overspeed/cheating). Let me
+  inspect one log to confirm the format is sane and check the "no cheating"
+  claim:
+
+● Bash(echo "=== head of spawn-to-spawn log ==="; head -8
+      logs/spawn-to-spawn/*.qb0.log; echo "..."; echo "=== tail ==="; tail -3
+      logs/spawn-to-spawn/*.qb0.log; echo "…)
+  ⎿  === head of spawn-to-spawn log ===
+     # qbots movement log  scenario=spawn-to-spawn  bot=qb0  map=q2dm1  goa
+     l=(2016,-224,664)
+     … +15 lines (ctrl+o to expand)
+
+  Thought for 14s (ctrl+o to expand)
+
+● Log is well-formed, no grounded overspeed, logs/ correctly gitignored. Let me
+  record the baseline numbers in the tracker and add the CLAUDE.md section:
+
+● Update(context/plans/10_movement_test_harness_tracker.md)
+  ⎿  Added 11 lines, removed 3 lines
+       7  
+       8  ## Baseline (fill in at T5)
+       9  Run against the **current** steering code (pre-Plans 11–14). Th
+          ese numbers are what
+      10 -11–14 must beat.                                               
+      10 +11–14 must beat. Measured live 2026-06-15 on `noir.lan:27910` (
+         +q2dm1, 2 other                                                 
+      11 +clients present; scenario combat disabled so the run is pure na
+         +vigation). `max_speed`                                         
+      12 +≤ 300 throughout — no overspeed / no cheating confirmed.       
+      13  
+      14  | Scenario | Map | reached | elapsed (s) | distance | mean_spee
+          d | max_speed | bumps | wrong_turns | hindered_fr | log |
+      15  |----------|-----|---------|-------------|----------|----------
+          --|-----------|-------|-------------|-------------|-----|
+      14 -| spawn-to-spawn | | | | | | | | | | |                         
+      15 -| spawn-to-weapon (RL) | | | | | | | | | | |                   
+      16 +| spawn-to-spawn | q2dm1 | false | 29.92 | 1002 | 33 | 300 | 18
+         + | 26 | 196 | `logs/spawn-to-spawn/1781559241.qb0.log` |       
+      17 +| spawn-to-weapon (RL) | q2dm1 | false | 29.91 | 322 | 11 | 276
+         + | 62 | 1 | 239 | `logs/spawn-to-weapon/1781559291.qb1.log` |  
+      18  
+      19 +**Headline**: both runs **failed to reach** the goal in 30 s. `
+         +spawn-to-spawn` made                                           
+      20 +~1000 u of progress (mean 33 u/s vs. a 300 u/s envelope) with 1
+         +96/300 frames                                                  
+      21 +hindered; `spawn-to-weapon` barely moved (322 u) and ground a w
+         +all near spawn                                                 
+      22 +(62 bumps). This is exactly the orbit/grind/wrong-way-facing pa
+         +thology Plans 11–13                                            
+      23 +target. The log files themselves are gitignored (`/logs/`).    
+      24 +                                                               
+      25  ## Resume Instructions
+      26  1. T1 (BSP entities) and T2 (recorder) are independent — do the
+          m in parallel, then T3/T4.
+      27  2. T4 needs T1 (spawn points / weapon origins) and T2 (recorder
+          ) both landed.
+
+● Update(context/plans/10_movement_test_harness_tracker.md)
+  ⎿  Added 1 line, removed 1 line
+      38  | 3 | T3: log format + `dump()` + schema doc | `brain/src/recor
+          der.rs` | done | schema doc block + `dump_matches_documented_sc
+          hema` test (16 cols + SUMMARY keys) |
+      39  | 4 | T4: `SpawnToSpawn` / `SpawnToWeapon` CLI + `scenario.rs` 
+          + `scenario_mode` in `bot_task` | `qbots/src/main.rs`, `qbots/s
+          rc/scenario.rs` | done | wrote a dedicated `scenario.rs` loop (
+          mirrors connect+tick scaffolding, reuses brain primitives, NO `
+          bot_task` munge). build+clippy clean; CLI help shows both subco
+          mmands. live run is T5. |
+      40  | 5 | T4b: factor (or duplicate) connect handshake for reuse | 
+          `qbots/src/supervisor.rs` | done | chose the duplicate path (Op
+          en Q6) — `scenario.rs` mirrors the ~15-line `Conn` handshake + 
+          `tokio::select!` recv/tick loop; brain logic is shared, not dup
+          licated. |
+      41 -| 6 | T5: baseline runs + `.gitignore /logs/` + docs | `.gitign
+         -ore`, `qbots/CLAUDE.md` | pending | `/logs/` already gitignored
+         -; live baseline needs a server — fill Baseline table on next li
+         -ve run |                                                       
+      41 +| 6 | T5: baseline runs + `.gitignore /logs/` + docs | `.gitign
+         +ore`, `qbots/CLAUDE.md` | done | both baselines measured live o
+         +n q2dm1; numbers in Baseline table; `/logs/` gitignored; CLAUDE
+         +.md "Movement testing" section added |                         
+
+● Update(context/plans/10_movement_test_harness_tracker.md)
+  ⎿  Added 1 line, removed 1 line
+      1  # Plan 10 — Movement Test Harness — Tracker
+      2  
+      3  ## Overview
+      4 -- Status: 80% complete                                          
+      4 +- Status: 100% complete                                         
+      5  - Start date: 2026-06-15
+      6  - Goal: measurable movement quality (`spawn-to-spawn` / `spawn-t
+         o-weapon` → structured log)
+      7  
+
+● Now add the "Movement testing" section to qbots/CLAUDE.md:
+
+  Thought for 12s, read 1 file (ctrl+o to expand)
+
+● Update(CLAUDE.md)
+  ⎿  Error: Refusing to write through symlink: 
+     /home/iphands/prog/slop/qbots/CLAUDE.md. Resolve the symlink and pass the 
+     real target path explicitly.
+
+  Thought for 6s (ctrl+o to expand)
+
+● CLAUDE.md is a symlink. Let me resolve it:
+
+● Bash(readlink -f CLAUDE.md && echo "---is AGENTS.md?---" && ls -la CLAUDE.md)
+  ⎿  /home/iphands/prog/slop/qbots/AGENTS.md
+     ---is AGENTS.md?---
+     lrwxrwxrwx 1 iphands iphands 9 Jun 14 19:51 CLAUDE.md -> AGENTS.md
+
+● Update(AGENTS.md)
+  ⎿  File must be read first
+
+  Thought for 9s, read 1 file (ctrl+o to expand)
+
+● Update(AGENTS.md)
+  ⎿  Added 33 lines
+      303  
+      304  ---
+      305  
+      306 +## Movement Testing (Plan 10)                                 
+      307 +                                                              
+      308 +Two CLI scenarios measure how well a bot **moves** — the lens 
+          +for Plans 11–14.                                              
+      309 +Each connects one bot like `connect-one`, **disables combat**,
+          + pins its nav goal to a                                       
+      310 +known target, samples every server frame into a `MovementRecor
+          +der`, and dumps a                                             
+      311 +structured log + a SUMMARY line. They never set velocity or te
+          +leport — a                                                    
+      312 +grounded `max_speed` > ~320 in a log flags a physics bug, not 
+          +a feature.                                                    
+      313 +                                                              
+      314 +```bash                                                       
+      315 +# Farthest DM spawn from where the bot spawns.                
+      316 +cargo run -p qbots -- spawn-to-spawn [--map q2dm1] [--addr hos
+          +t:27910] [--name qb0]                                         
+      317 +# A named weapon's BSP origin (resolved as weapon_<name>).    
+      318 +cargo run -p qbots -- spawn-to-weapon rocketlauncher [--map q2
+          +dm1] [--name qb1]                                             
+      319 +```                                                           
+      320 +                                                              
+      321 +- **Map**: `--map` selects the BSP; if omitted it defaults to 
+          +`q2dm1`. The map                                              
+      322 +  **must match the server's loaded map** (the nav graph + spaw
+          +n/weapon origins come                                         
+      323 +  from the BSP, so a mismatch produces garbage). Discover the 
+          +server's map with a                                           
+      324 +  brief `qbots connect-one` (it logs `loading nav graph map=…`
+          +).                                                            
+      325 +- **Output**: `./logs/<scenario>/<unix_ts>.<bot>.log` — one fr
+          +ame per line, 16                                              
+      326 +  positional columns + a `flags` run (`B`=wall-bump, `W`=wrong
+          +-turn, `H`=hindered,                                          
+      327 +  `A`=airborne), ending in a `# SUMMARY reached=… elapsed=… …`
+          + line. The schema is                                          
+      328 +  documented in `crates/brain/src/recorder.rs`. `./logs/` is g
+          +itignored.                                                    
+      329 +- **Exit code**: `0` = reached the goal (held within 48 u for 
+          +0.5 s); `2` = ran to                                          
+      330 +  the 30 s cap without reaching it; `FAILURE` = setup/IO error
+          +.                                                             
+      331 +                                                              
+      332 +The **baseline** (current steering code) lives in             
+      333 +`context/plans/10_movement_test_harness_tracker.md`'s Baseline
+          + table — both runs                                            
+      334 +fail to reach, with low mean speed and many hindered/bump fram
+          +es. That is the                                               
+      335 +contract Plans 11–14 must beat; re-run the same scenarios afte
+          +r each and compare.                                           
+      336 +                                                              
+      337 +---                                                           
+      338 +                                                              
+      339  ## Getting Started (suggested plan series)
+      340  
+      341  1. **Plan 01 — Workspace scaffold.** `crates/` skeleton, `.git
+           ignore`
+
+  Thought for 16s (ctrl+o to expand)
+
+● Now commit T5 (verifying logs aren't staged):
+
+● Bash(git add -A && git status --short && echo "=== (logs must be absent above)
+      ===" && git commit -q -m "task(T5): measure movement baseline + document
+      movement test…)
+  ⎿  M  AGENTS.md
+     M  context/plans/10_movement_test_harness_tracker.md
+     === (logs must be absent above) ===
+     … +2 lines (ctrl+o to expand)
+  Thought for 12s (ctrl+o to expand)
+
+● Plan 10 T1–T5 all committed. Per your instruction, let me re-read RULES.md and
+  run the closing checklist before declaring the plan done.
+
+  Thought for 10s, read 1 file (ctrl+o to expand)
+
+● Plan 10 closing checklist (RULES.md Rule A/B/C):
+
+  Rule B — one commit per task, task(TN): format: T1–T5 all committed. ✓
+
+  Now Rule A — final full-workspace verification:
+
+● Bash(cargo fmt --check && echo "fmt: OK" && cargo build --workspace 2>&1 |
+      tail -2 && cargo clippy --workspace --all-targets -- -D warnings 2>&1 |
+      tail -2 && cargo t…)
+  ⎿  fmt: OK
+         Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03
+     s
+     … +4 lines (ctrl+o to expand)
+
+  Thought for 9s (ctrl+o to expand)
+
+● My grep was misleading — let me check test results cleanly for any failures:
+
+● Bash(cargo test --workspace 2>&1 | grep -E "test result|FAILED|error\[" | grep
+      -vE "0 passed" || echo "(all non-empty test binaries: no failures
+      shown)"; echo "=== a…)
+  ⎿  test result: ok. 86 passed; 0 failed; 0 ignored; 0 measured; 0 filtere
+     d out; finished in 0.00s
+     test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+     … +13 lines (ctrl+o to expand)
+
+  Thought for 8s (ctrl+o to expand)
+
+● All green — Rule A satisfied (0 failures, 0 warnings). Now Rule C — move Plan
+  10 to completed/. First update the plan's status + SERIES.md:
+
+● Update(context/plans/10_movement_test_harness.md)
+  ⎿  Added 1 line, removed 1 line
+      1  # Plan 10 — Movement Test Harness (`spawn-to-spawn` / `spawn-to-
+         weapon`)
+      2  
+      3 -> **Status**: pending                                           
+      3 +> **Status**: done                                              
+      4  > **Created**: 2026-06-15
+      5  > **Depends on**: Plan 09 (fleet/CLI/supervisor)
+      6  > **Goal**: Ship two CLI scenarios that drive one bot along a kn
+         own route and dump a structured per-frame log, so movement quali
+         ty (pathing accuracy + elapsed time) becomes *measurable* — the 
+         lens for Plans 11–14.
+
+● Update(context/plans/SERIES.md)
+  ⎿  Added 1 line, removed 1 line
+      14  | **07** | Eraser-derived brain enhancements | 06 | done | port
+           Eraser's combat aim/lead/jitter, weapon-select, projectile dan
+          ger dodge, skill/personality (`distilled/eraser.md`) → **bots f
+          ight like Eraser** (verified: 6 frags/30s, 3-bot fleet). RL-ret
+          reat deferred (enemy weapon not on wire). |
+      15  | **08** | Danger/popularity heatmap nav | 05, 06 | done | runt
+          ime risk overlay on the static nav graph (novel — Eraser can't)
+           → **route around death-traps, toward hot lanes** (deterministi
+          c integration test verifies detour→decay-restore + skill-scalin
+          g; live exercise pending — the observed 8-bot fleet ran pre-hea
+          tmap code) |
+      16  | **09** | Fleet (`qbots` bin) | 06 | done | roster config, sup
+          ervisor (shared nav cache, stagger, reconnect/backoff, graceful
+           shutdown), per-bot logging, rate-safe pacing, `run`/`connect-o
+          ne`/`status` CLI → **8-bot fleet verified live** (qb0-qb7 conne
+          cted, frags accumulating, no kicks; `qbots status` OOB lens) |
+      17 -| **10** | Movement test harness | 09 | pending | BSP **entity-
+         -lump** parse (spawn points + `weapon_*` origins), `spawn-to-spa
+         -wn` / `spawn-to-weapon` CLI, per-frame `MovementRecorder` → str
+         -uctured `./logs/<scenario>/<ts>.<bot>.log` → **measure pathing 
+         -accuracy & elapsed time** (the lens for 11-14) |               
+      17 +| **10** | Movement test harness | 09 | done | BSP **entity-lum
+         +p** parse (spawn points + `weapon_*` origins), `spawn-to-spawn`
+         + / `spawn-to-weapon` CLI, per-frame `MovementRecorder` → struct
+         +ured `./logs/<scenario>/<ts>.<bot>.log` → **measure pathing acc
+         +uracy & elapsed time** (the lens for 11-14). Verified live 2026
+         +-06-15: both baselines fail-to-reach (mean_speed 33/11 u/s; 196
+         +/239 hindered frames) — the contract 11–14 must beat. |        
+      18  | **11** | Honest LOS perception | 10 | pending | BSP-trace lin
+          e-of-sight gate on enemy selection (`combat.rs`), FSM transitio
+          n (`fsm.rs`), fire/chase, and nav-to-enemy → **bots stop target
+          ing/shooting/walking through walls** |
+      19  | **12** | Steering controller | 11 | pending | turn-rate limit
+          ing, look-ahead/"pursue" target + arrive, anti-orbit Z-aware no
+          de-advance, facing-validated forward, aim/move-yaw separation (
+          circle-strafe) → **bots move like humans, not orbit/spin/wedge*
+          * |
+      20  | **13** | Stuck recovery & wall avoidance | 12 | pending | por
+          t `botRoamFindBestDirection` fan-out + inline micro-recovery (s
+          trafe ±110°/jump/back-off), unified 4u/1s stuck detector, tight
+          ened 2s/4s give-up → **bots unstick & steer around geometry** |
+
+● Bash(git mv context/plans/10_movement_test_harness.md
+      context/plans/completed/10_movement_test_harness.md && git mv
+      context/plans/10_movement_test_harness_tracker.md…)
+  ⎿   M context/plans/SERIES.md
+     RM context/plans/10_movement_test_harness.md -> context/plans/complete
+     d/10_movement_test_harness.md
+     … +3 lines (ctrl+o to expand)
+
+  Thought for 12s (ctrl+o to expand)
+
+● Plan 10 complete and archived. Let me update tasks and start Plan 11 (read
+  combat.rs + fsm.rs first):
+
+  Thought for 3m 24s, read 2 files (ctrl+o to expand)
+
+● Now I understand the combat/FSM structure. For Plan 11 I need a small,
+  reusable way to test the LOS trace without full BSP geometry. Let me add a
+  CollisionModel::half_space constructor to world (a single-plane "wall" —
+  genuinely useful for tests/debug), then build los.rs on top of it. First,
+  half_space:
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(crates/world/src/collision.rs)
+  ⎿  Added 59 lines
+      187          self.point_contents(p) & MASK_SOLID != 0
+      188      }
+      189  
+      190 +    /// The simplest possible collision world: a single solid 
+          +**half-space**. The                                           
+      191 +    /// front side of `plane` (where `normal·p >= dist`) is em
+          +pty; the back side is                                         
+      192 +    /// a `CONTENTS_SOLID` brush. Useful for tests/debug that 
+          +need "a wall" without                                         
+      193 +    /// building BSP geometry — e.g. a line-of-sight trace tha
+          +t should be clear on                                          
+      194 +    /// one side and blocked through the plane.               
+      195 +    pub fn half_space(normal: [f32; 3], dist: f32) -> Self {  
+      196 +        let typ = if normal[1] == 0.0 && normal[2] == 0.0 {   
+      197 +            0 // PLANE_X                                      
+      198 +        } else if normal[0] == 0.0 && normal[2] == 0.0 {      
+      199 +            1 // PLANE_Y                                      
+      200 +        } else if normal[0] == 0.0 && normal[1] == 0.0 {      
+      201 +            2 // PLANE_Z                                      
+      202 +        } else {                                              
+      203 +            3 // PLANE_ANYX-ish general                       
+      204 +        };                                                    
+      205 +        let signbits = (0..3).fold(0u8, |b, j| if normal[j] < 
+          +0.0 { b | (1 << j) } else { b });                             
+      206 +        let planes = vec![Plane {                             
+      207 +            normal,                                           
+      208 +            dist,                                             
+      209 +            typ,                                              
+      210 +            signbits,                                         
+      211 +        }];                                                   
+      212 +        // Root node splits on plane 0: front → empty leaf 0, 
+          +back → solid leaf 1.                                          
+      213 +        let nodes = vec![Node {                               
+      214 +            plane: 0,                                         
+      215 +            children: [-1, -2],                               
+      216 +        }];                                                   
+      217 +        let leafs = vec![                                     
+      218 +            Leaf {                                            
+      219 +                contents: 0,                                  
+      220 +                cluster: 0,                                   
+      221 +                firstleafbrush: 0,                            
+      222 +                numleafbrushes: 0,                            
+      223 +            },                                                
+      224 +            Leaf {                                            
+      225 +                contents: CONTENTS_SOLID,                     
+      226 +                cluster: -1,                                  
+      227 +                firstleafbrush: 0,                            
+      228 +                numleafbrushes: 1,                            
+      229 +            },                                                
+      230 +        ];                                                    
+      231 +        let brushsides = vec![BrushSide { plane: 0 }];        
+      232 +        let brushes = vec![BrushCol {                         
+      233 +            firstside: 0,                                     
+      234 +            numsides: 1,                                      
+      235 +            contents: CONTENTS_SOLID,                         
+      236 +        }];                                                   
+      237 +        let leafbrushes = vec![0u16];                         
+      238 +        Self {                                                
+      239 +            planes,                                           
+      240 +            nodes,                                            
+      241 +            leafs,                                            
+      242 +            brushes,                                          
+      243 +            brushsides,                                       
+      244 +            leafbrushes,                                      
+      245 +            headnode: 0,                                      
+      246 +        }                                                     
+      247 +    }                                                         
+      248 +                                                              
+      249      /// `CM_LeafCluster` — the PVS cluster of the leaf contain
+           ing `p` (-1 if none).
+      250      pub fn point_cluster(&self, p: &[f32; 3]) -> i16 {
+      251          let leaf = self.point_leafnum(p, self.headnode);
+
+● Now add a test for half_space confirming clear-vs-blocked trace:
+
+● Update(crates/world/src/collision.rs)
+  ⎿  Added 34 lines
+      750          // headnode = leaf 0 (solid) everywhere → startsolid.
+      751          assert!(t.startsolid || t.fraction == 1.0);
+      752      }
+      753 +                                                              
+      754 +    /// A half-space wall at x=0 (x<0 solid): rays on the empt
+          +y side are clear,                                             
+      755 +    /// rays crossing into x<0 are blocked. The geometry every
+          + LOS test needs.                                              
+      756 +    #[test]                                                   
+      757 +    fn half_space_blocks_across_the_plane() {                 
+      758 +        let w = CollisionModel::half_space([1.0, 0.0, 0.0], 0.
+          +0);                                                           
+      759 +        // Both points in the empty front (x>0) → unobstructed
+          +.                                                             
+      760 +        let clear = w.trace(                                  
+      761 +            &[50.0, 0.0, 0.0],                                
+      762 +            &[100.0, 0.0, 0.0],                               
+      763 +            &[0.0; 3],                                        
+      764 +            &[0.0; 3],                                        
+      765 +            MASK_SOLID,                                       
+      766 +        );                                                    
+      767 +        assert!((clear.fraction - 1.0).abs() < 1e-4, "clear ra
+          +y, got {}", clear.fraction);                                  
+      768 +        assert!(!clear.startsolid);                           
+      769 +                                                              
+      770 +        // Crossing the plane into the solid back (target x<0)
+          + → stops at x≈0.                                              
+      771 +        let blocked = w.trace(                                
+      772 +            &[50.0, 0.0, 0.0],                                
+      773 +            &[-50.0, 0.0, 0.0],                               
+      774 +            &[0.0; 3],                                        
+      775 +            &[0.0; 3],                                        
+      776 +            MASK_SOLID,                                       
+      777 +        );                                                    
+      778 +        assert!(blocked.fraction < 1.0, "should hit the wall")
+          +;                                                             
+      779 +        assert!((blocked.fraction - 0.5).abs() < 1e-3, "stops 
+          +at the plane, got {}", blocked.fraction);                     
+      780 +        // The blocking plane's normal points into the empty s
+          +ide (toward +x).                                              
+      781 +        assert!(blocked.plane.normal[0] > 0.0);               
+      782 +                                                              
+      783 +        // A point behind the plane is solid.                 
+      784 +        assert!(w.is_solid(&[-10.0, 0.0, 0.0]));              
+      785 +        assert!(!w.is_solid(&[10.0, 0.0, 0.0]));              
+      786 +    }                                                         
+      787  }
+
+● Bash(cargo test -p world half_space 2>&1 | grep -E "test
+      result|half_space|FAILED" && cargo clippy -p world --all-targets -- -D
+      warnings 2>&1 | tail -3)
+  ⎿  test collision::tests::half_space_blocks_across_the_plane ... ok
+     test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 19 filtere
+     d out; finished in 0.00s
+     … +3 lines (ctrl+o to expand)
+
+  Thought for 9s (ctrl+o to expand)
+
+● half_space works. Now create los.rs (Plan 11 T1):
+
+● Write(crates/brain/src/los.rs)
+  ⎿  Wrote 89 lines to crates/brain/src/los.rs
+         ually* see a point. a BSP-trace gate on whether the bot can *act
+       3 //! Plan 11. The FOV cone in [`crate::perception::Worldview::nea
+       4 //! the nearest enemy whose *direction* is in view — with **no g
+         eometry test**, so a
+         elpers wrapes" and chases/fires at enemies behind walls. These h
+         's Engageld::CollisionModel::trace`] so enemy selection, the FSM
+       7 //! transition, the fire decision, and nav-to-enemy goals can al
+       8 //! line of sight.
+      10 //! Uses a **zero-size** (`mins=maxs=0`) trace: we care whether 
+         the *line* is clear,
+     … +108 lines (ctrl+o to expand)
+
+● Now export los from brain's lib and run tests + clippy:
+
+● Update(crates/brain/src/lib.rs)  ⎿  Added 1 line
+      12  pub mod fsm;
+      13  pub mod heatmap;
+      14  pub mod items;
+      15 +pub mod los;                                                   
+      16  pub mod move_ctrl;
+      17  pub mod nav;
+      18  pub mod observed;
+
+● Bash(cargo test -p brain los 2>&1 | grep -E "test result|los::|FAILED" &&
+      cargo fmt && cargo clippy -p brain -p world --all-targets -- -D warnings
+      2>&1 | tail -3)
+  ⎿  test los::tests::clear_line_has_los ... ok
+     test los::tests::eye_embedded_is_not_los ... ok
+     test los::tests::line_through_wall_has_no_los ... ok
+     … +9 lines (ctrl+o to expand)
+
+● All 4 los tests pass, clippy clean. Update tracker + commit T1:
+
+● Update(context/plans/11_los_perception_tracker.md)
+  ⎿  Added 1 line, removed 1 line
+      1  # Plan 11 — Honest LOS Perception — Tracker
+      2  
+      3  ## Overview
+      4 -- Status: 0% complete                                           
+      4 +- Status: 17% complete                                          
+      5  - Start date: 2026-06-15
+      6  - Goal: bots only target/fire-at/chase/navigate-to enemies they 
+         can actually see
+      7  
+
+● Update(context/plans/11_los_perception_tracker.md)
+  ⎿  Added 1 line, removed 1 line
+      23  
+      24  | # | Task | File / Module | Status | Notes |
+      25  |---|------|---------------|--------|-------|
+      26 -| 1 | T1: `los.rs` — `has_los` / `has_los_player` / `eye_origin
+         -` + tests | `brain/src/los.rs`, `brain/src/lib.rs`, `brain/test
+         -s/los.rs` | pending | |                                        
+      26 +| 1 | T1: `los.rs` — `has_los` / `has_los_player` / `eye_origin
+         +` + tests | `brain/src/los.rs`, `brain/src/lib.rs` | done | + `
+         +world::CollisionModel::half_space` test fixture; 4 los tests + 
+         +1 half_space test green; clippy clean |                        
+      27  | 2 | T2: `nearest_visible_enemy` + wire combat/FSM callers | `
+          brain/src/perception.rs`, `brain/src/combat.rs`, `brain/src/fsm
+          .rs` | pending | signature: pass `&LosChecker` |
+      28  | 3 | T2b: ensure `Arc<CollisionModel>` available in tick | `qb
+          ots/src/supervisor.rs` / `MapNav` | pending | Open Q1 |
+      29  | 4 | T3: sight hysteresis (`SIGHT_GRACE_FRAMES=2`) | `brain/sr
+          c/combat.rs` | pending | |
+
+● Bash(git add -A && git commit -q -m "task(T1): brain::los — BSP-trace
+      line-of-sight helpers…)
+  ⎿  aacadcaa9 task(T1): brain::los — BSP-trace line-of-sight helpers
+
+  Thought for 25s (ctrl+o to expand)
+
+● T1 committed. Now Plan 11 T2 + T2b — thread Arc<CollisionModel> into the tick
+  (MapNav) and add nearest_visible_enemy. First, add cm to MapNav:
+
+● Update(crates/qbots/src/supervisor.rs)
+  ⎿  Added 4 lines
+      23  #[derive(Clone)]
+      24  pub struct MapNav {
+      25      pub graph: Arc<world::NavGraph>,
+      26 +    /// The collision model the graph was built from — retained
+         + so the tick can run                                           
+      27 +    /// line-of-sight traces (Plan 11) and reactive wall probes
+         + (Plan 13) without                                             
+      28 +    /// rebuilding it.                                         
+      29 +    pub cm: Arc<world::CollisionModel>,                        
+      30      pub roam_nodes: Vec<usize>,
+      31  }
+      32  
+
+● Update(crates/qbots/src/supervisor.rs)
+  ⎿  Added 2 lines, removed 1 line
+      73              return None;
+      74          }
+      75      };
+      76 -    let cm = world::CollisionModel::from_bsp(&bsp);            
+      76 +    let cm = Arc::new(world::CollisionModel::from_bsp(&bsp));  
+      77      let m = bsp.models.first().expect("bsp has models");
+      78      let t0 = std::time::Instant::now();
+      79      let g = world::NavGraph::generate(&cm, (m.mins, m.maxs), 64
+          .0);
+     ...
+      88      );
+      89      Some(MapNav {
+      90          graph: Arc::new(g),
+      91 +        cm,                                                    
+      92          roam_nodes: largest,
+      93      })
+      94  }
+
+● Now add nearest_visible_enemy to perception.rs:
+
+● Update(crates/brain/src/perception.rs)
+  ⎿  Added 30 lines
+      280              })
+      281      }
+      282  
+      283 +    /// The nearest enemy within FOV **with an unobstructed li
+          +ne of sight** (Plan 11).                                      
+      284 +    /// Same as [`Self::nearest_enemy`] but additionally requi
+          +res a clear BSP trace                                         
+      285 +    /// from our eye to the enemy's chest/feet, so a wall betw
+          +een us and a target                                           
+      286 +    /// disqualifies it. `cm` is the collision model the nav g
+          +raph was built from.                                          
+      287 +    pub fn nearest_visible_enemy(                             
+      288 +        &self,                                                
+      289 +        cm: &world::CollisionModel,                           
+      290 +        fov_degrees: f32,                                     
+      291 +    ) -> Option<&PerceivedEntity> {                           
+      292 +        let eye = crate::los::eye_origin(self.self_state.origi
+          +n.into());                                                    
+      293 +        self.enemies()                                        
+      294 +            .filter(|e| self.in_fov(e.origin, fov_degrees))   
+      295 +            .filter(|e| crate::los::has_los_player(cm, eye, e.
+          +origin.into()))                                               
+      296 +            .min_by(|a, b| {                                  
+      297 +                let da = (a.origin - self.self_state.origin).l
+          +ength_squared();                                              
+      298 +                let db = (b.origin - self.self_state.origin).l
+          +ength_squared();                                              
+      299 +                da.partial_cmp(&db).unwrap_or(std::cmp::Orderi
+          +ng::Equal)                                                    
+      300 +            })                                                
+      301 +    }                                                         
+      302 +                                                              
+      303 +    /// Is `target` within the view FOV cone? (Factored out of
+          + `nearest_enemy`.)                                            
+      304 +    fn in_fov(&self, target: Vec3, fov_degrees: f32) -> bool {
+      305 +        let origin = self.self_state.origin;                  
+      306 +        let dir = target - origin;                            
+      307 +        if dir.length_squared() < 1e-6 {                      
+      308 +            return true;                                      
+      309 +        }                                                     
+      310 +        self.forward_vector().dot(dir.normalize()) > fov_degre
+          +es.to_radians().cos()                                         
+      311 +    }                                                         
+      312 +                                                              
+      313      /// Convert view angles to a forward direction vector.
+      314      fn forward_vector(&self) -> Vec3 {
+      315          let yaw = self.self_state.angles.y.to_radians();
+
+  Thought for 11s (ctrl+o to expand)
+
+● Now wire cm into CombatDriver. Update evaluate + select_target_entity:
+
+● Update(crates/brain/src/combat.rs)
+  ⎿  Added 1 line
+      13  use crate::perception::{EntityClass, Worldview};
+      14  use crate::skill::BotSkill;
+      15  use crate::weapons::{self, Weapon};
+      16 +use world::CollisionModel;                                     
+      17  
+      18  /// Frames to hold on a target before considering a switch (~0.
+          5s at 10 Hz),
+      19  /// preventing thrashing when enemies pop in/out of PVS. (Erase
+          r "target stability".)
+
+● Update(crates/brain/src/combat.rs)
+  ⎿  Added 6 lines, removed 2 lines
+       94      }
+       95  
+       96      /// Evaluate combat state and produce a decision. `skill` 
+           drives aim jitter
+       97 -    /// (accuracy rating), reaction delay, and combat gating. 
+       97 +    /// (accuracy rating), reaction delay, and combat gating. 
+          +`los` is the collision                                        
+       98 +    /// model for line-of-sight gating (Plan 11); when `None` 
+          +(geometry not loaded —                                        
+       99 +    /// e.g. before the nav graph builds, or in unit tests) ta
+          +rgeting degrades to                                           
+      100 +    /// FOV-only, which the recorder's `phantom_target` flag w
+          +ill surface.                                                  
+      101      pub fn evaluate(
+      102          &mut self,
+      103          view: &Worldview,
+      104          skill: &BotSkill,
+      105          jitter_seed: f32,
+      106 +        los: Option<&CollisionModel>,                         
+      107      ) -> CombatDecision {
+      108          let prev_target = self.current_target;
+      105 -        let target_num = self.select_target_entity(view);     
+      109 +        let target_num = self.select_target_entity(view, los);
+      110  
+      111          let Some(num) = target_num else {
+      112              self.frames_since_shot += 1;
+
+● Update(crates/brain/src/combat.rs)
+  ⎿  Added 11 lines, removed 2 lines
+      190          }
+      191      }
+      192  
+      193 -    fn select_target_entity(&mut self, view: &Worldview) -> Op
+          -tion<i32> {                                                   
+      193 +    fn select_target_entity(                                  
+      194 +        &mut self,                                            
+      195 +        view: &Worldview,                                     
+      196 +        los: Option<&CollisionModel>,                         
+      197 +    ) -> Option<i32> {                                        
+      198          if let Some(target_num) = self.current_target {
+      199              if self.lock_frames_remaining > 0
+      200                  && view.enemies().any(|e| e.entity_number == t
+           arget_num)
+     ...
+      204              }
+      205          }
+      206  
+      203 -        if let Some(t) = view.nearest_enemy(90.0) {           
+      207 +        // Trace-gated nearest enemy when geometry is availabl
+          +e; else FOV-only.                                             
+      208 +        let nearest = match los {                             
+      209 +            Some(cm) => view.nearest_visible_enemy(cm, 90.0), 
+      210 +            None => view.nearest_enemy(90.0),                 
+      211 +        };                                                    
+      212 +        if let Some(t) = nearest {                            
+      213              self.current_target = Some(t.entity_number);
+      214              self.lock_frames_remaining = TARGET_LOCK_FRAMES;
+      215              return Some(t.entity_number);
+
+  Thought for 19s (ctrl+o to expand)
+
+● Now update the combat test call sites. Let me check q2proto's Frame/entity
+  state to see if I can build a 2-enemy Worldview fixture for the T2 test:
+
+  Thought for 58s, searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● EntityState is Default-derivable with public fields — I can build a 2-enemy
+  fixture. First update the combat test call site:
+
+● Update(crates/brain/src/combat.rs)
+  ⎿  Added 1 line, removed 1 line
+      305          let frame = Frame::default();
+      306          let config = ConfigStrings::default();
+      307          let view = crate::perception::Worldview::from_frame(&f
+           rame, &config, 0);
+      308 -        let decision = driver.evaluate(&view, &BotSkill::defau
+          -lt(), 0.0);                                                   
+      308 +        let decision = driver.evaluate(&view, &BotSkill::defau
+          +lt(), 0.0, None);                                             
+      309          assert!(!decision.should_fire);
+      310          assert!(decision.target_entity.is_none());
+      311          assert!(decision.weapon_request.is_none());
+
+● Now add the nearest_visible_enemy test to perception.rs:
+
+● Update(crates/brain/src/perception.rs)
+  ⎿  Added 44 lines
+      461          const { assert!(STALE_THRESHOLD <= 20) }; // Reasonabl
+           e decay
+      462      }
+      463  
+      464 +    /// LOS-gated selection (Plan 11): the nearer enemy is beh
+          +ind a wall, the                                               
+      465 +    /// farther one is in the open → `nearest_visible_enemy` p
+          +icks the open one,                                            
+      466 +    /// while FOV-only `nearest_enemy` picks the nearer walled
+          + one.                                                         
+      467      #[test]
+      468 +    fn nearest_visible_enemy_skips_walled_picks_open() {      
+      469 +        use q2proto::{EntityState, Frame};                    
+      470 +        // Wall at x=0 (x<0 solid). Self at (100,0,0).        
+      471 +        let cm = world::CollisionModel::half_space([1.0, 0.0, 
+          +0.0], 0.0);                                                   
+      472 +        let mut frame = Frame::default();                     
+      473 +        // pmove.origin is raw 12.3 fixed-point (×8).         
+      474 +        frame.playerstate.pmove.origin = [(100.0 * 8.0) as i16
+          +, 0, 0];                                                      
+      475 +        frame.entities = vec![                                
+      476 +            // Nearer, but across the wall (no LOS).          
+      477 +            EntityState {                                     
+      478 +                number: 2,                                    
+      479 +                origin: [-20.0, 0.0, 0.0],                    
+      480 +                modelindex: 255,                              
+      481 +                ..Default::default()                          
+      482 +            },                                                
+      483 +            // Farther, but in the open (clear LOS).          
+      484 +            EntityState {                                     
+      485 +                number: 3,                                    
+      486 +                origin: [250.0, 0.0, 0.0],                    
+      487 +                modelindex: 255,                              
+      488 +                ..Default::default()                          
+      489 +            },                                                
+      490 +        ];                                                    
+      491 +        let cs = ConfigStrings::default();                    
+      492 +        let view = Worldview::from_frame(&frame, &cs, 0);     
+      493 +                                                              
+      494 +        // FOV-only (180° = no cone filter): the nearer walled
+          + enemy is "nearest".                                          
+      495 +        let near = view.nearest_enemy(180.0).expect("an enemy"
+          +);                                                            
+      496 +        assert_eq!(near.entity_number, 2);                    
+      497 +                                                              
+      498 +        // LOS-gated: the walled enemy is filtered out → the o
+          +pen one is chosen.                                            
+      499 +        let vis = view                                        
+      500 +            .nearest_visible_enemy(&cm, 180.0)                
+      501 +            .expect("a visible enemy");                       
+      502 +        assert_eq!(                                           
+      503 +            vis.entity_number, 3,                             
+      504 +            "open enemy chosen over the nearer walled one"    
+      505 +        );                                                    
+      506 +    }                                                         
+      507 +                                                              
+      508 +    #[test]                                                   
+      509      fn player_name_from_skin_infostring() {
+      510          let mut cs = ConfigStrings::default();
+      511          // entity_number=1 → CS_PLAYERSKINS+0. Infostring with
+            no leading backslash.
+
+● Now update FSM::tick/transition to take cm. Let me wire it:
+
+● Update(crates/brain/src/fsm.rs)
+  ⎿  Added 1 line
+       7  use crate::nav::NavGoal;
+       8  use crate::perception::Worldview;
+       9  use glam::Vec3;
+      10 +use world::CollisionModel;                                     
+      11  
+      12  /// Behavior states for the bot.
+      13  #[derive(Debug, Clone, PartialEq)]
+
+● Update(crates/brain/src/fsm.rs)  ⎿  Added 12 lines, removed 6 lines
+      33  }
+      34  
+      35  impl BehaviorState {
+      36 -    /// Tick the FSM based on current worldview. Returns moveme
+         -nt intent.                                                     
+      37 -    pub fn tick(&mut self, view: &Worldview) -> BehaviorIntent 
+         -{                                                              
+      36 +    /// Tick the FSM based on current worldview. Returns moveme
+         +nt intent. `los` is                                            
+      37 +    /// the collision model for the Roam→Engage "enemy in sight
+         +" gate (Plan 11): when                                         
+      38 +    /// `None` it degrades to FOV-only sighting.               
+      39 +    pub fn tick(&mut self, view: &Worldview, los: Option<&Colli
+         +sionModel>) -> BehaviorIntent {                                
+      40          // Check transitions first
+      39 -        self.transition(view);                                 
+      41 +        self.transition(view, los);                            
+      42  
+      43          // Execute current state - extract values to avoid borr
+          ow issues
+      44          match self {
+     ...
+      59          }
+      60      }
+      61  
+      60 -    fn transition(&mut self, view: &Worldview) {               
+      62 +    fn transition(&mut self, view: &Worldview, los: Option<&Col
+         +lisionModel>) {                                                
+      63          // Low health → Flee (highest priority)
+      64          if view.is_low_health_with_threshold(30) {
+      65              *self = Self::Flee;
+     ...
+      86              }
+      87          }
+      88  
+      87 -        // Enemy in sight → Engage                             
+      88 -        let nearest = view.nearest_enemy(90.0);                
+      89 +        // Enemy in sight → Engage. Trace-gated when geometry i
+         +s available (Plan 11)                                          
+      90 +        // so a bot doesn't flip to Engage on an enemy behind a
+         + wall.                                                         
+      91 +        let nearest = match los {                              
+      92 +            Some(cm) => view.nearest_visible_enemy(cm, 90.0),  
+      93 +            None => view.nearest_enemy(90.0),                  
+      94 +        };                                                     
+      95          tracing::debug!(
+      96              "FSM transition check: state={:?}, nearest_enemy={:
+          ?}, enemy_count={}",
+      97              self,
+
+  Thought for 11s (ctrl+o to expand)
+
+● Now update bot_task in main.rs — store the cm Arc and pass it to
+  evaluate/tick:
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Update(crates/qbots/src/main.rs)
+  ⎿  Added 3 lines
+      359      let mut move_ctrl = MovementController::new();
+      360      let mut skill = BotSkill::default();
+      361      let mut nav_driver: Option<NavigationDriver> = None;
+      362 +    /// Collision model the nav graph was built from — for LOS
+          + gating (Plan 11) and                                         
+      363 +    /// reactive wall probes (Plan 13). Set when the map loads
+          +.                                                             
+      364 +    let mut collision: Option<Arc<world::CollisionModel>> = No
+          +ne;                                                           
+      365      let mut roam_nodes: Vec<usize> = Vec::new();
+      366      let mut roam_idx: usize = 0;
+      367      let mut map_loaded = false;
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(crates/qbots/src/main.rs)
+  ⎿  Added 1 line
+      456                                  roam_nodes = map_nav.roam_node
+           s.clone();
+      457                                  nav_driver =
+      458                                      Some(NavigationDriver::new
+           (Arc::clone(&map_nav.graph)));
+      459 +                                collision = Some(Arc::clone(&m
+          +ap_nav.cm));                                                  
+      460                                  heatmap_obs = Some(brain::Heat
+           mapObserver::new(
+      461                                      Arc::clone(&map_nav.graph)
+           ,
+      462                                      name,
+
+● Update(crates/qbots/src/main.rs)
+  ⎿  Added 2 lines, removed 1 line
+      570                          // Health tracking is done above, befo
+           re creating the view
+      571                          // No need to call view.detect_damage(
+           ) here
+      572                          let jitter = (ticks as f32) * 0.1;
+      573 -                        let combat_dec = combat.evaluate(&view
+          -, &skill, jitter);                                            
+      573 +                        let combat_dec =                      
+      574 +                            combat.evaluate(&view, &skill, jit
+          +ter, collision.as_deref());                                   
+      575  
+      576                          // Pass combat target to FSM for navig
+           ation goal
+      577                          let fsm_intent = if let Some(target) =
+            combat_dec.target_entity {
+
+● Update(crates/qbots/src/main.rs)
+  ⎿  Added 1 line, removed 1 line
+      597                                  should_pickup: None,
+      598                              }
+      599                          } else {
+      600 -                            fsm.tick(&view)                   
+      600 +                            fsm.tick(&view, collision.as_deref
+          +())                                                           
+      601                          };
+      602  
+      603                          let mut mv = MovementIntent::new();
+
+● Bash(cargo build -p qbots 2>&1 | tail -15)
+  ⎿     Compiling qbots v0.1.0 (/home/iphands/prog/slop/qbots/crates/qbots)
+     warning: unused doc comment
+        --> crates/qbots/src/main.rs:362:5
+     … +19 lines (ctrl+o to expand)
+  ⎿  (timeout 3m)
+
+  Thought for 8s (ctrl+o to expand)
+
+● Doc comment on a let — switch to a plain comment:
+
+● Update(crates/qbots/src/main.rs)
+  ⎿  Added 2 lines, removed 2 lines
+      359      let mut move_ctrl = MovementController::new();
+      360      let mut skill = BotSkill::default();
+      361      let mut nav_driver: Option<NavigationDriver> = None;
+      362 -    /// Collision model the nav graph was built from — for LOS
+          - gating (Plan 11) and                                         
+      363 -    /// reactive wall probes (Plan 13). Set when the map loads
+          -.                                                             
+      362 +    // Collision model the nav graph was built from — for LOS 
+          +gating (Plan 11) and                                          
+      363 +    // reactive wall probes (Plan 13). Set when the map loads.
+      364      let mut collision: Option<Arc<world::CollisionModel>> = No
+           ne;
+      365      let mut roam_nodes: Vec<usize> = Vec::new();
+      366      let mut roam_idx: usize = 0;
+
+● Bash(cargo fmt && cargo test -p brain 2>&1 | grep -E "test
+      result|FAILED|nearest_visible" && cargo clippy --workspace --all-targets
+      -- -D warnings 2>&1 | tail -4)
+  ⎿  test perception::tests::nearest_visible_enemy_skips_walled_picks_open
+     ... FAILED
+     ---- perception::tests::nearest_visible_enemy_skips_walled_picks_open
+     … +10 lines (ctrl+o to expand)
+  ⎿  (timeout 4m)
+
+  Thought for 43s (ctrl+o to expand)
+
+● The test geometry was wrong — entity A landed directly behind the bot (outside
+  even a 180° FOV). Let me fix the positions so both enemies are in a 90° FOV
+  cone, A nearer-but-walled, B farther-but-open:
+
+● Update(crates/brain/src/perception.rs)
+  ⎿  Added 11 lines, removed 10 lines
+      463  
+      464      /// LOS-gated selection (Plan 11): the nearer enemy is beh
+           ind a wall, the
+      465      /// farther one is in the open → `nearest_visible_enemy` p
+           icks the open one,
+      466 -    /// while FOV-only `nearest_enemy` picks the nearer walled
+          - one.                                                         
+      466 +    /// while FOV-only `nearest_enemy` picks the nearer walled
+          + one. Self faces yaw                                          
+      467 +    /// 135° so both enemies sit inside a 90° FOV cone.       
+      468      #[test]
+      469      fn nearest_visible_enemy_skips_walled_picks_open() {
+      470          use q2proto::{EntityState, Frame};
+      470 -        // Wall at x=0 (x<0 solid). Self at (100,0,0).        
+      471 +        // Wall at x=0 (x<0 solid). Self at (100,0,0) facing 1
+          +35° (-x,+y).                                                  
+      472          let cm = world::CollisionModel::half_space([1.0, 0.0, 
+           0.0], 0.0);
+      473          let mut frame = Frame::default();
+      473 -        // pmove.origin is raw 12.3 fixed-point (×8).         
+      474          frame.playerstate.pmove.origin = [(100.0 * 8.0) as i16
+           , 0, 0];
+      475 +        frame.playerstate.viewangles = [0.0, 135.0, 0.0];     
+      476          frame.entities = vec![
+      476 -            // Nearer, but across the wall (no LOS).          
+      477 +            // Nearer (~144u), but across the wall → no LOS.  
+      478              EntityState {
+      479                  number: 2,
+      479 -                origin: [-20.0, 0.0, 0.0],                    
+      480 +                origin: [-20.0, 80.0, 0.0],                   
+      481                  modelindex: 255,
+      482                  ..Default::default()
+      483              },
+      483 -            // Farther, but in the open (clear LOS).          
+      484 +            // Farther (~171u), but in the open (same x>0 side
+          + as us) → clear LOS.                                          
+      485              EntityState {
+      486                  number: 3,
+      486 -                origin: [250.0, 0.0, 0.0],                    
+      487 +                origin: [40.0, 160.0, 0.0],                   
+      488                  modelindex: 255,
+      489                  ..Default::default()
+      490              },
+     ...
+      492          let cs = ConfigStrings::default();
+      493          let view = Worldview::from_frame(&frame, &cs, 0);
+      494  
+      494 -        // FOV-only (180° = no cone filter): the nearer walled
+          - enemy is "nearest".                                          
+      495 -        let near = view.nearest_enemy(180.0).expect("an enemy"
+          -);                                                            
+      495 +        // FOV-only: the nearer walled enemy is "nearest".    
+      496 +        let near = view.nearest_enemy(90.0).expect("an enemy")
+          +;                                                             
+      497          assert_eq!(near.entity_number, 2);
+      498  
+      499          // LOS-gated: the walled enemy is filtered out → the o
+           pen one is chosen.
+      500          let vis = view
+      500 -            .nearest_visible_enemy(&cm, 180.0)                
+      501 +            .nearest_visible_enemy(&cm, 90.0)                 
+      502              .expect("a visible enemy");
+      503          assert_eq!(
+      504              vis.entity_number, 3,
+
+● Bash(cargo test -p brain 2>&1 | grep -E "test result|FAILED|nearest_visible"
+      && cargo clippy --workspace --all-targets -- -D warnings 2>&1 | tail -3)
+  ⎿  test perception::tests::nearest_visible_enemy_skips_walled_picks_open
+     ... ok
+     test result: ok. 91 passed; 0 failed; 0 ignored; 0 measured; 0 filtere
+     … +9 lines (ctrl+o to expand)
+
+● All 91 brain tests pass, workspace clippy clean. Update tracker + commit T2:
+
+● Update(context/plans/11_los_perception_tracker.md)
+  ⎿  Added 1 line, removed 1 line
+      1  # Plan 11 — Honest LOS Perception — Tracker
+      2  
+      3  ## Overview
+      4 -- Status: 17% complete                                          
+      4 +- Status: 45% complete                                          
+      5  - Start date: 2026-06-15
+      6  - Goal: bots only target/fire-at/chase/navigate-to enemies they 
+         can actually see
+      7  
+
+● Update(context/plans/11_los_perception_tracker.md)
+  ⎿  Added 2 lines, removed 2 lines
+      24  | # | Task | File / Module | Status | Notes |
+      25  |---|------|---------------|--------|-------|
+      26  | 1 | T1: `los.rs` — `has_los` / `has_los_player` / `eye_origin
+          ` + tests | `brain/src/los.rs`, `brain/src/lib.rs` | done | + `
+          world::CollisionModel::half_space` test fixture; 4 los tests + 
+          1 half_space test green; clippy clean |
+      27 -| 2 | T2: `nearest_visible_enemy` + wire combat/FSM callers | `
+         -brain/src/perception.rs`, `brain/src/combat.rs`, `brain/src/fsm
+         -.rs` | pending | signature: pass `&LosChecker` |               
+      28 -| 3 | T2b: ensure `Arc<CollisionModel>` available in tick | `qb
+         -ots/src/supervisor.rs` / `MapNav` | pending | Open Q1 |        
+      27 +| 2 | T2: `nearest_visible_enemy` + wire combat/FSM callers | `
+         +brain/src/perception.rs`, `brain/src/combat.rs`, `brain/src/fsm
+         +.rs` | done | `Option<&CollisionModel>` param (None = FOV-only 
+         +fallback). perception test: open enemy chosen over nearer walle
+         +d one. |                                                       
+      28 +| 3 | T2b: ensure `Arc<CollisionModel>` available in tick | `qb
+         +ots/src/supervisor.rs` / `MapNav` | done | `MapNav.cm: Arc<Coll
+         +isionModel>` retained in `build_map_nav`; bot_task stores + pas
+         +ses `collision.as_deref()` to `combat.evaluate`/`fsm.tick`. |  
+      29  | 4 | T3: sight hysteresis (`SIGHT_GRACE_FRAMES=2`) | `brain/sr
+          c/combat.rs` | pending | |
+      30  | 5 | T4: nav-to-enemy only on LOS + `phantom_target` recorder 
+          flag | `qbots/src/main.rs`, `brain/src/recorder.rs` | pending |
+           |
+      31  | 6 | T5: live before/after + pitfalls/distilled notes | `conte
+          xt/pitfalls.md`, `context/distilled.md` | pending | fill Before
+          /After table |
+
+● Bash(git add -A && git commit -q -m "task(T2): trace-gated
+      nearest_visible_enemy + thread cm into tick…)
+  ⎿  2e7a522b9 task(T2): trace-gated nearest_visible_enemy + thread cm into
+      tick
+
+● API Error: Request rejected (429) · [1310][Weekly/Monthly Limit 
+  Exhausted. Your limit will reset at 2026-06-18 
+  13:07:42][2026061605505047d15f5dc7994da9]
+
+✻ Baked for 39m 21s

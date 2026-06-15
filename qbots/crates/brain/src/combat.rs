@@ -19,6 +19,10 @@ use world::CollisionModel;
 /// preventing thrashing when enemies pop in/out of PVS. (Eraser "target stability".)
 const TARGET_LOCK_FRAMES: u32 = 5;
 
+/// Frames to keep firing at a target after LOS drops (Eraser `last_enemy_sight` gate,
+/// Plan 11 T3). 2 frames ≈ 0.2 s at 10 Hz — enough to not flicker on thin pillars.
+const SIGHT_GRACE_FRAMES: u32 = 2;
+
 /// Brain tick rate (Hz). Eraser's calibrated timings are in seconds; we convert
 /// to frames at this cadence.
 const TICK_HZ: f32 = 10.0;
@@ -68,6 +72,10 @@ pub struct CombatDriver {
     /// Weapon we believe we're holding. Optimistic: set when we request a switch
     /// (the server grants it only if owned). Reset to Blaster on respawn.
     held_weapon: Weapon,
+    /// Frames of LOS grace remaining on the current target (Plan 11 T3).
+    /// Set to `SIGHT_GRACE_FRAMES` on fresh selection or while LOS holds;
+    /// decremented each tick after LOS is lost; target is dropped when it reaches 0.
+    sight_grace_remaining: u32,
 }
 
 impl CombatDriver {
@@ -79,6 +87,7 @@ impl CombatDriver {
             sight_frames: 0,
             frames_since_switch: u32::MAX,
             held_weapon: Weapon::Blaster,
+            sight_grace_remaining: 0,
         }
     }
 
@@ -106,7 +115,7 @@ impl CombatDriver {
         los: Option<&CollisionModel>,
     ) -> CombatDecision {
         let prev_target = self.current_target;
-        let target_num = self.select_target_entity(view, los);
+        let (target_num, fire_allowed) = self.select_target_entity(view, los);
 
         let Some(num) = target_num else {
             self.frames_since_shot += 1;
@@ -164,7 +173,8 @@ impl CombatDriver {
             aim_direction(view.self_state().origin, t.origin, t.velocity, weapon)
         };
 
-        let should_fire = self.should_fire(weapon, distance, combat);
+        // Gate `should_fire` on both timing gates AND current LOS (or grace period).
+        let should_fire = fire_allowed && self.should_fire(weapon, distance, combat);
 
         self.frames_since_shot = if should_fire {
             0
@@ -190,21 +200,47 @@ impl CombatDriver {
         }
     }
 
+    /// Returns `(target_entity_num, fire_allowed)`.
+    /// `fire_allowed=false` on stale-only targets so the caller never fires at
+    /// an entity with no confirmed LOS (Plan 11 T3).
     fn select_target_entity(
         &mut self,
         view: &Worldview,
         los: Option<&CollisionModel>,
-    ) -> Option<i32> {
+    ) -> (Option<i32>, bool) {
         if let Some(target_num) = self.current_target {
             if self.lock_frames_remaining > 0
                 && view.enemies().any(|e| e.entity_number == target_num)
             {
-                self.lock_frames_remaining -= 1;
-                return Some(target_num);
+                // LOS + grace check on the locked target (Plan 11 T3).
+                if let Some(cm) = los {
+                    if let Some(target) = view.entities().find(|e| e.entity_number == target_num) {
+                        let eye = crate::los::eye_origin(view.self_state().origin.into());
+                        if crate::los::has_los_player(cm, eye, target.origin.into()) {
+                            // LOS holds: refresh grace.
+                            self.sight_grace_remaining = SIGHT_GRACE_FRAMES;
+                        } else if self.sight_grace_remaining == 0 {
+                            // Grace expired: force-drop the target.
+                            self.current_target = None;
+                            self.lock_frames_remaining = 0;
+                            // Fall through to fresh selection below.
+                        } else {
+                            // Grace period: keep target one more frame.
+                            self.sight_grace_remaining -= 1;
+                            self.lock_frames_remaining -= 1;
+                            return (Some(target_num), true);
+                        }
+                    }
+                }
+                // Still locked (LOS holds or no cm for geometry).
+                if self.current_target.is_some() {
+                    self.lock_frames_remaining -= 1;
+                    return (Some(target_num), true);
+                }
             }
         }
 
-        // Trace-gated nearest enemy when geometry is available; else FOV-only.
+        // Fresh selection: trace-gated when geometry is available; else FOV-only.
         let nearest = match los {
             Some(cm) => view.nearest_visible_enemy(cm, 90.0),
             None => view.nearest_enemy(90.0),
@@ -212,10 +248,11 @@ impl CombatDriver {
         if let Some(t) = nearest {
             self.current_target = Some(t.entity_number);
             self.lock_frames_remaining = TARGET_LOCK_FRAMES;
-            return Some(t.entity_number);
+            self.sight_grace_remaining = SIGHT_GRACE_FRAMES;
+            return (Some(t.entity_number), true);
         }
 
-        // Fall back to the nearest stale (last-known) enemy.
+        // Stale fallback: navigate to last-known pos but do not fire (no LOS).
         let stale = view
             .entities()
             .filter(|e| e.class == EntityClass::EnemyPlayer && e.is_stale)
@@ -228,10 +265,10 @@ impl CombatDriver {
         if let Some(t) = stale {
             self.current_target = Some(t.entity_number);
             self.lock_frames_remaining = TARGET_LOCK_FRAMES;
-            return Some(t.entity_number);
+            return (Some(t.entity_number), false);
         }
 
-        None
+        (None, false)
     }
 
     /// Eraser fire gate (`bot_Attack`, `bot_wpns.c:134-324`): fire iff cooldown
@@ -372,5 +409,56 @@ mod tests {
         assert!(!driver.should_fire(Weapon::Shotgun, 150.0, 1.0));
         driver.sight_frames = 8;
         assert!(driver.should_fire(Weapon::Shotgun, 150.0, 1.0));
+    }
+
+    /// Plan 11 T3: when LOS drops the target is kept for exactly `SIGHT_GRACE_FRAMES`
+    /// frames (fire allowed during grace), then dropped — bot doesn't fire through walls.
+    #[test]
+    fn sight_grace_allows_fire_then_drops_after_n_frames() {
+        use client::parse::ConfigStrings;
+        use q2proto::{EntityState, Frame};
+
+        // Wall at x=0 (x<0 solid). Bot at (100,0,0), enemy behind wall at (-50,0,0).
+        let cm = world::CollisionModel::half_space([1.0, 0.0, 0.0], 0.0);
+        let mut frame = Frame::default();
+        frame.playerstate.pmove.origin = [(100.0 * 8.0) as i16, 0, 0];
+        frame.entities = vec![EntityState {
+            number: 5,
+            origin: [-50.0, 0.0, 0.0], // behind wall — no LOS
+            modelindex: 255,
+            ..Default::default()
+        }];
+        let cs = ConfigStrings::default();
+        let view = crate::perception::Worldview::from_frame(&frame, &cs, 0);
+
+        let mut driver = ready_driver();
+        // Prime: pretend the target was freshly acquired last tick with LOS.
+        driver.current_target = Some(5);
+        driver.lock_frames_remaining = 10;
+        driver.sight_grace_remaining = SIGHT_GRACE_FRAMES; // 2
+
+        // Grace frame 1: LOS absent, grace 2→1 — target kept.
+        let dec1 = driver.evaluate(&view, &BotSkill::default(), 0.0, Some(&cm));
+        assert_eq!(
+            dec1.target_entity,
+            Some(5),
+            "target kept during grace frame 1"
+        );
+
+        // Grace frame 2: LOS absent, grace 1→0 — target kept (last grace tick).
+        let dec2 = driver.evaluate(&view, &BotSkill::default(), 0.0, Some(&cm));
+        assert_eq!(
+            dec2.target_entity,
+            Some(5),
+            "target kept during grace frame 2"
+        );
+
+        // Frame 3: grace=0, LOS still absent — target dropped.
+        let dec3 = driver.evaluate(&view, &BotSkill::default(), 0.0, Some(&cm));
+        assert!(
+            dec3.target_entity.is_none(),
+            "target dropped after grace expires"
+        );
+        assert!(!dec3.should_fire, "no fire after target dropped");
     }
 }
