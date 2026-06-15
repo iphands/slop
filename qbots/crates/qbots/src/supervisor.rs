@@ -76,16 +76,30 @@ fn build_map_nav(cfg: &Config, map: &str) -> Option<MapNav> {
     let cm = Arc::new(world::CollisionModel::from_bsp(&bsp));
     let m = bsp.models.first().expect("bsp has models");
     let t0 = std::time::Instant::now();
-    let g = world::NavGraph::generate(&cm, (m.mins, m.maxs), 64.0);
+    let mut g = world::NavGraph::generate(&cm, (m.mins, m.maxs), 64.0);
+    // Seed nodes at DM spawn origins so freshly-spawned bots always have a
+    // reachable nearest node (Plan 14 T3).
+    let spawn_origins: Vec<[f32; 3]> = bsp.spawn_points().iter().map(|s| s.origin).collect();
+    let seeded = g.seed_spawns(&cm, &spawn_origins);
+    let (in_largest, total_spawns) = g.spawns_in_largest_component(&spawn_origins);
     let largest = g.components().into_iter().next().unwrap_or_default();
     tracing::info!(
         map,
         nodes = g.node_count(),
         edges = g.edge_count(),
         largest = largest.len(),
+        seeded,
         ms = t0.elapsed().as_millis() as u64,
         "nav graph ready"
     );
+    if in_largest < total_spawns {
+        tracing::warn!(
+            map,
+            in_largest,
+            total_spawns,
+            "some spawn points are not in the largest nav component"
+        );
+    }
     Some(MapNav {
         graph: Arc::new(g),
         cm,

@@ -228,6 +228,84 @@ impl NavGraph {
         result
     }
 
+    /// Seed nav nodes at DM spawn origins (Plan 14 T3). For each spawn position
+    /// that has no existing node within `STEP`, validate the position is walkable
+    /// (hull not startsolid), add it, and hull-trace-connect it to nearby nodes
+    /// (within ~128 u, same height-step constraint as `generate`). Returns the
+    /// number of nodes added.
+    pub fn seed_spawns(&mut self, cm: &CollisionModel, spawns: &[[f32; 3]]) -> usize {
+        let mut to_add: Vec<[f32; 3]> = Vec::new();
+        for &sp in spawns {
+            // Skip if an existing node (or already-queued spawn) is close enough.
+            let already = self.nodes.iter().chain(to_add.iter()).any(|n| {
+                let dx = n[0] - sp[0];
+                let dy = n[1] - sp[1];
+                let dz = n[2] - sp[2];
+                dx * dx + dy * dy + dz * dz < STEP * STEP
+            });
+            if already {
+                continue;
+            }
+            // Validate the spawn position is not embedded in solid geometry.
+            let stand = cm.trace(&sp, &sp, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+            if stand.startsolid {
+                continue;
+            }
+            to_add.push(sp);
+        }
+
+        let added = to_add.len();
+        for wp in to_add {
+            let new_idx = self.nodes.len();
+            self.nodes.push(wp);
+            self.adj.push(Vec::new());
+            // Connect to all existing nodes (pre-this-addition) within reach.
+            for other_idx in 0..new_idx {
+                let other = self.nodes[other_idx];
+                if (wp[2] - other[2]).abs() >= STEP {
+                    continue;
+                }
+                let d2 = {
+                    let dx = wp[0] - other[0];
+                    let dy = wp[1] - other[1];
+                    dx * dx + dy * dy
+                };
+                if d2 > 128.0 * 128.0 {
+                    continue;
+                }
+                let t = cm.trace(&wp, &other, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+                if t.fraction < 1.0 || t.startsolid {
+                    continue;
+                }
+                let cost = dist(&wp, &other);
+                self.adj[new_idx].push((other_idx, cost));
+                self.adj[other_idx].push((new_idx, cost));
+            }
+        }
+        added
+    }
+
+    /// Check how many of the given spawn positions are in the largest connected
+    /// component. Returns `(in_largest, total)`. Used to log a warning when spawns
+    /// are unreachable after `seed_spawns`.
+    pub fn spawns_in_largest_component(&self, spawns: &[[f32; 3]]) -> (usize, usize) {
+        if spawns.is_empty() {
+            return (0, 0);
+        }
+        let largest: std::collections::HashSet<usize> = self
+            .components()
+            .into_iter()
+            .next()
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        let connected = spawns
+            .iter()
+            .filter(|sp| self.nearest(sp).is_some_and(|i| largest.contains(&i)))
+            .count();
+        (connected, spawns.len())
+    }
+
     /// Sum of base edge costs along a node path (diagnostics / degeneracy check).
     pub fn path_len(&self, path: &[usize]) -> f32 {
         path.windows(2)
@@ -496,6 +574,47 @@ mod tests {
             "smoothed is not longer than original"
         );
         assert_eq!(smoothed, vec![0, 3], "open path collapses to [A, D]");
+    }
+
+    /// A spawn off the grid is seeded and connected to the existing graph.
+    #[test]
+    fn seed_spawns_adds_and_connects() {
+        // One existing node at origin; all-clear collision model.
+        let cm = CollisionModel::half_space([1.0, 0.0, 0.0], -10000.0);
+        let mut g = NavGraph::from_raw(vec![[0.0, 0.0, 0.0]], vec![vec![]]);
+        // Spawn 80 u away (within 128u connect radius; no existing node within STEP=24).
+        let n_before = g.node_count();
+        let added = g.seed_spawns(&cm, &[[80.0, 0.0, 0.0]]);
+        assert_eq!(added, 1, "one node seeded");
+        assert_eq!(g.node_count(), n_before + 1, "graph grew");
+        // New node should be connected to node 0.
+        assert!(
+            g.adj[1].iter().any(|&(nb, _)| nb == 0),
+            "seeded node connected to existing graph"
+        );
+    }
+
+    /// A spawn already close to an existing node is not double-seeded.
+    #[test]
+    fn seed_spawns_skips_nearby_node() {
+        let cm = CollisionModel::half_space([1.0, 0.0, 0.0], -10000.0);
+        let mut g = NavGraph::from_raw(vec![[0.0, 0.0, 0.0]], vec![vec![]]);
+        // Spawn only 5 u away — within STEP=24, should be skipped.
+        let added = g.seed_spawns(&cm, &[[5.0, 0.0, 0.0]]);
+        assert_eq!(added, 0, "nearby spawn not duplicated");
+    }
+
+    /// spawns_in_largest_component counts correctly.
+    #[test]
+    fn spawns_connectivity_counts_correct() {
+        // Two disconnected nodes; spawn nearest to node 0 (in largest component by tie).
+        let g = NavGraph::from_raw(
+            vec![[0.0, 0.0, 0.0], [1000.0, 0.0, 0.0]],
+            vec![vec![], vec![]],
+        );
+        let (connected, total) = g.spawns_in_largest_component(&[[1.0, 0.0, 0.0]]);
+        assert_eq!(total, 1);
+        assert_eq!(connected, 1, "spawn maps to some component");
     }
 
     /// Path of length ≤2 is returned unchanged.
