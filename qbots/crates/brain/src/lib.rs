@@ -19,6 +19,7 @@ pub mod observed;
 pub mod perception;
 pub mod recorder;
 pub mod skill;
+pub mod steer;
 pub mod weapons;
 
 pub use combat::{CombatDecision, CombatDriver};
