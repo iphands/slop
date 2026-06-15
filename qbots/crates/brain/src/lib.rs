@@ -16,6 +16,7 @@ pub mod move_ctrl;
 pub mod nav;
 pub mod observed;
 pub mod perception;
+pub mod recorder;
 pub mod skill;
 pub mod weapons;
 

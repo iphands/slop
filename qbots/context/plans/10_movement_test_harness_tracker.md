@@ -1,7 +1,7 @@
 # Plan 10 — Movement Test Harness — Tracker
 
 ## Overview
-- Status: 20% complete
+- Status: 35% complete
 - Start date: 2026-06-15
 - Goal: measurable movement quality (`spawn-to-spawn` / `spawn-to-weapon` → structured log)
 
@@ -26,8 +26,8 @@ Run against the **current** steering code (pre-Plans 11–14). These numbers are
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
 | 1 | T1: parse `LUMP_ENTITIES` + `spawn_points()` + `find_class()` | `world/src/bsp.rs`, `world/src/lib.rs` | done | 4 new tests green; clippy clean |
-| 2 | T2: `MovementRecorder` + detectors + unit tests | `brain/src/recorder.rs`, `brain/src/lib.rs`, `brain/tests/recorder.rs` | pending | |
-| 3 | T3: log format + `dump()` + schema doc | `brain/src/recorder.rs` | pending | |
+| 2 | T2: `MovementRecorder` + detectors + unit tests | `brain/src/recorder.rs`, `brain/src/lib.rs`, `brain/tests/recorder.rs` | done | 7 tests green; clippy clean; detectors via `WallProbe` trait (prod `CmWallProbe`, test stubs) |
+| 3 | T3: log format + `dump()` + schema doc | `brain/src/recorder.rs` | pending | dump() already writes header+rows+SUMMARY; T3 = schema doc block + column polish |
 | 4 | T4: `SpawnToSpawn` / `SpawnToWeapon` CLI + `scenario.rs` + `scenario_mode` in `bot_task` | `qbots/src/main.rs`, `qbots/src/scenario.rs` | pending | |
 | 5 | T4b: factor (or duplicate) connect handshake for reuse | `qbots/src/supervisor.rs` | pending | Open Q6 |
 | 6 | T5: baseline runs + `.gitignore /logs/` + docs | `.gitignore`, `qbots/CLAUDE.md` | pending | fill Baseline table |
