@@ -210,6 +210,7 @@ pub async fn run_scenario(
                             // Drive nav to the goal — no combat.
                             nav_driver.update(pos);
                             nav_driver.set_goal(NavGoal::Position(Vec3::from(goal)), pos);
+                            nav_driver.smooth_with_cm(&cm, pos);
 
                             // dt from observed serverframe delta (clamped).
                             let current_sf = frame.serverframe;
