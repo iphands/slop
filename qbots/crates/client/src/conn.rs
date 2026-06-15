@@ -259,6 +259,14 @@ impl Conn {
         let nc = self.netchan.as_mut()?;
         Some(nc.transmit(&payload))
     }
+
+    /// Build a disconnect packet to send to the server before teardown.
+    /// Sends `clc_stringcmd "disconnect"` three times (per CL_Disconnect in yquake2).
+    pub fn disconnect(&mut self) -> Option<Bytes> {
+        let nc = self.netchan.as_mut()?;
+        let payload = b"disconnect";
+        Some(nc.transmit(payload))
+    }
 }
 
 /// Build a connectionless datagram carrying `line`.

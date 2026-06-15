@@ -8,13 +8,9 @@ mod config;
 use std::net::SocketAddr;
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use config::Config;
-use q2proto::Usercmd;
-use tokio::net::UdpSocket;
-use tokio::time;
 
 #[derive(Parser)]
 #[command(
@@ -85,8 +81,10 @@ async fn resolve_addr(addr: &str) -> Result<SocketAddr, String> {
     }
 }
 
-/// Connect a single bot and drive it with the full brain (FSM + nav + combat).
-async fn run_brain_bot(
+
+/// Wrapper that adds signal handling for graceful shutdown.
+/// Sends a disconnect packet before teardown when SIGINT/SIGTERM received.
+async fn run_brain_bot_with_shutdown(
     addr: SocketAddr,
     name: &str,
     qport: u16,
@@ -98,7 +96,11 @@ async fn run_brain_bot(
         BotSkill, CombatDriver, MovementController, MovementIntent, NavGoal, NavigationDriver,
     };
     use client::{Conn, ConnState};
-
+    use q2proto::Usercmd;
+    use tokio::net::UdpSocket;
+    use tokio::time;
+    use std::time::Duration;
+    
     let sock = UdpSocket::bind("0.0.0.0:0").await?;
     sock.connect(addr).await?;
     let mut conn = Conn::new(addr, name, qport);
@@ -119,6 +121,13 @@ async fn run_brain_bot(
     let mut roam_nodes: Vec<usize> = Vec::new();
     let mut roam_idx: usize = 0;
     let mut map_loaded = false;
+    
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .map_err(|e| std::io::Error::other(format!("failed to create SIGTERM handler: {e}")))?;
+    let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+        .map_err(|e| std::io::Error::other(format!("failed to create SIGINT handler: {e}")))?;
+    
+    let mut shutting_down = false;
 
     loop {
         tokio::select! {
@@ -130,20 +139,15 @@ async fn run_brain_bot(
                 if conn.state() == ConnState::Disconnected {
                     break;
                 }
-
             }
-
+            
             _ = ticker.tick() => {
                 ticks = ticks.wrapping_add(1);
 
-                // Clone what we need before any mutable borrow.
                 let (frame_opt, cs) = (conn.frame.clone(), conn.configstrings().clone());
                 let state = conn.state();
                 let playernum = conn.serverdata.as_ref().map(|sd| sd.playernum).unwrap_or(0);
 
-                // Lazy-load nav graph from CS_MODELS+1 (index 33 = "maps/q2dm7.bsp").
-                // CS_NAME in svc_serverdata is the display name, not the filename.
-                // Configstrings arrive over multiple packets so we retry each tick.
                 if !map_loaded && state == ConnState::Active {
                     if let Some(bsp_path) = cs.get(33) {
                         if !bsp_path.is_empty() {
@@ -193,13 +197,11 @@ async fn run_brain_bot(
 
                         let mut mv = MovementIntent::new();
 
-                        // Aim + fire when we have a target.
                         if combat_dec.should_fire {
                             mv.look_at(combat_dec.aim_yaw, combat_dec.aim_pitch);
                             mv.attack();
                         }
 
-                        // Navigation: set FSM goal or cycle roam waypoints.
                         let pos = view.self_state().origin;
                         if let Some(nav) = nav_driver.as_mut() {
                             nav.update(pos);
@@ -208,7 +210,6 @@ async fn run_brain_bot(
                                 g
                             } else if !roam_nodes.is_empty() {
                                 if ticks.is_multiple_of(50) {
-                                    // Advance to a well-spread roam target (skip ~1/7 of nodes).
                                     roam_idx = (roam_idx + roam_nodes.len() / 7 + 1)
                                         % roam_nodes.len();
                                 }
@@ -227,8 +228,6 @@ async fn run_brain_bot(
                                 }
                                 mv.move_forward(400.0);
                             } else if !combat_dec.should_fire {
-                                // No path from current position (disconnected component).
-                                // Wander forward until we reach the main nav region.
                                 mv.move_forward(200.0);
                             }
 
@@ -274,6 +273,25 @@ async fn run_brain_bot(
                     }
                 }
             }
+            
+            _ = sigterm.recv(), if !shutting_down => {
+                eprintln!("qbots: received SIGTERM, shutting down...");
+                shutting_down = true;
+            }
+            _ = sigint.recv(), if !shutting_down => {
+                eprintln!("qbots: received SIGINT, shutting down...");
+                shutting_down = true;
+            }
+        }
+        
+        if shutting_down && conn.state() == ConnState::Active {
+            if let Some(pkt) = conn.disconnect() {
+                let _ = sock.send(&pkt).await;
+                let _ = sock.send(&pkt).await;
+                let _ = sock.send(&pkt).await;
+            }
+            time::sleep(Duration::from_millis(100)).await;
+            break;
         }
     }
     Ok(())
@@ -292,6 +310,28 @@ async fn main() -> ExitCode {
     };
 
     match cli.cmd {
+        Cmd::ConnectOne { addr, name, qport } => {
+            let name = name.unwrap_or_else(|| "qbots".to_string());
+            let qport = qport.unwrap_or_else(default_qport);
+            let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
+            let addr = match resolve_addr(&addr_str).await {
+                Ok(a) => a,
+                Err(e) => {
+                    eprintln!("qbots: {e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            println!("qbots: connecting '{name}' to {addr} (qport {qport})…  Ctrl-C to stop.");
+            
+            // Set up signal handling for graceful shutdown
+            match run_brain_bot_with_shutdown(addr, &name, qport, &cfg).await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("qbots: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Cmd::Config => {
             println!("server      : {}", cfg.server_addr());
             println!("server_cfg  : {}", cfg.paths.server_cfg.display());
@@ -528,25 +568,5 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        Cmd::ConnectOne { addr, name, qport } => {
-            let name = name.unwrap_or_else(|| "qbots".to_string());
-            let qport = qport.unwrap_or_else(default_qport);
-            let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
-            let addr = match resolve_addr(&addr_str).await {
-                Ok(a) => a,
-                Err(e) => {
-                    eprintln!("qbots: {e}");
-                    return ExitCode::FAILURE;
-                }
-            };
-            println!("qbots: connecting '{name}' to {addr} (qport {qport})…  Ctrl-C to stop.");
-            match run_brain_bot(addr, &name, qport, &cfg).await {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(e) => {
-                    eprintln!("qbots: {e}");
-                    ExitCode::FAILURE
-                }
-            }
-        }
     }
 }
