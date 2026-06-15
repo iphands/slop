@@ -24,6 +24,9 @@ use tokio::time;
 use crate::parse::{parse_message, ConfigStrings, ServerData, SvcEvent};
 use crate::{Netchan, Userinfo};
 
+/// Max `svc_print` lines buffered between ticks (oldest dropped past this).
+const PRINT_BUFFER_CAP: usize = 128;
+
 /// Connection lifecycle states (ports the `ca_*` enum, `client/header/client.h:194`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnState {
@@ -52,6 +55,9 @@ pub struct Conn {
     /// Most recently decoded server frame (our state + visible world).
     pub frame: Option<Frame>,
     begin_queued: bool,
+    /// Accumulated `svc_print` lines (obituaries, chat, MOTD) since the last
+    /// [`Conn::drain_prints`]. Capped so a print burst can't grow unbounded.
+    prints: Vec<String>,
 }
 
 impl Conn {
@@ -69,6 +75,7 @@ impl Conn {
             ring: FrameRing::new(),
             frame: None,
             begin_queued: false,
+            prints: Vec::new(),
         }
     }
 
@@ -181,7 +188,15 @@ impl Conn {
                     }
                     // Other stufftext ("kick", "cmd startdlights", etc.) is ignored.
                 }
-                Ok(SvcEvent::Print { .. }) | Ok(SvcEvent::Nop) => {}
+                Ok(SvcEvent::Print { text, .. }) => {
+                    self.prints.push(text);
+                    // Cap so a MOTD/chat burst between ticks can't grow this.
+                    if self.prints.len() > PRINT_BUFFER_CAP {
+                        let drop_n = self.prints.len() - PRINT_BUFFER_CAP;
+                        self.prints.drain(0..drop_n);
+                    }
+                }
+                Ok(SvcEvent::Nop) => {}
                 Ok(SvcEvent::Disconnect) => {
                     self.state = ConnState::Disconnected;
                     break;
@@ -237,6 +252,13 @@ impl Conn {
     /// Access the current configstrings table.
     pub fn configstrings(&self) -> &ConfigStrings {
         &self.configstrings
+    }
+
+    /// Drain `svc_print` lines accumulated since the last call (obituaries, chat,
+    /// MOTD). The brain feeds these to the danger heatmap (Plan 08 T1). Returns
+    /// the lines in arrival order; the buffer is cleared.
+    pub fn drain_prints(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.prints)
     }
 
     /// Our player's world-space origin from the most recent frame, if any.

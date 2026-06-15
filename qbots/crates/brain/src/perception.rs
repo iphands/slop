@@ -11,6 +11,15 @@ use q2proto::{Frame, PlayerState};
 /// Configstring index where the models table starts (`CS_MODELS`, `shared.h:1193`).
 const CS_MODELS: usize = 32;
 
+/// `CS_PLAYERSKINS` — start of the per-client infostring table (`shared.h:1208`).
+/// Derived for yquake2 (MAX_CLIENTS = MAX_MODELS = MAX_SOUNDS = MAX_IMAGES =
+/// MAX_LIGHTSTYLES = MAX_ITEMS = 256): `CS_MODELS(32) + 256·5 = 1312`.
+/// Validated against `MAX_CONFIGSTRINGS = 2080` (CS_GENERAL = 1312 + 256 = 1568;
+/// + MAX_GENERAL(512) = 2080 ✓ — see `context/distilled.md`).
+pub const CS_PLAYERSKINS: usize = 1312;
+/// `MAX_CLIENTS` (`shared.h:184`) — bounds valid client slots for name lookup.
+const MAX_CLIENTS: usize = 256;
+
 /// Stats indices (from shared.h:1130-1148)
 const STAT_HEALTH: usize = 1;
 #[allow(dead_code)]
@@ -344,6 +353,33 @@ impl SelfState {
     }
 }
 
+/// A player's display name from their `CS_PLAYERSKINS` infostring. `entity_number`
+/// is 1-based (the player's slot + 1, as carried in `svc_packetentities`). Used
+/// by the heatmap observer to attribute obituary deaths to a victim's name.
+/// Returns `None` for non-client entity numbers or unset skin strings.
+pub fn player_name(cs: &ConfigStrings, entity_number: i32) -> Option<String> {
+    if !(1..=MAX_CLIENTS as i32).contains(&entity_number) {
+        return None;
+    }
+    let idx = CS_PLAYERSKINS + (entity_number - 1) as usize;
+    cs.get(idx)
+        .and_then(|info| infostring_value(info, "name").map(str::to_owned))
+}
+
+/// Read one `\key\value\` pair out of a Q2 infostring. Handles both leading and
+/// absent leading backslashes (the skin configstring has none).
+fn infostring_value<'a>(info: &'a str, key: &str) -> Option<&'a str> {
+    let mut parts = info.split('\\').filter(|s| !s.is_empty());
+    while let Some(k) = parts.next() {
+        match parts.next() {
+            Some(v) if k.eq_ignore_ascii_case(key) => return Some(v),
+            // No value for this key (trailing key) → stop.
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Classify an entity based on its model string.
 fn classify_model(model_str: &str) -> Option<EntityClass> {
     let s = model_str.to_lowercase();
@@ -393,5 +429,23 @@ mod tests {
     fn test_stale_threshold() {
         const { assert!(STALE_THRESHOLD > 0) };
         const { assert!(STALE_THRESHOLD <= 20) }; // Reasonable decay
+    }
+
+    #[test]
+    fn player_name_from_skin_infostring() {
+        let mut cs = ConfigStrings::default();
+        // entity_number=1 → CS_PLAYERSKINS+0. Infostring with no leading backslash.
+        cs.set(CS_PLAYERSKINS, "name\\Killer\\skin\\male/grunt\\hand\\0");
+        assert_eq!(player_name(&cs, 1).as_deref(), Some("Killer"));
+
+        // entity_number=2 → CS_PLAYERSKINS+1. Infostring with leading backslash.
+        cs.set(CS_PLAYERSKINS + 1, "\\name\\Foe\\skin\\female/cyborg");
+        assert_eq!(player_name(&cs, 2).as_deref(), Some("Foe"));
+
+        // Out-of-range / unset → None.
+        assert_eq!(player_name(&cs, 0), None);
+        assert_eq!(player_name(&cs, -1), None);
+        assert_eq!(player_name(&cs, MAX_CLIENTS as i32 + 1), None);
+        assert_eq!(player_name(&cs, 5), None); // slot never set
     }
 }

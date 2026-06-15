@@ -1,7 +1,7 @@
 # Danger/Popularity Heatmap Nav Overlay — Tracker
 
 ## Overview
-- Status: 0% complete
+- Status: ~35% complete
 - Start date: 2026-06-14
 - Plan: `08_danger_heatmap_nav.md`
 - Depends on: Plan 05 (world: nav graph + trace), Plan 06 (brain: perception/events)
@@ -22,9 +22,9 @@
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: event ingestion | `brain/src/observed.rs` | pending | obituary→victim last-known node; presence from deltas |
-| 2 | T2: heatmap + decay | `brain/src/heatmap.rs` | pending | exp danger decay, EMA popularity, budgeted |
+| 1 | T1: event ingestion | `brain/src/observed.rs` | done | obituary→victim last-known node (word-boundary match); presence from enemy deltas; self death/damage via health; conn surfaces svc_print |
+| 2 | T2: heatmap + decay | `brain/src/heatmap.rs` | done | exp danger decay, EMA popularity (+ independent TAU_POP decay), budgeted |
 | 3 | T3: risk-weighted A\* | `brain/src/nav.rs` | pending | `cost = base + W_d·danger − W_p·pop` |
-| 4 | T4: PVS-honest attribution | `brain/src/{heatmap,perception}.rs` | pending | only observed nodes; debug overlay |
+| 4 | T4: PVS-honest attribution | `brain/src/observed.rs` | in-progress | only observed/recent players attributed (PLAYER_NODE_TTL); debug overlay pending |
 | 5 | T5: tune + integrate | `brain/src/{lib,skill}.rs` | pending | skill-derived weights; composes with 07 T3 |
 | 6 | T6: verify | — | pending | detour + gravitation + decay |

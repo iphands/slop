@@ -77,6 +77,18 @@ impl NavGraph {
         self.adj.iter().map(|e| e.len()).sum()
     }
 
+    /// Build a graph directly from nodes + adjacency (each adjacency entry is
+    /// `(neighbor index, edge cost)`). Intended for tests that need a nav graph
+    /// without running the BSP sampler. `nodes` and `adj` must align in length.
+    pub fn from_raw(nodes: Vec<[f32; 3]>, adj: Vec<Vec<(usize, f32)>>) -> Self {
+        assert_eq!(
+            nodes.len(),
+            adj.len(),
+            "nodes and adjacency vectors must have equal length"
+        );
+        Self { nodes, adj }
+    }
+
     /// Connected components (BFS). Useful for diagnosing multi-level fragmentation.
     pub fn components(&self) -> Vec<Vec<usize>> {
         let n = self.nodes.len();

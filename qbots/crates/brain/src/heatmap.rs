@@ -16,8 +16,14 @@
 /// Danger time-constant: a node's danger decays to ~37% over this many seconds.
 /// Short-term "this place is hot right now." (`distilled/eraser.md` §10/§13-D.)
 pub const TAU_DANGER: f32 = 45.0;
-/// Popularity EMA rate (per second). Slower → minute-scale "busy lane."
+/// Popularity EMA rate (per second). Drives the per-tick heating toward 1 when
+/// an enemy is seen at a node (`sample_presence`). Slower → minute-scale heat.
 pub const POP_K: f32 = 0.08;
+/// Popularity decay time-constant: a quieted lane's popularity decays to ~37%
+/// over this many seconds. Applied uniformly in [`Heatmap::decay`], so the
+/// observer only needs to *heat* present nodes — cooling is automatic. Longer
+/// than `TAU_DANGER` (popularity is a slower signal than "I just died here").
+pub const TAU_POP: f32 = 90.0;
 /// Bump applied to a node's danger on our own death there.
 pub const DANGER_BUMP_DEATH: f32 = 1.0;
 /// Smaller bump when we merely take damage near a node (we're under fire).
@@ -85,13 +91,18 @@ impl Heatmap {
         }
     }
 
-    /// Advance decay over `dt` seconds. Danger cools exponentially. Popularity is
-    /// **not** decayed here — its EMA in `sample_presence` already converges back
-    /// to 0 when a node stops being sampled (a quieted lane cools off on its own).
+    /// Advance decay over `dt` seconds. Danger cools exponentially (short-term
+    /// "this place is hot right now"); popularity cools on its own slower
+    /// time-constant (`TAU_POP`) so a quieted lane fades even if the observer
+    /// stops sampling it. Heating still happens in [`Self::sample_presence`].
     pub fn decay(&mut self, dt: f32) {
         let danger_factor = (-dt / TAU_DANGER).exp();
+        let pop_factor = (-dt / TAU_POP).exp();
         for d in &mut self.danger {
             *d *= danger_factor;
+        }
+        for p in &mut self.popularity {
+            *p *= pop_factor;
         }
     }
 
@@ -159,6 +170,25 @@ mod tests {
         assert!(
             h.popularity(0) < 0.05,
             "absent node trends to 0, got {}",
+            h.popularity(0)
+        );
+    }
+
+    #[test]
+    fn popularity_decays_in_decay() {
+        // A node that was popular but is no longer sampled cools off via decay(),
+        // even though the observer never calls sample_presence(false) for it.
+        let mut h = Heatmap::new(1);
+        for _ in 0..1000 {
+            h.sample_presence(0, true, 0.1);
+        }
+        let hot = h.popularity(0);
+        assert!(hot > 0.95);
+        // After one popularity time-constant, popularity ~ 37%.
+        h.decay(TAU_POP);
+        assert!(
+            (h.popularity(0) - hot * (-1.0_f32).exp()).abs() < 0.01,
+            "popularity decays to ~37%, got {}",
             h.popularity(0)
         );
     }
