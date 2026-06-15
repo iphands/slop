@@ -10,6 +10,7 @@ use q2proto::{Frame, PlayerState};
 
 /// Stats indices (from shared.h:1130-1148)
 const STAT_HEALTH: usize = 1;
+#[allow(dead_code)]
 const STAT_AMMO: usize = 3;
 const STAT_ARMOR: usize = 5;
 
