@@ -16,6 +16,8 @@ use tokio::time;
 
 use crate::config::Config;
 
+pub use crate::stats::FleetStats;
+
 /// A cached, shared nav graph + roam nodes for a map. Built once per map name;
 /// cloned cheaply as `Arc` to every bot.
 #[derive(Clone)]
@@ -140,6 +142,16 @@ struct Reconnect {
     max_attempts: u32,
 }
 
+/// Shared, clone-cheap fleet infrastructure handed to each bot's supervisor loop
+/// (Plan 09): the nav cache, shutdown signal, and kill/death tally. Bundled so
+/// the per-bot dispatcher stays under clippy's argument count.
+#[derive(Clone)]
+struct FleetShared {
+    nav: NavCache,
+    shutdown: Shutdown,
+    stats: FleetStats,
+}
+
 /// Run the full fleet from config: shared nav cache + shutdown, one task per bot,
 /// staggered connects, reconnect-on-disconnect with backoff. Returns when all
 /// bot tasks have exited (typically after shutdown is requested).
@@ -168,7 +180,13 @@ pub async fn run_fleet(cfg: Arc<Config>, addr: SocketAddr) -> std::io::Result<()
 
     let nav_cache = NavCache::new();
     let shutdown = Shutdown::new();
+    let stats = FleetStats::new();
     let _signals = spawn_signal_listener(shutdown.clone());
+    let shared = FleetShared {
+        nav: nav_cache,
+        shutdown: shutdown.clone(),
+        stats: stats.clone(),
+    };
 
     tracing::info!(count, "launching fleet to {addr}");
 
@@ -177,24 +195,31 @@ pub async fn run_fleet(cfg: Arc<Config>, addr: SocketAddr) -> std::io::Result<()
         let name = cfg.fleet.bot_name(i);
         let qport = cfg.fleet.bot_qport(i);
         let cfg = Arc::clone(&cfg);
-        let nav = nav_cache.clone();
-        let sd = shutdown.clone();
+        let shared = shared.clone();
         tasks.push(tokio::spawn(async move {
-            bot_supervisor_loop(addr, name, qport, cfg, nav, sd, reconnect).await;
+            bot_supervisor_loop(addr, name, qport, cfg, shared, reconnect).await;
         }));
         // Stagger connects so we don't burst the server's connectionless handler.
         time::sleep(Duration::from_millis(stagger)).await;
     }
 
-    // Periodic fleet heartbeat (liveness + count). Per-bot events carry the bot
-    // name via the `bot` tracing span, so individual bots are filterable in logs.
+    // Periodic fleet heartbeat (liveness + count + rolling kill/death tally).
+    // Per-bot events carry the bot name via the `bot` tracing span, so individual
+    // bots are filterable in logs.
     let sd = shutdown.clone();
+    let hb_stats = stats.clone();
     let status = tokio::spawn(async move {
         let mut interval = time::interval(Duration::from_secs(30));
         interval.tick().await; // skip immediate first tick
         loop {
             interval.tick().await;
-            tracing::info!(total = count, "fleet heartbeat");
+            let totals = hb_stats.totals();
+            tracing::info!(
+                bots = count,
+                kills = totals.kills,
+                deaths = totals.deaths,
+                "fleet heartbeat"
+            );
             if sd.requested() {
                 break;
             }
@@ -205,6 +230,9 @@ pub async fn run_fleet(cfg: Arc<Config>, addr: SocketAddr) -> std::io::Result<()
         let _ = t.await;
     }
     status.abort();
+    // All bots have now disconnected (each sends `disconnect` on shutdown before
+    // exiting) — emit the final tally.
+    log_final_stats(&stats);
     tracing::info!("fleet exited");
     Ok(())
 }
@@ -216,17 +244,26 @@ async fn bot_supervisor_loop(
     name: String,
     qport: u16,
     cfg: Arc<Config>,
-    nav: NavCache,
-    shutdown: Shutdown,
+    shared: FleetShared,
     reconnect: Reconnect,
 ) {
     let mut attempts: u32 = 0;
     let mut backoff_ms: u64 = 1000;
     loop {
-        if shutdown.requested() {
+        if shared.shutdown.requested() {
             return;
         }
-        match crate::bot_task(addr, &name, qport, &cfg, &nav, &shutdown).await {
+        match crate::bot_task(
+            addr,
+            &name,
+            qport,
+            &cfg,
+            &shared.nav,
+            &shared.shutdown,
+            &shared.stats,
+        )
+        .await
+        {
             Ok(()) => {
                 tracing::info!(%name, "bot task exited");
             }
@@ -234,7 +271,7 @@ async fn bot_supervisor_loop(
                 tracing::warn!(%name, "bot task error: {e}");
             }
         }
-        if !reconnect.enabled || shutdown.requested() {
+        if !reconnect.enabled || shared.shutdown.requested() {
             return;
         }
         attempts += 1;
@@ -243,7 +280,8 @@ async fn bot_supervisor_loop(
             return;
         }
         tracing::info!(%name, backoff_ms, "reconnecting");
-        shutdown
+        shared
+            .shutdown
             .sleep_or_cancel(Duration::from_millis(backoff_ms))
             .await;
         backoff_ms = (backoff_ms * 2).min(15_000);
@@ -260,6 +298,25 @@ pub async fn run_single(
 ) -> std::io::Result<()> {
     let nav = NavCache::new();
     let shutdown = Shutdown::new();
+    let stats = FleetStats::new();
     let _signals = spawn_signal_listener(shutdown.clone());
-    crate::bot_task(addr, name, qport, cfg, &nav, &shutdown).await
+    let res = crate::bot_task(addr, name, qport, cfg, &nav, &shutdown, &stats).await;
+    // bot_task has disconnected (or errored) — emit the single-bot tally.
+    log_final_stats(&stats);
+    res
+}
+
+/// Emit the fleet's final kill/death tally: totals + a per-bot breakdown (frag
+/// leaders first). Call after the fleet has disconnected.
+fn log_final_stats(stats: &FleetStats) {
+    let totals = stats.totals();
+    tracing::info!(
+        kills = totals.kills,
+        deaths = totals.deaths,
+        bots = stats.bot_count(),
+        "fleet final stats"
+    );
+    for (name, t) in stats.snapshot() {
+        tracing::info!("{:>3} kills / {:>3} deaths  {}", t.kills, t.deaths, name);
+    }
 }

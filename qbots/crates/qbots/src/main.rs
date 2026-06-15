@@ -5,6 +5,7 @@
 //! `config.yaml`. The fleet supervisor + per-bot task live in [`supervisor`].
 
 mod config;
+mod stats;
 mod status;
 mod supervisor;
 
@@ -187,6 +188,7 @@ pub(crate) async fn bot_task(
     cfg: &Config,
     nav_cache: &supervisor::NavCache,
     shutdown: &supervisor::Shutdown,
+    stats: &supervisor::FleetStats,
 ) -> std::io::Result<()> {
     use brain::fsm::{BehaviorIntent, BehaviorState};
     use brain::nav::NavGoal;
@@ -204,6 +206,10 @@ pub(crate) async fn bot_task(
     // per-bot filterable (Plan 09 T3).
     let span = tracing::info_span!("bot", %name, qport);
     let _enter = span.enter();
+
+    // Register this bot with the fleet tally so it appears in the report even
+    // if it never frags/dies (Plan 09 observability).
+    stats.register(name);
 
     let sock = UdpSocket::bind("0.0.0.0:0").await?;
     sock.connect(addr).await?;
@@ -353,6 +359,7 @@ pub(crate) async fn bot_task(
                                     combat.on_respawn();
                                     // Eraser auto-skill: ease down after a death.
                                     skill.on_death();
+                                    stats.record_death(name);
                                     // Plan 08: record where we died (highest-confidence
                                     // danger) and force a replan so the new path avoids it.
                                     let death_pos = last_alive_pos
@@ -385,6 +392,7 @@ pub(crate) async fn bot_task(
                             if current_frags > prev {
                                 tracing::info!(frags = current_frags, gained = current_frags - prev, "*** FRAG ***");
                                 skill.on_kill();
+                                stats.record_kill(name);
                             }
                         }
                         last_frags = Some(current_frags);
