@@ -189,7 +189,7 @@ pub(crate) async fn bot_task(
     let mut fsm = BehaviorState::Roam;
     let mut combat = CombatDriver::new();
     let mut move_ctrl = MovementController::new();
-    let skill = BotSkill::default();
+    let mut skill = BotSkill::default();
     let mut nav_driver: Option<NavigationDriver> = None;
     let mut roam_nodes: Vec<usize> = Vec::new();
     let mut roam_idx: usize = 0;
@@ -306,6 +306,8 @@ pub(crate) async fn bot_task(
                                     // and the server reseeds delta_angles; let the
                                     // next frame's playerstate re-feed both.
                                     combat.on_respawn();
+                                    // Eraser auto-skill: ease down after a death.
+                                    skill.on_death();
                                 }
                             } else if current_health > *prev && *prev > 0 {
                                 let healed = current_health - *prev;
@@ -324,6 +326,7 @@ pub(crate) async fn bot_task(
                         if let Some(prev) = last_frags {
                             if current_frags > prev {
                                 tracing::info!(frags = current_frags, gained = current_frags - prev, "*** FRAG ***");
+                                skill.on_kill();
                             }
                         }
                         last_frags = Some(current_frags);
@@ -336,8 +339,7 @@ pub(crate) async fn bot_task(
                         // Health tracking is done above, before creating the view
                         // No need to call view.detect_damage() here
                         let jitter = (ticks as f32) * 0.1;
-                        let combat_dec =
-                            combat.evaluate(&view, skill.aim_jitter_factor(), jitter);
+                        let combat_dec = combat.evaluate(&view, &skill, jitter);
 
                         // Pass combat target to FSM for navigation goal
                         let fsm_intent = if let Some(target) = combat_dec.target_entity {

@@ -19,11 +19,50 @@ pub enum Personality {
     Aggressive,
 }
 
+/// Eraser combat ratings (1.0-5.0). Driven by the master skill level via
+/// [`BotSkill::adjust_to_skill`] (Eraser `bot_misc.c:1065`).
+///
+/// - `accuracy` → aim jitter (`aim.rs`).
+/// - `combat`   → reaction delay, FOV, dodge gating.
+/// - `aggression` → item-search frequency, chase-abort.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Ratings {
+    pub accuracy: f32,
+    pub aggression: f32,
+    pub combat: f32,
+}
+
+impl Ratings {
+    /// Clamp each rating into Eraser's [1, 5] range.
+    fn clamped(self) -> Self {
+        Self {
+            accuracy: self.accuracy.clamp(1.0, 5.0),
+            aggression: self.aggression.clamp(1.0, 5.0),
+            combat: self.combat.clamp(1.0, 5.0),
+        }
+    }
+}
+
+impl Default for Ratings {
+    fn default() -> Self {
+        // Mid-range "balanced" baseline before skill remap.
+        Self {
+            accuracy: 3.0,
+            aggression: 3.0,
+            combat: 3.0,
+        }
+    }
+}
+
 /// Per-bot skill/personality parameters.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BotSkill {
     /// Skill level (0-10). Affects aim accuracy and reaction time.
     pub skill: SkillLevel,
+    /// Live auto-skill accumulator (drifts on kill/death; initialized to `skill`).
+    pub auto_skill: f32,
+    /// Eraser combat ratings (post-`adjust_to_skill`).
+    pub ratings: Ratings,
     /// Personality type.
     pub personality: Personality,
     /// Preferred weapon (None = auto-select).
@@ -31,17 +70,28 @@ pub struct BotSkill {
     /// Reaction time multiplier (1.0 = normal, >1.0 = slower).
     /// Reserved for future use; currently not applied to calculations.
     pub reaction_time: f32,
+    /// Eraser `quad_freak`: over-values the Quad Damage item when set.
+    pub quad_freak: bool,
+    /// Eraser `camper`: dwells at a camp node when set (no pressing enemy/item).
+    pub camper: bool,
 }
 
 impl BotSkill {
-    /// Create a new BotSkill with defaults.
+    /// Create a new BotSkill with defaults, then apply the Eraser skill remap
+    /// so ratings reflect the starting skill level.
     pub fn new(skill: SkillLevel, personality: Personality) -> Self {
-        Self {
+        let mut s = Self {
             skill: skill.clamp(0, 10),
+            auto_skill: skill.clamp(0, 10) as f32,
+            ratings: Ratings::default(),
             personality,
             preferred_weapon: None,
             reaction_time: 1.0,
-        }
+            quad_freak: false,
+            camper: false,
+        };
+        s.adjust_to_skill();
+        s
     }
 }
 
@@ -52,6 +102,45 @@ impl Default for BotSkill {
 }
 
 impl BotSkill {
+    /// Eraser `AdjustRatingsToSkill` (`bot_misc.c:1065`): map the live skill to
+    /// the ratings axis (1..5), then `acc/cmb += (s−1)*2.5`, `aggr -= (s−1)*2.0`,
+    /// clamped to [1,5]. Higher skill → more accurate/combat-ready, less reckless.
+    pub fn adjust_to_skill(&mut self) {
+        // Map our 0-10 skill to Eraser's ~1-3 skill axis.
+        let s = 1.0 + (self.auto_skill.clamp(0.0, 10.0) / 10.0) * 2.0;
+        let delta = (s - 1.0) * 2.5;
+        let mut r = self.ratings;
+        r.accuracy += delta;
+        r.combat += delta;
+        r.aggression -= (s - 1.0) * 2.0;
+        self.ratings = r.clamped();
+    }
+
+    /// `bot_auto_skill` on our own kill (`eraser.md` §skill): bump the live skill
+    /// up (+0.2, capped so an already-strong bot doesn't runaway), re-remap ratings.
+    pub fn on_kill(&mut self) {
+        self.auto_skill = (self.auto_skill + 0.2).min(10.0);
+        self.skill = self.auto_skill.round() as u8;
+        self.adjust_to_skill();
+    }
+
+    /// `bot_auto_skill` on our death: ease the live skill down (−0.2, floor 0).
+    pub fn on_death(&mut self) {
+        self.auto_skill = (self.auto_skill - 0.2).max(0.0);
+        self.skill = self.auto_skill.round() as u8;
+        self.adjust_to_skill();
+    }
+
+    /// Current accuracy rating (1-5), used by `aim.rs` for jitter.
+    pub fn accuracy(&self) -> f32 {
+        self.ratings.accuracy
+    }
+
+    /// Current combat rating (1-5), used for reaction delay / dodge gating.
+    pub fn combat(&self) -> f32 {
+        self.ratings.combat
+    }
+
     /// Aim jitter factor based on skill (0.0-1.0).
     /// Skill 0 = max jitter (1.0), Skill 10 = no jitter (0.0).
     pub fn aim_jitter_factor(&self) -> f32 {
@@ -223,5 +312,41 @@ mod tests {
 
         registry.remove("bot1");
         assert_eq!(registry.get("bot1").skill, 5); // back to default
+    }
+
+    #[test]
+    fn adjust_to_skill_raises_accuracy_for_high_skill() {
+        let low = BotSkill::new(0, Personality::Balanced);
+        let high = BotSkill::new(10, Personality::Balanced);
+        assert!(
+            high.accuracy() > low.accuracy(),
+            "high skill → higher accuracy rating"
+        );
+        assert!(
+            high.combat() > low.combat(),
+            "high skill → higher combat rating"
+        );
+        assert!(
+            high.ratings.aggression <= low.ratings.aggression,
+            "high skill → lower aggression"
+        );
+    }
+
+    #[test]
+    fn ratings_clamped_to_1_5() {
+        let extreme = BotSkill::new(10, Personality::Balanced);
+        assert!(extreme.accuracy() <= 5.0);
+        assert!(extreme.ratings.aggression >= 1.0);
+    }
+
+    #[test]
+    fn auto_skill_drifts_on_kill_and_death() {
+        let mut s = BotSkill::new(5, Personality::Balanced);
+        let start_acc = s.accuracy();
+        s.on_kill(); // skill up → accuracy up
+        assert!(s.accuracy() >= start_acc);
+        s.on_death(); // skill back down
+        s.on_death();
+        assert!(s.accuracy() <= start_acc + 0.001 || s.auto_skill < 5.0);
     }
 }

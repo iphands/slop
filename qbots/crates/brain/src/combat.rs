@@ -11,6 +11,7 @@
 
 use crate::aim::{aim_direction, aim_hitscan, JitterRng};
 use crate::perception::{EntityClass, Worldview};
+use crate::skill::BotSkill;
 use crate::weapons::{self, Weapon};
 
 /// Frames to hold on a target before considering a switch (~0.5s at 10 Hz),
@@ -91,8 +92,14 @@ impl CombatDriver {
         self.held_weapon = Weapon::Blaster;
     }
 
-    /// Evaluate combat state and produce a decision.
-    pub fn evaluate(&mut self, view: &Worldview, skill: f32, jitter_seed: f32) -> CombatDecision {
+    /// Evaluate combat state and produce a decision. `skill` drives aim jitter
+    /// (accuracy rating), reaction delay, and combat gating.
+    pub fn evaluate(
+        &mut self,
+        view: &Worldview,
+        skill: &BotSkill,
+        jitter_seed: f32,
+    ) -> CombatDecision {
         let prev_target = self.current_target;
         let target_num = self.select_target_entity(view);
 
@@ -133,11 +140,10 @@ impl CombatDriver {
 
         let weapon = self.held_weapon;
 
-        // `skill` here is a 0-1 jitter factor (1=max miss, 0=perfect). Map to
-        // Eraser's 1-5 accuracy (5=perfect) and a 1-5 combat rating. Seed a
-        // deterministic jitter RNG.
-        let accuracy = (5.0 - skill * 4.0).clamp(1.0, 5.0);
-        let combat = (5.0 - skill * 4.0).clamp(1.0, 5.0);
+        // `skill` provides Eraser's accuracy/combat ratings (1-5, adjusted to the
+        // bot's level). Seed a deterministic jitter RNG.
+        let accuracy = skill.accuracy();
+        let combat = skill.combat();
         let mut rng = JitterRng::new(jitter_seed.to_bits());
 
         let (yaw, pitch) = if weapon.is_hitscan() {
@@ -278,7 +284,7 @@ mod tests {
         let frame = Frame::default();
         let config = ConfigStrings::default();
         let view = crate::perception::Worldview::from_frame(&frame, &config, 0);
-        let decision = driver.evaluate(&view, 0.5, 0.0);
+        let decision = driver.evaluate(&view, &BotSkill::default(), 0.0);
         assert!(!decision.should_fire);
         assert!(decision.target_entity.is_none());
         assert!(decision.weapon_request.is_none());
