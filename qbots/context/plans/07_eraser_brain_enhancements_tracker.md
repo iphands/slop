@@ -20,10 +20,10 @@
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: combat aim/lead/jitter | `brain/src/{combat,aim}.rs` | pending | per-weapon lead + `(5−acc)/5*2` jitter + ±15° pitch |
-| 2 | T2: fire timing + weapon select | `brain/src/weapons.rs` | pending | intervals, reaction, priority lists, 0.9 s lockout |
+| 1 | T1: combat aim/lead/jitter | `brain/src/{combat,aim}.rs` | done | per-weapon lead (RL/HB/GL/BFG), `(5−acc)/5*2` jitter, ±15° pitch; 10 tests |
+| 2 | T2: fire timing + weapon select | `brain/src/weapons.rs` | partial | weapon select reworked in plan 06 (use stringcmd); fire-interval/reaction/lockout pending |
 | 3 | T3: danger avoidance | `brain/src/danger.rs` | pending | rocket(>=4)/grenade dodge, `botJumpAvoidEnt` on BSP |
 | 4 | T4: skill/personality config | `brain/src/skill.rs` | pending | 7-field, `AdjustRatingsToSkill`, auto-skill |
-| 5 | T5: FSM give-up/stuck/engage | `brain/src/{fsm,nav}.rs` | pending | 2s/4s give-up, 4u/5s stuck, RL-retreat, ideal-dist |
-| 6 | T6: fix Eraser gaps | `brain/src/{items,weapons}.rs` | pending | powerup values, BFG lead, fresh camping |
+| 5 | T5: FSM give-up/stuck/engage | `brain/src/{fsm,nav}.rs` | partial | **ideal-distance done** (hold 160u, back up <80u); 2s/4s give-up + RL-retreat pending |
+| 6 | T6: fix Eraser gaps | `brain/src/{items,weapons}.rs` | partial | BFG lead dist/400 done (T1); powerup values + camping pending |
 | 7 | T7: verify | — | pending | frags + dodge + skill tiers |

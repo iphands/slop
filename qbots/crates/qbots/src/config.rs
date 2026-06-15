@@ -1,4 +1,4 @@
-//! Load `config.yaml` — server address + on-disk Q2 paths (for BSP loading in Plan 05).
+//! Load `config.yaml` — server address, on-disk Q2 paths, and the bot fleet roster.
 
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -7,6 +7,9 @@ use std::path::PathBuf;
 pub struct Config {
     pub server: Server,
     pub paths: Paths,
+    /// Fleet roster. When present, `qbots run` launches this many bots.
+    #[serde(default)]
+    pub fleet: Fleet,
 }
 
 #[derive(Debug, Deserialize)]
@@ -19,6 +22,54 @@ pub struct Server {
 pub struct Paths {
     pub server_cfg: PathBuf,
     pub baseq2: PathBuf,
+}
+
+/// Fleet roster — describes N bots spawned by `qbots run` (Plan 09).
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct Fleet {
+    /// Number of bots to spawn.
+    pub count: usize,
+    /// Bots are named `<name_prefix><index>` (e.g. `qb0`, `qb1`).
+    pub name_prefix: String,
+    /// Base qport; bot *i* uses `qport_base + i`. Must be distinct per bot.
+    pub qport_base: u16,
+    /// Delay between successive connect starts (ms), to avoid a connectionless burst.
+    pub connect_stagger_ms: u64,
+    /// Restart a bot that disconnects (with backoff).
+    pub reconnect: bool,
+    /// Max reconnect attempts before giving up (0 = unlimited).
+    pub max_reconnects: u32,
+}
+
+impl Default for Fleet {
+    fn default() -> Self {
+        Self {
+            count: 0,
+            name_prefix: "qb".to_string(),
+            qport_base: 28000,
+            connect_stagger_ms: 250,
+            reconnect: true,
+            max_reconnects: 0,
+        }
+    }
+}
+
+impl Fleet {
+    /// The display name for bot `i`.
+    pub fn bot_name(&self, i: usize) -> String {
+        format!("{}{}", self.name_prefix, i)
+    }
+
+    /// The qport for bot `i`.
+    pub fn bot_qport(&self, i: usize) -> u16 {
+        self.qport_base.wrapping_add(i as u16)
+    }
+
+    /// Is the fleet enabled (any bots to spawn)?
+    pub fn enabled(&self) -> bool {
+        self.count > 0
+    }
 }
 
 impl Config {
@@ -63,5 +114,29 @@ paths:
             cfg.map_bsp("q2dm1"),
             PathBuf::from("/srv/q2/baseq2/maps/q2dm1.bsp")
         );
+        // Fleet defaults when absent.
+        assert!(!cfg.fleet.enabled());
+    }
+
+    #[test]
+    fn parses_fleet_roster() {
+        let yaml = "\
+server: { host: noir.lan, port: 27910 }
+paths: { server_cfg: /x, baseq2: /y }
+fleet:
+  count: 6
+  name_prefix: bot
+  qport_base: 28000
+  connect_stagger_ms: 300
+  reconnect: true
+  max_reconnects: 5
+";
+        let cfg: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(cfg.fleet.enabled());
+        assert_eq!(cfg.fleet.bot_name(0), "bot0");
+        assert_eq!(cfg.fleet.bot_name(5), "bot5");
+        assert_eq!(cfg.fleet.bot_qport(0), 28000);
+        assert_eq!(cfg.fleet.bot_qport(5), 28005);
+        assert_eq!(cfg.fleet.connect_stagger_ms, 300);
     }
 }
