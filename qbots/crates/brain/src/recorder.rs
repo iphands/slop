@@ -23,7 +23,7 @@
 //! # t frame x y z vx vy vz speed yaw pitch move_yaw face_delta wp wpd flags
 //! <t> <frame> <x> <y> <z> <vx> <vy> <vz> <speed> <yaw> <pitch> <move_yaw> <face_delta> <wp> <wpd> <flags>
 //! ...
-//! # SUMMARY reached=<0|1> elapsed=<s> distance=<u> mean_speed=<u/s> max_speed=<u/s> bumps=<n> wrong_turns=<n> hindered_frames=<n>
+//! # SUMMARY reached=<0|1> elapsed=<s> distance=<u> mean_speed=<u/s> max_speed=<u/s> bumps=<n> wrong_turns=<n> hindered_frames=<n> phantom_frames=<n>
 //! ```
 //!
 //! Columns: `t` elapsed seconds; `frame` serverframe; `x y z` origin;
@@ -31,8 +31,8 @@
 //! angles (deg); `move_yaw` velocity-heading yaw (`nan` when ~still);
 //! `face_delta` `|yaw − move_yaw|` (0 when still); `wp` current waypoint index
 //! (`-` if none); `wpd` 3D distance to it (`-`); `flags` a char run — `B` wall
-//! bump, `W` wrong turn, `H` hindered, `A` airborne, `.` none. The `SUMMARY` line
-//! is the headline: it is what Plans 11–14 must beat.
+//! bump, `W` wrong turn, `H` hindered, `A` airborne, `P` phantom-target (combat with
+//! no LOS), `.` none. The `SUMMARY` line is the headline: it is what Plans 11–14 must beat.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -89,6 +89,9 @@ pub struct FrameRecord {
     pub wrong_turn: bool,
     pub hindered: bool,
     pub grounded: bool,
+    /// True when the bot had a combat target / was firing with no confirmed LOS
+    /// (Plan 11 phantom-chase marker; always `false` in scenario mode).
+    pub phantom_target: bool,
 }
 
 /// Raw inputs the tick gathers for one frame; the recorder derives everything in
@@ -108,6 +111,10 @@ pub struct Sample {
     pub waypoint_pos: Option<[f32; 3]>,
     /// Forward intent commanded this tick ([-1,1]); drives the hindered/bump gates.
     pub intent_forward: f32,
+    /// True when the bot has a combat target or `should_fire` but no confirmed LOS
+    /// (Plan 11 T4). Marks "phantom chasing" through walls. Always `false` in
+    /// scenario mode (no combat); meaningful only in live bot ticks.
+    pub phantom_target: bool,
 }
 
 /// Geometry probe for the wall-bump detector. Production wraps
@@ -168,6 +175,9 @@ pub struct RunSummary {
     pub bumps: u32,
     pub wrong_turns: u32,
     pub hindered_frames: u32,
+    /// Frames with `phantom_target=true` (combat/fire with no LOS). Should be ~0
+    /// after Plan 11; always 0 in scenario mode (no combat).
+    pub phantom_frames: u32,
 }
 
 /// The recorder: owns the probe, the goal, and the accumulating frame log.
@@ -188,6 +198,7 @@ pub struct MovementRecorder {
     hindered_frames: u32,
     last_bump_t: f32,
     ever_reached: bool,
+    phantom_frames: u32,
 }
 
 impl MovementRecorder {
@@ -221,6 +232,7 @@ impl MovementRecorder {
             hindered_frames: 0,
             last_bump_t: f32::NEG_INFINITY,
             ever_reached: false,
+            phantom_frames: 0,
         }
     }
 
@@ -288,6 +300,10 @@ impl MovementRecorder {
             self.hindered_frames += 1;
         }
 
+        if s.phantom_target {
+            self.phantom_frames += 1;
+        }
+
         let waypoint_dist = s.waypoint_pos.map(|wp| dist3(s.origin, wp));
 
         self.frames.push(FrameRecord {
@@ -307,6 +323,7 @@ impl MovementRecorder {
             wrong_turn,
             hindered,
             grounded: s.grounded,
+            phantom_target: s.phantom_target,
         });
 
         self.prev_origin = Some(s.origin);
@@ -339,6 +356,7 @@ impl MovementRecorder {
             bumps: self.bumps,
             wrong_turns: self.wrong_turns,
             hindered_frames: self.hindered_frames,
+            phantom_frames: self.phantom_frames,
         }
     }
 
@@ -386,16 +404,16 @@ impl MovementRecorder {
         }
         let s = self.summary();
         out.push_str(&format!(
-            "# SUMMARY reached={} elapsed={:.2} distance={:.0} mean_speed={:.0} max_speed={:.0} bumps={} wrong_turns={} hindered_frames={}\n",
+            "# SUMMARY reached={} elapsed={:.2} distance={:.0} mean_speed={:.0} max_speed={:.0} bumps={} wrong_turns={} hindered_frames={} phantom_frames={}\n",
             s.reached as u8, s.elapsed_secs, s.distance, s.mean_speed, s.max_speed, s.bumps,
-            s.wrong_turns, s.hindered_frames
+            s.wrong_turns, s.hindered_frames, s.phantom_frames
         ));
         std::fs::write(path, out)
     }
 }
 
 /// Per-frame flag string: `B`=wall_bump, `W`=wrong_turn, `H`=hindered,
-/// `A`=airborne, `.`=none.
+/// `A`=airborne, `P`=phantom_target, `.`=none.
 fn flags(f: &FrameRecord) -> String {
     let mut s = String::new();
     if f.wall_bump.is_some() {
@@ -409,6 +427,9 @@ fn flags(f: &FrameRecord) -> String {
     }
     if !f.grounded {
         s.push('A');
+    }
+    if f.phantom_target {
+        s.push('P');
     }
     if s.is_empty() {
         s.push('.');
@@ -516,6 +537,7 @@ mod tests {
                 waypoint: None,
                 waypoint_pos: None,
                 intent_forward: 1.0,
+                phantom_target: false,
             });
         }
         let s = r.summary();
@@ -553,6 +575,7 @@ mod tests {
                 waypoint: None,
                 waypoint_pos: None,
                 intent_forward: 1.0,
+                phantom_target: false,
             });
         }
         let s = r.summary();
@@ -588,6 +611,7 @@ mod tests {
                 waypoint: None,
                 waypoint_pos: None,
                 intent_forward: 1.0,
+                phantom_target: false,
             });
         }
         let s = r.summary();
@@ -615,6 +639,7 @@ mod tests {
             waypoint: Some(5),
             waypoint_pos: Some(wp),
             intent_forward: 1.0,
+            phantom_target: false,
         });
         r.sample(Sample {
             t_secs: 0.1,
@@ -627,6 +652,7 @@ mod tests {
             waypoint: Some(5),
             waypoint_pos: Some(wp),
             intent_forward: 1.0,
+            phantom_target: false,
         });
         let s = r.summary();
         assert_eq!(
@@ -653,6 +679,7 @@ mod tests {
                 waypoint: None,
                 waypoint_pos: None,
                 intent_forward: 1.0,
+                phantom_target: false,
             });
             let d = r.summary().distance;
             assert!(d >= prev, "distance must not decrease");
@@ -676,6 +703,7 @@ mod tests {
             waypoint: Some(0),
             waypoint_pos: Some([1000.0, 0.0, 0.0]),
             intent_forward: 1.0,
+            phantom_target: false,
         });
         let dir = std::env::temp_dir().join(format!("qbots-rec-test-{}", std::process::id()));
         let path = dir.join("run.qb0.log");
@@ -711,6 +739,7 @@ mod tests {
             waypoint: Some(0),
             waypoint_pos: Some([1000.0, 0.0, 0.0]),
             intent_forward: 1.0,
+            phantom_target: false,
         });
         let dir = std::env::temp_dir().join(format!("qbots-schema-{}", std::process::id()));
         let path = dir.join("run.qb0.log");
@@ -764,6 +793,7 @@ mod tests {
             "bumps=",
             "wrong_turns=",
             "hindered_frames=",
+            "phantom_frames=",
         ] {
             assert!(summary.contains(key), "SUMMARY has {key}");
         }

@@ -219,6 +219,7 @@ pub async fn run_scenario(
                                     waypoint: wp,
                                     waypoint_pos: wp_pos,
                                     intent_forward,
+                                    phantom_target: false, // scenario disables combat
                                 });
                             }
 

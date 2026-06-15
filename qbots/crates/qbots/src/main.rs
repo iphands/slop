@@ -573,28 +573,39 @@ pub(crate) async fn bot_task(
                         let combat_dec =
                             combat.evaluate(&view, &skill, jitter, collision.as_deref());
 
-                        // Pass combat target to FSM for navigation goal
+                        // Pass combat target to FSM for navigation goal.
+                        // Only chase via nav when LOS holds (Plan 11 T4) — without
+                        // LOS the bot was walking into walls toward walled enemies.
                         let fsm_intent = if let Some(target) = combat_dec.target_entity {
-                            // Force FSM into Engage state and set nav goal to chase combat target
-                            let target_pos = view.entities()
-                                .find(|e| e.entity_number == target)
+                            let target_entity = view.entities()
+                                .find(|e| e.entity_number == target);
+                            let target_pos = target_entity
                                 .map(|e| e.origin)
                                 .unwrap_or(view.self_state().origin);
 
-                            // Update FSM state to Engage if not already
-                            if !matches!(fsm, BehaviorState::Engage { .. }) {
-                                tracing::debug!("forcing FSM into Engage state (target={})", target);
-                                fsm = BehaviorState::Engage { target_entity: target };
-                            }
+                            // LOS check: only set Entity nav goal when the path is clear.
+                            let has_los = target_entity
+                                .and_then(|te| collision.as_deref().map(|cm| {
+                                    let eye = brain::los::eye_origin(view.self_state().origin.into());
+                                    brain::los::has_los_player(cm, eye, te.origin.into())
+                                }))
+                                .unwrap_or(true); // no cm yet → optimistic (old behavior)
 
-                            tracing::trace!(
-                                "combat target override: target={} pos={:?}",
-                                target, target_pos
-                            );
-                            BehaviorIntent {
-                                nav_goal: Some(NavGoal::Entity(target_pos)),
-                                combat_decision: Some(combat_dec),
-                                should_pickup: None,
+                            if has_los {
+                                if !matches!(fsm, BehaviorState::Engage { .. }) {
+                                    tracing::debug!("forcing FSM into Engage (target={})", target);
+                                    fsm = BehaviorState::Engage { target_entity: target };
+                                }
+                                tracing::trace!("combat target override: target={} pos={:?}", target, target_pos);
+                                BehaviorIntent {
+                                    nav_goal: Some(NavGoal::Entity(target_pos)),
+                                    combat_decision: Some(combat_dec),
+                                    should_pickup: None,
+                                }
+                            } else {
+                                // Target exists (grace-period fire still possible) but
+                                // no clear path → let FSM navigate (Hunt last-known pos).
+                                fsm.tick(&view, collision.as_deref())
                             }
                         } else {
                             fsm.tick(&view, collision.as_deref())
