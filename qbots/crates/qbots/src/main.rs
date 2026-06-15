@@ -384,13 +384,22 @@ async fn run_brain_bot_with_shutdown(
                                 let pitch =
                                     (-dir.z).atan2(dir.x.hypot(dir.y)).to_degrees();
                                 
-                                // Check if nav direction is pointing toward combat target
+                                // Debug: log nav direction vs target
                                 if let Some(target) = combat_dec.target_entity {
                                     if let Some(enemy) = view.entities().find(|e| e.entity_number == target) {
                                         let to_enemy = enemy.origin - pos;
                                         let to_enemy_normalized = to_enemy.normalize();
-                                        // If nav direction is more than 90° away from target, it's wrong
+                                        let enemy_yaw = to_enemy.y.atan2(to_enemy.x).to_degrees();
+                                        let nav_yaw = dir.y.atan2(dir.x).to_degrees();
+                                        let yaw_diff = (nav_yaw - enemy_yaw).abs().rem_euclid(360.0);
                                         let dot = dir.dot(to_enemy_normalized);
+                                        
+                                        tracing::debug!(
+                                            "nav vs target: nav_dir={:?} yaw={:.1}° vs to_enemy={:?} yaw={:.1}° (diff={:.1}°, dot={:.2})",
+                                            dir, nav_yaw, to_enemy, enemy_yaw, yaw_diff, dot
+                                        );
+                                        
+                                        // If nav direction is more than 90° away from target, it's wrong
                                         nav_dir_correct = dot > 0.0;
                                         
                                         if !nav_dir_correct {
