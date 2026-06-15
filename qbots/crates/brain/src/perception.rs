@@ -8,6 +8,9 @@ use client::parse::ConfigStrings;
 use glam::Vec3;
 use q2proto::{Frame, PlayerState};
 
+/// Configstring index where the models table starts (`CS_MODELS`, `shared.h:1193`).
+const CS_MODELS: usize = 32;
+
 /// Stats indices (from shared.h:1130-1148)
 const STAT_HEALTH: usize = 1;
 #[allow(dead_code)]
@@ -75,30 +78,32 @@ pub struct Worldview {
 }
 
 impl Worldview {
-    /// Build a Worldview from a Frame and configstrings.
-    pub fn from_frame(frame: &Frame, configstrings: &ConfigStrings) -> Self {
-        // Build model→class lookup from CS_MODELS
+    /// Build a Worldview from a Frame, configstrings, and our player number.
+    /// `playernum` is the 0-based slot from `svc_serverdata`; our entity = playernum+1.
+    pub fn from_frame(frame: &Frame, configstrings: &ConfigStrings, playernum: i16) -> Self {
+        // Build modelindex→class lookup. Entity modelindex is 1-based into CS_MODELS,
+        // so configstring index CS_MODELS+modelindex maps to model_to_class[modelindex].
         let mut model_to_class = vec![EntityClass::Unknown; 256];
         for (i, model_str) in configstrings.iter() {
-            if i == 0 {
-                continue; // CS_MODELS starts at index 0, but we skip it
+            if i < CS_MODELS {
+                continue;
             }
+            let modelindex = i - CS_MODELS;
             if let Some(class) = classify_model(model_str) {
-                if i < model_to_class.len() {
-                    model_to_class[i] = class;
+                if modelindex < model_to_class.len() {
+                    model_to_class[modelindex] = class;
                 }
             }
         }
 
         // Parse self state from playerstate
         let self_state = SelfState::from_playerstate(&frame.playerstate);
+        let self_entity = (playernum + 1) as i32;
 
         // Parse entities
         let mut entities: Vec<PerceivedEntity> = Vec::new();
         for entity_state in &frame.entities {
-            // TODO: Get self entity number from playernum (passed via ServerData)
-            // For now, assume entity 1 is self (Q2 convention: 0=world, 1=first player)
-            let class = if entity_state.number == 1 {
+            let class = if entity_state.number == self_entity {
                 EntityClass::SelfPlayer
             } else {
                 model_to_class
@@ -279,18 +284,22 @@ impl SelfState {
 /// Classify an entity based on its model string.
 fn classify_model(model_str: &str) -> Option<EntityClass> {
     let s = model_str.to_lowercase();
+    // Player models: "players/male/tris.md2", "players/female/tris.md2", etc.
+    if s.starts_with("players/") {
+        return Some(EntityClass::EnemyPlayer);
+    }
     if s.contains("health") {
         Some(EntityClass::ItemHealth)
     } else if s.contains("armor") {
         Some(EntityClass::ItemArmor)
-    } else if s.contains("weapon") || s.contains("gun") {
+    } else if s.contains("weapon") || s.contains("w_") || s.contains("gun") {
         Some(EntityClass::ItemWeapon)
     } else if s.contains("quad")
         || s.contains("invulnerability")
         || s.contains("environmental_suit")
     {
         Some(EntityClass::ItemPowerup)
-    } else if s.contains("rocket") {
+    } else if s.contains("rocket") || s.contains("blaster") || s.contains("bolt") {
         Some(EntityClass::ProjectileRocket)
     } else if s.contains("grenade") {
         Some(EntityClass::ProjectileGrenade)

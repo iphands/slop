@@ -200,7 +200,7 @@ mod tests {
         let mut driver = CombatDriver::new();
         let frame = Frame::default();
         let config = ConfigStrings::default();
-        let view = crate::perception::Worldview::from_frame(&frame, &config);
+        let view = crate::perception::Worldview::from_frame(&frame, &config, 0);
         let decision = driver.evaluate(&view, 0.5, 0.0);
         assert!(!decision.should_fire);
         assert!(decision.target_entity.is_none());
