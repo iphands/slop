@@ -77,3 +77,19 @@ Reaches "test connected" / "test entered the game" on a real yquake2 server:
   `i16` then `as u16` (bit-correct for unsigned values).
 - Verified counts (real maps): q2dm1 = 2408 planes / 2250 leafs / 960 brushes; base1 =
   8558 planes; 007_facility = 5020 planes.
+
+## Collision trace — `gi.trace()` replacement (VERIFIED LIVE)
+- `cplane_t` (`shared.h:578`) adds `signbits` = `signx | signy<<1 | signz<<2` (set when
+  `normal[j] < 0`), computed at load (`collision.c:1463`). `type < 3` ⇒ axial fast path
+  (`d = p[type] - dist`).
+- `DIST_EPSILON = 0.03125` (`collision.c:127`) — nudge for the plane-cross split + brush clip.
+- Trace sweeps via `CM_RecursiveHullCheck` (split the ray at each node's plane into near/far
+  segments, `frac = (t1 ∓ offset ± EPS)/(t1-t2)`), then `CM_TraceToLeaf` → `CM_ClipBoxToBrush`
+  (track enter/leave frac across the brush's planes; `enterfrac < leavefrac` ⇒ hit).
+- Node children: leafs encoded `-(leaf+1)`. `BoxOnPlaneSide` (corners method) for the
+  position-test leaf gather.
+- Brush dedup across adjacent leafs uses a per-trace `HashSet` (the C `checkcount` trick
+  would need interior mutability; dedup is an optimization, not correctness).
+- **VERIFIED on q2dm1**: bounds [-256,-464,-256]..[2240,1808,1920], center (992,672,832)
+  `is_solid=false`; 8 horizontal rays from center hit walls at 288–800 units in every
+  direction — the tracer is byte-correct against real geometry.
