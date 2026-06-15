@@ -113,6 +113,30 @@ impl NavGraph {
             .map(|(i, _)| i)
     }
 
+    /// BFS from `start`; among all reachable nodes, return the one nearest to `target`.
+    /// Used when start and a desired goal are in different components.
+    pub fn nearest_reachable_from(&self, start: usize, target: &[f32; 3]) -> Option<usize> {
+        let n = self.nodes.len();
+        let mut seen = vec![false; n];
+        let mut queue = std::collections::VecDeque::new();
+        seen[start] = true;
+        queue.push_back(start);
+        let mut best: Option<(usize, f32)> = None;
+        while let Some(u) = queue.pop_front() {
+            let d = dist2(&self.nodes[u], target);
+            if best.is_none_or(|(_, bd)| d < bd) {
+                best = Some((u, d));
+            }
+            for &(nb, _) in &self.adj[u] {
+                if !seen[nb] {
+                    seen[nb] = true;
+                    queue.push_back(nb);
+                }
+            }
+        }
+        best.map(|(i, _)| i)
+    }
+
     /// A* path from node `start` to `goal` (node indices), or `None` if unreachable.
     pub fn path(&self, start: usize, goal: usize) -> Option<Vec<usize>> {
         if start == goal {

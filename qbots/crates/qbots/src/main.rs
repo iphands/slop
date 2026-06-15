@@ -226,6 +226,10 @@ async fn run_brain_bot(
                                     mv.look_at(yaw, pitch);
                                 }
                                 mv.move_forward(400.0);
+                            } else if !combat_dec.should_fire {
+                                // No path from current position (disconnected component).
+                                // Wander forward until we reach the main nav region.
+                                mv.move_forward(200.0);
                             }
 
                             if nav.is_stuck() {

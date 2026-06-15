@@ -52,6 +52,18 @@ impl NavigationDriver {
                     self.current_path = path;
                     self.current_waypoint = self.current_path.first().copied();
                 } else {
+                    // start and target are in different components. Path to the node
+                    // in start's component that is closest to the target position.
+                    let target_pos = self.nav_graph.nodes[target];
+                    if let Some(alt) =
+                        self.nav_graph.nearest_reachable_from(start, &target_pos)
+                    {
+                        if let Some(path) = self.nav_graph.path(start, alt) {
+                            self.current_path = path;
+                            self.current_waypoint = self.current_path.first().copied();
+                            return;
+                        }
+                    }
                     self.current_path.clear();
                     self.current_waypoint = None;
                 }
