@@ -402,28 +402,34 @@ async fn run_brain_bot_with_shutdown(
                                     }
                                 }
                                 
-                                // Only override look direction if not shooting
-                                if !combat_dec.should_fire {
-                                    mv.look_at(yaw, pitch);
-                                }
-                                mv.move_forward(400.0);
-                                
-                                // Debug: log movement when engaging
-                                if matches!(fsm, BehaviorState::Engage { .. }) {
-                                    tracing::debug!(
-                                        "engaging: moving dir=({:.1},{:.1},{:.1}) yaw={:.1}°",
-                                        dir.x, dir.y, dir.z, yaw
-                                    );
-                                } else if combat_dec.target_entity.is_some() {
-                                    // Log movement even when not in Engage state but has combat target
-                                    tracing::debug!(
-                                        "combat target active: moving dir=({:.1},{:.1},{:.1}) yaw={:.1}° pos={:?}",
-                                        dir.x, dir.y, dir.z, yaw, pos
-                                    );
+                                // Only use nav movement if direction is correct
+                                if nav_dir_correct {
+                                    // Only override look direction if not shooting
+                                    if !combat_dec.should_fire {
+                                        mv.look_at(yaw, pitch);
+                                    }
+                                    mv.move_forward(400.0);
+                                    
+                                    // Debug: log movement when engaging
+                                    if matches!(fsm, BehaviorState::Engage { .. }) {
+                                        tracing::debug!(
+                                            "engaging: moving dir=({:.1},{:.1},{:.1}) yaw={:.1}°",
+                                            dir.x, dir.y, dir.z, yaw
+                                        );
+                                    } else if combat_dec.target_entity.is_some() {
+                                        // Log movement even when not in Engage state but has combat target
+                                        tracing::debug!(
+                                            "combat target active: moving dir=({:.1},{:.1},{:.1}) yaw={:.1}° pos={:?}",
+                                            dir.x, dir.y, dir.z, yaw, pos
+                                        );
+                                    }
+                                } else if combat_dec.should_fire {
+                                    // If shooting and nav is wrong, still shoot but don't move
+                                    mv.attack();
                                 }
                             }
                             
-                            // If nav can't find a path but we have a combat target, move directly toward enemy
+                            // If nav can't find a path or direction is wrong but we have a combat target, move directly toward enemy
                             if !nav_moving || !nav_dir_correct {
                                 if !combat_dec.should_fire {
                                     if let Some(target) = combat_dec.target_entity {
