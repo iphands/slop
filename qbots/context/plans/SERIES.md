@@ -19,6 +19,7 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 | **12** | Steering controller | 11 | done | turn-rate limiting, look-ahead/"pursue" target + arrive, anti-orbit Z-aware node-advance, facing-validated forward, aim/move-yaw separation (circle-strafe) → **bots move like humans, not orbit/spin/wedge** |
 | **13** | Stuck recovery & wall avoidance | 12 | done | unified 4u/1s `StuckDetector`, 6-dir fan-out `find_best_direction`, `Recovery::evaluate→RecoveryAction`; `R` recorder flag; old blind-reverse + dual detectors removed → **bots unstick reactively** |
 | **14** | Nav-graph & path quality | 10 | done | funnel/string-pull smoothing (smooth_path + smooth_with_cm), spawn seeding (seed_spawns), jump-down links (detect_jump_edges + EdgeKind), path_efficiency recorder metric → **shorter, smoother, faster routes** (code complete; live elapsed-time verification pending) |
+| **15** | Scenario nav parity | 11–14 | in-progress | scenario.rs was missing seed_spawns, detect_jump_edges, smooth_with_cm, jump-edge action, and Recovery → **spawn-to-spawn reached=1** |
 
 **Milestones**
 - After **03**: a bot connects and shows in the server's player list.
@@ -33,6 +34,7 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 - After **12**: bots steer along paths the way a human does (turn, then go; no orbiting).
 - After **13**: bots recover from wedges and steer around walls instead of grinding into them.
 - After **14**: routes are short and smooth via string-pull; spawns are seeded and connected; jump-down ledges navigable.
+- After **15**: `spawn-to-spawn` scenario reaches the goal — all nav-quality work from 11–14 is actually exercised in the scenario.
 
 > Active plans live alongside this file as `NN_name.md` + `NN_name_tracker.md`.
 > Completed plans move to `context/plans/completed/` (see `RULES.md`).
