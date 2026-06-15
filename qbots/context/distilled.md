@@ -203,3 +203,11 @@ wallhack) — bots must achieve speed *through better control*, not physics viol
 default; `wishvel=forward*fmove+right*smove`, `wishspeed` clamped to `pm_maxspeed`
 (no sqrt(2) diagonal clamp). `forwardmove/sidemove` are ±400-scale but capped by maxspeed.
 `STEPSIZE`: Q2 `18` vs Eraser `24` (verify which the live server uses before tuning steps).
+
+## LOS (line-of-sight) trace — Plan 11
+Use a **zero-size** (`mins=maxs=[0;3]`) `CollisionModel::trace` from eye to target; `fraction ≥ 1.0`
+and `!startsolid` = clear. Eye = `origin + [0,0,22]` (Q2 standing viewheight). Check both chest
+(`+12z`) and feet (`-20z`) so partially-covered enemies still register as visible. Gate combat
+target acquisition AND nav-goal override on this check. Keep a 2-frame grace after LOS loss so
+thin-pillar flicker doesn't cause target thrashing. The server already PVS-filters entities, so
+the LOS pass runs only on ≤8 visible candidates — cheap at 10 Hz.

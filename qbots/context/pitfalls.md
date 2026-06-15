@@ -73,3 +73,25 @@ input world yaw (test at offsets 0/90/180°). Done in
 - vendor: `vendor/yquake2/src/common/pmove.c:1243-1270` (server angle resolution)
 - vendor: `vendor/yquake2/src/common/header/shared.h:1184` (`ANGLE2SHORT`)
 - vendor: `vendor/yquake2/src/game/player/client.c:1675` (delta_angles seeding)
+
+---
+
+# FOV-only targeting shoots and chases through walls
+
+## Problem
+`view.nearest_enemy(fov)` filtered by view cone but **not** by geometry. The bot would
+select the nearest enemy, set `nav_goal = NavGoal::Entity(enemy.origin)`, and fire — even
+when a solid wall separated them. Result: bot walks face-first into a wall for 8 s (the
+give-up watchdog), fires into geometry, wastes ammo, and ignores reachable enemies.
+
+## Fix
+Add a BSP trace (`CollisionModel::trace` with zero-size box and `MASK_SOLID`) from eye to
+enemy chest and feet (`has_los_player`). Gate BOTH the nav override (`nav_goal = Entity(...)`)
+AND `should_fire` on this check. A 2-frame grace period (`SIGHT_GRACE_FRAMES=2`) keeps the
+target alive after momentary occlusion (thin pillars, enemy strafing behind cover), then drops
+it. The FSM transitions to Hunt with the last-known position.
+
+## Sources
+- qbots: `crates/brain/src/los.rs` (`has_los`, `has_los_player`, `eye_origin`)
+- qbots: `crates/brain/src/combat.rs` (`select_target_entity`, `sight_grace_remaining`)
+- qbots: `crates/qbots/src/main.rs` (nav-to-enemy LOS gate, Plan 11 T4)
