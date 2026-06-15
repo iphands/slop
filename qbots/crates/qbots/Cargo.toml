@@ -6,4 +6,6 @@ edition.workspace = true
 [dependencies]
 client = { path = "../client" }
 clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }

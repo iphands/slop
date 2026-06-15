@@ -11,6 +11,9 @@
 # Sisyphus / local tooling
 /.sisyphus
 
+# Local config (machine-specific paths); commit config.example.yaml instead
+/config.yaml
+
 # Editor / OS cruft
 /.idea/
 /.vscode/

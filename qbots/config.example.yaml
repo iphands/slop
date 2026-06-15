@@ -1,0 +1,11 @@
+# qbots configuration. Copy to `config.yaml` and adjust for your machine.
+# (`config.yaml` is gitignored — it holds machine-specific paths.)
+server:
+  host: noir.lan        # server hostname or IP (DNS-resolved at connect)
+  port: 27910           # Q2 server port
+
+paths:
+  # Local mount of the server's baseq2 dir — used by Plan 05 to read .bsp maps
+  # (loose files *and* inside pak0/pak1 archives).
+  server_cfg: /mnt/noir/scratch/games/q2/baseq2/server.cfg
+  baseq2: /mnt/noir/scratch/games/q2/baseq2
