@@ -1,7 +1,7 @@
 # Brain (brain) — Tracker
 
 ## Overview
-- Status: 0% complete
+- Status: ~14% complete — T1 done & verified; T2-T7 pending.
 - Start date: 2026-06-14
 - Plan: `06_brain.md`
 - Depends on: Plan 05 (world trace + nav graph) and transitively Plan 04 (perception)
@@ -17,7 +17,7 @@
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: perception / Worldview | `brain/src/perception.rs` | pending | classify entities; last-known-pos |
+| 1 | T1: perception / Worldview | `brain/src/perception.rs` | done | classify entities, decay system, query methods; **verified** (3 tests pass) |
 | 2 | T2: navigation driver | `brain/src/nav.rs` | pending | A* + stuck recovery |
 | 3 | T3: move controller wiring | `brain/src/move_ctrl.rs` | pending | intent → Usercmd; pmove consts |
 | 4 | T4: combat / aim / weapons | `brain/src/{combat,aim,weapons}.rs` | pending | lead-aim, weapon-select |
