@@ -17,8 +17,13 @@ use crate::weapons::{self, Weapon};
 /// preventing thrashing when enemies pop in/out of PVS. (Eraser "target stability".)
 const TARGET_LOCK_FRAMES: u32 = 5;
 
-/// Minimum frames between shots (fire-rate limiter).
-const FIRE_RATE_COOLDOWN_FRAMES: u32 = 2;
+/// Brain tick rate (Hz). Eraser's calibrated timings are in seconds; we convert
+/// to frames at this cadence.
+const TICK_HZ: f32 = 10.0;
+
+/// `BOT_CHANGEWEAPON_DELAY` — withhold `BUTTON_ATTACK` for 0.9 s after
+/// requesting a weapon switch (Eraser `bot_procs.h`). Firing mid-switch is wasted.
+const SWITCH_LOCKOUT_SECS: f32 = 0.9;
 
 /// A requested weapon switch (`use <name>`). The connection layer converts this
 /// to a reliable stringcmd.
@@ -53,6 +58,11 @@ pub struct CombatDriver {
     current_target: Option<i32>,
     lock_frames_remaining: u32,
     frames_since_shot: u32,
+    /// Frames since we acquired the *current* target — drives Eraser's reaction
+    /// delay (`SIGHT_FIRE_DELAY`). Reset when the target changes.
+    sight_frames: u32,
+    /// Frames since we requested a weapon switch — drives the 0.9 s attack lockout.
+    frames_since_switch: u32,
     /// Weapon we believe we're holding. Optimistic: set when we request a switch
     /// (the server grants it only if owned). Reset to Blaster on respawn.
     held_weapon: Weapon,
@@ -64,6 +74,8 @@ impl CombatDriver {
             current_target: None,
             lock_frames_remaining: 0,
             frames_since_shot: 10,
+            sight_frames: 0,
+            frames_since_switch: u32::MAX,
             held_weapon: Weapon::Blaster,
         }
     }
@@ -81,17 +93,26 @@ impl CombatDriver {
 
     /// Evaluate combat state and produce a decision.
     pub fn evaluate(&mut self, view: &Worldview, skill: f32, jitter_seed: f32) -> CombatDecision {
+        let prev_target = self.current_target;
         let target_num = self.select_target_entity(view);
 
         let Some(num) = target_num else {
             self.frames_since_shot += 1;
+            self.frames_since_switch = self.frames_since_switch.saturating_add(1);
             return CombatDecision::default();
         };
 
         let Some(t) = view.entities().find(|e| e.entity_number == num) else {
             self.frames_since_shot += 1;
+            self.frames_since_switch = self.frames_since_switch.saturating_add(1);
             return CombatDecision::default();
         };
+
+        // New target acquired → reset the reaction-delay timer (Eraser reacquire).
+        if Some(num) != prev_target {
+            self.sight_frames = 0;
+        }
+        self.sight_frames = self.sight_frames.saturating_add(1);
 
         let distance = (t.origin - view.self_state().origin).length();
 
@@ -105,13 +126,18 @@ impl CombatDriver {
 
         if let Some(WeaponRequest(w)) = weapon_request {
             tracing::info!(weapon = %w.name(), distance = %format!("{:.0}", distance), "requesting weapon");
+            self.frames_since_switch = 0;
+        } else {
+            self.frames_since_switch = self.frames_since_switch.saturating_add(1);
         }
 
         let weapon = self.held_weapon;
 
         // `skill` here is a 0-1 jitter factor (1=max miss, 0=perfect). Map to
-        // Eraser's 1-5 accuracy (5=perfect). Seed a deterministic jitter RNG.
+        // Eraser's 1-5 accuracy (5=perfect) and a 1-5 combat rating. Seed a
+        // deterministic jitter RNG.
         let accuracy = (5.0 - skill * 4.0).clamp(1.0, 5.0);
+        let combat = (5.0 - skill * 4.0).clamp(1.0, 5.0);
         let mut rng = JitterRng::new(jitter_seed.to_bits());
 
         let (yaw, pitch) = if weapon.is_hitscan() {
@@ -127,7 +153,7 @@ impl CombatDriver {
             aim_direction(view.self_state().origin, t.origin, t.velocity, weapon)
         };
 
-        let should_fire = self.should_fire(weapon, distance);
+        let should_fire = self.should_fire(weapon, distance, combat);
 
         self.frames_since_shot = if should_fire {
             0
@@ -188,10 +214,30 @@ impl CombatDriver {
         None
     }
 
-    fn should_fire(&self, weapon: Weapon, distance: f32) -> bool {
-        if self.frames_since_shot < FIRE_RATE_COOLDOWN_FRAMES {
+    /// Eraser fire gate (`bot_Attack`, `bot_wpns.c:134-324`): fire iff cooldown
+    /// elapsed AND reaction delay satisfied AND not in weapon-switch lockout AND
+    /// a sane range. All timings are per-frame at [`TICK_HZ`].
+    fn should_fire(&self, weapon: Weapon, distance: f32, combat: f32) -> bool {
+        // 0.9 s switch lockout — firing mid-weapon-change is wasted.
+        let switch_lockout_frames = (SWITCH_LOCKOUT_SECS * TICK_HZ).round() as u32;
+        if self.frames_since_switch < switch_lockout_frames {
             return false;
         }
+
+        // Reaction delay on target acquisition: `0.8 * (5 - combat*0.5)/5` s.
+        // combat1 → 0.72 s, combat3 → 0.56 s, combat5 → 0.40 s.
+        let reaction_secs = 0.8 * (5.0 - combat * 0.5) / 5.0;
+        let reaction_frames = (reaction_secs * TICK_HZ).round() as u32;
+        if self.sight_frames < reaction_frames {
+            return false;
+        }
+
+        // Per-weapon fire interval (0 = every frame for CG/MG/HB).
+        let interval_frames = (weapon.fire_interval_secs() * TICK_HZ).round() as u32;
+        if self.frames_since_shot < interval_frames {
+            return false;
+        }
+
         if distance < weapon.min_safe_distance() {
             return false;
         }
@@ -246,18 +292,58 @@ mod tests {
         assert_eq!(driver.held_weapon(), Weapon::Blaster);
     }
 
+    /// A driver with all timing gates satisfied, so `should_fire` depends only
+    /// on weapon + distance (range/safety). Each test then perturbs one gate.
+    fn ready_driver() -> CombatDriver {
+        let mut d = CombatDriver::new();
+        d.sight_frames = 100; // past any reaction delay
+        d.frames_since_switch = 100; // past switch lockout
+        d.frames_since_shot = 100; // past any fire interval
+        d
+    }
+
     #[test]
     fn should_not_fire_blaster_across_map() {
-        let driver = CombatDriver::new();
+        let driver = ready_driver();
         // Blaster effective range ~600; at 2000 it shouldn't fire.
-        assert!(!driver.should_fire(Weapon::Blaster, 2000.0));
-        assert!(driver.should_fire(Weapon::Blaster, 200.0));
+        assert!(!driver.should_fire(Weapon::Blaster, 2000.0, 3.0));
+        assert!(driver.should_fire(Weapon::Blaster, 200.0, 3.0));
     }
 
     #[test]
     fn should_not_fire_rocket_point_blank() {
-        let driver = CombatDriver::new();
-        assert!(!driver.should_fire(Weapon::RocketLauncher, 50.0));
-        assert!(driver.should_fire(Weapon::RocketLauncher, 300.0));
+        let driver = ready_driver();
+        assert!(!driver.should_fire(Weapon::RocketLauncher, 50.0, 3.0));
+        assert!(driver.should_fire(Weapon::RocketLauncher, 300.0, 3.0));
+    }
+
+    #[test]
+    fn switch_lockout_suppresses_fire() {
+        let mut driver = ready_driver();
+        driver.frames_since_switch = 0; // just switched
+                                        // Even with everything else satisfied, the 0.9 s lockout blocks fire.
+        assert!(!driver.should_fire(Weapon::Railgun, 400.0, 5.0));
+        driver.frames_since_switch = 9; // 0.9 s elapsed
+        assert!(driver.should_fire(Weapon::Railgun, 400.0, 5.0));
+    }
+
+    #[test]
+    fn per_weapon_fire_interval_enforced() {
+        let mut driver = ready_driver();
+        // Railgun interval = 1.5 s = 15 frames. Right after a shot it must wait.
+        driver.frames_since_shot = 0;
+        assert!(!driver.should_fire(Weapon::Railgun, 400.0, 5.0));
+        driver.frames_since_shot = 15;
+        assert!(driver.should_fire(Weapon::Railgun, 400.0, 5.0));
+    }
+
+    #[test]
+    fn reaction_delay_blocks_immediate_fire() {
+        let mut driver = ready_driver();
+        // Fresh acquisition (combat 1 → ~0.72 s reaction ≈ 7 frames).
+        driver.sight_frames = 1;
+        assert!(!driver.should_fire(Weapon::Shotgun, 150.0, 1.0));
+        driver.sight_frames = 8;
+        assert!(driver.should_fire(Weapon::Shotgun, 150.0, 1.0));
     }
 }

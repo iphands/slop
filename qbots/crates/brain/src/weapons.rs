@@ -129,6 +129,21 @@ impl Weapon {
             Self::Blaster => 20.0,
         }
     }
+
+    /// Minimum seconds between shots (Eraser `fire_interval`, `bot_wpns.c`).
+    /// `0.0` = every frame (chain-/machine-/hyper-blaster). Source: distilled
+    /// `eraser.md` §5 fire-interval table.
+    pub fn fire_interval_secs(self) -> f32 {
+        match self {
+            Self::Blaster => 0.6,
+            Self::Shotgun | Self::SuperShotgun => 1.0,
+            Self::Machinegun | Self::Chaingun | Self::Hyperblaster => 0.0,
+            Self::GrenadeLauncher => 0.9,
+            Self::RocketLauncher => 0.8,
+            Self::Railgun => 1.5,
+            Self::Bfg10k => 2.8,
+        }
+    }
 }
 
 /// Score a weapon for use against a target at `distance`. Higher is better.
