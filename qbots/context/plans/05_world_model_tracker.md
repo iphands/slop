@@ -17,9 +17,9 @@
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: BSP loader | `world/src/{bsp,pak}.rs` | done | IBSP v38 + 7 collision lumps; **verified live** (q2dm1/base1/loose parse) |
+| 1 | T1: BSP loader | `world/src/{bsp,pak}.rs` | done | IBSP v38 + 7 collision lumps; **verified live** (q2dm1/base1 from pak files) |
 | 2 | T2: collision trace + contents | `world/src/collision.rs` | done | CM_RecursiveHullCheck + box/brush clip; **verified live** (q2dm1: 8 rays hit walls 288-800u) |
 | 3 | T3: PVS query | `world/src/vis.rs` | done | CM_DecompressVis RLE + cluster_visible; **verified live** (q2dm1: 925 clusters, center sees 336) |
-| 4 | T4: nav graph + A* | `world/src/{navgraph,pathfind}.rs` | pending | auto-gen from BSP |
-| 5 | T5: discovery + cache | `world/src/loader.rs` | pending | `Arc<World>`, file hash |
-| 6 | T6: verify on q2dm1 | — | pending | trace/vis/nav all green |
+| 4 | T4: nav graph + A* | `world/src/navgraph.rs` | done | auto-gen from BSP; 1067 nodes/7708 edges on q2dm1; pathfinding works (18 hops, 1497u) |
+| 5 | T5: discovery + cache | `world/src/loader.rs` | pending | `Arc<World>`, file hash — not yet implemented; BSP loading works inline in main.rs |
+| 6 | T6: verify on q2dm1 | — | in_progress | trace/vis/nav all green; pathfinding verified |

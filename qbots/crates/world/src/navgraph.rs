@@ -100,8 +100,7 @@ impl NavGraph {
             }
             comps.push(comp);
         }
-        // largest first, for convenience
-        comps.sort_by(|a, b| b.len().cmp(&a.len()));
+        comps.sort_by_key(|b| std::cmp::Reverse(b.len()));
         comps
     }
 

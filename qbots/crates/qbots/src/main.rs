@@ -233,35 +233,45 @@ async fn main() -> ExitCode {
                 // Diagnose connectivity, then find a path inside the largest component.
                 let cz = (m.mins[2] + m.maxs[2]) * 0.5;
                 let start = g.nearest(&[m.mins[0] + 200.0, m.mins[1] + 200.0, cz]);
-                let goal = g.nearest(&[m.maxs[0] - 200.0, m.maxs[1] - 200.0, cz]);
                 let comps = g.components();
-                let largest = comps.first().map(|c| c.len()).unwrap_or(0);
-                println!("  {} components; largest = {} nodes", comps.len(), largest);
+                
+                // Guard against empty nav graph
+                let largest = comps.first().expect("nav graph must have at least one component");
+                if largest.is_empty() {
+                    println!("  no walkable nodes in nav graph");
+                    return ExitCode::SUCCESS;
+                }
+                
+                println!("  {} components; largest = {} nodes", comps.len(), largest.len());
 
-                let (s, go) = match (start, goal, comps.first()) {
-                    // corner-to-corner worked
-                    (Some(a), Some(b), _) if g.path(a, b).is_some() => (a, b),
-                    // multi-level: path across the largest connected component instead
-                    (Some(a), _, Some(comp)) => {
-                        let far = comp
-                            .iter()
-                            .copied()
-                            .max_by(|&x, &y| {
-                                dist2(&g.nodes[x], &g.nodes[a])
-                                    .total_cmp(&dist2(&g.nodes[y], &g.nodes[a]))
-                            })
-                            .unwrap_or(a);
-                        println!("  (corners split across levels — pathing inside the largest component)");
-                        (a, far)
+                // Pick a start node from the largest component
+                let s = if let Some(start) = start {
+                    if largest.contains(&start) {
+                        start
+                    } else {
+                        largest[0]
                     }
-                    _ => {
-                        println!("  couldn't find waypoints");
-                        return ExitCode::SUCCESS;
-                    }
+                } else {
+                    largest[0]
                 };
 
+                // Find the farthest node in the largest component
+                let farthest = largest
+                    .iter()
+                    .copied()
+                    .max_by(|&x, &y| {
+                        dist2(&g.nodes[x], &g.nodes[s])
+                            .total_cmp(&dist2(&g.nodes[y], &g.nodes[s]))
+                    })
+                    .expect("largest component must have nodes");
+
+                if s == farthest {
+                    println!("  only one node in largest component");
+                    return ExitCode::SUCCESS;
+                }
+
                 let t0 = std::time::Instant::now();
-                match g.path(s, go) {
+                match g.path(s, farthest) {
                     Some(path) => {
                         let len: f32 = path
                             .windows(2)
@@ -275,16 +285,16 @@ async fn main() -> ExitCode {
                             })
                             .sum();
                         println!(
-                            "  path {}→{}: {} hops / {} nodes, {:.0} units  ({} ms)",
+                            "  path (in largest): {}→{}: {} hops / {} nodes, {:.0} units  ({} ms)",
                             s,
-                            go,
+                            farthest,
                             path.len() - 1,
                             path.len(),
                             len,
                             t0.elapsed().as_millis(),
                         );
                     }
-                    None => println!("  no path {}→{} (unreachable)", s, go),
+                    None => println!("  no path in largest component (this is a bug!)"),
                 }
                 ExitCode::SUCCESS
             }
