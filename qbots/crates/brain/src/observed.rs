@@ -33,6 +33,21 @@ use crate::perception::{player_name, Worldview};
 /// stale last-known node (PVS-honesty, T4).
 const PLAYER_NODE_TTL: i32 = 20; // ~2 s at 10 Hz
 
+/// Compact heatmap state for periodic debug logging (Plan 08 T4). Cheap to build
+/// each tick; the brain logs it on a cadence and a future tools binary can render
+/// it as a "danger map" overlay.
+#[derive(Debug, Clone, Default)]
+pub struct HeatmapSnapshot {
+    /// Nav nodes under observation.
+    pub node_count: usize,
+    /// Highest danger value ever seen.
+    pub max_danger: f32,
+    /// Sum of danger across all nodes (overall "heat").
+    pub total_danger: f32,
+    /// `(node, danger)` for the few hottest nodes, descending.
+    pub hot_nodes: Vec<(usize, f32)>,
+}
+
 /// One parsed Q2 death message (`ClientObituary`, `p_hud.c`). The server prints
 /// these as `svc_print` text with **no coordinates**, so we resolve names by
 /// matching against the known player set rather than parsing grammar.
@@ -211,6 +226,18 @@ impl HeatmapObserver {
         self.heatmap.cost_overlay(w_danger, w_pop)
     }
 
+    /// A compact snapshot for periodic debug logging / a danger-map overlay
+    /// (Plan 08 T4). `hot_k` caps how many hot nodes to report.
+    pub fn snapshot(&self, hot_k: usize) -> HeatmapSnapshot {
+        let hm = &self.heatmap;
+        HeatmapSnapshot {
+            node_count: hm.node_count(),
+            max_danger: hm.max_danger_seen(),
+            total_danger: hm.total_danger(),
+            hot_nodes: hm.hot_nodes(hot_k),
+        }
+    }
+
     fn nearest_node(&self, origin: Vec3) -> Option<usize> {
         self.graph.nearest(&[origin.x, origin.y, origin.z])
     }
@@ -279,6 +306,19 @@ mod tests {
         assert!(obs.heatmap().danger(1) > 0.0, "node 1 gets danger");
         assert_eq!(obs.heatmap().danger(0), 0.0, "node 0 untouched");
         assert_eq!(obs.heatmap().danger(2), 0.0, "node 2 untouched");
+    }
+
+    #[test]
+    fn snapshot_reports_hot_nodes_and_totals() {
+        let mut obs = HeatmapObserver::new(tiny_graph(), "me");
+        obs.on_self_death(Vec3::new(100.0, 0.0, 0.0)); // node 1
+        obs.on_self_death(Vec3::new(200.0, 0.0, 0.0)); // node 2
+        let snap = obs.snapshot(3);
+        assert_eq!(snap.node_count, 3);
+        assert!(snap.total_danger > 1.5, "total danger ~2.0");
+        assert_eq!(snap.hot_nodes.len(), 2);
+        // Hottest first (descending).
+        assert!(snap.hot_nodes[0].1 >= snap.hot_nodes[1].1);
     }
 
     #[test]

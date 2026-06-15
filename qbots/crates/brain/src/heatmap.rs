@@ -121,6 +121,26 @@ impl Heatmap {
     pub fn max_danger_seen(&self) -> f32 {
         self.max_danger
     }
+
+    /// The `k` most-dangerous nodes `(index, danger)`, descending. Diagnostics /
+    /// debug overlay (Plan 08 T4). Zero-danger nodes are excluded.
+    pub fn hot_nodes(&self, k: usize) -> Vec<(usize, f32)> {
+        let mut hot: Vec<(usize, f32)> = self
+            .danger
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|&(_, d)| d > 0.0)
+            .collect();
+        hot.sort_by(|a, b| b.1.total_cmp(&a.1));
+        hot.truncate(k);
+        hot
+    }
+
+    /// Sum of danger across all nodes (diagnostics).
+    pub fn total_danger(&self) -> f32 {
+        self.danger.iter().sum()
+    }
 }
 
 #[cfg(test)]
@@ -206,5 +226,21 @@ mod tests {
             overlay[1] < 0.0,
             "popular node has negative (preferred) cost"
         );
+    }
+
+    #[test]
+    fn hot_nodes_returns_top_danger_descending() {
+        let mut h = Heatmap::new(4);
+        h.record_death(2); // node 2: danger 2.0
+        h.record_death(2);
+        h.record_death(0); // node 0: danger 1.0
+        let hot = h.hot_nodes(2);
+        // Node 2 (most danger) first, then node 0; node 1/3 excluded (zero).
+        assert_eq!(hot.len(), 2);
+        assert_eq!(hot[0].0, 2);
+        assert!((hot[0].1 - 2.0).abs() < 0.001);
+        assert_eq!(hot[1].0, 0);
+        assert!((hot[1].1 - 1.0).abs() < 0.001);
+        assert!(h.total_danger() > 2.9, "total danger ~3.0");
     }
 }

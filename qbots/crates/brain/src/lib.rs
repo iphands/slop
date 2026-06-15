@@ -24,7 +24,7 @@ pub use danger::{DangerDriver, DodgeAction};
 pub use heatmap::Heatmap;
 pub use move_ctrl::{MovementController, MovementIntent};
 pub use nav::{NavGoal, NavigationDriver, StuckAction};
-pub use observed::{parse_obituary, HeatmapObserver, Obituary};
+pub use observed::{parse_obituary, HeatmapObserver, HeatmapSnapshot, Obituary};
 pub use perception::{EntityClass, PerceivedEntity, SelfState, Worldview};
 pub use skill::{BotSkill, Personality, SkillLevel, SkillRegistry};
 pub use weapons::Weapon;
