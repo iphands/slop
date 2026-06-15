@@ -221,6 +221,7 @@ dependencies = [
  "serde",
  "serde_yaml",
  "tokio",
+ "world",
 ]
 
 [[package]]
@@ -390,3 +391,6 @@ dependencies = [
 [[package]]
 name = "world"
 version = "0.1.0"
+dependencies = [
+ "q2proto",
+]

@@ -41,6 +41,8 @@ enum Cmd {
     },
     /// Print the loaded config (server + paths) and exit.
     Config,
+    /// Load + dump a BSP (planes/nodes/leafs/brushes counts) from the configured baseq2.
+    BspInfo { map: String },
 }
 
 /// A per-process default qport (distinct across concurrent bot processes).
@@ -103,6 +105,27 @@ async fn main() -> ExitCode {
             );
             ExitCode::SUCCESS
         }
+        Cmd::BspInfo { map } => match world::Bsp::load(&cfg.paths.baseq2, &map) {
+            Ok(bsp) => {
+                println!(
+                    "{}: v{} | {} planes, {} nodes, {} leafs, {} brushes, {} brushsides, {} leafbrushes, {} models",
+                    map,
+                    bsp.version,
+                    bsp.planes.len(),
+                    bsp.nodes.len(),
+                    bsp.leafs.len(),
+                    bsp.brushes.len(),
+                    bsp.brushsides.len(),
+                    bsp.leafbrushes.len(),
+                    bsp.models.len(),
+                );
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("qbots: {e}");
+                ExitCode::FAILURE
+            }
+        },
         Cmd::ConnectOne { addr, name, qport } => {
             let name = name.unwrap_or_else(|| "qbots".to_string());
             let qport = qport.unwrap_or_else(default_qport);
