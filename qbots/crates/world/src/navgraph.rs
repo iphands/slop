@@ -171,6 +171,63 @@ impl NavGraph {
         self.path_inner(start, goal, |cur| overlay.get(cur).copied().unwrap_or(0.0))
     }
 
+    /// String-pull smoothing (Plan 14 T1): collapse a grid path into the longest
+    /// legal straight runs. From `from` (current bot position), scan forward through
+    /// `path`; for each node the LOS trace is clear, keep extending; the first
+    /// blocked candidate commits the last-visible node as the new apex. Repeat until
+    /// the goal is reached. Returns a new node-index sequence (subset of `path`).
+    ///
+    /// Uses a zero-size (point) trace — individual edges already have hull clearance
+    /// from `generate()`; the string-pull only checks whether the intermediate nodes
+    /// can be skipped (line-of-sight), which the half-space/BSP visibility model handles
+    /// exactly. This is the "Simple Stupid Funnel Algorithm" via successive LOS tests
+    /// (distilled §9).
+    pub fn smooth_path(&self, cm: &CollisionModel, path: &[usize], from: [f32; 3]) -> Vec<usize> {
+        if path.len() <= 2 {
+            return path.to_vec();
+        }
+
+        let mut result = Vec::new();
+        result.push(path[0]);
+
+        let mut apex = from;
+        let mut commit_idx = 0usize; // index in `path` we most recently committed
+
+        while commit_idx < path.len() - 1 {
+            // Scan forward from apex for the furthest LOS-clear node.
+            let mut furthest = commit_idx;
+            let zero = [0.0f32; 3];
+            for (j, &node_idx) in path.iter().enumerate().skip(commit_idx + 1) {
+                let candidate = self.nodes[node_idx];
+                let t = cm.trace(&apex, &candidate, &zero, &zero, MASK_SOLID);
+                if t.fraction >= 1.0 && !t.startsolid {
+                    furthest = j;
+                } else {
+                    break; // first block — stop scanning
+                }
+            }
+
+            if furthest > commit_idx {
+                // Commit the furthest visible node.
+                if result.last().copied() != Some(path[furthest]) {
+                    result.push(path[furthest]);
+                }
+                apex = self.nodes[path[furthest]];
+                commit_idx = furthest;
+            } else {
+                // Even the immediate next node is not LOS-clear — step past it.
+                let next = commit_idx + 1;
+                if result.last().copied() != Some(path[next]) {
+                    result.push(path[next]);
+                }
+                apex = self.nodes[path[next]];
+                commit_idx = next;
+            }
+        }
+
+        result
+    }
+
     /// Sum of base edge costs along a node path (diagnostics / degeneracy check).
     pub fn path_len(&self, path: &[usize]) -> f32 {
         path.windows(2)
@@ -377,5 +434,80 @@ mod tests {
             vec![vec![], vec![]],
         );
         assert!(g.path_weighted(0, 1, &[0.0, 0.0]).is_none());
+    }
+
+    // ── smooth_path tests (Plan 14 T1) ──────────────────────────────────────
+
+    /// Straight-line path A→B→C in open air: string-pull collapses to [A, C].
+    #[test]
+    fn smooth_path_straight_run_collapses() {
+        let g = NavGraph::from_raw(
+            vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [200.0, 0.0, 0.0]],
+            vec![
+                vec![(1, 100.0)],
+                vec![(0, 100.0), (2, 100.0)],
+                vec![(1, 100.0)],
+            ],
+        );
+        let cm = CollisionModel::half_space([1.0, 0.0, 0.0], -10000.0); // all-clear
+        let path = vec![0, 1, 2];
+        let smoothed = g.smooth_path(&cm, &path, [0.0, 0.0, 0.0]);
+        // A→C is LOS-clear, so the middle node (1) should be skipped.
+        assert!(
+            smoothed.len() < path.len(),
+            "straight run: smoothed path ({}) should be shorter than raw ({})",
+            smoothed.len(),
+            path.len()
+        );
+        assert_eq!(*smoothed.last().unwrap(), 2, "goal node must be preserved");
+    }
+
+    /// L-shaped path A→B→C→D in open space (all-clear model): the string-pull
+    /// should collapse all intermediate nodes since A has direct LOS to D.
+    /// This verifies maximum compression in obstacle-free environments.
+    /// Note: testing "corner preservation when a wall blocks the shortcut" requires
+    /// a finite-obstacle BSP model; a half_space's PLANE_X shortcut ignores normal
+    /// sign, making negative-normal walls unreliable for this purpose.
+    #[test]
+    fn smooth_path_l_shape_open_collapses() {
+        let g = NavGraph::from_raw(
+            vec![
+                [0.0, 0.0, 0.0],     // 0: A
+                [100.0, 0.0, 0.0],   // 1: B
+                [100.0, 100.0, 0.0], // 2: C
+                [100.0, 200.0, 0.0], // 3: D
+            ],
+            vec![
+                vec![(1, 100.0)],
+                vec![(0, 100.0), (2, 100.0)],
+                vec![(1, 100.0), (3, 100.0)],
+                vec![(2, 100.0)],
+            ],
+        );
+        // All-clear model: wall at x<-10000 (never in range).
+        let cm = CollisionModel::half_space([1.0, 0.0, 0.0], -10000.0);
+        let path = vec![0, 1, 2, 3];
+        let smoothed = g.smooth_path(&cm, &path, [0.0, 0.0, 0.0]);
+        // All nodes are in LOS from A, so A→D is clear → collapsed to [A, D].
+        assert_eq!(smoothed[0], 0, "first node is A");
+        assert_eq!(*smoothed.last().unwrap(), 3, "goal D is preserved");
+        assert!(
+            smoothed.len() <= path.len(),
+            "smoothed is not longer than original"
+        );
+        assert_eq!(smoothed, vec![0, 3], "open path collapses to [A, D]");
+    }
+
+    /// Path of length ≤2 is returned unchanged.
+    #[test]
+    fn smooth_path_short_path_unchanged() {
+        let g = NavGraph::from_raw(
+            vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]],
+            vec![vec![(1, 100.0)], vec![(0, 100.0)]],
+        );
+        let cm = CollisionModel::half_space([1.0, 0.0, 0.0], -10000.0);
+        let path = vec![0, 1];
+        let smoothed = g.smooth_path(&cm, &path, [0.0, 0.0, 0.0]);
+        assert_eq!(smoothed, path, "length-2 path is returned as-is");
     }
 }

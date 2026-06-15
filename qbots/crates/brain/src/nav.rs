@@ -2,7 +2,7 @@
 
 use glam::Vec3;
 use std::sync::Arc;
-use world::NavGraph;
+use world::{CollisionModel, NavGraph};
 
 /// Hard cap on pursuing a single goal without reaching a waypoint. At 10 Hz
 /// this is ~8 s — past it we abandon the goal (Eraser's 4 s give-up is tighter,
@@ -314,6 +314,36 @@ impl NavigationDriver {
 
     pub fn path_length(&self) -> usize {
         self.current_path.len()
+    }
+
+    /// String-pull the current path using `cm` so the bot cuts corners instead of
+    /// zigzagging at every 64-unit grid node. Call once after `set_goal` replans.
+    ///
+    /// Safe to call every tick — it only re-smoothes when the path has ≥3 nodes
+    /// and the smoothed version is shorter. Plan 14 T1.
+    pub fn smooth_with_cm(&mut self, cm: &CollisionModel, from: Vec3) {
+        if self.current_path.len() < 3 {
+            return;
+        }
+        let smoothed = self
+            .nav_graph
+            .smooth_path(cm, &self.current_path, [from.x, from.y, from.z]);
+        if smoothed.len() < self.current_path.len() {
+            let old_wp = self.current_waypoint;
+            self.current_path = smoothed;
+            // Re-anchor the current waypoint to the first valid node in the new path.
+            let new_wp = if self.current_path.len() > 1 {
+                // Keep the old waypoint if it's still in the smoothed path; else use path[1].
+                if old_wp.is_some_and(|w| self.current_path.contains(&w)) {
+                    old_wp
+                } else {
+                    Some(self.current_path[1])
+                }
+            } else {
+                self.current_path.first().copied()
+            };
+            self.current_waypoint = new_wp;
+        }
     }
 }
 

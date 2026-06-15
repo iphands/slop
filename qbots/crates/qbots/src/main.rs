@@ -666,6 +666,10 @@ pub(crate) async fn bot_task(
                             };
 
                             nav.set_goal(goal, pos);
+                            // String-pull the path into longer straight runs (Plan 14 T1).
+                            if let Some(cm) = collision.as_deref() {
+                                nav.smooth_with_cm(cm, pos);
+                            }
 
                             // Ideal-distance combat constants (Eraser BOT_IDEAL_DIST_FROM_ENEMY).
                             const IDEAL_DIST: f32 = 160.0;
