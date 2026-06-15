@@ -181,7 +181,12 @@ impl Worldview {
         let delta = self.self_state.health - self.prev_health;
 
         if delta != 0 {
-            tracing::trace!("health changed: {} -> {} (delta={})", self.prev_health, self.self_state.health, delta);
+            tracing::trace!(
+                "health changed: {} -> {} (delta={})",
+                self.prev_health,
+                self.self_state.health,
+                delta
+            );
         }
 
         if delta < 0 {

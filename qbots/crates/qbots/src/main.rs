@@ -206,10 +206,10 @@ async fn run_brain_bot_with_shutdown(
                 let (frame_opt, cs) = (conn.frame.clone(), conn.configstrings().clone());
                 let state = conn.state();
                 let playernum = conn.serverdata.as_ref().map(|sd| sd.playernum).unwrap_or(0);
-                
+
                 // Track health across frames for damage detection
                 if let Some(ref frame) = frame_opt {
-                    let view = Worldview::from_frame(&frame, &cs, playernum);
+                    let view = Worldview::from_frame(frame, &cs, playernum);
                     let current_health = view.self_state().health;
                     if current_health > 0 {
                         if let Some(prev) = last_health {
@@ -280,7 +280,7 @@ async fn run_brain_bot_with_shutdown(
                 let cmd = if state == ConnState::Active {
                     if let Some(frame) = frame_opt {
                         let view = Worldview::from_frame(&frame, &cs, playernum);
-                        
+
                         // Detect damage before creating worldview (need previous health)
                         let current_health = view.self_state().health;
                         if let Some(prev) = last_health.as_mut() {
@@ -306,7 +306,12 @@ async fn run_brain_bot_with_shutdown(
                             }
                         }
                         last_health = Some(current_health);
-                        
+
+                        // Feed the server's delta_angles into the movement controller so
+                        // build_cmd can subtract it — without this, every aim/move direction
+                        // is rotated by the persistent spawn-yaw offset. (pmove.c:1255)
+                        move_ctrl.set_delta_angles(frame.playerstate.pmove.delta_angles);
+
                         // Health tracking is done above, before creating the view
                         // No need to call view.detect_damage() here
                         let jitter = (ticks as f32) * 0.1;
@@ -320,13 +325,13 @@ async fn run_brain_bot_with_shutdown(
                                 .find(|e| e.entity_number == target)
                                 .map(|e| e.origin)
                                 .unwrap_or(view.self_state().origin);
-                            
+
                             // Update FSM state to Engage if not already
                             if !matches!(fsm, BehaviorState::Engage { .. }) {
                                 tracing::debug!("forcing FSM into Engage state (target={})", target);
                                 fsm = BehaviorState::Engage { target_entity: target };
                             }
-                            
+
                             tracing::debug!(
                                 "combat target override: target={} pos={:?}",
                                 target, target_pos
@@ -362,139 +367,48 @@ async fn run_brain_bot_with_shutdown(
                             } else {
                                 NavGoal::Position(pos)
                             };
-                            
-                            // Debug: log nav goal when combat target is active
-                            if combat_dec.target_entity.is_some() {
-                                tracing::debug!(
-                                    "nav goal: {:?}, current_waypoint={:?}, path_len={}",
-                                    goal,
-                                    nav.current_waypoint(),
-                                    nav.path_length()
-                                );
-                            }
-                            
-                            nav.set_goal(goal.clone(), pos);
 
-                            // Always compute movement direction (even when shooting)
-                            let mut nav_moving = false;
-                            let mut nav_dir_correct = true;
+                            nav.set_goal(goal, pos);
+
+                            // Walk along the nav path. The graph routes around walls, so trust
+                            // its direction. While firing we keep facing the enemy (forwardmove is
+                            // view-relative, so we chase what we aim at); otherwise turn toward the
+                            // next waypoint. Movement intent is [-1,1]; build_cmd scales to speed.
                             if let Some(dir) = nav.next_waypoint_direction(pos) {
-                                nav_moving = true;
                                 let yaw = dir.y.atan2(dir.x).to_degrees();
-                                let pitch =
-                                    (-dir.z).atan2(dir.x.hypot(dir.y)).to_degrees();
-                                
-                                // Debug: log nav direction vs target
-                                if let Some(target) = combat_dec.target_entity {
-                                    if let Some(enemy) = view.entities().find(|e| e.entity_number == target) {
-                                        let to_enemy = enemy.origin - pos;
-                                        let to_enemy_normalized = to_enemy.normalize();
-                                        let enemy_yaw = to_enemy.y.atan2(to_enemy.x).to_degrees();
-                                        let nav_yaw = dir.y.atan2(dir.x).to_degrees();
-                                        let yaw_diff = (nav_yaw - enemy_yaw).abs().rem_euclid(360.0);
-                                        let dot = dir.dot(to_enemy_normalized);
-                                        
-                                        tracing::debug!(
-                                            "nav vs target: nav_dir={:?} yaw={:.1}° vs to_enemy={:?} yaw={:.1}° (diff={:.1}°, dot={:.2})",
-                                            dir, nav_yaw, to_enemy, enemy_yaw, yaw_diff, dot
-                                        );
-                                        
-                                        // If nav direction is more than 90° away from target, it's wrong
-                                        nav_dir_correct = dot > 0.0;
-                                        
-                                        if !nav_dir_correct {
-                                            tracing::warn!(
-                                                "NAV DIRECTION WRONG: nav_dir={:?} vs to_enemy={:?} (dot={:.2})",
-                                                dir, to_enemy, dot
-                                            );
-                                        }
-                                    }
-                                }
-                                
-                                // Only use nav movement if direction is correct
-                                if nav_dir_correct {
-                                    // Only override look direction if not shooting
-                                    if !combat_dec.should_fire {
-                                        mv.look_at(yaw, pitch);
-                                    }
-                                    mv.move_forward(400.0);
-                                    
-                                    // Debug: log movement when engaging
-                                    if matches!(fsm, BehaviorState::Engage { .. }) {
-                                        tracing::debug!(
-                                            "engaging: moving dir=({:.1},{:.1},{:.1}) yaw={:.1}°",
-                                            dir.x, dir.y, dir.z, yaw
-                                        );
-                                    } else if combat_dec.target_entity.is_some() {
-                                        // Log movement even when not in Engage state but has combat target
-                                        tracing::debug!(
-                                            "combat target active: moving dir=({:.1},{:.1},{:.1}) yaw={:.1}° pos={:?}",
-                                            dir.x, dir.y, dir.z, yaw, pos
-                                        );
-                                    }
-                                } else if combat_dec.should_fire {
-                                    // If shooting and nav is wrong, still shoot but don't move
-                                    mv.attack();
-                                }
-                            }
-                            
-                            // If nav can't find a path or direction is wrong but we have a combat target, move directly toward enemy
-                            if !nav_moving || !nav_dir_correct {
+                                let pitch = (-dir.z).atan2(dir.x.hypot(dir.y)).to_degrees();
                                 if !combat_dec.should_fire {
-                                    if let Some(target) = combat_dec.target_entity {
-                                        if let Some(enemy) = view.entities().find(|e| e.entity_number == target) {
-                                            let to_enemy = enemy.origin - pos;
-                                            let dist = to_enemy.length();
-                                            if dist > 10.0 {
-                                                let dir = to_enemy.normalize();
-                                                let yaw = dir.y.atan2(dir.x).to_degrees();
-                                                let pitch = (-dir.z).atan2(dir.x.hypot(dir.y)).to_degrees();
-                                                
-                                                tracing::debug!(
-                                                    "no nav path/nav wrong, moving directly to enemy: dir=({:.1},{:.1},{:.1}) yaw={:.1}° dist={:.1}",
-                                                    dir.x, dir.y, dir.z, yaw, dist
-                                                );
-                                                
-                                                mv.look_at(yaw, pitch);
-                                                mv.move_forward(400.0);
-                                            }
+                                    mv.look_at(yaw, pitch);
+                                }
+                                mv.move_forward(1.0);
+                            } else if let Some(target) = combat_dec.target_entity {
+                                // No nav path but a visible target: close the distance directly.
+                                if let Some(enemy) =
+                                    view.entities().find(|e| e.entity_number == target)
+                                {
+                                    let to_enemy = enemy.origin - pos;
+                                    if to_enemy.length() > 10.0 {
+                                        let dir = to_enemy.normalize();
+                                        let yaw = dir.y.atan2(dir.x).to_degrees();
+                                        let pitch =
+                                            (-dir.z).atan2(dir.x.hypot(dir.y)).to_degrees();
+                                        if !combat_dec.should_fire {
+                                            mv.look_at(yaw, pitch);
                                         }
+                                        mv.move_forward(1.0);
                                     }
                                 }
-                            }
-                            
-                            if !nav_moving && !nav_dir_correct && !combat_dec.should_fire {
-                                mv.move_forward(200.0);
                             }
 
+                            // Stuck recovery: jump to break free; nav replans next tick.
                             if nav.is_stuck() {
-                                tracing::warn!("bot stuck at pos={:?}, jumping and re-aiming", pos);
+                                tracing::debug!(?pos, "stuck — jumping to recover");
                                 mv.jump();
-                                // If we have a combat target, look toward enemy; otherwise look random
-                                if let Some(target) = combat_dec.target_entity {
-                                    if let Some(enemy) = view.entities().find(|e| e.entity_number == target) {
-                                        let to_enemy = enemy.origin - pos;
-                                        let yaw = to_enemy.y.atan2(to_enemy.x).to_degrees();
-                                        let pitch = (-to_enemy.z).atan2(to_enemy.x.hypot(to_enemy.y)).to_degrees();
-                                        mv.look_at(yaw, pitch);
-                                        // Move toward enemy to break out of stuck state
-                                        mv.move_forward(400.0);
-                                    } else {
-                                        // No enemy visible, look random and move
-                                        let random_yaw = (ticks as f32 * 13.7).rem_euclid(360.0);
-                                        mv.look_at(random_yaw, 0.0);
-                                        mv.move_forward(400.0);
-                                    }
-                                } else {
-                                    // No combat target, look random and move
-                                    let random_yaw = (ticks as f32 * 13.7).rem_euclid(360.0);
-                                    mv.look_at(random_yaw, 0.0);
-                                    mv.move_forward(400.0);
-                                }
                                 nav_driver.as_mut().unwrap().reset_stuck();
                             }
                         } else if !combat_dec.should_fire {
-                            mv.move_forward(200.0);
+                            // No nav graph loaded yet — just walk forward.
+                            mv.move_forward(1.0);
                             if ticks.is_multiple_of(20) {
                                 mv.jump();
                             }
@@ -502,10 +416,6 @@ async fn run_brain_bot_with_shutdown(
 
                         let mut cmd = move_ctrl.build_cmd(mv);
                         cmd.impulse = combat_dec.impulse.unwrap_or(0);
-                        tracing::debug!(
-                            "cmd: pos={:?} forward={} yaw_short={}",
-                            pos, cmd.forwardmove, cmd.angles[1]
-                        );
                         cmd
                     } else {
                         Usercmd::default()

@@ -75,12 +75,12 @@ impl CombatDriver {
                 let best_weapon_ammo_idx = best_weapon.ammo_index();
                 let best_weapon_has_ammo = best_weapon.ammo_cost() == 0
                     || (best_weapon_ammo_idx < ammo.len() && ammo[best_weapon_ammo_idx] > 0);
-                
+
                 // In Q2, you can only use weapons you've picked up (server sends gunindex).
                 // Check if the server has given us this weapon by comparing with gunindex.
-                let server_gave_us_this_weapon = self.server_weapon == best_weapon
-                    || best_weapon == Weapon::Blaster; // Blaster is always available
-                
+                let server_gave_us_this_weapon =
+                    self.server_weapon == best_weapon || best_weapon == Weapon::Blaster; // Blaster is always available
+
                 // Debug: log weapon selection decision
                 if best_weapon != self.server_weapon {
                     tracing::trace!(
@@ -92,11 +92,11 @@ impl CombatDriver {
                         self.server_weapon
                     );
                 }
-                
+
                 // Only switch if: we have ammo, server gave us the weapon, and it's different from current
-                let impulse = if best_weapon != self.server_weapon 
-                    && best_weapon_has_ammo 
-                    && server_gave_us_this_weapon 
+                let impulse = if best_weapon != self.server_weapon
+                    && best_weapon_has_ammo
+                    && server_gave_us_this_weapon
                 {
                     self.desired_weapon = best_weapon;
                     Some(best_weapon as u8)
@@ -120,7 +120,10 @@ impl CombatDriver {
                     };
                     tracing::info!(
                         "weapon switch: {:?} (ammo {}) → {:?} (ammo {})",
-                        current_weapon, current_ammo, best_weapon, new_ammo
+                        current_weapon,
+                        current_ammo,
+                        best_weapon,
+                        new_ammo
                     );
                 }
 
