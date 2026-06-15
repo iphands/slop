@@ -8,3 +8,4 @@ q2proto = { path = "../q2proto" }
 client = { path = "../client" }
 world = { path = "../world" }
 glam = "0.29"
+tracing = "0.1"

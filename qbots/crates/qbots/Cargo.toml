@@ -11,5 +11,8 @@ glam = "0.29"
 q2proto = { path = "../q2proto" }
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
+time = "0.3"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 world = { path = "../world" }
