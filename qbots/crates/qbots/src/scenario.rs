@@ -77,17 +77,35 @@ pub async fn run_scenario(
         .models
         .first()
         .ok_or_else(|| io_err(format!("BSP for '{map}' has no models")))?;
-    let graph = Arc::new(world::NavGraph::generate(
-        &cm,
-        (model.mins, model.maxs),
-        64.0,
-    ));
+
+    // Build nav graph with spawn seeding and jump detection (mirrors supervisor.rs).
+    let bsp_spawns: Vec<[f32; 3]> = bsp
+        .spawn_points()
+        .iter()
+        .map(|s| s.origin)
+        .collect();
+    let mut graph_mut = world::NavGraph::generate(&cm, (model.mins, model.maxs), 64.0);
+    let seeded = graph_mut.seed_spawns(&cm, &bsp_spawns);
+    let added_jumps = graph_mut.detect_jump_edges(&cm, 64.0);
+    let (in_largest, total_spawns) = graph_mut.spawns_in_largest_component(&bsp_spawns);
     tracing::info!(
         map,
-        nodes = graph.node_count(),
-        edges = graph.edge_count(),
-        "scenario nav graph"
+        nodes = graph_mut.node_count(),
+        edges = graph_mut.edge_count(),
+        seeded,
+        added_jumps,
+        in_largest,
+        total_spawns,
+        "scenario nav graph (augmented)"
     );
+    if in_largest < total_spawns {
+        tracing::warn!(
+            in_largest,
+            total_spawns,
+            "some spawns not in the largest nav component — cross-component routes may fail"
+        );
+    }
+    let graph = Arc::new(graph_mut);
 
     // 2. Resolve the scenario label + (when known up front) the goal origin + the
     //    spawn origins for the lazy farthest-spawn pick. A weapon origin is known
