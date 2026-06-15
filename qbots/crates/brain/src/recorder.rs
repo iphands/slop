@@ -23,7 +23,7 @@
 //! # t frame x y z vx vy vz speed yaw pitch move_yaw face_delta wp wpd flags
 //! <t> <frame> <x> <y> <z> <vx> <vy> <vz> <speed> <yaw> <pitch> <move_yaw> <face_delta> <wp> <wpd> <flags>
 //! ...
-//! # SUMMARY reached=<0|1> elapsed=<s> distance=<u> mean_speed=<u/s> max_speed=<u/s> bumps=<n> wrong_turns=<n> hindered_frames=<n> phantom_frames=<n>
+//! # SUMMARY reached=<0|1> elapsed=<s> distance=<u> mean_speed=<u/s> max_speed=<u/s> bumps=<n> wrong_turns=<n> hindered_frames=<n> phantom_frames=<n> path_efficiency=<0..1>
 //! ```
 //!
 //! Columns: `t` elapsed seconds; `frame` serverframe; `x y z` origin;
@@ -183,6 +183,9 @@ pub struct RunSummary {
     /// Frames with `phantom_target=true` (combat/fire with no LOS). Should be ~0
     /// after Plan 11; always 0 in scenario mode (no combat).
     pub phantom_frames: u32,
+    /// `straight_line_dist / distance_traveled` (Plan 14 T4). Closer to 1.0 means
+    /// less grid zigzag. `0.0` when no frames or the bot didn't move.
+    pub path_efficiency: f32,
 }
 
 /// The recorder: owns the probe, the goal, and the accumulating frame log.
@@ -196,6 +199,7 @@ pub struct MovementRecorder {
     started_iso: String,
     frames: Vec<FrameRecord>,
     prev_origin: Option<[f32; 3]>,
+    start_origin: Option<[f32; 3]>,
     distance: f32,
     max_speed: f32,
     bumps: u32,
@@ -230,6 +234,7 @@ impl MovementRecorder {
             started_iso: started_iso.into(),
             frames: Vec::new(),
             prev_origin: None,
+            start_origin: None,
             distance: 0.0,
             max_speed: 0.0,
             bumps: 0,
@@ -257,9 +262,11 @@ impl MovementRecorder {
             0.0
         };
 
-        // Distance traveled this frame (3D).
+        // Distance traveled this frame (3D); record start on first frame.
         if let Some(prev) = self.prev_origin {
             self.distance += dist3(s.origin, prev);
+        } else {
+            self.start_origin = Some(s.origin);
         }
         if horiz_speed > self.max_speed {
             self.max_speed = horiz_speed;
@@ -353,6 +360,15 @@ impl MovementRecorder {
         } else {
             0.0
         };
+        let path_efficiency = if self.distance > 1e-3 {
+            let straight = self
+                .start_origin
+                .map(|s| dist3(s, self.goal))
+                .unwrap_or(0.0);
+            (straight / self.distance).min(1.0)
+        } else {
+            0.0
+        };
         RunSummary {
             reached: self.ever_reached,
             elapsed_secs: elapsed,
@@ -363,6 +379,7 @@ impl MovementRecorder {
             wrong_turns: self.wrong_turns,
             hindered_frames: self.hindered_frames,
             phantom_frames: self.phantom_frames,
+            path_efficiency,
         }
     }
 
@@ -410,9 +427,9 @@ impl MovementRecorder {
         }
         let s = self.summary();
         out.push_str(&format!(
-            "# SUMMARY reached={} elapsed={:.2} distance={:.0} mean_speed={:.0} max_speed={:.0} bumps={} wrong_turns={} hindered_frames={} phantom_frames={}\n",
+            "# SUMMARY reached={} elapsed={:.2} distance={:.0} mean_speed={:.0} max_speed={:.0} bumps={} wrong_turns={} hindered_frames={} phantom_frames={} path_efficiency={:.3}\n",
             s.reached as u8, s.elapsed_secs, s.distance, s.mean_speed, s.max_speed, s.bumps,
-            s.wrong_turns, s.hindered_frames, s.phantom_frames
+            s.wrong_turns, s.hindered_frames, s.phantom_frames, s.path_efficiency
         ));
         std::fs::write(path, out)
     }
@@ -811,6 +828,7 @@ mod tests {
             "wrong_turns=",
             "hindered_frames=",
             "phantom_frames=",
+            "path_efficiency=",
         ] {
             assert!(summary.contains(key), "SUMMARY has {key}");
         }
