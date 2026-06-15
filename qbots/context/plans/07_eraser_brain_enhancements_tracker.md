@@ -1,0 +1,29 @@
+# Eraser-Derived Brain Enhancements — Tracker
+
+## Overview
+- Status: 0% complete
+- Start date: 2026-06-14
+- Plan: `07_eraser_brain_enhancements.md`
+- Depends on: Plan 06 (brain skeleton)
+- Exit criterion: a single qbot frags with Eraser-grade aim/dodge/skill — hitscan+projectile aim connects,
+  `combat>=4` bots dodge visible rockets/grenades, skill tiers visibly differ, auto-skill drifts, give-up/stuck fire.
+
+## Resume Instructions
+1. Read `context/distilled/eraser.md` FIRST — every constant/formula and `bot_*.c:line` ref is there.
+2. Plan 06 must be far enough that `crates/brain` exists with perception + a combat stub. This plan *fills in*
+   Eraser's numbers; it does not re-architect Plan 06.
+3. Plugin-only substitutions: `gi.trace`/`visible`→our `world/` BSP trace; enemy `velocity`→derived from origin
+   deltas (low-pass); enemy `health`/`weapon`→not transmitted, use hit-derived estimates; `Pmove` oracle→drop (server runs physics).
+4. Keep Eraser's calibrated defaults; only tune per T7.
+
+## Progress
+
+| # | Task | File / Module | Status | Notes |
+|---|------|---------------|--------|-------|
+| 1 | T1: combat aim/lead/jitter | `brain/src/{combat,aim}.rs` | pending | per-weapon lead + `(5−acc)/5*2` jitter + ±15° pitch |
+| 2 | T2: fire timing + weapon select | `brain/src/weapons.rs` | pending | intervals, reaction, priority lists, 0.9 s lockout |
+| 3 | T3: danger avoidance | `brain/src/danger.rs` | pending | rocket(>=4)/grenade dodge, `botJumpAvoidEnt` on BSP |
+| 4 | T4: skill/personality config | `brain/src/skill.rs` | pending | 7-field, `AdjustRatingsToSkill`, auto-skill |
+| 5 | T5: FSM give-up/stuck/engage | `brain/src/{fsm,nav}.rs` | pending | 2s/4s give-up, 4u/5s stuck, RL-retreat, ideal-dist |
+| 6 | T6: fix Eraser gaps | `brain/src/{items,weapons}.rs` | pending | powerup values, BFG lead, fresh camping |
+| 7 | T7: verify | — | pending | frags + dodge + skill tiers |

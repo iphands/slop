@@ -122,7 +122,7 @@ state emits a goal for T2/T3. Keep it small and debuggable (log transitions).
 
 **What to do**: Per-bot params (Eraser `bots.cfg`): aiming accuracy, reaction time (ms),
 aggressiveness, preferred weapon, max skill. Scale aim jitter, reaction delay, target-switch
-hesitation, and weapon prefs. Loaded from the fleet config (Plan 07).
+hesitation, and weapon prefs. Loaded from the fleet config (Plan 09).
 
 **Commit**: `task(T6): per-bot skill/personality parameters`
 

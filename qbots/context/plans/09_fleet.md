@@ -1,8 +1,8 @@
-# Plan 07 — Fleet (`qbots` binary)
+# Plan 09 — Fleet (`qbots` binary)
 
 > **Status**: pending
 > **Created**: 2026-06-14
-> **Depends on**: Plan 06 (brain)
+> **Depends on**: Plan 06 (brain) — required; Plans 07 (eraser enhancements) & 08 (heatmap) — optional quality layers
 > **Goal**: Run many bots from one process — config-driven roster, supervised lifecycle,
 > per-bot logging, and rate-safe connection pacing — so a fleet of bots fills a deathmatch
 > server and stays up.
@@ -17,7 +17,9 @@
 
 **What**: Build out the `qbots` binary: a roster config, a supervisor that spawns one tokio
 task per bot (sharing an `Arc<World>`), staggered/retried connects, structured logging, and
-a clean CLI. Replaces the Plan 03 `connect-one` harness with a real fleet runner.
+a clean CLI. Replaces the Plan 03 `connect-one` harness with a real fleet runner. Ports Eraser's
+battle-tested supervisor policies (spawn-to-target, 0.5 s/bot throttle, lowest-score-kick-when-crowded,
+`bot_free_clients` reservation, map-change respawn list, 8 s reconnect grace) — see `distilled/eraser.md §12`.
 
 **Deliverables**:
 1. Roster config (TOML): server addr + N bots (name/skin/skill) + tuning.

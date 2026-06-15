@@ -1,0 +1,30 @@
+# Danger/Popularity Heatmap Nav Overlay — Tracker
+
+## Overview
+- Status: 0% complete
+- Start date: 2026-06-14
+- Plan: `08_danger_heatmap_nav.md`
+- Depends on: Plan 05 (world: nav graph + trace), Plan 06 (brain: perception/events)
+- Exit criterion: bots visibly detour around a known death-trap within ~30 s, gravitate toward hot lanes,
+  and the heatmap decays so quieted nodes stop detouring.
+
+## Resume Instructions
+1. This is the **novel** plan (not a port) — Eraser can't do this (its graph is static topology). Motivation:
+   `distilled/eraser.md §10 & §13-D`.
+2. **Per-bot overlay, never shared** — AGENTS.md forbids shared mutable world state across bot tasks. Each bot's
+   heatmap reflects its own PVS-limited observations.
+3. Read-only topology: never mutate the `Arc<World>` nav graph — overlay is a side-table keyed by node id.
+4. This is **strategic** routing (minute-scale); it composes with Plan 07 T3's **tactical** projectile dodge
+   (frame-scale). Don't let them fight — strategic sets path/goal, tactical overrides a frame.
+5. Keep updates **budgeted** (Eraser `optimize_marker`-style rotating cursor) so we never stall a tick.
+
+## Progress
+
+| # | Task | File / Module | Status | Notes |
+|---|------|---------------|--------|-------|
+| 1 | T1: event ingestion | `brain/src/observed.rs` | pending | obituary→victim last-known node; presence from deltas |
+| 2 | T2: heatmap + decay | `brain/src/heatmap.rs` | pending | exp danger decay, EMA popularity, budgeted |
+| 3 | T3: risk-weighted A\* | `brain/src/nav.rs` | pending | `cost = base + W_d·danger − W_p·pop` |
+| 4 | T4: PVS-honest attribution | `brain/src/{heatmap,perception}.rs` | pending | only observed nodes; debug overlay |
+| 5 | T5: tune + integrate | `brain/src/{lib,skill}.rs` | pending | skill-derived weights; composes with 07 T3 |
+| 6 | T6: verify | — | pending | detour + gravitation + decay |

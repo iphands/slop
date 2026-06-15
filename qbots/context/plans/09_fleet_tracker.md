@@ -3,7 +3,7 @@
 ## Overview
 - Status: 0% complete
 - Start date: 2026-06-14
-- Plan: `07_fleet.md`
+- Plan: `09_fleet.md`
 - Depends on: Plan 06 (brain) — a single bot must work before fanning out
 - Exit criterion: 8–16 bots run several minutes, all connected, frags accumulating, no kicks.
 

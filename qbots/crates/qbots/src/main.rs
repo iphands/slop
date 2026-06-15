@@ -502,6 +502,10 @@ async fn run_brain_bot_with_shutdown(
 
                         let mut cmd = move_ctrl.build_cmd(mv);
                         cmd.impulse = combat_dec.impulse.unwrap_or(0);
+                        tracing::debug!(
+                            "cmd: pos={:?} forward={} yaw_short={}",
+                            pos, cmd.forwardmove, cmd.angles[1]
+                        );
                         cmd
                     } else {
                         Usercmd::default()
