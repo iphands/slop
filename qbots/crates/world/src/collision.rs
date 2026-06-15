@@ -50,10 +50,11 @@ struct Node {
     children: [i32; 2],
 }
 
-/// Internal leaf: contents + a range into the leafbrush table.
+/// Internal leaf: contents + cluster + a range into the leafbrush table.
 #[derive(Debug, Clone, Copy)]
 struct Leaf {
     contents: i32,
+    cluster: i16,
     firstleafbrush: u16,
     numleafbrushes: u16,
 }
@@ -138,6 +139,7 @@ impl CollisionModel {
             .iter()
             .map(|l| Leaf {
                 contents: l.contents,
+                cluster: l.cluster,
                 firstleafbrush: l.firstleafbrush,
                 numleafbrushes: l.numleafbrushes,
             })
@@ -183,6 +185,12 @@ impl CollisionModel {
     /// True if `p` is in a solid leaf (cheap, leaf-only).
     pub fn is_solid(&self, p: &[f32; 3]) -> bool {
         self.point_contents(p) & MASK_SOLID != 0
+    }
+
+    /// `CM_LeafCluster` — the PVS cluster of the leaf containing `p` (-1 if none).
+    pub fn point_cluster(&self, p: &[f32; 3]) -> i16 {
+        let leaf = self.point_leafnum(p, self.headnode);
+        self.leafs[leaf].cluster
     }
 
     /// `CM_BoxTrace` — sweep a box from `start` to `end` (mins/maxs relative to origin;
@@ -623,6 +631,7 @@ mod tests {
         }];
         let leafs = vec![Leaf {
             contents: CONTENTS_SOLID,
+            cluster: 0,
             firstleafbrush: 0,
             numleafbrushes: 1,
         }];

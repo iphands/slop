@@ -45,6 +45,8 @@ enum Cmd {
     BspInfo { map: String },
     /// Build the collision model for a map and fire test rays from its center.
     Trace { map: String },
+    /// Show PVS info for a map (cluster at the center + how many clusters it sees).
+    Pvs { map: String },
 }
 
 /// A per-process default qport (distinct across concurrent bot processes).
@@ -162,6 +164,39 @@ async fn main() -> ExitCode {
                         t.fraction,
                         t.fraction * RAY,
                         if t.fraction < 1.0 { "WALL" } else { "clear" }
+                    );
+                }
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("qbots: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Cmd::Pvs { map } => match world::Bsp::load(&cfg.paths.baseq2, &map) {
+            Ok(bsp) => {
+                let cm = world::CollisionModel::from_bsp(&bsp);
+                let pvs = world::Pvs::from_lump(bsp.vis.clone());
+                match &pvs {
+                    Some(p) => println!("{}: {} clusters", map, p.numclusters()),
+                    None => println!("{}: no PVS lump", map),
+                }
+                let m = bsp.models.first().expect("bsp has models");
+                let center = [
+                    (m.mins[0] + m.maxs[0]) * 0.5,
+                    (m.mins[1] + m.maxs[1]) * 0.5,
+                    (m.mins[2] + m.maxs[2]) * 0.5,
+                ];
+                let cluster = cm.point_cluster(&center);
+                println!(
+                    "  center ({:.0},{:.0},{:.0}) → cluster {}",
+                    center[0], center[1], center[2], cluster
+                );
+                if let Some(p) = &pvs {
+                    println!(
+                        "  clusters visible from {}: {}",
+                        cluster,
+                        p.count_visible(cluster)
                     );
                 }
                 ExitCode::SUCCESS

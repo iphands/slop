@@ -7,6 +7,7 @@
 pub mod bsp;
 pub mod collision;
 pub mod pak;
+pub mod vis;
 
 pub use bsp::{
     Brush, BrushSide, Bsp, Header, Leaf, Lump, Model, Node, Plane as BspPlane, NUM_LUMPS,
@@ -16,3 +17,4 @@ pub use collision::{
     CONTENTS_WINDOW, MASK_SOLID, MASK_WATER,
 };
 pub use pak::Pak;
+pub use vis::Pvs;

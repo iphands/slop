@@ -15,6 +15,7 @@ pub const NUM_LUMPS: usize = 19;
 
 // Lump indices (`files.h:273`).
 const LUMP_PLANES: usize = 1;
+const LUMP_VISIBILITY: usize = 3;
 const LUMP_NODES: usize = 4;
 const LUMP_LEAFS: usize = 8;
 const LUMP_LEAFBRUSHES: usize = 10;
@@ -97,6 +98,8 @@ pub struct Bsp {
     pub brushsides: Vec<BrushSide>,
     pub leafbrushes: Vec<u16>,
     pub models: Vec<Model>,
+    /// Raw visibility (PVS) lump: `dvis_t` header + RLE-compressed bitvectors.
+    pub vis: Vec<u8>,
 }
 
 impl Bsp {
@@ -144,6 +147,7 @@ impl Bsp {
         let brushsides = parse_brushsides(slice(LUMP_BRUSHSIDES)?).map_err(|e| e.to_string())?;
         let leafbrushes = parse_leafbrushes(slice(LUMP_LEAFBRUSHES)?).map_err(|e| e.to_string())?;
         let models = parse_models(slice(LUMP_MODELS)?).map_err(|e| e.to_string())?;
+        let vis = slice(LUMP_VISIBILITY).unwrap_or(&[]).to_vec();
 
         Ok(Self {
             version,
@@ -154,6 +158,7 @@ impl Bsp {
             brushsides,
             leafbrushes,
             models,
+            vis,
         })
     }
 
