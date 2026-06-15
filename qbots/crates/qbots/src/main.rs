@@ -369,7 +369,9 @@ async fn run_brain_bot_with_shutdown(
                             nav.set_goal(goal.clone(), pos);
 
                             // Always compute movement direction (even when shooting)
+                            let mut nav_moving = false;
                             if let Some(dir) = nav.next_waypoint_direction(pos) {
+                                nav_moving = true;
                                 let yaw = dir.y.atan2(dir.x).to_degrees();
                                 let pitch =
                                     (-dir.z).atan2(dir.x.hypot(dir.y)).to_degrees();
@@ -393,12 +395,42 @@ async fn run_brain_bot_with_shutdown(
                                         dir.x, dir.y, dir.z, yaw, pos
                                     );
                                 }
-                            } else if !combat_dec.should_fire {
+                            }
+                            
+                            // If nav can't find a path but we have a combat target, move directly toward enemy
+                            if !nav_moving && !combat_dec.should_fire {
+                                if let Some(target) = combat_dec.target_entity {
+                                    if let Some(enemy) = view.entities().find(|e| e.entity_number == target) {
+                                        let to_enemy = enemy.origin - pos;
+                                        let dist = to_enemy.length();
+                                        if dist > 10.0 {
+                                            let dir = to_enemy.normalize();
+                                            let yaw = dir.y.atan2(dir.x).to_degrees();
+                                            let pitch = (-dir.z).atan2(dir.x.hypot(dir.y)).to_degrees();
+                                            
+                                            tracing::debug!(
+                                                "no nav path, moving directly to enemy: dir=({:.1},{:.1},{:.1}) yaw={:.1}° dist={:.1}",
+                                                dir.x, dir.y, dir.z, yaw, dist
+                                            );
+                                            
+                                            mv.look_at(yaw, pitch);
+                                            mv.move_forward(400.0);
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            if !nav_moving && !combat_dec.should_fire {
                                 mv.move_forward(200.0);
                             }
 
                             if nav.is_stuck() {
+                                tracing::warn!("bot stuck at pos={:?}, jumping and re-aiming", pos);
                                 mv.jump();
+                                // Look random direction to break out of stuck state
+                                let random_yaw = (ticks as f32 * 13.7).rem_euclid(360.0);
+                                mv.look_at(random_yaw, 0.0);
+                                nav_driver.as_mut().unwrap().reset_stuck();
                             }
                         } else if !combat_dec.should_fire {
                             mv.move_forward(200.0);
