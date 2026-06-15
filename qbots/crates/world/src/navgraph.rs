@@ -7,7 +7,7 @@
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BinaryHeap, HashMap};
 
-use crate::collision::{CollisionModel, MASK_SOLID};
+use crate::collision::{CollisionModel, MASK_SOLID, MASK_WATER};
 
 /// Q2 standing player hull (`VEC_HULL_MIN/MAX`): the bbox traces use.
 pub const HULL_MINS: [f32; 3] = [-16.0, -16.0, -24.0];
@@ -195,6 +195,10 @@ fn floor_waypoint(
     let floor_z = down.endpos[2];
     // bot origin stands ~24 above the floor (hull mins.z = -24).
     let wp = [x, y, floor_z + 24.0];
+    // Skip waypoints inside water, slime or lava.
+    if cm.point_contents(&wp) & MASK_WATER != 0 {
+        return None;
+    }
     let stand = cm.trace(&wp, &wp, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
     (!stand.startsolid).then_some(wp)
 }

@@ -105,6 +105,10 @@ impl Worldview {
         for entity_state in &frame.entities {
             let class = if entity_state.number == self_entity {
                 EntityClass::SelfPlayer
+            } else if entity_state.modelindex == 255 {
+                // Q2 protocol sentinel: modelindex=255 means "use player skin from
+                // CS_PLAYERSKINS" — i.e., this is always a player entity.
+                EntityClass::EnemyPlayer
             } else {
                 model_to_class
                     .get(entity_state.modelindex as usize)
