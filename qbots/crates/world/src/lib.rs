@@ -5,7 +5,14 @@
 //! by Plan 05: loader (T1) → collision trace (T2) → PVS (T3) → nav graph (T4).
 
 pub mod bsp;
+pub mod collision;
 pub mod pak;
 
-pub use bsp::{Brush, BrushSide, Bsp, Header, Leaf, Lump, Model, Node, Plane, NUM_LUMPS};
+pub use bsp::{
+    Brush, BrushSide, Bsp, Header, Leaf, Lump, Model, Node, Plane as BspPlane, NUM_LUMPS,
+};
+pub use collision::{
+    CollisionModel, Trace, CONTENTS_LAVA, CONTENTS_SLIME, CONTENTS_SOLID, CONTENTS_WATER,
+    CONTENTS_WINDOW, MASK_SOLID, MASK_WATER,
+};
 pub use pak::Pak;

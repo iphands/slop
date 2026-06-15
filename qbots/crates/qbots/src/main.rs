@@ -43,6 +43,8 @@ enum Cmd {
     Config,
     /// Load + dump a BSP (planes/nodes/leafs/brushes counts) from the configured baseq2.
     BspInfo { map: String },
+    /// Build the collision model for a map and fire test rays from its center.
+    Trace { map: String },
 }
 
 /// A per-process default qport (distinct across concurrent bot processes).
@@ -105,6 +107,70 @@ async fn main() -> ExitCode {
             );
             ExitCode::SUCCESS
         }
+        Cmd::Trace { map } => match world::Bsp::load(&cfg.paths.baseq2, &map) {
+            Ok(bsp) => {
+                let cm = world::CollisionModel::from_bsp(&bsp);
+                let m = bsp.models.first().expect("bsp has models");
+                let center = [
+                    (m.mins[0] + m.maxs[0]) * 0.5,
+                    (m.mins[1] + m.maxs[1]) * 0.5,
+                    (m.mins[2] + m.maxs[2]) * 0.5,
+                ];
+                println!(
+                    "{}: bounds [{:.0},{:.0},{:.0}]..[{:.0},{:.0},{:.0}]  center=({:.0},{:.0},{:.0})",
+                    map,
+                    m.mins[0],
+                    m.mins[1],
+                    m.mins[2],
+                    m.maxs[0],
+                    m.maxs[1],
+                    m.maxs[2],
+                    center[0],
+                    center[1],
+                    center[2]
+                );
+                println!(
+                    "  point_contents(center) = {:#x}  is_solid={}",
+                    cm.point_contents(&center),
+                    cm.is_solid(&center)
+                );
+                // 8 horizontal rays, 4096 units each, from the center.
+                const RAY: f32 = 4096.0;
+                let dirs = [
+                    [1.0f32, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [-1.0, 0.0, 0.0],
+                    [0.0, -1.0, 0.0],
+                    [1.0, 1.0, 0.0],
+                    [-1.0, -1.0, 0.0],
+                    [1.0, -1.0, 0.0],
+                    [-1.0, 1.0, 0.0],
+                ];
+                for d in dirs {
+                    let n = (d[0] * d[0] + d[1] * d[1]).sqrt();
+                    let dir = [d[0] / n, d[1] / n, 0.0];
+                    let end = [
+                        center[0] + dir[0] * RAY,
+                        center[1] + dir[1] * RAY,
+                        center[2],
+                    ];
+                    let t = cm.trace(&center, &end, &[0.0; 3], &[0.0; 3], world::MASK_SOLID);
+                    println!(
+                        "  dir ({:+.1},{:+.1}): frac={:.3}  hit at {:.0} units  {}",
+                        dir[0],
+                        dir[1],
+                        t.fraction,
+                        t.fraction * RAY,
+                        if t.fraction < 1.0 { "WALL" } else { "clear" }
+                    );
+                }
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("qbots: {e}");
+                ExitCode::FAILURE
+            }
+        },
         Cmd::BspInfo { map } => match world::Bsp::load(&cfg.paths.baseq2, &map) {
             Ok(bsp) => {
                 println!(
