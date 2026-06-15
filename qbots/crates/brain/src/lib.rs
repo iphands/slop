@@ -10,6 +10,7 @@ pub mod aim;
 pub mod combat;
 pub mod danger;
 pub mod fsm;
+pub mod items;
 pub mod move_ctrl;
 pub mod nav;
 pub mod perception;

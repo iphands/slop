@@ -393,8 +393,19 @@ pub(crate) async fn bot_task(
 
                             let goal = if let Some(g) = fsm_intent.nav_goal {
                                 g
+                            } else if let Some((item_pos, _)) =
+                                brain::items::best_item_goal(&view, &skill)
+                            {
+                                // Seek the highest-value visible item (powerups,
+                                // armor, weapons) weighted by value/distance and
+                                // the bot's health need / quad_freak personality.
+                                NavGoal::Position(item_pos)
                             } else if !roam_nodes.is_empty() {
-                                if ticks.is_multiple_of(50) {
+                                // Campers dwell ~5x longer per node (first-cut
+                                // camping; a true camp-node picker with cover/LOS
+                                // is a follow-up). Default roamer cycles every 5s.
+                                let dwell = if skill.camper { 250 } else { 50 };
+                                if ticks.is_multiple_of(dwell) {
                                     roam_idx = (roam_idx + roam_nodes.len() / 7 + 1)
                                         % roam_nodes.len();
                                 }
