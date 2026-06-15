@@ -384,32 +384,64 @@ async fn run_brain_bot_with_shutdown(
 
                             nav.set_goal(goal, pos);
 
-                            // Walk along the nav path. The graph routes around walls, so trust
-                            // its direction. While firing we keep facing the enemy (forwardmove is
-                            // view-relative, so we chase what we aim at); otherwise turn toward the
-                            // next waypoint. Movement intent is [-1,1]; build_cmd scales to speed.
-                            if let Some(dir) = nav.next_waypoint_direction(pos) {
-                                let yaw = dir.y.atan2(dir.x).to_degrees();
-                                let pitch = (-dir.z).atan2(dir.x.hypot(dir.y)).to_degrees();
-                                if !combat_dec.should_fire {
-                                    mv.look_at(yaw, pitch);
-                                }
-                                mv.move_forward(1.0);
-                            } else if let Some(target) = combat_dec.target_entity {
-                                // No nav path but a visible target: close the distance directly.
+                            // Ideal-distance combat (Eraser `BOT_IDEAL_DIST_FROM_ENEMY=160`):
+                            // when we can see our target, hold at ~160u and back up below 80u
+                            // instead of charging point-blank into a losing duel. Facing the
+                            // enemy makes `forwardmove` relative to them (back-up = away).
+                            const IDEAL_DIST: f32 = 160.0;
+                            const BACKUP_DIST: f32 = 80.0;
+                            let mut enemy_dist: Option<f32> = None;
+                            if let Some(target) = combat_dec.target_entity {
                                 if let Some(enemy) =
                                     view.entities().find(|e| e.entity_number == target)
                                 {
                                     let to_enemy = enemy.origin - pos;
-                                    if to_enemy.length() > 10.0 {
-                                        let dir = to_enemy.normalize();
-                                        let yaw = dir.y.atan2(dir.x).to_degrees();
-                                        let pitch =
-                                            (-dir.z).atan2(dir.x.hypot(dir.y)).to_degrees();
-                                        if !combat_dec.should_fire {
-                                            mv.look_at(yaw, pitch);
+                                    let d = to_enemy.length();
+                                    enemy_dist = Some(d);
+                                    if d < IDEAL_DIST && !combat_dec.should_fire {
+                                        let yaw = to_enemy.y.atan2(to_enemy.x).to_degrees();
+                                        mv.look_at(yaw, 0.0);
+                                    }
+                                }
+                            }
+
+                            // Walk along the nav path. The graph routes around walls, so trust
+                            // its direction. While firing we keep facing the enemy (forwardmove is
+                            // view-relative, so we chase what we aim at); otherwise turn toward the
+                            // next waypoint. Movement intent is [-1,1]; build_cmd scales to speed.
+                            // Ideal-distance overrides the forward amount when engaging close.
+                            let forward = match enemy_dist {
+                                Some(d) if d < BACKUP_DIST => -1.0, // back up off the enemy
+                                Some(d) if d < IDEAL_DIST => 0.0,   // hold at range
+                                _ => 1.0,                            // advance (close or roam)
+                            };
+
+                            if forward != 0.0 || combat_dec.target_entity.is_none() {
+                                if let Some(dir) = nav.next_waypoint_direction(pos) {
+                                    let yaw = dir.y.atan2(dir.x).to_degrees();
+                                    let pitch = (-dir.z).atan2(dir.x.hypot(dir.y)).to_degrees();
+                                    if !combat_dec.should_fire && !matches!(enemy_dist, Some(d) if d < IDEAL_DIST) {
+                                        mv.look_at(yaw, pitch);
+                                    }
+                                    mv.move_forward(forward);
+                                } else if forward != 0.0 {
+                                    // No nav path but moving: head straight at the enemy if visible.
+                                    if let Some(target) = combat_dec.target_entity {
+                                        if let Some(enemy) =
+                                            view.entities().find(|e| e.entity_number == target)
+                                        {
+                                            let to_enemy = enemy.origin - pos;
+                                            if to_enemy.length() > 10.0 {
+                                                let dir = to_enemy.normalize();
+                                                let yaw = dir.y.atan2(dir.x).to_degrees();
+                                                let pitch =
+                                                    (-dir.z).atan2(dir.x.hypot(dir.y)).to_degrees();
+                                                if !combat_dec.should_fire {
+                                                    mv.look_at(yaw, pitch);
+                                                }
+                                                mv.move_forward(forward);
+                                            }
                                         }
-                                        mv.move_forward(1.0);
                                     }
                                 }
                             }
