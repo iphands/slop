@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use std::net::SocketAddr;
 use std::process::ExitCode;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use clap::{Parser, Subcommand};
 use config::Config;
@@ -107,10 +107,96 @@ fn abbreviate_level(level: tracing::Level) -> &'static str {
     }
 }
 
-/// Custom event formatter that abbreviates levels to single letters
+/// Max wall-time a run of identical lines is suppressed before we emit a
+/// "repeated N times" coda and keep counting — so a stuck bot still shows life.
+const DEDUP_FLUSH: Duration = Duration::from_secs(5);
+
+/// What the deduper wants the formatter to do for one event.
+#[derive(Debug, PartialEq)]
+enum DedupAction {
+    /// This event is a repeat — suppress it. If `coda` is `Some(n)`, first emit a
+    /// "repeated n times" line (a periodic flush so a long run isn't silent).
+    Suppress { coda: Option<u64> },
+    /// Emit this event. If `prev_coda` is `Some(n)`, first close out the previous
+    /// run with a "repeated n times" line.
+    Emit { prev_coda: Option<u64> },
+}
+
+/// One run of consecutive identical log lines (`key` = level + fields, no
+/// timestamp, so the changing clock doesn't defeat dedup).
+#[derive(Clone)]
+struct DedupRun {
+    key: String,
+    /// Suppressed repeats since the line was last emitted/flushed.
+    count: u64,
+    /// Elapsed at the run's start (or last periodic flush).
+    first_seen: Duration,
+}
+
+/// Consecutive-duplicate suppressor: a pure state machine over `(key, elapsed)`
+/// so it's unit-testable without a tracing subscriber. Collapses a stream like
+/// `FSM transition check …` ×100 into one line + a "repeated N times" coda — the
+/// syslog/journald "last message repeated" pattern.
+#[derive(Default)]
+struct Deduper {
+    run: Option<DedupRun>,
+}
+
+impl Deduper {
+    fn observe(&mut self, key: &str, elapsed: Duration, flush: Duration) -> DedupAction {
+        if let Some(r) = self.run.as_mut() {
+            if r.key == key {
+                r.count += 1;
+                if elapsed - r.first_seen >= flush {
+                    let c = r.count;
+                    r.count = 0;
+                    r.first_seen = elapsed;
+                    return DedupAction::Suppress { coda: Some(c) };
+                }
+                return DedupAction::Suppress { coda: None };
+            }
+            // Different line: close out the previous run, start a new one.
+            let prev_coda = (r.count > 0).then_some(r.count);
+            self.run = Some(DedupRun {
+                key: key.to_string(),
+                count: 0,
+                first_seen: elapsed,
+            });
+            return DedupAction::Emit { prev_coda };
+        }
+        self.run = Some(DedupRun {
+            key: key.to_string(),
+            count: 0,
+            first_seen: elapsed,
+        });
+        DedupAction::Emit { prev_coda: None }
+    }
+}
+
+/// Write the "repeated N times" coda line (indented under the line it summarizes).
+fn write_coda(
+    writer: &mut tracing_subscriber::fmt::format::Writer<'_>,
+    count: u64,
+) -> std::fmt::Result {
+    writeln!(writer, "  └─ repeated {count} times")
+}
+
+/// Custom event formatter: abbreviates levels to single letters and collapses
+/// consecutive identical lines into one + a "repeated N times" coda. Kills the
+/// per-tick FSM/nav spam without demoting every call site by hand.
 #[derive(Clone)]
 struct AbbreviatedFormat {
     start_time: Instant,
+    dedup: Arc<Mutex<Deduper>>,
+}
+
+impl AbbreviatedFormat {
+    fn new(start_time: Instant) -> Self {
+        Self {
+            start_time,
+            dedup: Arc::new(Mutex::new(Deduper::default())),
+        }
+    }
 }
 
 impl<S, N> tracing_subscriber::fmt::format::FormatEvent<S, N> for AbbreviatedFormat
@@ -125,15 +211,31 @@ where
         event: &tracing::Event<'_>,
     ) -> std::fmt::Result {
         let elapsed = self.start_time.elapsed();
-        let secs = elapsed.as_secs();
-        let millis = elapsed.subsec_millis();
-        write!(writer, "{secs:04}.{millis:03} ")?;
+        let level = abbreviate_level(*event.metadata().level());
 
-        let meta = event.metadata();
-        write!(writer, "{} ", abbreviate_level(*meta.level()))?;
+        // Format the event's fields into a buffer (the dedup key + the emit body).
+        let mut fields = String::new();
+        ctx.field_format().format_fields(
+            tracing_subscriber::fmt::format::Writer::new(&mut fields),
+            event,
+        )?;
+        let key = format!("{level} {fields}");
 
-        ctx.field_format().format_fields(writer.by_ref(), event)?;
-        writeln!(writer)
+        // Hold the lock across decision + write so interleaved threads can't tear
+        // a line or corrupt the run state.
+        let mut dedup = self.dedup.lock().unwrap();
+        match dedup.observe(&key, elapsed, DEDUP_FLUSH) {
+            DedupAction::Suppress { coda: Some(n) } => write_coda(&mut writer, n),
+            DedupAction::Suppress { coda: None } => Ok(()),
+            DedupAction::Emit { prev_coda } => {
+                if let Some(n) = prev_coda {
+                    write_coda(&mut writer, n)?;
+                }
+                let secs = elapsed.as_secs();
+                let millis = elapsed.subsec_millis();
+                writeln!(writer, "{secs:04}.{millis:03} {level} {fields}")
+            }
+        }
     }
 }
 
@@ -678,7 +780,7 @@ async fn main() -> ExitCode {
         .with_timer(ElapsedFormatter(start_time))
         .with_target(false)
         .with_thread_ids(false)
-        .event_format(AbbreviatedFormat { start_time })
+        .event_format(AbbreviatedFormat::new(start_time))
         .init();
 
     let cli = Cli::parse();
@@ -1010,5 +1112,101 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    const FLUSH: Duration = Duration::from_secs(5);
+
+    #[test]
+    fn first_event_emits_no_coda() {
+        let mut d = Deduper::default();
+        assert_eq!(
+            d.observe("D msg", Duration::ZERO, FLUSH),
+            DedupAction::Emit { prev_coda: None }
+        );
+    }
+
+    #[test]
+    fn consecutive_repeats_suppress_then_coda_on_change() {
+        let mut d = Deduper::default();
+        assert_eq!(
+            d.observe("D msg", Duration::ZERO, FLUSH),
+            DedupAction::Emit { prev_coda: None }
+        );
+        // Two repeats (same key): suppressed, no periodic coda yet.
+        assert_eq!(
+            d.observe("D msg", Duration::from_millis(100), FLUSH),
+            DedupAction::Suppress { coda: None }
+        );
+        assert_eq!(
+            d.observe("D msg", Duration::from_millis(200), FLUSH),
+            DedupAction::Suppress { coda: None }
+        );
+        // A different line closes the run with a coda of 2 (the suppressed repeats).
+        assert_eq!(
+            d.observe("I other", Duration::from_millis(300), FLUSH),
+            DedupAction::Emit { prev_coda: Some(2) }
+        );
+    }
+
+    #[test]
+    fn periodic_flush_emits_coda_and_resets_count() {
+        let mut d = Deduper::default();
+        assert_eq!(
+            d.observe("D msg", Duration::ZERO, FLUSH),
+            DedupAction::Emit { prev_coda: None }
+        );
+        // Repeats under the flush window: suppressed, no coda.
+        for _ in 0..3 {
+            assert_eq!(
+                d.observe("D msg", Duration::from_secs(1), FLUSH),
+                DedupAction::Suppress { coda: None }
+            );
+        }
+        // Once the elapsed since first_seen exceeds the flush window, a periodic
+        // coda fires (4 suppressed so far) and the count resets.
+        assert_eq!(
+            d.observe("D msg", Duration::from_secs(6), FLUSH),
+            DedupAction::Suppress { coda: Some(4) }
+        );
+        // The run continues; the next repeat is suppressed again with no coda.
+        assert_eq!(
+            d.observe("D msg", Duration::from_secs(7), FLUSH),
+            DedupAction::Suppress { coda: None }
+        );
+    }
+
+    #[test]
+    fn different_levels_do_not_merge() {
+        let mut d = Deduper::default();
+        assert_eq!(
+            d.observe("D msg", Duration::ZERO, FLUSH),
+            DedupAction::Emit { prev_coda: None }
+        );
+        // Same message text but a different level letter is a different key → emits.
+        assert_eq!(
+            d.observe("I msg", Duration::from_millis(100), FLUSH),
+            DedupAction::Emit { prev_coda: None }
+        );
+    }
+
+    #[test]
+    fn zero_repeat_run_emits_no_coda() {
+        // A line that never repeats (count stays 0) produces no coda when the next
+        // different line arrives.
+        let mut d = Deduper::default();
+        assert_eq!(
+            d.observe("D a", Duration::ZERO, FLUSH),
+            DedupAction::Emit { prev_coda: None }
+        );
+        assert_eq!(
+            d.observe("D b", Duration::from_millis(100), FLUSH),
+            DedupAction::Emit { prev_coda: None }
+        );
     }
 }
