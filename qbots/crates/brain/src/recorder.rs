@@ -32,7 +32,8 @@
 //! `face_delta` `|yaw − move_yaw|` (0 when still); `wp` current waypoint index
 //! (`-` if none); `wpd` 3D distance to it (`-`); `flags` a char run — `B` wall
 //! bump, `W` wrong turn, `H` hindered, `A` airborne, `P` phantom-target (combat with
-//! no LOS), `.` none. The `SUMMARY` line is the headline: it is what Plans 11–14 must beat.
+//! no LOS), `R` recovery-active (Plan 13), `.` none.
+//! The `SUMMARY` line is the headline: it is what Plans 11–14 must beat.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -92,6 +93,8 @@ pub struct FrameRecord {
     /// True when the bot had a combat target / was firing with no confirmed LOS
     /// (Plan 11 phantom-chase marker; always `false` in scenario mode).
     pub phantom_target: bool,
+    /// True when the recovery controller issued a non-None action this tick (Plan 13 T4).
+    pub recovery: bool,
 }
 
 /// Raw inputs the tick gathers for one frame; the recorder derives everything in
@@ -115,6 +118,8 @@ pub struct Sample {
     /// (Plan 11 T4). Marks "phantom chasing" through walls. Always `false` in
     /// scenario mode (no combat); meaningful only in live bot ticks.
     pub phantom_target: bool,
+    /// True when the recovery controller issued a non-None action this tick (Plan 13 T4).
+    pub recovery: bool,
 }
 
 /// Geometry probe for the wall-bump detector. Production wraps
@@ -324,6 +329,7 @@ impl MovementRecorder {
             hindered,
             grounded: s.grounded,
             phantom_target: s.phantom_target,
+            recovery: s.recovery,
         });
 
         self.prev_origin = Some(s.origin);
@@ -413,7 +419,7 @@ impl MovementRecorder {
 }
 
 /// Per-frame flag string: `B`=wall_bump, `W`=wrong_turn, `H`=hindered,
-/// `A`=airborne, `P`=phantom_target, `.`=none.
+/// `A`=airborne, `P`=phantom_target, `R`=recovery_active, `.`=none.
 fn flags(f: &FrameRecord) -> String {
     let mut s = String::new();
     if f.wall_bump.is_some() {
@@ -430,6 +436,9 @@ fn flags(f: &FrameRecord) -> String {
     }
     if f.phantom_target {
         s.push('P');
+    }
+    if f.recovery {
+        s.push('R');
     }
     if s.is_empty() {
         s.push('.');
@@ -538,6 +547,7 @@ mod tests {
                 waypoint_pos: None,
                 intent_forward: 1.0,
                 phantom_target: false,
+                recovery: false,
             });
         }
         let s = r.summary();
@@ -576,6 +586,7 @@ mod tests {
                 waypoint_pos: None,
                 intent_forward: 1.0,
                 phantom_target: false,
+                recovery: false,
             });
         }
         let s = r.summary();
@@ -612,6 +623,7 @@ mod tests {
                 waypoint_pos: None,
                 intent_forward: 1.0,
                 phantom_target: false,
+                recovery: false,
             });
         }
         let s = r.summary();
@@ -640,6 +652,7 @@ mod tests {
             waypoint_pos: Some(wp),
             intent_forward: 1.0,
             phantom_target: false,
+            recovery: false,
         });
         r.sample(Sample {
             t_secs: 0.1,
@@ -653,6 +666,7 @@ mod tests {
             waypoint_pos: Some(wp),
             intent_forward: 1.0,
             phantom_target: false,
+            recovery: false,
         });
         let s = r.summary();
         assert_eq!(
@@ -680,6 +694,7 @@ mod tests {
                 waypoint_pos: None,
                 intent_forward: 1.0,
                 phantom_target: false,
+                recovery: false,
             });
             let d = r.summary().distance;
             assert!(d >= prev, "distance must not decrease");
@@ -704,6 +719,7 @@ mod tests {
             waypoint_pos: Some([1000.0, 0.0, 0.0]),
             intent_forward: 1.0,
             phantom_target: false,
+            recovery: false,
         });
         let dir = std::env::temp_dir().join(format!("qbots-rec-test-{}", std::process::id()));
         let path = dir.join("run.qb0.log");
@@ -740,6 +756,7 @@ mod tests {
             waypoint_pos: Some([1000.0, 0.0, 0.0]),
             intent_forward: 1.0,
             phantom_target: false,
+            recovery: false,
         });
         let dir = std::env::temp_dir().join(format!("qbots-schema-{}", std::process::id()));
         let path = dir.join("run.qb0.log");

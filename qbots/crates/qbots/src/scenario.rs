@@ -254,6 +254,7 @@ pub async fn run_scenario(
                                     waypoint_pos: wp_pos,
                                     intent_forward,
                                     phantom_target: false, // scenario disables combat
+                                    recovery: false,        // no recovery in scenario mode
                                 });
                             }
 

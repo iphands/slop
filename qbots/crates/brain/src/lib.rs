@@ -18,6 +18,7 @@ pub mod nav;
 pub mod observed;
 pub mod perception;
 pub mod recorder;
+pub mod recover;
 pub mod skill;
 pub mod steer;
 pub mod weapons;
@@ -26,12 +27,13 @@ pub use combat::{CombatDecision, CombatDriver};
 pub use danger::{DangerDriver, DodgeAction};
 pub use heatmap::Heatmap;
 pub use move_ctrl::{MovementController, MovementIntent};
-pub use nav::{NavGoal, NavigationDriver, StuckAction};
+pub use nav::{NavGoal, NavigationDriver};
 pub use observed::{parse_obituary, HeatmapObserver, HeatmapSnapshot, Obituary};
 pub use perception::{EntityClass, PerceivedEntity, SelfState, Worldview};
 pub use recorder::{
     CmWallProbe, FrameRecord, MovementRecorder, RunSummary, Sample, WallBump, WallProbe,
 };
+pub use recover::{Recovery, RecoveryAction, StuckDetector, StuckLevel};
 pub use skill::{BotSkill, Personality, SkillLevel, SkillRegistry};
 pub use weapons::Weapon;
 

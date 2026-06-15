@@ -4,8 +4,6 @@ use glam::Vec3;
 use std::sync::Arc;
 use world::NavGraph;
 
-const STUCK_THRESHOLD_TICKS: i32 = 30;
-const STUCK_MIN_MOVEMENT: f32 = 16.0;
 /// Hard cap on pursuing a single goal without reaching a waypoint. At 10 Hz
 /// this is ~8 s — past it we abandon the goal (Eraser's 4 s give-up is tighter,
 /// but we tolerate the slow nav-graph routing). Prevents infinite stale-enemy
@@ -49,8 +47,6 @@ pub struct NavigationDriver {
     /// Goal node from the last successful plan; used to skip redundant replans.
     last_goal_node: Option<usize>,
     last_position: Option<Vec3>,
-    stuck_ticks: i32,
-    is_stuck: bool,
     /// Ticks since the current goal was set without reaching a waypoint. Drives
     /// the give-up watchdog.
     goal_age_ticks: i32,
@@ -73,8 +69,6 @@ impl NavigationDriver {
             current_waypoint: None,
             last_goal_node: None,
             last_position: None,
-            stuck_ticks: 0,
-            is_stuck: false,
             goal_age_ticks: 0,
             goal_abandoned: false,
             risk_overlay: None,
@@ -297,18 +291,6 @@ impl NavigationDriver {
             }
         }
 
-        if let Some(last_pos) = self.last_position {
-            let movement = (position - last_pos).length();
-            if movement < STUCK_MIN_MOVEMENT {
-                self.stuck_ticks += 1;
-                if self.stuck_ticks > STUCK_THRESHOLD_TICKS && !self.is_stuck {
-                    self.is_stuck = true;
-                }
-            } else {
-                self.stuck_ticks = 0;
-                self.is_stuck = false;
-            }
-        }
         self.last_position = Some(position);
 
         false
@@ -321,10 +303,6 @@ impl NavigationDriver {
         self.goal_abandoned
     }
 
-    pub fn is_stuck(&self) -> bool {
-        self.is_stuck
-    }
-
     /// Force the next `set_goal` to replan from scratch, even if the goal is
     /// unchanged. Call after clearing an obstacle so the bot doesn't re-attempt
     /// the same wedged waypoint.
@@ -332,17 +310,6 @@ impl NavigationDriver {
         self.current_path.clear();
         self.current_waypoint = None;
         self.last_goal_node = None;
-    }
-
-    pub fn reset_stuck(&mut self) {
-        self.stuck_ticks = 0;
-        self.is_stuck = false;
-    }
-
-    pub fn stuck_recovery(&mut self) -> StuckAction {
-        self.is_stuck = false;
-        self.stuck_ticks = 0;
-        StuckAction::Jump
     }
 
     pub fn path_length(&self) -> usize {
@@ -361,18 +328,6 @@ pub enum StuckAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_stuck_threshold() {
-        const { assert!(STUCK_THRESHOLD_TICKS > 0) };
-        const { assert!(STUCK_THRESHOLD_TICKS < 100) };
-    }
-
-    #[test]
-    fn test_stuck_min_movement() {
-        const { assert!(STUCK_MIN_MOVEMENT > 0.0) };
-        const { assert!(STUCK_MIN_MOVEMENT < 128.0) };
-    }
 
     #[test]
     fn test_stuck_action_variants() {

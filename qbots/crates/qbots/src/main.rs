@@ -326,6 +326,7 @@ pub(crate) async fn bot_task(
     use brain::steer::{move_from_world_dir, Steering};
     use brain::{
         BotSkill, CombatDriver, DangerDriver, MovementController, MovementIntent, NavigationDriver,
+        Recovery, RecoveryAction,
     };
     use client::{Conn, ConnState};
     use q2proto::Usercmd;
@@ -367,10 +368,8 @@ pub(crate) async fn bot_task(
     let mut roam_nodes: Vec<usize> = Vec::new();
     let mut roam_idx: usize = 0;
     let mut map_loaded = false;
-    let mut last_position: Option<Vec3> = None;
     let mut last_serverframe: Option<i32> = None;
-    let mut stuck_frames: u32 = 0;
-    const STUCK_WARNING_FRAMES: u32 = 50;
+    let mut recovery = Recovery::new();
     let mut last_health: Option<i32> = None; // Track health across frames for damage detection
     let mut last_frags: Option<i32> = None; // Track frags for kill detection
 
@@ -784,14 +783,40 @@ pub(crate) async fn bot_task(
                             mv.move_forward(fwd * arrive);
                             mv.move_side(side * arrive);
 
-                            // Stuck recovery: back off + jump; force a fresh route so we don't
-                            // re-wedge on the same node.
-                            if nav.is_stuck() {
-                                tracing::debug!(?pos, "stuck — backing off + jump");
-                                mv.move_forward(-1.0);
-                                mv.jump();
-                                nav.force_replan();
-                                nav.reset_stuck();
+                            // ── 6. Stuck recovery (Plan 13) ───────────────────────────────
+                            let has_nav_target = nav.pursue_target(pos).is_some();
+                            let engaging = matches!(fsm, BehaviorState::Engage { .. });
+                            let rec_action = recovery.evaluate(
+                                pos, dt,
+                                collision.as_deref(),
+                                view_yaw,
+                                has_nav_target,
+                                engaging,
+                            );
+                            match rec_action {
+                                RecoveryAction::None => {}
+                                RecoveryAction::Jump => {
+                                    tracing::debug!(?pos, "stuck — jump");
+                                    mv.jump();
+                                }
+                                RecoveryAction::Strafe { dir } => {
+                                    tracing::debug!(?pos, dir, "stuck — strafe");
+                                    mv.move_side(dir);
+                                }
+                                RecoveryAction::BackOffThenRepath => {
+                                    tracing::debug!(?pos, "stuck — back off + repath");
+                                    mv.move_forward(-0.5);
+                                    nav.force_replan();
+                                }
+                                RecoveryAction::UseHeading(yaw) => {
+                                    tracing::debug!(?pos, yaw, "no nav — steer free heading");
+                                    let r = yaw.to_radians();
+                                    let free_dir = Vec3::new(r.cos(), r.sin(), 0.0);
+                                    let (hfwd, hside) =
+                                        move_from_world_dir(free_dir, view_yaw, true);
+                                    mv.move_forward(hfwd);
+                                    mv.move_side(hside);
+                                }
                             }
                         } else if !combat_dec.should_fire {
                             // No nav graph loaded yet — just walk forward.
@@ -841,26 +866,6 @@ pub(crate) async fn bot_task(
                     match conn.frame.as_ref() {
                         Some(f) => {
                             let o = f.playerstate.pmove.origin_f32();
-                            let pos = Vec3::from(o);
-
-                            if let Some(last_pos) = last_position {
-                                let movement = (pos - last_pos).length();
-                                if movement < 1.0 {
-                                    stuck_frames += 1;
-                                    if stuck_frames >= STUCK_WARNING_FRAMES {
-                                        tracing::error!(
-                                            "BOT STUCK! Position unchanged for 5+ seconds  pos=({:.1},{:.1},{:.1})  fsm={:?}  frames={}",
-                                            o[0], o[1], o[2],
-                                            fsm,
-                                            stuck_frames
-                                        );
-                                        stuck_frames = 0;
-                                    }
-                                } else {
-                                    stuck_frames = 0;
-                                }
-                            }
-                            last_position = Some(pos);
 
                             tracing::debug!(
                                 state = ?conn.state(),
