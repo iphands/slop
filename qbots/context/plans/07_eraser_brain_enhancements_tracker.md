@@ -1,9 +1,7 @@
 # Eraser-Derived Brain Enhancements — Tracker
 
 ## Overview
-- Status: 0% complete
-- Start date: 2026-06-14
-- Plan: `07_eraser_brain_enhancements.md`
+- Status: ~30% — T1 done; T2/T5/T6 partial; T3/T4/T7 pending.
 - Depends on: Plan 06 (brain skeleton)
 - Exit criterion: a single qbot frags with Eraser-grade aim/dodge/skill — hitscan+projectile aim connects,
   `combat>=4` bots dodge visible rockets/grenades, skill tiers visibly differ, auto-skill drifts, give-up/stuck fire.
