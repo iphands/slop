@@ -1,7 +1,7 @@
 # World Model (world) — Tracker
 
 ## Overview
-- Status: ~30% — T1+T2 done & live-verified; T3–T6 (PVS/nav/cache) remain.
+- Status: ~50% — T1–T3 done & live-verified; T4–T6 (nav graph + cache + verify) remain.
 - Start date: 2026-06-14
 - Plan: `05_world_model.md`
 - Depends on: Plan 04 (frame snapshots + map name from configstrings)
@@ -19,7 +19,7 @@
 |---|------|---------------|--------|-------|
 | 1 | T1: BSP loader | `world/src/{bsp,pak}.rs` | done | IBSP v38 + 7 collision lumps; **verified live** (q2dm1/base1/loose parse) |
 | 2 | T2: collision trace + contents | `world/src/collision.rs` | done | CM_RecursiveHullCheck + box/brush clip; **verified live** (q2dm1: 8 rays hit walls 288-800u) |
-| 3 | T3: PVS query | `world/src/vis.rs` | pending | `collision.c:282` |
+| 3 | T3: PVS query | `world/src/vis.rs` | done | CM_DecompressVis RLE + cluster_visible; **verified live** (q2dm1: 925 clusters, center sees 336) |
 | 4 | T4: nav graph + A* | `world/src/{navgraph,pathfind}.rs` | pending | auto-gen from BSP |
 | 5 | T5: discovery + cache | `world/src/loader.rs` | pending | `Arc<World>`, file hash |
 | 6 | T6: verify on q2dm1 | — | pending | trace/vis/nav all green |

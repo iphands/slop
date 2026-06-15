@@ -93,3 +93,13 @@ Reaches "test connected" / "test entered the game" on a real yquake2 server:
 - **VERIFIED on q2dm1**: bounds [-256,-464,-256]..[2240,1808,1920], center (992,672,832)
   `is_solid=false`; 8 horizontal rays from center hit walls at 288–800 units in every
   direction — the tracer is byte-correct against real geometry.
+
+## PVS — cluster visibility (VERIFIED LIVE)
+- Vis lump = `dvis_t` header `[numclusters:i32][bitofs[numclusters][2]:i32]` + RLE
+  bitvectors. `bitofs[c][0]` (PVS offset) is at byte `4 + c*8`.
+- `CM_DecompressVis`: nonzero byte = 8 literal bits; `0x00 <count>` = skip `count` zero
+  bytes. Output is `(numclusters+7)/8` bytes (use `.div_ceil(8)`).
+- `cluster == -1` (solid/void) ⇒ nothing visible; missing vis ⇒ everything visible.
+- The server only sends entities in the viewer's PVS — so this both explains what we see
+  and is a cheap LOS pre-filter. True LOS still needs `trace` (T2) — PVS over-approximates.
+- **VERIFIED on q2dm1**: 925 clusters; center (cluster 553) sees 336 of them.
