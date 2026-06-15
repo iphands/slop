@@ -27,6 +27,9 @@ pub use move_ctrl::{MovementController, MovementIntent};
 pub use nav::{NavGoal, NavigationDriver, StuckAction};
 pub use observed::{parse_obituary, HeatmapObserver, HeatmapSnapshot, Obituary};
 pub use perception::{EntityClass, PerceivedEntity, SelfState, Worldview};
+pub use recorder::{
+    CmWallProbe, FrameRecord, MovementRecorder, RunSummary, Sample, WallBump, WallProbe,
+};
 pub use skill::{BotSkill, Personality, SkillLevel, SkillRegistry};
 pub use weapons::Weapon;
 

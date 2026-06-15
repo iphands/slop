@@ -5,6 +5,7 @@
 //! `config.yaml`. The fleet supervisor + per-bot task live in [`supervisor`].
 
 mod config;
+mod scenario;
 mod stats;
 mod status;
 mod supervisor;
@@ -70,10 +71,37 @@ enum Cmd {
     Pvs { map: String },
     /// Generate the nav graph for a map and find a corner-to-corner path.
     Nav { map: String },
+    /// Drive one bot from spawn to the farthest DM spawn point; log movement; stop.
+    /// The measurement lens for movement quality (Plan 10).
+    SpawnToSpawn {
+        /// Map to load (defaults to q2dm1 / the server's map).
+        #[arg(long)]
+        map: Option<String>,
+        /// Server address (defaults to config's server).
+        #[arg(long)]
+        addr: Option<String>,
+        /// Bot display name.
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Drive one bot from spawn to a named weapon's BSP origin; log movement; stop.
+    SpawnToWeapon {
+        /// Weapon to reach, e.g. `rocketlauncher` (resolved as `weapon_<name>`).
+        weapon_name: String,
+        /// Map to load (defaults to q2dm1 / the server's map).
+        #[arg(long)]
+        map: Option<String>,
+        /// Server address (defaults to config's server).
+        #[arg(long)]
+        addr: Option<String>,
+        /// Bot display name.
+        #[arg(long)]
+        name: Option<String>,
+    },
 }
 
 /// A per-process default qport (distinct across concurrent bot processes).
-fn default_qport() -> u16 {
+pub(crate) fn default_qport() -> u16 {
     (std::process::id() & 0xFFFF) as u16
 }
 
@@ -771,6 +799,43 @@ pub(crate) async fn bot_task(
     }
 }
 
+/// Shared CLI plumbing for the two movement scenarios (Plan 10): resolve the
+/// server address + bot name, then hand off to [`scenario::run_scenario`] and map
+/// its result to a process exit code.
+async fn run_scenario_cmd(
+    cfg: &Config,
+    addr: Option<String>,
+    name: Option<String>,
+    map: Option<String>,
+    goal: scenario::ScenarioGoal,
+) -> ExitCode {
+    let name = name.unwrap_or_else(|| "qbots".to_string());
+    let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
+    let addr = match resolve_addr(&addr_str).await {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::error!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match scenario::run_scenario(
+        cfg,
+        addr,
+        &name,
+        map.as_deref(),
+        goal,
+        scenario::DEFAULT_MAX_SECS,
+    )
+    .await
+    {
+        Ok(code) => code,
+        Err(e) => {
+            tracing::error!("scenario: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     // Initialize tracing subscriber with elapsed time formatting and abbreviated levels
@@ -1091,6 +1156,24 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Cmd::SpawnToSpawn { map, addr, name } => {
+            run_scenario_cmd(&cfg, addr, name, map, scenario::ScenarioGoal::FarthestSpawn).await
+        }
+        Cmd::SpawnToWeapon {
+            weapon_name,
+            map,
+            addr,
+            name,
+        } => {
+            run_scenario_cmd(
+                &cfg,
+                addr,
+                name,
+                map,
+                scenario::ScenarioGoal::Weapon(weapon_name),
+            )
+            .await
+        }
         Cmd::BspInfo { map } => match world::Bsp::load(&cfg.paths.baseq2, &map) {
             Ok(bsp) => {
                 tracing::info!(
