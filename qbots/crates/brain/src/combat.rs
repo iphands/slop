@@ -95,6 +95,16 @@ impl CombatDriver {
                     self.frames_since_shot + 1
                 };
 
+                if should_fire {
+                    tracing::debug!(
+                        target = t.entity_number,
+                        distance = "{:.1}",
+                        distance,
+                        weapon = ?self.current_weapon,
+                        "shooting at player"
+                    );
+                }
+
                 return CombatDecision {
                     should_fire,
                     aim_yaw: yaw,

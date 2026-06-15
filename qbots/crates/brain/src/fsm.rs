@@ -98,7 +98,9 @@ impl BehaviorState {
                     .entities()
                     .find(|e| e.entity_number == *target_entity)
                     .map(|e| e.origin);
-                *self = Self::Hunt { last_enemy_pos: last_pos };
+                *self = Self::Hunt {
+                    last_enemy_pos: last_pos,
+                };
             }
             Self::Flee | Self::Pickup { .. } => {}
             Self::Roam => {}

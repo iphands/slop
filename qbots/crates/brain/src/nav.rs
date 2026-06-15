@@ -58,9 +58,9 @@ impl NavigationDriver {
         }
         self.last_goal_node = Some(target);
 
-        let Some(start) = self
-            .nav_graph
-            .nearest(&[from_position.x, from_position.y, from_position.z])
+        let Some(start) =
+            self.nav_graph
+                .nearest(&[from_position.x, from_position.y, from_position.z])
         else {
             return;
         };

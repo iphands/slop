@@ -75,6 +75,8 @@ pub struct Worldview {
     /// Pre-built lookup: modelindex → EntityClass.
     #[allow(dead_code)]
     model_to_class: Vec<EntityClass>,
+    /// Previous frame's health for detecting damage.
+    prev_health: i32,
 }
 
 impl Worldview {
@@ -162,7 +164,45 @@ impl Worldview {
             self_state,
             entities,
             model_to_class,
+            prev_health: 0, // First frame, no previous health to compare
         }
+    }
+
+    /// Detect health changes between frames and log damage/death events.
+    /// Returns the health delta (negative = damage taken).
+    pub fn detect_damage(&mut self) -> Option<i32> {
+        if self.prev_health == 0 {
+            // First frame, just initialize
+            self.prev_health = self.self_state.health;
+            return None;
+        }
+
+        let delta = self.self_state.health - self.prev_health;
+
+        if delta < 0 {
+            // Damage taken
+            tracing::warn!(
+                health_before = self.prev_health,
+                health_after = self.self_state.health,
+                damage = -delta,
+                "taking damage"
+            );
+
+            if self.self_state.health <= 0 {
+                tracing::error!(health = 0, "bot death detected");
+            }
+        } else if delta > 0 {
+            // Health restored (picked up health item)
+            tracing::debug!(
+                health_before = self.prev_health,
+                health_after = self.self_state.health,
+                healed = delta,
+                "health restored"
+            );
+        }
+
+        self.prev_health = self.self_state.health;
+        Some(delta)
     }
 
     /// Get self state.
