@@ -172,7 +172,7 @@ impl BehaviorState {
                 aim_yaw: 0.0,
                 aim_pitch: 0.0,
                 target_entity: Some(target_entity),
-                impulse: None,
+                weapon_request: None,
             }),
             should_pickup: None,
         }

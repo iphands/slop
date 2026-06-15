@@ -246,6 +246,17 @@ impl Conn {
             .map(|f| f.playerstate.pmove.origin_f32())
     }
 
+    /// Queue a reliable `clc_stringcmd "<text>"` to be sent to the server on the
+    /// next transmit. This is how a client issues commands the game DLL consumes
+    /// via `ClientCommand` — e.g. `use Rocket Launcher` to switch weapons, since
+    /// Q2 ignores `usercmd.impulse`. No-op before the netchan is up.
+    pub fn queue_stringcmd(&mut self, text: &str) {
+        if let Some(nc) = self.netchan.as_mut() {
+            nc.message_mut().write_u8(ClcOp::Stringcmd.into());
+            nc.message_mut().write_string(text);
+        }
+    }
+
     /// Build and transmit a move frame with the provided usercmd.
     /// Pre-active: flushes the reliable queue with an empty payload.
     /// Active: sends `clc_move` with the given command (sent 3× as Q2 expects).

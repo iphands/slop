@@ -1,18 +1,29 @@
-//! Combat driver — target selection, fire decision, danger avoidance.
+//! Combat driver — target selection, weapon selection, fire decision.
 //!
-//! Orchestrates aim.rs + weapons.rs. Maintains target cache to prevent thrashing.
+//! Orchestrates `aim.rs` + `weapons.rs`. Maintains a target cache to prevent
+//! thrashing and a held-weapon model so we only request a switch on change.
+//!
+//! Weapon switching is done by emitting a [`WeaponRequest`] (`use <name>`
+//! stringcmd); Q2 ignores `usercmd.impulse`, so the connection layer sends the
+//! `use` command, not an impulse. Ownership isn't visible on the wire (Q2's HUD
+//! is server-driven), so we request optimistically and the server grants it
+//! only if we own the weapon.
 
 use crate::aim::{aim_hitscan, aim_projectile};
 use crate::perception::{EntityClass, Worldview};
 use crate::weapons::{self, Weapon};
 
-/// Frames to hold on a target before considering a switch.
-/// 5 frames (~0.5s at 10 Hz) prevents thrashing when enemies pop in/out of PVS.
-/// Based on Eraser's "target stability" heuristic.
+/// Frames to hold on a target before considering a switch (~0.5s at 10 Hz),
+/// preventing thrashing when enemies pop in/out of PVS. (Eraser "target stability".)
 const TARGET_LOCK_FRAMES: u32 = 5;
 
-/// Minimum frames between shots (fire rate limiter).
+/// Minimum frames between shots (fire-rate limiter).
 const FIRE_RATE_COOLDOWN_FRAMES: u32 = 2;
+
+/// A requested weapon switch (`use <name>`). The connection layer converts this
+/// to a reliable stringcmd.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WeaponRequest(pub Weapon);
 
 /// Combat decision for one frame.
 #[derive(Debug, Clone, Copy)]
@@ -21,7 +32,20 @@ pub struct CombatDecision {
     pub aim_yaw: f32,
     pub aim_pitch: f32,
     pub target_entity: Option<i32>,
-    pub impulse: Option<u8>,
+    /// A `use <name>` switch to emit this frame, if the desired weapon changed.
+    pub weapon_request: Option<WeaponRequest>,
+}
+
+impl Default for CombatDecision {
+    fn default() -> Self {
+        Self {
+            should_fire: false,
+            aim_yaw: 0.0,
+            aim_pitch: 0.0,
+            target_entity: None,
+            weapon_request: None,
+        }
+    }
 }
 
 /// Combat driver state.
@@ -29,10 +53,9 @@ pub struct CombatDriver {
     current_target: Option<i32>,
     lock_frames_remaining: u32,
     frames_since_shot: u32,
-    /// Weapon we're currently trying to use (local desired state).
-    desired_weapon: Weapon,
-    /// Weapon the server reports we have (from serverstate).
-    server_weapon: Weapon,
+    /// Weapon we believe we're holding. Optimistic: set when we request a switch
+    /// (the server grants it only if owned). Reset to Blaster on respawn.
+    held_weapon: Weapon,
 }
 
 impl CombatDriver {
@@ -41,139 +64,87 @@ impl CombatDriver {
             current_target: None,
             lock_frames_remaining: 0,
             frames_since_shot: 10,
-            desired_weapon: Weapon::Blaster,
-            server_weapon: Weapon::Blaster,
+            held_weapon: Weapon::Blaster,
         }
+    }
+
+    /// The weapon we currently believe we're holding.
+    pub fn held_weapon(&self) -> Weapon {
+        self.held_weapon
+    }
+
+    /// Reset held-weapon tracking to the Blaster (e.g. after a respawn, where the
+    /// server forces us back to the spawn loadout).
+    pub fn on_respawn(&mut self) {
+        self.held_weapon = Weapon::Blaster;
     }
 
     /// Evaluate combat state and produce a decision.
     pub fn evaluate(&mut self, view: &Worldview, skill: f32, jitter_seed: f32) -> CombatDecision {
-        self.server_weapon = match view.self_state().weapon {
-            1 => Weapon::Blaster,
-            2 => Weapon::Shotgun,
-            3 => Weapon::Nailgun,
-            4 => Weapon::GrenadeLauncher,
-            5 => Weapon::HandGrenade,
-            6 => Weapon::Railgun,
-            7 => Weapon::BFG10k,
-            8 => Weapon::RocketLauncher,
-            9 => Weapon::Hyperblaster,
-            10 => Weapon::Chaingun,
-            _ => Weapon::Blaster,
-        };
-
         let target_num = self.select_target_entity(view);
 
-        if let Some(num) = target_num {
-            let target = view.entities().find(|e| e.entity_number == num);
+        let Some(num) = target_num else {
+            self.frames_since_shot += 1;
+            return CombatDecision::default();
+        };
 
-            if let Some(t) = target {
-                let distance = (t.origin - view.self_state().origin).length();
-                let ammo = view.self_state().ammo;
+        let Some(t) = view.entities().find(|e| e.entity_number == num) else {
+            self.frames_since_shot += 1;
+            return CombatDecision::default();
+        };
 
-                let best_weapon = weapons::select_best_weapon(self.desired_weapon, &ammo, distance);
-                let best_weapon_ammo_idx = best_weapon.ammo_index();
-                let best_weapon_has_ammo = best_weapon.ammo_cost() == 0
-                    || (best_weapon_ammo_idx < ammo.len() && ammo[best_weapon_ammo_idx] > 0);
+        let distance = (t.origin - view.self_state().origin).length();
 
-                // In Q2, you can only use weapons you've picked up (server sends gunindex).
-                // Check if the server has given us this weapon by comparing with gunindex.
-                let server_gave_us_this_weapon =
-                    self.server_weapon == best_weapon || best_weapon == Weapon::Blaster; // Blaster is always available
+        // Pick the best weapon for this distance; only request a switch if it
+        // differs from what we're holding.
+        let desired = weapons::select_best_weapon(self.held_weapon, distance);
+        let weapon_request = (desired != self.held_weapon).then(|| {
+            self.held_weapon = desired;
+            WeaponRequest(desired)
+        });
 
-                // Debug: log weapon selection decision
-                if best_weapon != self.server_weapon {
-                    tracing::trace!(
-                        "weapon eval: best={:?} (ammo={}, has_ammo={}, gunindex_ok={}), current={:?}",
-                        best_weapon,
-                        if best_weapon_ammo_idx < ammo.len() { ammo[best_weapon_ammo_idx] } else { -1 },
-                        best_weapon_has_ammo,
-                        server_gave_us_this_weapon,
-                        self.server_weapon
-                    );
-                }
-
-                // Only switch if: we have ammo, server gave us the weapon, and it's different from current
-                let impulse = if best_weapon != self.server_weapon
-                    && best_weapon_has_ammo
-                    && server_gave_us_this_weapon
-                {
-                    self.desired_weapon = best_weapon;
-                    Some(best_weapon as u8)
-                } else {
-                    None
-                };
-
-                if impulse.is_some() {
-                    let current_weapon = self.server_weapon;
-                    let current_ammo_idx = current_weapon.ammo_index();
-                    let current_ammo = if current_ammo_idx < ammo.len() {
-                        ammo[current_ammo_idx]
-                    } else {
-                        0
-                    };
-                    let new_ammo_idx = best_weapon.ammo_index();
-                    let new_ammo = if new_ammo_idx < ammo.len() {
-                        ammo[new_ammo_idx]
-                    } else {
-                        0
-                    };
-                    tracing::info!(
-                        "weapon switch: {:?} (ammo {}) → {:?} (ammo {})",
-                        current_weapon,
-                        current_ammo,
-                        best_weapon,
-                        new_ammo
-                    );
-                }
-
-                let (yaw, pitch) = if self.desired_weapon.is_hitscan() {
-                    aim_hitscan(
-                        view.self_state().origin,
-                        t.origin,
-                        t.velocity,
-                        skill,
-                        jitter_seed,
-                    )
-                } else {
-                    let proj_speed = self.desired_weapon.projectile_speed().unwrap_or(500.0);
-                    aim_projectile(view.self_state().origin, t.origin, t.velocity, proj_speed)
-                };
-
-                let should_fire = self.should_fire(view, distance);
-
-                self.frames_since_shot = if should_fire {
-                    0
-                } else {
-                    self.frames_since_shot + 1
-                };
-
-                if should_fire {
-                    tracing::info!(
-                        target = t.entity_number,
-                        distance = %format!("{:.1}", distance),
-                        weapon = ?self.desired_weapon,
-                        "shooting at player"
-                    );
-                }
-
-                return CombatDecision {
-                    should_fire,
-                    aim_yaw: yaw,
-                    aim_pitch: pitch,
-                    target_entity: Some(t.entity_number),
-                    impulse,
-                };
-            }
+        if let Some(WeaponRequest(w)) = weapon_request {
+            tracing::info!(weapon = %w.name(), distance = %format!("{:.0}", distance), "requesting weapon");
         }
 
-        self.frames_since_shot += 1;
+        let weapon = self.held_weapon;
+
+        let (yaw, pitch) = if weapon.is_hitscan() {
+            aim_hitscan(
+                view.self_state().origin,
+                t.origin,
+                t.velocity,
+                skill,
+                jitter_seed,
+            )
+        } else {
+            let proj_speed = weapon.projectile_speed().unwrap_or(500.0);
+            aim_projectile(view.self_state().origin, t.origin, t.velocity, proj_speed)
+        };
+
+        let should_fire = self.should_fire(weapon, distance);
+
+        self.frames_since_shot = if should_fire {
+            0
+        } else {
+            self.frames_since_shot + 1
+        };
+
+        if should_fire {
+            tracing::info!(
+                target = t.entity_number,
+                distance = %format!("{:.0}", distance),
+                weapon = %weapon.name(),
+                "shooting at player"
+            );
+        }
+
         CombatDecision {
-            should_fire: false,
-            aim_yaw: 0.0,
-            aim_pitch: 0.0,
-            target_entity: None,
-            impulse: None,
+            should_fire,
+            aim_yaw: yaw,
+            aim_pitch: pitch,
+            target_entity: Some(t.entity_number),
+            weapon_request,
         }
     }
 
@@ -193,6 +164,7 @@ impl CombatDriver {
             return Some(t.entity_number);
         }
 
+        // Fall back to the nearest stale (last-known) enemy.
         let stale = view
             .entities()
             .filter(|e| e.class == EntityClass::EnemyPlayer && e.is_stale)
@@ -211,25 +183,17 @@ impl CombatDriver {
         None
     }
 
-    fn should_fire(&self, view: &Worldview, distance: f32) -> bool {
+    fn should_fire(&self, weapon: Weapon, distance: f32) -> bool {
         if self.frames_since_shot < FIRE_RATE_COOLDOWN_FRAMES {
             return false;
         }
-
-        if distance < self.desired_weapon.min_safe_distance() {
+        if distance < weapon.min_safe_distance() {
             return false;
         }
-
-        let ammo_idx = self.desired_weapon.ammo_index();
-        let ammo = if ammo_idx < view.self_state().ammo.len() {
-            view.self_state().ammo[ammo_idx]
-        } else {
-            0
-        };
-        if self.desired_weapon.ammo_cost() > 0 && ammo <= 0 {
+        // Don't waste a blaster bolt across the whole map — it'll never land.
+        if weapon == Weapon::Blaster && distance > weapon.effective_range() {
             return false;
         }
-
         true
     }
 
@@ -251,10 +215,9 @@ mod tests {
     use q2proto::Frame;
 
     #[test]
-    fn combat_driver_starts_ready() {
+    fn combat_driver_starts_with_blaster() {
         let driver = CombatDriver::new();
-        assert_eq!(driver.desired_weapon, Weapon::Blaster);
-        assert_eq!(driver.server_weapon, Weapon::Blaster);
+        assert_eq!(driver.held_weapon(), Weapon::Blaster);
         assert!(driver.current_target.is_none());
     }
 
@@ -267,34 +230,29 @@ mod tests {
         let decision = driver.evaluate(&view, 0.5, 0.0);
         assert!(!decision.should_fire);
         assert!(decision.target_entity.is_none());
+        assert!(decision.weapon_request.is_none());
     }
 
     #[test]
-    fn no_switch_to_weapon_without_ammo() {
-        let ammo = [0i32; 32];
-        let distance = 100.0;
-
-        let best = weapons::select_best_weapon(Weapon::Blaster, &ammo, distance);
-        let best_ammo_idx = best.ammo_index();
-        let has_ammo =
-            best.ammo_cost() == 0 || (best_ammo_idx < ammo.len() && ammo[best_ammo_idx] > 0);
-
-        assert_eq!(best, Weapon::Blaster);
-        assert!(has_ammo);
+    fn respawn_resets_to_blaster() {
+        let mut driver = CombatDriver::new();
+        driver.held_weapon = Weapon::RocketLauncher;
+        driver.on_respawn();
+        assert_eq!(driver.held_weapon(), Weapon::Blaster);
     }
 
     #[test]
-    fn switch_to_weapon_with_ammo() {
-        let mut ammo = [0i32; 32];
-        ammo[Weapon::Shotgun.ammo_index()] = 10;
-        let distance = 100.0;
+    fn should_not_fire_blaster_across_map() {
+        let driver = CombatDriver::new();
+        // Blaster effective range ~600; at 2000 it shouldn't fire.
+        assert!(!driver.should_fire(Weapon::Blaster, 2000.0));
+        assert!(driver.should_fire(Weapon::Blaster, 200.0));
+    }
 
-        let best = weapons::select_best_weapon(Weapon::Blaster, &ammo, distance);
-        let best_ammo_idx = best.ammo_index();
-        let has_ammo =
-            best.ammo_cost() == 0 || (best_ammo_idx < ammo.len() && ammo[best_ammo_idx] > 0);
-
-        assert!(best == Weapon::Shotgun || best == Weapon::Blaster);
-        assert!(has_ammo);
+    #[test]
+    fn should_not_fire_rocket_point_blank() {
+        let driver = CombatDriver::new();
+        assert!(!driver.should_fire(Weapon::RocketLauncher, 50.0));
+        assert!(driver.should_fire(Weapon::RocketLauncher, 300.0));
     }
 }

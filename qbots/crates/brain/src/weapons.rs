@@ -1,70 +1,116 @@
 //! Weapon definitions and selection logic.
 //!
-//! Q2 weapon enum values match `shared.h:817` (IT_*) indices.
-//! Selection scores weapons by ammo availability, distance to target, and power.
+//! Q2 weapons and their `use <name>` stringcmd names (the only way to switch —
+//! the game DLL ignores `usercmd.impulse`; see `g_cmds.c:1945` `Cmd_Use_f`).
+//! Names match the binds in `baseq2/config.cfg`.
+//!
+//! Selection scores weapons by distance to target and power. An external client
+//! cannot see its own inventory over the wire (Q2's HUD is server-driven), so
+//! ownership is tracked optimistically: we request `use <name>` and the server
+//! grants it only if we own the weapon.
 
-/// Weapon indices (from `shared.h:817` — IT_* constants).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
+/// Q2 weapons. Discriminant values are arbitrary (NOT impulse numbers); they
+/// only need a stable ordering. Switching is done via [`Weapon::name`] stringcmds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Weapon {
-    Blaster = 1,
-    Shotgun = 2,
-    Nailgun = 3,
-    GrenadeLauncher = 4,
-    HandGrenade = 5,
-    Railgun = 6,
-    BFG10k = 7,
-    RocketLauncher = 8,
-    Hyperblaster = 9,
-    Chaingun = 10,
+    Blaster,
+    Shotgun,
+    SuperShotgun,
+    Machinegun,
+    Chaingun,
+    GrenadeLauncher,
+    RocketLauncher,
+    Hyperblaster,
+    Railgun,
+    Bfg10k,
 }
 
+/// All weapons, strongest first, for iteration.
+pub const ALL_WEAPONS: [Weapon; 10] = [
+    Weapon::Railgun,
+    Weapon::Bfg10k,
+    Weapon::RocketLauncher,
+    Weapon::GrenadeLauncher,
+    Weapon::Hyperblaster,
+    Weapon::Chaingun,
+    Weapon::Machinegun,
+    Weapon::SuperShotgun,
+    Weapon::Shotgun,
+    Weapon::Blaster,
+];
+
 impl Weapon {
-    /// Projectile speed, or 0 for hitscan weapons.
+    /// `use <name>` stringcmd name — what the server's `Cmd_Use_f` matches against
+    /// `item->pickup_name` (`baseq2/config.cfg` binds).
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Blaster => "Blaster",
+            Self::Shotgun => "Shotgun",
+            Self::SuperShotgun => "Super Shotgun",
+            Self::Machinegun => "Machinegun",
+            Self::Chaingun => "Chaingun",
+            Self::GrenadeLauncher => "Grenade Launcher",
+            Self::RocketLauncher => "Rocket Launcher",
+            Self::Hyperblaster => "Hyperblaster",
+            Self::Railgun => "Railgun",
+            Self::Bfg10k => "BFG10K",
+        }
+    }
+
+    /// Projectile speed in world units/sec, or `None` for hitscan weapons.
+    /// Sources: `fire_blaster` speed=1000, `fire_rocket` speed=650,
+    /// grenade 400–800 (default hold ~600), hyperblaster fires blaster bolts.
     pub fn projectile_speed(self) -> Option<f32> {
         match self {
-            Self::RocketLauncher => Some(1200.0),
-            Self::GrenadeLauncher => Some(750.0),
-            Self::HandGrenade => Some(750.0),
-            Self::Blaster => Some(500.0),
-            Self::Nailgun => Some(2000.0),
+            Self::Blaster => Some(1000.0),
+            Self::GrenadeLauncher => Some(600.0),
+            Self::RocketLauncher => Some(650.0),
             Self::Hyperblaster => Some(1000.0),
+            Self::Bfg10k => Some(800.0),
             _ => None, // hitscan
         }
     }
 
-    /// True if this is a hitscan weapon (instant hit).
+    /// True for hitscan (instant-hit) weapons.
     pub fn is_hitscan(self) -> bool {
-        matches!(self, Self::Shotgun | Self::Railgun | Self::Chaingun)
+        self.projectile_speed().is_none()
     }
 
-    /// True if this weapon can damage the shooter at close range.
+    /// True if this weapon can damage the shooter at close range (splash).
     pub fn self_dangerous(self) -> bool {
-        matches!(self, Self::RocketLauncher | Self::GrenadeLauncher)
+        matches!(
+            self,
+            Self::RocketLauncher | Self::GrenadeLauncher | Self::Bfg10k
+        )
     }
 
     /// Minimum safe firing distance for splash weapons.
     pub fn min_safe_distance(self) -> f32 {
         if self.self_dangerous() {
-            128.0
+            match self {
+                Self::Bfg10k => 512.0, // huge blast radius
+                Self::RocketLauncher => 128.0,
+                Self::GrenadeLauncher => 200.0,
+                _ => 128.0,
+            }
         } else {
             0.0
         }
     }
 
-    /// Effective range for scoring. Beyond this, weapon is poor choice.
+    /// Effective range for scoring. Beyond this, the weapon is a poor choice.
     pub fn effective_range(self) -> f32 {
         match self {
-            Self::Shotgun => 256.0,
-            Self::Railgun => 9999.0,
+            Self::Railgun => 4096.0,
+            Self::Bfg10k => 2048.0,
             Self::RocketLauncher => 1500.0,
-            Self::GrenadeLauncher => 1200.0,
-            Self::BFG10k => 1000.0,
+            Self::GrenadeLauncher => 1000.0,
+            Self::Hyperblaster => 900.0,
             Self::Chaingun => 800.0,
+            Self::Machinegun => 600.0,
             Self::Blaster => 600.0,
-            Self::Nailgun => 600.0,
-            Self::Hyperblaster => 800.0,
-            Self::HandGrenade => 1200.0,
+            Self::SuperShotgun => 256.0,
+            Self::Shotgun => 256.0,
         }
     }
 
@@ -72,130 +118,67 @@ impl Weapon {
     pub fn power(self) -> f32 {
         match self {
             Self::Railgun => 100.0,
-            Self::BFG10k => 90.0,
+            Self::Bfg10k => 95.0,
             Self::RocketLauncher => 70.0,
             Self::GrenadeLauncher => 60.0,
-            Self::Shotgun => 50.0,
-            Self::Chaingun => 40.0,
-            Self::Nailgun => 35.0,
-            Self::Hyperblaster => 30.0,
+            Self::Hyperblaster => 60.0,
+            Self::Chaingun => 55.0,
+            Self::SuperShotgun => 65.0, // devastating up close
+            Self::Machinegun => 40.0,
+            Self::Shotgun => 45.0,
             Self::Blaster => 20.0,
-            Self::HandGrenade => 55.0,
         }
     }
 }
 
-/// Ammo indices for each weapon (from `shared.h:1135` — STAT_* ammo slots).
-impl Weapon {
-    pub fn ammo_index(self) -> usize {
-        match self {
-            Self::Blaster => 0,
-            Self::Shotgun => 1,
-            Self::Nailgun => 2,
-            Self::GrenadeLauncher => 3,
-            Self::HandGrenade => 3,
-            Self::Railgun => 4,
-            Self::BFG10k => 5,
-            Self::RocketLauncher => 6,
-            Self::Hyperblaster => 7,
-            Self::Chaingun => 8,
-        }
-    }
-
-    /// Ammo cost per shot.
-    pub fn ammo_cost(self) -> i32 {
-        match self {
-            Self::Blaster => 0, // unlimited
-            Self::Shotgun => 1,
-            Self::Nailgun => 1,
-            Self::GrenadeLauncher => 1,
-            Self::HandGrenade => 1,
-            Self::Railgun => 1,
-            Self::BFG10k => 1,
-            Self::RocketLauncher => 1,
-            Self::Hyperblaster => 1,
-            Self::Chaingun => 1,
-        }
-    }
-}
-
-/// Score a weapon for use against a target at `distance`.
-/// Returns a score (higher = better choice). 0 means unusable.
-pub fn score_weapon(weapon: Weapon, ammo_count: i32, distance: f32) -> f32 {
-    // Must have ammo (blaster is unlimited)
-    if weapon.ammo_cost() > 0 && ammo_count <= 0 {
-        return 0.0;
-    }
-
-    // Too close for splash weapons
+/// Score a weapon for use against a target at `distance`. Higher is better.
+/// Returns 0 if unusable at this distance (e.g. splash weapon too close).
+pub fn score_weapon(weapon: Weapon, distance: f32) -> f32 {
+    // Too close for splash weapons — would damage ourselves.
     if distance < weapon.min_safe_distance() {
         return 0.0;
     }
 
-    // Range falloff: full power within effective range, drops off after
+    // Range falloff: full power within effective range, drops off after.
     let range_factor = if distance <= weapon.effective_range() {
         1.0
     } else {
-        weapon.effective_range() / distance
+        (weapon.effective_range() / distance).max(0.0)
     };
 
-    // Close-range bonus for spread weapons (shotgun excels up close)
-    let close_bonus = if weapon == Weapon::Shotgun && distance < 128.0 {
-        3.0
-    } else {
-        1.0
-    };
+    // Close-range bonus for spread weapons (shotguns excel up close).
+    let close_bonus =
+        if matches!(weapon, Weapon::Shotgun | Weapon::SuperShotgun) && distance < 128.0 {
+            2.0
+        } else {
+            1.0
+        };
 
-    // Ammo scarcity penalty: fewer ammo = lower score (but still usable)
-    let ammo_factor = if weapon.ammo_cost() == 0 {
-        1.0
-    } else if ammo_count <= 1 {
-        0.3
-    } else {
-        1.0
-    };
-
-    weapon.power() * range_factor * ammo_factor * close_bonus
+    weapon.power() * range_factor * close_bonus
 }
 
-/// Select the best weapon from available options.
-/// `ammo` is the stats array (from PlayerState).
-/// Returns the best weapon, or Blaster as fallback.
-pub fn select_best_weapon(_current_weapon: Weapon, ammo: &[i32; 32], distance: f32) -> Weapon {
-    let all_weapons = [
-        Weapon::Blaster,
-        Weapon::Shotgun,
-        Weapon::Nailgun,
-        Weapon::GrenadeLauncher,
-        Weapon::HandGrenade,
-        Weapon::Railgun,
-        Weapon::BFG10k,
-        Weapon::RocketLauncher,
-        Weapon::Hyperblaster,
-        Weapon::Chaingun,
-    ];
-
+/// Select the best weapon for a target at `distance`. Ownership is not known
+/// over the wire, so this returns the *desired* weapon; the caller requests it
+/// via `use <name>` and the server grants it if owned. Falls back to Blaster
+/// (always owned, unlimited ammo) so the bot can always shoot.
+pub fn select_best_weapon(held: Weapon, distance: f32) -> Weapon {
     let mut best = Weapon::Blaster;
-    let mut best_score = 0.0;
+    let mut best_score = score_weapon(Weapon::Blaster, distance);
 
-    for &w in &all_weapons {
-        let idx = w.ammo_index();
-        let ammo_count = if idx < ammo.len() { ammo[idx] } else { 0 };
-        let s = score_weapon(w, ammo_count, distance);
+    for &w in &ALL_WEAPONS {
+        let s = score_weapon(w, distance);
         if s > best_score {
             best_score = s;
             best = w;
         }
     }
 
-    best
-}
-
-/// Check if the bot should switch weapons to fire at the target.
-/// Returns true if a better weapon is available than the current one.
-pub fn should_switch_weapon(current_weapon: Weapon, ammo: &[i32; 32], distance: f32) -> bool {
-    let best = select_best_weapon(current_weapon, ammo, distance);
-    best != current_weapon && score_weapon(best, ammo[best.ammo_index()], distance) > 0.0
+    // Don't bother switching if the held weapon is already (near) best.
+    if score_weapon(held, distance) >= best_score * 0.95 {
+        held
+    } else {
+        best
+    }
 }
 
 #[cfg(test)]
@@ -203,62 +186,59 @@ mod tests {
     use super::*;
 
     #[test]
-    fn blaster_always_available() {
-        let ammo = [0i32; 32];
-        assert!(score_weapon(Weapon::Blaster, ammo[Weapon::Blaster.ammo_index()], 100.0) > 0.0);
+    fn blaster_always_usable() {
+        assert!(score_weapon(Weapon::Blaster, 100.0) > 0.0);
     }
 
     #[test]
-    fn no_ammo_means_unusable() {
-        let ammo = [0i32; 32];
-        assert_eq!(
-            score_weapon(Weapon::Shotgun, ammo[Weapon::Shotgun.ammo_index()], 100.0),
-            0.0
-        );
-    }
-
-    #[test]
-    fn shotgun_self_dangerous() {
-        assert!(!Weapon::Shotgun.self_dangerous());
-        assert!(Weapon::RocketLauncher.self_dangerous());
-        assert!(!Weapon::Railgun.self_dangerous());
-    }
-
-    #[test]
-    fn shotgun_too_close() {
-        let ammo = [100i32; 32];
-        // Shotgun is NOT self-dangerous (pellets aren't splash), so it scores at any distance
-        assert!(score_weapon(Weapon::Shotgun, ammo[Weapon::Shotgun.ammo_index()], 50.0) > 0.0);
+    fn splash_too_close_is_zero() {
+        // Rocket min safe = 128; firing from 50 would self-damage.
+        assert_eq!(score_weapon(Weapon::RocketLauncher, 50.0), 0.0);
+        assert!(score_weapon(Weapon::RocketLauncher, 300.0) > 0.0);
     }
 
     #[test]
     fn railgun_best_at_range() {
-        let ammo = [100i32; 32];
-        let dist = 1000.0;
-        let rail_score = score_weapon(Weapon::Railgun, ammo[Weapon::Railgun.ammo_index()], dist);
-        let shot_score = score_weapon(Weapon::Shotgun, ammo[Weapon::Shotgun.ammo_index()], dist);
+        let dist = 2000.0;
         assert!(
-            rail_score > shot_score,
+            score_weapon(Weapon::Railgun, dist) > score_weapon(Weapon::Shotgun, dist),
             "railgun should score higher at long range"
         );
     }
 
     #[test]
-    fn shotgun_best_up_close() {
-        let ammo = [100i32; 32];
-        let dist = 100.0;
-        let rail_score = score_weapon(Weapon::Railgun, ammo[Weapon::Railgun.ammo_index()], dist);
-        let shot_score = score_weapon(Weapon::Shotgun, ammo[Weapon::Shotgun.ammo_index()], dist);
+    fn super_shotgun_best_up_close() {
+        let dist = 80.0;
         assert!(
-            shot_score > rail_score,
-            "shotgun should score higher at close range"
+            score_weapon(Weapon::SuperShotgun, dist) > score_weapon(Weapon::Railgun, dist),
+            "SSG should out-score railgun point-blank"
         );
     }
 
     #[test]
-    fn hitscan_weapons() {
+    fn names_match_use_stringcmd() {
+        assert_eq!(Weapon::RocketLauncher.name(), "Rocket Launcher");
+        assert_eq!(Weapon::Bfg10k.name(), "BFG10K");
+        assert_eq!(Weapon::SuperShotgun.name(), "Super Shotgun");
+    }
+
+    #[test]
+    fn hitscan_classification() {
         assert!(Weapon::Railgun.is_hitscan());
         assert!(Weapon::Shotgun.is_hitscan());
         assert!(!Weapon::RocketLauncher.is_hitscan());
+        assert!(!Weapon::Blaster.is_hitscan());
+    }
+
+    #[test]
+    fn select_best_prefers_railgun_at_range() {
+        // At long range the Railgun dominates; a Blaster-holder should switch.
+        assert_eq!(select_best_weapon(Weapon::Blaster, 2000.0), Weapon::Railgun);
+    }
+
+    #[test]
+    fn select_best_keeps_held_when_near_best() {
+        // If we already hold the top weapon, no switch is requested.
+        assert_eq!(select_best_weapon(Weapon::Railgun, 2000.0), Weapon::Railgun);
     }
 }

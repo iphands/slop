@@ -294,6 +294,10 @@ async fn run_brain_bot_with_shutdown(
                                 );
                                 if current_health <= 0 {
                                     tracing::error!(health = 0, "bot death detected");
+                                    // Respawn resets us to the spawn loadout (Blaster)
+                                    // and the server reseeds delta_angles; let the
+                                    // next frame's playerstate re-feed both.
+                                    combat.on_respawn();
                                 }
                             } else if current_health > *prev && *prev > 0 {
                                 let healed = current_health - *prev;
@@ -419,9 +423,14 @@ async fn run_brain_bot_with_shutdown(
                             }
                         }
 
-                        let mut cmd = move_ctrl.build_cmd(mv);
-                        cmd.impulse = combat_dec.impulse.unwrap_or(0);
-                        cmd
+                        // Request a weapon switch via `use <name>` stringcmd (Q2
+                        // ignores impulse). Queued as a reliable message; flushed
+                        // on the next transmit_cmd below.
+                        if let Some(req) = combat_dec.weapon_request {
+                            conn.queue_stringcmd(&format!("use {}", req.0.name()));
+                        }
+
+                        move_ctrl.build_cmd(mv)
                     } else {
                         Usercmd::default()
                     }
