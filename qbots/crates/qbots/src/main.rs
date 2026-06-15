@@ -66,14 +66,15 @@ fn dist2(a: &[f32; 3], b: &[f32; 3]) -> f32 {
 }
 
 /// Custom elapsed time formatter for tracing (seconds.nanoseconds from startup).
+/// Formats as NNNN.nnn (padded to 4 digits for seconds, 3 digits for milliseconds).
 struct ElapsedFormatter(Instant);
 
 impl tracing_subscriber::fmt::time::FormatTime for ElapsedFormatter {
     fn format_time(&self, w: &mut tracing_subscriber::fmt::format::Writer<'_>) -> std::fmt::Result {
         let elapsed = self.0.elapsed();
         let secs = elapsed.as_secs();
-        let nanos = elapsed.subsec_nanos();
-        write!(w, "{secs}.{nanos:03}")
+        let millis = elapsed.subsec_millis();
+        write!(w, "{secs:04}.{millis:03}")
     }
 }
 
