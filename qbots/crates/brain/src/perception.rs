@@ -181,11 +181,11 @@ impl Worldview {
 
         if delta < 0 {
             // Damage taken
-            tracing::warn!(
+            tracing::info!(
                 health_before = self.prev_health,
                 health_after = self.self_state.health,
                 damage = -delta,
-                "taking damage"
+                "being hit"
             );
 
             if self.self_state.health <= 0 {

@@ -96,12 +96,20 @@ impl CombatDriver {
                 };
 
                 if should_fire {
-                    tracing::debug!(
+                    tracing::info!(
                         target = t.entity_number,
                         distance = "{:.1}",
                         distance,
                         weapon = ?self.current_weapon,
                         "shooting at player"
+                    );
+                }
+
+                // Log weapon change
+                if let Some(_impulse) = impulse {
+                    tracing::info!(
+                        "changing weapon to {:?}",
+                        best_weapon
                     );
                 }
 

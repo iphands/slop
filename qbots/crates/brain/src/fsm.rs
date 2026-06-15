@@ -70,6 +70,12 @@ impl BehaviorState {
         {
             let dist = (item.origin - view.self_state().origin).length();
             if dist < 64.0 {
+                tracing::info!(
+                    item_entity = item.entity_number,
+                    distance = "{:.1}",
+                    dist,
+                    "picking up item"
+                );
                 *self = Self::Pickup {
                     item_entity: item.entity_number,
                 };
@@ -79,6 +85,13 @@ impl BehaviorState {
 
         // Enemy in sight → Engage
         if let Some(enemy) = view.nearest_enemy(90.0) {
+            let distance = (enemy.origin - view.self_state().origin).length();
+            tracing::info!(
+                target = enemy.entity_number,
+                distance = "{:.1}",
+                distance,
+                "seeing enemy"
+            );
             *self = Self::Engage {
                 target_entity: enemy.entity_number,
             };
