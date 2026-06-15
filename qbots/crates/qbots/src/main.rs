@@ -470,9 +470,27 @@ async fn run_brain_bot_with_shutdown(
                             if nav.is_stuck() {
                                 tracing::warn!("bot stuck at pos={:?}, jumping and re-aiming", pos);
                                 mv.jump();
-                                // Look random direction to break out of stuck state
-                                let random_yaw = (ticks as f32 * 13.7).rem_euclid(360.0);
-                                mv.look_at(random_yaw, 0.0);
+                                // If we have a combat target, look toward enemy; otherwise look random
+                                if let Some(target) = combat_dec.target_entity {
+                                    if let Some(enemy) = view.entities().find(|e| e.entity_number == target) {
+                                        let to_enemy = enemy.origin - pos;
+                                        let yaw = to_enemy.y.atan2(to_enemy.x).to_degrees();
+                                        let pitch = (-to_enemy.z).atan2(to_enemy.x.hypot(to_enemy.y)).to_degrees();
+                                        mv.look_at(yaw, pitch);
+                                        // Move toward enemy to break out of stuck state
+                                        mv.move_forward(400.0);
+                                    } else {
+                                        // No enemy visible, look random and move
+                                        let random_yaw = (ticks as f32 * 13.7).rem_euclid(360.0);
+                                        mv.look_at(random_yaw, 0.0);
+                                        mv.move_forward(400.0);
+                                    }
+                                } else {
+                                    // No combat target, look random and move
+                                    let random_yaw = (ticks as f32 * 13.7).rem_euclid(360.0);
+                                    mv.look_at(random_yaw, 0.0);
+                                    mv.move_forward(400.0);
+                                }
                                 nav_driver.as_mut().unwrap().reset_stuck();
                             }
                         } else if !combat_dec.should_fire {
