@@ -250,6 +250,9 @@ pub async fn run_scenario(
                                 mv.move_side(side * arrive);
                                 intent_forward = fwd * arrive;
                             }
+                            if nav_driver.current_edge_is_jump() {
+                                mv.jump();
+                            }
                             move_ctrl.set_delta_angles(frame.playerstate.pmove.delta_angles);
                             let cmd = move_ctrl.build_cmd(mv);
 
