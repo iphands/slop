@@ -303,6 +303,39 @@ This repo already has a rigorous plan system. **Use it:**
 
 ---
 
+## Movement Testing (Plan 10)
+
+Two CLI scenarios measure how well a bot **moves** — the lens for Plans 11–14.
+Each connects one bot like `connect-one`, **disables combat**, pins its nav goal to a
+known target, samples every server frame into a `MovementRecorder`, and dumps a
+structured log + a SUMMARY line. They never set velocity or teleport — a
+grounded `max_speed` > ~320 in a log flags a physics bug, not a feature.
+
+```bash
+# Farthest DM spawn from where the bot spawns.
+cargo run -p qbots -- spawn-to-spawn [--map q2dm1] [--addr host:27910] [--name qb0]
+# A named weapon's BSP origin (resolved as weapon_<name>).
+cargo run -p qbots -- spawn-to-weapon rocketlauncher [--map q2dm1] [--name qb1]
+```
+
+- **Map**: `--map` selects the BSP; if omitted it defaults to `q2dm1`. The map
+  **must match the server's loaded map** (the nav graph + spawn/weapon origins come
+  from the BSP, so a mismatch produces garbage). Discover the server's map with a
+  brief `qbots connect-one` (it logs `loading nav graph map=…`).
+- **Output**: `./logs/<scenario>/<unix_ts>.<bot>.log` — one frame per line, 16
+  positional columns + a `flags` run (`B`=wall-bump, `W`=wrong-turn, `H`=hindered,
+  `A`=airborne), ending in a `# SUMMARY reached=… elapsed=… …` line. The schema is
+  documented in `crates/brain/src/recorder.rs`. `./logs/` is gitignored.
+- **Exit code**: `0` = reached the goal (held within 48 u for 0.5 s); `2` = ran to
+  the 30 s cap without reaching it; `FAILURE` = setup/IO error.
+
+The **baseline** (current steering code) lives in
+`context/plans/10_movement_test_harness_tracker.md`'s Baseline table — both runs
+fail to reach, with low mean speed and many hindered/bump frames. That is the
+contract Plans 11–14 must beat; re-run the same scenarios after each and compare.
+
+---
+
 ## Getting Started (suggested plan series)
 
 1. **Plan 01 — Workspace scaffold.** `crates/` skeleton, `.gitignore`
