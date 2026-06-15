@@ -7,8 +7,10 @@
 //! See `AGENTS.md` and `context/plans/06_brain.md`.
 
 pub mod perception;
+pub mod nav;
 
 pub use perception::{EntityClass, PerceivedEntity, SelfState, Worldview};
+pub use nav::{NavGoal, NavigationDriver, StuckAction};
 
 #[cfg(test)]
 mod tests {
