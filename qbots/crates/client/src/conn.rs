@@ -173,7 +173,8 @@ impl Conn {
                             let servercount = sd.servercount;
                             if let Some(nc) = self.netchan.as_mut() {
                                 nc.message_mut().write_u8(ClcOp::Stringcmd.into());
-                                nc.message_mut().write_string(&format!("begin {servercount}"));
+                                nc.message_mut()
+                                    .write_string(&format!("begin {servercount}"));
                                 self.begin_queued = true;
                             }
                         }
@@ -311,17 +312,15 @@ pub async fn run(addr: SocketAddr, name: &str, qport: u16) -> std::io::Result<()
                     match &conn.frame {
                         Some(f) => {
                             let o = f.playerstate.pmove.origin_f32();
-                            eprintln!(
-                                "qbots: {:?} frame={} ents={} origin=({:.1},{:.1},{:.1})",
-                                conn.state(),
-                                f.serverframe,
-                                f.entities.len(),
-                                o[0],
-                                o[1],
-                                o[2]
+                            tracing::debug!(
+                                state = ?conn.state(),
+                                frame = f.serverframe,
+                                ents = f.entities.len(),
+                                "origin=({:.1},{:.1},{:.1})",
+                                o[0], o[1], o[2]
                             );
                         }
-                        None => eprintln!("qbots: {:?} (no frame yet)", conn.state()),
+                        None => tracing::debug!(state = ?conn.state(), "(no frame yet)"),
                     }
                 }
             }
