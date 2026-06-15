@@ -18,7 +18,7 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 | **11** | Honest LOS perception | 10 | done | BSP-trace LOS gate on enemy selection, FSM transition, fire/chase, nav-to-enemy (`has_los_player`); 2-frame sight grace; `phantom_target` recorder flag; stale `fire_allowed=false`. Bots no longer walk into walls at walled enemies. |
 | **12** | Steering controller | 11 | done | turn-rate limiting, look-ahead/"pursue" target + arrive, anti-orbit Z-aware node-advance, facing-validated forward, aim/move-yaw separation (circle-strafe) → **bots move like humans, not orbit/spin/wedge** |
 | **13** | Stuck recovery & wall avoidance | 12 | done | unified 4u/1s `StuckDetector`, 6-dir fan-out `find_best_direction`, `Recovery::evaluate→RecoveryAction`; `R` recorder flag; old blind-reverse + dual detectors removed → **bots unstick reactively** |
-| **14** | Nav-graph & path quality | 10 | deferred | funnel/string-pull smoothing, jump-up/down links, spawn-point connectivity, node redundancy pruning → **shorter, smoother, faster routes** (grid-zigzag elimination; elapsed-time gains) |
+| **14** | Nav-graph & path quality | 10 | done | funnel/string-pull smoothing (smooth_path + smooth_with_cm), spawn seeding (seed_spawns), jump-down links (detect_jump_edges + EdgeKind), path_efficiency recorder metric → **shorter, smoother, faster routes** (code complete; live elapsed-time verification pending) |
 
 **Milestones**
 - After **03**: a bot connects and shows in the server's player list.
@@ -32,7 +32,7 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 - After **11**: bots only react to enemies they can actually see.
 - After **12**: bots steer along paths the way a human does (turn, then go; no orbiting).
 - After **13**: bots recover from wedges and steer around walls instead of grinding into them.
-- After **14** (deferred): routes are short and smooth, not grid stair-steps.
+- After **14**: routes are short and smooth via string-pull; spawns are seeded and connected; jump-down ledges navigable.
 
 > Active plans live alongside this file as `NN_name.md` + `NN_name_tracker.md`.
 > Completed plans move to `context/plans/completed/` (see `RULES.md`).

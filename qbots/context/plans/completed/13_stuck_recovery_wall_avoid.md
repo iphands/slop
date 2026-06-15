@@ -1,6 +1,6 @@
 # Plan 13 — Reactive Stuck Recovery & Wall Avoidance
 
-> **Status**: pending
+> **Status**: done
 > **Created**: 2026-06-15
 > **Depends on**: Plan 12 (steering controller — recovery feeds `Steering`, not raw `mv`)
 > **Goal**: When a bot stops making progress, it reacts like Eraser — fan-out trace for a
