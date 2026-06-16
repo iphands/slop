@@ -112,6 +112,22 @@ enum Cmd {
         #[arg(long)]
         name: Option<String>,
     },
+    /// Pre-generate the nav graph cache for one or more maps.
+    ///
+    /// Run once per map (or after changing BSP or generation constants) so
+    /// `qbots run` / `spawn-to-spawn` load from disk instead of regenerating.
+    /// Supports a single map name (`q2dm1`) or a simple prefix glob (`q2dm*`).
+    GenerateMapCache {
+        /// Map name or glob (e.g. `q2dm1`, `q2dm*`). Required.
+        #[arg(long)]
+        map: String,
+        /// Number of parallel map-generation workers (default: available CPU threads).
+        #[arg(long)]
+        jobs: Option<usize>,
+        /// Output directory for `.qnav` cache files (default: `./data/mapcache`).
+        #[arg(long, default_value = "data/mapcache")]
+        out_dir: String,
+    },
 }
 
 /// A per-process default qport (distinct across concurrent bot processes).
@@ -989,6 +1005,164 @@ async fn run_scenario_cmd(
     result
 }
 
+/// Enumerate all available map names under `baseq2`: loose `.bsp` files in
+/// `<baseq2>/maps/` and entries matching `maps/*.bsp` in `pak0`–`pak9`.
+/// Returns deduplicated, sorted map names (no extension, no `maps/` prefix).
+fn enumerate_maps(baseq2: &std::path::Path) -> Vec<String> {
+    let mut names: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // Loose files.
+    let maps_dir = baseq2.join("maps");
+    if let Ok(rd) = std::fs::read_dir(&maps_dir) {
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if p.extension().and_then(|e| e.to_str()) == Some("bsp") {
+                if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                    names.insert(stem.to_ascii_lowercase());
+                }
+            }
+        }
+    }
+
+    // Pak files.
+    for n in 0..10u8 {
+        let pak_path = baseq2.join(format!("pak{n}.pak"));
+        if let Ok(pak) = world::Pak::open(&pak_path) {
+            for name in pak.names() {
+                let low = name.to_ascii_lowercase();
+                if let Some(rest) = low.strip_prefix("maps/") {
+                    if let Some(stem) = rest.strip_suffix(".bsp") {
+                        names.insert(stem.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    let mut v: Vec<String> = names.into_iter().collect();
+    v.sort();
+    v
+}
+
+/// Match a map name against a simple `*`-only glob (e.g. `q2dm*` matches `q2dm1`).
+fn glob_matches(pattern: &str, name: &str) -> bool {
+    if let Some(prefix) = pattern.strip_suffix('*') {
+        name.starts_with(prefix)
+    } else if let Some(suffix) = pattern.strip_prefix('*') {
+        name.ends_with(suffix)
+    } else {
+        pattern == name
+    }
+}
+
+/// `generate-map-cache` handler (Plan 18 T3). Synchronous — nav graph generation
+/// is CPU-bound so we run it on plain threads, not tokio tasks.
+fn generate_map_cache(cfg: &Config, map_arg: &str, jobs: Option<usize>, out_dir: &str) -> ExitCode {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let out_path = std::path::Path::new(out_dir);
+
+    // Resolve the list of maps to generate.
+    let maps: Vec<String> = if map_arg.contains('*') {
+        let all = enumerate_maps(&cfg.paths.baseq2);
+        let matched: Vec<String> = all
+            .into_iter()
+            .filter(|n| glob_matches(map_arg, n))
+            .collect();
+        if matched.is_empty() {
+            tracing::error!(
+                pattern = map_arg,
+                "no maps matched the glob pattern; check --map and baseq2 path"
+            );
+            return ExitCode::FAILURE;
+        }
+        matched
+    } else {
+        vec![map_arg.to_string()]
+    };
+
+    let n_jobs = jobs.unwrap_or_else(|| {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    });
+    tracing::info!(
+        maps = maps.len(),
+        jobs = n_jobs,
+        out_dir,
+        "generating map cache"
+    );
+
+    let succeeded = AtomicUsize::new(0);
+    let failed = AtomicUsize::new(0);
+
+    // Parallel over maps using a thread pool sized by --jobs.
+    std::thread::scope(|scope| {
+        // Simple bounded pool: chunk the map list into `n_jobs` slices.
+        let chunks: Vec<Vec<String>> = {
+            let mut cs: Vec<Vec<String>> = vec![Vec::new(); n_jobs];
+            for (i, m) in maps.iter().enumerate() {
+                cs[i % n_jobs].push(m.clone());
+            }
+            cs
+        };
+
+        let mut handles = Vec::new();
+        for chunk in &chunks {
+            if chunk.is_empty() {
+                continue;
+            }
+            let chunk = chunk.clone();
+            let succeeded = &succeeded;
+            let failed = &failed;
+            let baseq2 = cfg.paths.baseq2.clone();
+            let out_path = out_path.to_path_buf();
+            handles.push(scope.spawn(move || {
+                for map in &chunk {
+                    let t0 = std::time::Instant::now();
+                    let built = match world::generate_map_nav(&baseq2, map) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            tracing::error!(map, "generate failed: {e}");
+                            failed.fetch_add(1, Ordering::Relaxed);
+                            continue;
+                        }
+                    };
+                    let fp = world::Fingerprint::from_bsp(&built.bsp);
+                    let cache_path = out_path.join(format!("{map}.qnav"));
+                    match world::save_mapcache(&cache_path, built.graph, &fp) {
+                        Ok(()) => {
+                            tracing::info!(
+                                map,
+                                ms = t0.elapsed().as_millis() as u64,
+                                path = %cache_path.display(),
+                                "cached"
+                            );
+                            succeeded.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(e) => {
+                            tracing::error!(map, "save failed: {e}");
+                            failed.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                }
+            }));
+        }
+        for h in handles {
+            let _ = h.join();
+        }
+    });
+
+    let ok = succeeded.load(Ordering::Relaxed);
+    let err = failed.load(Ordering::Relaxed);
+    tracing::info!(ok, err, "generate-map-cache complete");
+    if err > 0 {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     // Initialize tracing subscriber with elapsed time formatting and abbreviated levels
@@ -1350,6 +1524,9 @@ async fn main() -> ExitCode {
                 1, // count=1 for spawn-to-weapon
             )
             .await
+        }
+        Cmd::GenerateMapCache { map, jobs, out_dir } => {
+            generate_map_cache(&cfg, &map, jobs, &out_dir)
         }
         Cmd::BspInfo { map } => match world::Bsp::load(&cfg.paths.baseq2, &map) {
             Ok(bsp) => {
