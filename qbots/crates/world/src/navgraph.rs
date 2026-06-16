@@ -7,6 +7,8 @@
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
+use rayon::prelude::*;
+
 use crate::collision::{CollisionModel, MASK_SOLID, MASK_WATER};
 
 /// Q2 standing player hull (`VEC_HULL_MIN/MAX`): the bbox traces use.
@@ -39,49 +41,74 @@ pub struct NavGraph {
 
 impl NavGraph {
     /// Sample walkable floor on a `spacing`-unit grid over `bounds`, connect 8-neighbors
-    /// whose edge is clear and step is small.
+    /// whose edge is clear and step is small. Grid sampling and edge connectivity are
+    /// both parallelized with rayon; node ordering is sorted by grid key so two runs
+    /// on the same BSP produce byte-identical caches.
     pub fn generate(cm: &CollisionModel, bounds: ([f32; 3], [f32; 3]), spacing: f32) -> Self {
-        let mut nodes: Vec<[f32; 3]> = Vec::new();
-        let mut grid: HashMap<(i32, i32), usize> = HashMap::new();
-
+        // --- Phase 1: collect all candidate (x, y) grid columns ------------------
+        let mut columns: Vec<(f32, f32, i32, i32)> = Vec::new();
         let mut x = bounds.0[0];
         while x <= bounds.1[0] {
             let mut y = bounds.0[1];
             while y <= bounds.1[1] {
-                if let Some(wp) = floor_waypoint(cm, x, y, bounds) {
-                    let gx = (x / spacing).round() as i32;
-                    let gy = (y / spacing).round() as i32;
-                    grid.insert((gx, gy), nodes.len());
-                    nodes.push(wp);
-                }
+                let gx = (x / spacing).round() as i32;
+                let gy = (y / spacing).round() as i32;
+                columns.push((x, y, gx, gy));
                 y += spacing;
             }
             x += spacing;
         }
 
-        let mut adj: Vec<Vec<(usize, f32)>> = vec![Vec::new(); nodes.len()];
-        for (&(gx, gy), &i) in &grid {
-            let a = nodes[i];
-            for ddx in -1..=1i32 {
-                for ddy in -1..=1i32 {
-                    if ddx == 0 && ddy == 0 {
-                        continue;
-                    }
-                    if let Some(&j) = grid.get(&(gx + ddx, gy + ddy)) {
-                        let b = nodes[j];
-                        if (a[2] - b[2]).abs() > STEP {
-                            continue; // too big a step
+        // --- Phase 2: parallel floor probe (CollisionModel is Sync) ---------------
+        let mut hits: Vec<((i32, i32), [f32; 3])> = columns
+            .par_iter()
+            .filter_map(|&(x, y, gx, gy)| floor_waypoint(cm, x, y, bounds).map(|wp| ((gx, gy), wp)))
+            .collect();
+
+        // Sort by grid key so node indices are deterministic across runs.
+        hits.sort_by_key(|((gx, gy), _)| (*gx, *gy));
+
+        let mut nodes: Vec<[f32; 3]> = Vec::with_capacity(hits.len());
+        let mut grid: HashMap<(i32, i32), usize> = HashMap::with_capacity(hits.len());
+        for ((gx, gy), wp) in hits {
+            grid.insert((gx, gy), nodes.len());
+            nodes.push(wp);
+        }
+
+        // --- Phase 3: parallel edge computation -----------------------------------
+        // Each node reads its 8 grid neighbours (read-only nodes/grid) and emits its
+        // own adjacency list. No shared mutable state during the parallel section.
+        let adj: Vec<Vec<(usize, f32)>> = nodes
+            .par_iter()
+            .enumerate()
+            .map(|(i, &a)| {
+                let gx = (a[0] / spacing).round() as i32;
+                let gy = (a[1] / spacing).round() as i32;
+                let mut edges = Vec::new();
+                for ddx in -1..=1i32 {
+                    for ddy in -1..=1i32 {
+                        if ddx == 0 && ddy == 0 {
+                            continue;
                         }
-                        let t = cm.trace(&a, &b, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
-                        if t.fraction < 1.0 || t.startsolid {
-                            continue; // wall in the way (or stuck)
+                        if let Some(&j) = grid.get(&(gx + ddx, gy + ddy)) {
+                            if j == i {
+                                continue;
+                            }
+                            let b = nodes[j];
+                            if (a[2] - b[2]).abs() > STEP {
+                                continue;
+                            }
+                            let t = cm.trace(&a, &b, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+                            if t.fraction < 1.0 || t.startsolid {
+                                continue;
+                            }
+                            edges.push((j, dist(&a, &b)));
                         }
-                        let cost = dist(&a, &b);
-                        adj[i].push((j, cost));
                     }
                 }
-            }
-        }
+                edges
+            })
+            .collect();
 
         NavGraph {
             nodes,

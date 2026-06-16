@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 q2proto = { path = "../q2proto" }
+rayon = "1"
 
 [dev-dependencies]
 tempfile = "3"
