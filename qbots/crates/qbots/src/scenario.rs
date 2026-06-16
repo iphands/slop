@@ -450,33 +450,23 @@ fn farthest_spawn(spawns: &[[f32; 3]], from: [f32; 3]) -> [f32; 3] {
         .unwrap_or(from)
 }
 
-/// The farthest DM spawn that is reachable from `from` (in the same nav graph component).
-/// If no spawns are reachable, falls back to the nearest spawn.
+/// The farthest DM spawn that is reachable from `from` (has a valid path in the nav graph).
+/// If no spawns are reachable, falls back to the farthest spawn by Euclidean distance.
 fn farthest_reachable_spawn(spawns: &[[f32; 3]], from: [f32; 3], graph: &Arc<NavGraph>) -> [f32; 3] {
-    // Find which component the bot is in
     let Some(from_node) = graph.nearest(&from) else {
         return farthest_spawn(spawns, from);
     };
-    let components = graph.components();
-    let bot_component = components.iter().position(|c| c.contains(&from_node));
     
-    // Find spawns in the same component
-    let mut reachable: Vec<([f32; 3], f32)> = spawns
-        .iter()
-        .copied()
-        .filter_map(|sp| {
-            graph.nearest(&sp).and_then(|sp_node| {
-                let same_component = bot_component.is_some_and(|idx| {
-                    components.get(idx).is_some_and(|c| c.contains(&sp_node))
-                });
-                if same_component {
-                    Some((sp, dist3_sq(sp, from)))
-                } else {
-                    None
-                }
-            })
-        })
-        .collect();
+    // Find all spawns that have a valid path from from_node
+    let mut reachable: Vec<([f32; 3], f32)> = Vec::new();
+    for &sp in spawns {
+        if let Some(sp_node) = graph.nearest(&sp) {
+            // Check if a path exists from from_node to sp_node
+            if graph.path(from_node, sp_node).is_some() {
+                reachable.push((sp, dist3_sq(sp, from)));
+            }
+        }
+    }
     
     // If we have reachable spawns, pick the farthest one
     if !reachable.is_empty() {
@@ -484,12 +474,8 @@ fn farthest_reachable_spawn(spawns: &[[f32; 3]], from: [f32; 3], graph: &Arc<Nav
         return reachable[0].0;
     }
     
-    // No reachable spawns - fall back to nearest
-    spawns
-        .iter()
-        .copied()
-        .min_by(|a, b| dist3_sq(*a, from).total_cmp(&dist3_sq(*b, from)))
-        .unwrap_or(from)
+    // No reachable spawns - fall back to farthest by Euclidean distance
+    farthest_spawn(spawns, from)
 }
 
 /// Dump the recorder log + emit the SUMMARY line; map outcome → exit code.
