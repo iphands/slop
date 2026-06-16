@@ -101,7 +101,11 @@ impl Default for StuckDetector {
 
 /// Forward trace distance for the direction fan-out (Eraser: 256 u).
 const TRACE_DIST: f32 = 256.0;
-/// Lift the trace origin by this much to clear ground clutter (Eraser: STEPSIZE 24 u).
+/// Trace-origin **lift** to clear ground clutter during the direction fan-out (not the
+/// Q2 step-climb height). 24 u is borrowed from Eraser's own `STEPSIZE` constant
+/// (`bot_nav.c:99`), which is Eraser's step budget, NOT Q2's `pmove.c` `STEPSIZE=18`.
+/// The two are independent: this lifts the trace ray off the floor so it doesn't clip
+/// into tiny surface irregularities; `world::navgraph::STEP=18` gates walkable edges.
 const STEPSIZE: f32 = 24.0;
 /// Fall fraction beyond which the endpoint is flagged as a ledge and the score is halved.
 const LEDGE_FRAC: f32 = 0.4;

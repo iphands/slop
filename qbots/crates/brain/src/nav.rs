@@ -22,8 +22,11 @@ pub const LOOKAHEAD: f32 = 96.0;
 /// Z-aware waypoint-reach threshold (horizontal). Eraser uses `horiz < 12` +
 /// `|dz| < 16`; we loosen slightly for the coarser 64-unit nav graph.
 const WP_REACH_HORIZ: f32 = 16.0;
-/// Z-aware waypoint-reach threshold (vertical). Larger than Eraser to tolerate step
-/// heights on ledges and ramps where the bot's XY is already past the node.
+/// Z-aware waypoint-reach threshold (vertical) — a waypoint **arrival** tolerance,
+/// not a step-climb constant. Larger than Eraser (16 u) to tolerate the coarser
+/// 64-unit grid and step heights on ledges where the bot's XY is already past the
+/// node. Do not conflate with `world::navgraph::STEP = 18` (step-climb height) even
+/// though both values happen to be in the same numeric neighbourhood.
 const WP_REACH_DZ: f32 = 24.0;
 /// Orbit watchdog: if the bot stays within this horizontal radius of the current
 /// waypoint for `ORBIT_FRAMES` ticks without reaching it, force-advance to the next

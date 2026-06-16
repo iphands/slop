@@ -14,8 +14,11 @@ use crate::collision::{CollisionModel, MASK_SOLID, MASK_WATER};
 /// Q2 standing player hull (`VEC_HULL_MIN/MAX`): the bbox traces use.
 pub const HULL_MINS: [f32; 3] = [-16.0, -16.0, -24.0];
 pub const HULL_MAXS: [f32; 3] = [16.0, 16.0, 32.0];
-/// Max walkable height delta between adjacent waypoints (a "step").
-/// Matches Q2's real step-up height: `pmove.c:32` `#define STEPSIZE 18`.
+/// Max walkable height delta between adjacent waypoints — the step-**climb** height.
+/// Matches Q2's real `STEPSIZE`: `pmove.c:32` `#define STEPSIZE 18`. Do not confuse
+/// with arrival-tolerance constants (e.g. `WP_REACH_DZ` in `brain::nav`) or trace-lift
+/// offsets (e.g. `STEPSIZE` in `brain::recover`) that happen to use a numerically nearby
+/// value for unrelated reasons.
 pub(crate) const STEP: f32 = 18.0;
 /// Minimum edge cost in the weighted pathfinder, so a popularity overlay can't
 /// drive an edge to zero/negative (Plan 08 T3).
