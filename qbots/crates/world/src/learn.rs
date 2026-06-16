@@ -7,7 +7,7 @@
 //! 4. Detecting jump edges for large drops
 
 use crate::collision::{CollisionModel, MASK_SOLID};
-use crate::navgraph::{HULL_MAXS, HULL_MINS, NavGraph};
+use crate::navgraph::{NavGraph, HULL_MAXS, HULL_MINS};
 
 /// Calculate distance between two points
 fn dist(a: &[f32; 3], b: &[f32; 3]) -> f32 {
@@ -20,7 +20,11 @@ fn dist(a: &[f32; 3], b: &[f32; 3]) -> f32 {
 /// Downsample a recorded path, keeping points where:
 /// - Direction changes by more than `angle_threshold` degrees
 /// - Distance from last kept point exceeds `distance_threshold`
-pub fn downsample_path(path: &[[f32; 3]], distance_threshold: f32, angle_threshold: f32) -> Vec<[f32; 3]> {
+pub fn downsample_path(
+    path: &[[f32; 3]],
+    distance_threshold: f32,
+    angle_threshold: f32,
+) -> Vec<[f32; 3]> {
     if path.is_empty() {
         return Vec::new();
     }
@@ -75,7 +79,7 @@ pub fn path_to_graph(path: &[[f32; 3]], cm: &CollisionModel) -> NavGraph {
         return NavGraph::from_raw(Vec::new(), Vec::new());
     }
 
-    let mut nodes: Vec<[f32; 3]> = path.to_vec();
+    let nodes: Vec<[f32; 3]> = path.to_vec();
     let mut adj: Vec<Vec<(usize, f32)>> = vec![Vec::new(); nodes.len()];
 
     // Connect consecutive points if the trace clears
@@ -108,7 +112,7 @@ pub fn add_spawns_to_graph(graph: &mut NavGraph, cm: &CollisionModel, spawns: &[
                 let dz = a[2] - spawn[2];
                 (dx * dx + dy * dy + dz * dz).sqrt()
             };
-            
+
             // If spawn is far from nearest node, add it
             if dist_to_spawn > spawn_distance {
                 let new_idx = graph.add_node(spawn);
@@ -122,12 +126,18 @@ pub fn add_spawns_to_graph(graph: &mut NavGraph, cm: &CollisionModel, spawns: &[
                         let dz = node[2] - spawn[2];
                         (dx * dx + dy * dy + dz * dz).sqrt()
                     };
-                    
+
                     if dist > spawn_distance * 2.0 {
                         continue;
                     }
 
-                    let t = cm.trace(&graph.nodes[new_idx], node, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+                    let t = cm.trace(
+                        &graph.nodes[new_idx],
+                        node,
+                        &HULL_MINS,
+                        &HULL_MAXS,
+                        MASK_SOLID,
+                    );
                     if t.fraction >= 1.0 && !t.startsolid {
                         to_connect.push((i, dist));
                     }
@@ -144,12 +154,11 @@ pub fn add_spawns_to_graph(graph: &mut NavGraph, cm: &CollisionModel, spawns: &[
 
 /// Detect jump edges in a nav graph (drops > STEP but < MAX_FALL).
 pub fn detect_jump_edges(graph: &mut NavGraph, cm: &CollisionModel, max_jump: f32) -> usize {
-    const MAX_FALL: f32 = 256.0;
     let mut count = 0;
 
     for i in 0..graph.nodes.len() {
         let node = graph.nodes[i];
-        
+
         // Check 8 directions
         for dx in [-1.0, 0.0, 1.0] {
             for dy in [-1.0, 0.0, 1.0] {
@@ -157,11 +166,7 @@ pub fn detect_jump_edges(graph: &mut NavGraph, cm: &CollisionModel, max_jump: f3
                     continue;
                 }
 
-                let test_pos = [
-                    node[0] + dx * 32.0,
-                    node[1] + dy * 32.0,
-                    node[2],
-                ];
+                let test_pos = [node[0] + dx * 32.0, node[1] + dy * 32.0, node[2]];
 
                 // Trace down to find if there's a drop
                 let down = cm.trace(
@@ -186,7 +191,7 @@ pub fn detect_jump_edges(graph: &mut NavGraph, cm: &CollisionModel, max_jump: f3
                             let dz = a[2] - landing[2];
                             (dx * dx + dy * dy + dz * dz).sqrt()
                         };
-                        
+
                         if dist < 32.0 {
                             // Add jump edge (one-way)
                             let cost = {
@@ -209,42 +214,42 @@ pub fn detect_jump_edges(graph: &mut NavGraph, cm: &CollisionModel, max_jump: f3
 
 /// Save a nav graph to disk in binary format.
 pub fn save_graph(graph: &NavGraph, path: &str) -> std::io::Result<()> {
-    use std::io::{Write, BufWriter};
-    
+    use std::io::{BufWriter, Write};
+
     let mut file = BufWriter::new(std::fs::File::create(path)?);
-    
+
     // Write magic header
     file.write_all(b"QBNAV1")?;
-    
+
     // Write version
     let version: u32 = 1;
     file.write_all(&version.to_le_bytes())?;
-    
+
     // Write node count
     let node_count: u32 = graph.nodes.len() as u32;
     file.write_all(&node_count.to_le_bytes())?;
-    
+
     // Write nodes
     for node in &graph.nodes {
         file.write_all(&node[0].to_le_bytes())?;
         file.write_all(&node[1].to_le_bytes())?;
         file.write_all(&node[2].to_le_bytes())?;
     }
-    
+
     // Write edge count (placeholder - edges not saved in this simplified version)
     let edge_count: u32 = 0;
     file.write_all(&edge_count.to_le_bytes())?;
-    
+
     file.flush()?;
     Ok(())
 }
 
 /// Load a nav graph from disk (simplified - nodes only, no edges).
 pub fn load_graph(path: &str) -> Result<NavGraph, std::io::Error> {
-    use std::io::{Read, BufReader};
-    
+    use std::io::{BufReader, Read};
+
     let mut file = BufReader::new(std::fs::File::open(path)?);
-    
+
     // Read and verify magic header
     let mut magic = [0u8; 6];
     file.read_exact(&mut magic)?;
@@ -254,7 +259,7 @@ pub fn load_graph(path: &str) -> Result<NavGraph, std::io::Error> {
             "Invalid nav graph file: bad magic header",
         ));
     }
-    
+
     // Read version
     let mut version_bytes = [0u8; 4];
     file.read_exact(&mut version_bytes)?;
@@ -265,12 +270,12 @@ pub fn load_graph(path: &str) -> Result<NavGraph, std::io::Error> {
             format!("Unsupported nav graph version: {}", version),
         ));
     }
-    
+
     // Read node count
     let mut node_count_bytes = [0u8; 4];
     file.read_exact(&mut node_count_bytes)?;
     let node_count = u32::from_le_bytes(node_count_bytes) as usize;
-    
+
     // Read nodes
     let mut nodes = Vec::with_capacity(node_count);
     for _ in 0..node_count {
@@ -286,11 +291,11 @@ pub fn load_graph(path: &str) -> Result<NavGraph, std::io::Error> {
             f32::from_le_bytes(z_bytes),
         ]);
     }
-    
+
     // Skip edge count (placeholder)
     let mut edge_count_bytes = [0u8; 4];
     file.read_exact(&mut edge_count_bytes)?;
-    
+
     // Return graph with no edges (will need to regenerate edges)
     let adj: Vec<Vec<(usize, f32)>> = vec![Vec::new(); node_count];
     Ok(NavGraph::from_raw(nodes, adj))
@@ -311,7 +316,7 @@ mod tests {
         ];
 
         let downsampled = downsample_path(&path, 25.0, 45.0);
-        
+
         // Should keep start, then points at 20, 40 (distance >= 25)
         assert!(downsampled.len() >= 2);
         assert_eq!(downsampled[0], [0.0, 0.0, 0.0]);
@@ -327,7 +332,7 @@ mod tests {
         ];
 
         let downsampled = downsample_path(&path, 25.0, 45.0);
-        
+
         // Should keep the turn point
         assert!(downsampled.len() >= 2);
     }
