@@ -38,8 +38,6 @@ const PMF_ON_GROUND: u32 = 4;
 const GOAL_TOL: f32 = brain::recorder::GOAL_TOL;
 /// A reach only counts once held this long (filters fly-through jitter).
 const GOAL_SETTLE: f32 = 0.5;
-/// Hard wall-clock cap on a scenario run.
-pub(crate) const DEFAULT_MAX_SECS: f32 = 30.0;
 /// Default map when `--map` is omitted.
 const DEFAULT_MAP: &str = "q2dm1";
 

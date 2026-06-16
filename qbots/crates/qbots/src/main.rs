@@ -97,6 +97,9 @@ enum Cmd {
         /// Number of bots to spawn (default 1).
         #[arg(long, default_value = "1")]
         count: u8,
+        /// Hard wall-clock cap per bot in seconds (default 30).
+        #[arg(long, default_value = "30.0")]
+        max_secs: f32,
     },
     /// Drive one bot from spawn to a named weapon's BSP origin; log movement; stop.
     SpawnToWeapon {
@@ -111,6 +114,12 @@ enum Cmd {
         /// Bot display name.
         #[arg(long)]
         name: Option<String>,
+        /// Number of bots to spawn (default 1).
+        #[arg(long, default_value = "1")]
+        count: u8,
+        /// Hard wall-clock cap per bot in seconds (default 30).
+        #[arg(long, default_value = "30.0")]
+        max_secs: f32,
     },
     /// Pre-generate the nav graph cache for one or more maps.
     ///
@@ -933,6 +942,7 @@ async fn run_scenario_cmd(
     map: Option<String>,
     goal: scenario::ScenarioGoal,
     count: u8,
+    max_secs: f32,
 ) -> ExitCode {
     let base_name = name.unwrap_or_else(|| "qbots".to_string());
     let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
@@ -945,7 +955,8 @@ async fn run_scenario_cmd(
     };
 
     let unix_ts = time::OffsetDateTime::now_utc().unix_timestamp();
-    let mut handles = Vec::new();
+    // (bot_name, join_handle) pairs for per-bot summary (T5).
+    let mut handles: Vec<(String, tokio::task::JoinHandle<ExitCode>)> = Vec::new();
     let map_clone = map.clone();
     let goal_clone = goal.clone();
 
@@ -961,6 +972,7 @@ async fn run_scenario_cmd(
         let cfg = cfg.clone();
         let map = map_clone.clone();
         let goal = goal_clone.clone();
+        let bot_name_task = bot_name.clone();
 
         // Stagger spawns by 500ms when count > 1
         if i > 0 {
@@ -972,36 +984,45 @@ async fn run_scenario_cmd(
             match scenario::run_scenario(
                 &cfg,
                 addr,
-                &bot_name,
+                &bot_name_task,
                 map.as_deref(),
                 goal,
-                scenario::DEFAULT_MAX_SECS,
+                max_secs,
                 bot_qport,
             )
             .await
             {
                 Ok(code) => code,
                 Err(e) => {
-                    tracing::error!("scenario for {}: {e}", bot_name);
+                    tracing::error!("scenario for {}: {e}", bot_name_task);
                     ExitCode::FAILURE
                 }
             }
         });
-        handles.push(handle);
+        handles.push((bot_name, handle));
     }
 
-    // Wait for all bots to complete and return the first failure (or SUCCESS if all succeed)
+    // Wait for all bots; emit per-bot result lines then an aggregate summary (T5).
+    let total = handles.len();
+    let mut reached = 0usize;
     let mut result = ExitCode::SUCCESS;
-    for handle in handles {
-        match handle.await {
-            Ok(code) if code != ExitCode::SUCCESS => result = code,
+    for (name, handle) in handles {
+        let code = match handle.await {
+            Ok(c) => c,
             Err(e) => {
-                tracing::error!("task join error: {e}");
-                result = ExitCode::FAILURE;
+                tracing::error!("task join error for {name}: {e}");
+                ExitCode::FAILURE
             }
-            _ => {}
+        };
+        let ok = code == ExitCode::SUCCESS;
+        tracing::info!(bot = %name, reached = ok, "scenario result");
+        if ok {
+            reached += 1;
+        } else if result == ExitCode::SUCCESS {
+            result = code;
         }
     }
+    tracing::info!("{reached}/{total} bots reached the goal");
     result
 }
 
@@ -1498,6 +1519,7 @@ async fn main() -> ExitCode {
             addr,
             name,
             count,
+            max_secs,
         } => {
             run_scenario_cmd(
                 &cfg,
@@ -1506,6 +1528,7 @@ async fn main() -> ExitCode {
                 map,
                 scenario::ScenarioGoal::FarthestSpawn,
                 count,
+                max_secs,
             )
             .await
         }
@@ -1514,6 +1537,8 @@ async fn main() -> ExitCode {
             map,
             addr,
             name,
+            count,
+            max_secs,
         } => {
             run_scenario_cmd(
                 &cfg,
@@ -1521,7 +1546,8 @@ async fn main() -> ExitCode {
                 name,
                 map,
                 scenario::ScenarioGoal::Weapon(weapon_name),
-                1, // count=1 for spawn-to-weapon
+                count,
+                max_secs,
             )
             .await
         }
