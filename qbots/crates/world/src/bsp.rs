@@ -435,11 +435,21 @@ fn parse_models(buf: &[u8]) -> Result<Vec<Model>, DecodeError> {
     let mut r = Reader::new(buf);
     let mut out = Vec::with_capacity(buf.len() / SIZE);
     while r.remaining() >= SIZE {
-        let mins = read_f3(&mut r)?;
-        let maxs = read_f3(&mut r)?;
+        let mut mins = read_f3(&mut r)?;
+        let mut maxs = read_f3(&mut r)?;
         r.skip(12)?; // origin
         let headnode = r.read_i32()?;
         r.skip(8)?; // firstface + numface
+
+        // Apply the same -1/+1 margin as yquake2 (collision.c:1220-1223)
+        // "spread the mins / maxs by a pixel" for collision tolerance
+        mins[0] -= 1.0;
+        mins[1] -= 1.0;
+        mins[2] -= 1.0;
+        maxs[0] += 1.0;
+        maxs[1] += 1.0;
+        maxs[2] += 1.0;
+
         out.push(Model {
             mins,
             maxs,
@@ -637,5 +647,35 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(starts.len(), 1);
         assert_eq!(starts[0].origin(), Some([5.0, 6.0, 7.0]));
+    }
+
+    #[test]
+    fn model_bounds_have_margin() {
+        // Build a minimal BSP with one model to verify the -1/+1 margin is applied.
+        let mut buf = minimal_bsp();
+
+        // Add a LUMP_MODELS with one model: mins=[0,0,0], maxs=[100,100,100], origin=[0,0,0], headnode=0
+        let mut model = Vec::new();
+        model.extend_from_slice(&[0f32, 0.0, 0.0].map(|f| f.to_le_bytes()).concat()); // mins
+        model.extend_from_slice(&[100f32, 100.0, 100.0].map(|f| f.to_le_bytes()).concat()); // maxs
+        model.extend_from_slice(&[0f32, 0.0, 0.0].map(|f| f.to_le_bytes()).concat()); // origin
+        model.extend_from_slice(&0i32.to_le_bytes()); // headnode
+        model.extend_from_slice(&0i32.to_le_bytes()); // firstface
+        model.extend_from_slice(&0i32.to_le_bytes()); // numfaces
+
+        let lump_pos = 8; // magic(4)+version(4) → first lump entry
+        let ofs = buf.len() as i32;
+        buf.extend_from_slice(&model);
+        let base = lump_pos + LUMP_MODELS * 8;
+        buf[base..base + 4].copy_from_slice(&ofs.to_le_bytes());
+        buf[base + 4..base + 8].copy_from_slice(&(model.len() as i32).to_le_bytes());
+
+        let bsp = Bsp::from_bytes(&buf).unwrap();
+        assert_eq!(bsp.models.len(), 1);
+
+        // Verify the -1/+1 margin is applied (collision.c:1220-1223)
+        let m = &bsp.models[0];
+        assert_eq!(m.mins, [-1.0, -1.0, -1.0], "mins should be raw - 1");
+        assert_eq!(m.maxs, [101.0, 101.0, 101.0], "maxs should be raw + 1");
     }
 }
