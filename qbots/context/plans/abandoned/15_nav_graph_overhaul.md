@@ -1,3 +1,7 @@
+> **ABANDONED 2026-06-16** — Phase 1 (spawn seeding, jump edges, component bridging, reachable-goal selection) was achieved organically via ad-hoc commits (2a6b3491f, ce282d32e, 6547c645b, cf1ba6cbf) outside this plan's process. Phases 2-4 (multi-height sampling, adaptive spacing, NodeKind enum, BSP surface extraction) are superseded by Plan 19's narrower, evidence-based fix list — the grid+fixup architecture is sound; remaining failures trace to a STEPSIZE constant mismatch and unseeded weapon goals, not the sampling strategy. See Plan 19.
+
+---
+
 # Plan 15: Nav Graph Overhaul - MVP First
 
 **TL;DR:** Fix broken nav graph with **MVP-first approach** - start with spawn seeding + jump edges (works today), then improve grid sampling, then add caching. BSP surface extraction is optional (only if MVP fails).

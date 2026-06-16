@@ -1,3 +1,7 @@
+> **ABANDONED 2026-06-16** — Superseded draft — superseded by the final analysis in context/plans/completed/bsp_bug_analysis.md, whose one confirmed bug (model mins/maxs margin) already shipped (commit b72600ae2).
+
+---
+
 # BSP Parsing Analysis - Critical Bugs Identified
 
 ## BSP Format Specification (Vendor yquake2)

@@ -1,3 +1,7 @@
+> **ABANDONED 2026-06-16** — Premise ("no amount of grid tweaking fixes fragmentation") is outdated — seed_spawns + detect_jump_edges + connect_components already resolved q2dm1's component fragmentation (see context/pitfalls.md). Observation-based learning remains a viable fallback if Plan 19's grid-based fixes fail on a future map, but is not pursued now. crates/world/src/learn.rs (path recorder + nodes-only save/load stub) is left in place, unused, for a future revisit.
+
+---
+
 # Plan 16: Observation-Based Nav Graph Learning
 
 **TL;DR:** Instead of trying to fix broken grid sampling or implement complex BSP surface extraction, use **observation-based learning** (like ACE Bot) to build nav graphs from recorded player paths.

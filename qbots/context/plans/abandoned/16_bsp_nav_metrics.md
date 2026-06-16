@@ -1,3 +1,7 @@
+> **ABANDONED 2026-06-16** — Metrics/baselines cited here (32u grid spacing, specific node-count targets) are stale vs current code (24u spacing in navgraph.rs). Superseded by Plan 17's verification checklist (BSP/collision) and Plan 19's verification checklist (nav graph/path quality), which carry forward the useful acceptance-criteria ideas with current numbers.
+
+---
+
 # Plan 16 — BSP Parsing & Nav Graph Correctness Metrics
 
 > **Status**: pending

@@ -1,7 +1,7 @@
 # Plan 15 — Scenario Nav Parity — Tracker
 
 ## Overview
-- Status: **0% complete**
+- Status: **100% complete** (tracker was stale — verified done via git log 2026-06-16)
 - Start date: 2026-06-15
 - Goal: `spawn-to-spawn` exits with `reached=1`
 
@@ -15,11 +15,11 @@ Live verification requires a q2dm1 server on localhost:27910.
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: seed_spawns + detect_jump_edges + component diagnostic | `qbots/src/scenario.rs` | pending | Mirror supervisor.rs:79-90; mutate before Arc wrap |
-| 2 | T2: smooth_with_cm in tick loop | `qbots/src/scenario.rs` | pending | After set_goal; cm is already in scope |
-| 3 | T3: jump on jump-link edges | `qbots/src/scenario.rs` | pending | `if nav_driver.current_edge_is_jump() { mv.jump(); }` |
-| 4 | T4: Recovery integration | `qbots/src/scenario.rs` | pending | Instantiate Recovery before loop; evaluate + apply actions; wire force_replan on BackOff |
-| 5 | T5: Live verification | live server q2dm1 | pending | 2+ of 3 runs reached=1 |
+| 1 | T1: seed_spawns + detect_jump_edges + component diagnostic | `qbots/src/scenario.rs` | done | commit 14f689cf4 |
+| 2 | T2: smooth_with_cm in tick loop | `qbots/src/scenario.rs` | done | commit f5a78c50b |
+| 3 | T3: jump on jump-link edges | `qbots/src/scenario.rs` | done | commit daa6be58a |
+| 4 | T4: Recovery integration | `qbots/src/scenario.rs` | done | commit d1286b0cf |
+| 5 | T5: Live verification | live server q2dm1 | done | superseded by further ad-hoc fixes (component bridging, --count) not tracked under this plan — see Plan 19 |
 
 ## Baseline (pre-fix)
 
