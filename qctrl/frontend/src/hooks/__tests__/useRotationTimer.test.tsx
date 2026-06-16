@@ -26,8 +26,8 @@ describe('useRotationTimer', () => {
   const mockStatus: StatusResponse = {
     map: 'q2dm1',
     players: [
-      { clientNum: 1, client_num: 1, score: 5, address: '192.168.1.1', name: 'Player1', ping: 50 },
-      { clientNum: 2, client_num: 2, score: 3, address: '192.168.1.2', name: 'Player2', ping: 60 },
+      { clientNum: 1, score: 5, address: '192.168.1.1', name: 'Player1', ping: 50 },
+      { clientNum: 2, score: 3, address: '192.168.1.2', name: 'Player2', ping: 60 },
     ],
     timelimit: 20,
     fraglimit: 25,
@@ -122,8 +122,8 @@ describe('useRotationTimer', () => {
     const statusWithFragLimit: StatusResponse = {
       map: 'q2dm1',
       players: [
-        { clientNum: 1, client_num: 1, score: 15, address: '192.168.1.1', name: 'Player1', ping: 50 },
-        { clientNum: 2, client_num: 2, score: 10, address: '192.168.1.2', name: 'Player2', ping: 60 },
+        { clientNum: 1, score: 15, address: '192.168.1.1', name: 'Player1', ping: 50 },
+        { clientNum: 2, score: 10, address: '192.168.1.2', name: 'Player2', ping: 60 },
       ],
       timelimit: 20,
       fraglimit: 20,

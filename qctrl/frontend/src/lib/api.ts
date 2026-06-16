@@ -30,14 +30,6 @@ export interface Player {
   ping: number;
 }
 
-export interface Player {
-  client_num: number;
-  score: number;
-  address: string;
-  name: string;
-  ping: number;
-}
-
 export interface StatusResponse {
   map: string | null;
   players: Player[];
@@ -63,9 +55,19 @@ export interface QueueResponse {
 export async function getStatus(): Promise<StatusResponse> {
   const res = await fetch('/api/status');
   if (!res.ok) {
-    throw new Error('Failed to fetch status');
+    throw new Error(`Failed to fetch status: ${res.status} ${res.statusText}`);
   }
-  return res.json();
+  const data = await res.json();
+  return {
+    ...data,
+    players: data.players?.map((p: any) => ({
+      clientNum: p.client_num,
+      score: p.score,
+      address: p.address,
+      name: p.name,
+      ping: p.ping,
+    })) ?? [],
+  };
 }
 
 export async function getHealth(): Promise<HealthResponse> {
