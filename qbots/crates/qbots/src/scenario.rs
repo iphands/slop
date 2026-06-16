@@ -72,48 +72,43 @@ pub async fn run_scenario(
         tracing::info!("no --map given; defaulting to {DEFAULT_MAP}");
     }
 
-    // 1. Load the BSP + build the collision model + nav graph (mirrors the fleet's
-    //    build_map_nav, but retains the CM for the recorder's wall-bump trace).
-    let bsp = world::Bsp::load(&cfg.paths.baseq2, &map)
-        .map_err(|e| io_err(format!("can't load BSP for '{map}': {e}")))?;
-    let cm = Arc::new(world::CollisionModel::from_bsp(&bsp));
-    let model = bsp
-        .models
-        .first()
-        .ok_or_else(|| io_err(format!("BSP for '{map}' has no models")))?;
+    // 1. Load BSP + build collision model + nav graph via the consolidated pipeline.
+    let built = world::generate_map_nav(&cfg.paths.baseq2, &map)
+        .map_err(|e| io_err(format!("can't build nav for '{map}': {e}")))?;
+    let cm = Arc::clone(&built.cm);
+    let bsp_spawns = built.spawn_origins.clone();
+    let bsp = built.bsp;
 
-    // Build nav graph with spawn seeding and jump detection (mirrors supervisor.rs).
-    let bsp_spawns: Vec<[f32; 3]> = bsp
-        .spawn_points()
-        .iter()
-        .map(|s| s.origin)
-        .collect();
     tracing::info!(count = bsp_spawns.len(), "bsp spawn points collected");
     for (i, sp) in bsp_spawns.iter().enumerate() {
         tracing::info!("  spawn[{}]: ({}, {}, {})", i, sp[0], sp[1], sp[2]);
     }
-    let mut graph_mut = world::NavGraph::generate(&cm, (model.mins, model.maxs), 24.0);
-    tracing::info!(nodes = graph_mut.node_count(), "base nav graph generated");
-    let seeded = graph_mut.seed_spawns(&cm, &bsp_spawns);
-    tracing::info!(seeded, "spawn seeding complete");
-    let added_jumps = graph_mut.detect_jump_edges(&cm, 48.0);
-    
-    // Check connectivity - if fragmented, this is a BUG in graph generation
-    let (in_largest, total_spawns) = graph_mut.spawns_in_largest_component(&bsp_spawns);
-    
-    // Log component sizes for debugging fragmentation (call ONCE, reuse result)
-    let comps = graph_mut.components();
+
+    // Diagnostic component logging.
+    let comps = built.graph.components();
     if comps.len() > 1 {
-        tracing::warn!(count = comps.len(), "nav graph has multiple disconnected components - THIS IS A BUG");
+        tracing::warn!(
+            count = comps.len(),
+            "nav graph has multiple disconnected components - THIS IS A BUG"
+        );
         for (i, c) in comps.iter().take(5).enumerate() {
             tracing::warn!("  component[{}]: {} nodes", i, c.len());
         }
-        
-        // Log which component each spawn is in
         for (i, sp) in bsp_spawns.iter().enumerate() {
-            if let Some(nearest_idx) = graph_mut.nearest(sp) {
-                let comp_idx = comps.iter().position(|c| c.contains(&nearest_idx)).unwrap_or(999);
-                tracing::info!("  spawn[{}] at ({}, {}, {}) -> nearest node {} -> component {}", i, sp[0], sp[1], sp[2], nearest_idx, comp_idx);
+            if let Some(nearest_idx) = built.graph.nearest(sp) {
+                let comp_idx = comps
+                    .iter()
+                    .position(|c| c.contains(&nearest_idx))
+                    .unwrap_or(999);
+                tracing::info!(
+                    "  spawn[{}] at ({}, {}, {}) -> nearest node {} -> component {}",
+                    i,
+                    sp[0],
+                    sp[1],
+                    sp[2],
+                    nearest_idx,
+                    comp_idx
+                );
             }
         }
     } else {
@@ -121,22 +116,22 @@ pub async fn run_scenario(
     }
     tracing::info!(
         map,
-        nodes = graph_mut.node_count(),
-        edges = graph_mut.edge_count(),
-        seeded,
-        added_jumps,
-        in_largest,
-        total_spawns,
-        "scenario nav graph (augmented)"
+        nodes = built.graph.node_count(),
+        edges = built.graph.edge_count(),
+        seeded = built.seeded,
+        added_jumps = built.added_jumps,
+        in_largest = built.in_largest,
+        total_spawns = built.total_spawns,
+        "scenario nav graph"
     );
-    if in_largest < total_spawns {
+    if built.in_largest < built.total_spawns {
         tracing::warn!(
-            in_largest,
-            total_spawns,
+            in_largest = built.in_largest,
+            total_spawns = built.total_spawns,
             "some spawns not in the largest nav component — THIS IS A BUG, all spawns should be reachable"
         );
     }
-    let graph = Arc::new(graph_mut);
+    let graph = Arc::new(built.graph);
 
     // 2. Resolve the scenario label + (when known up front) the goal origin + the
     //    spawn origins for the lazy farthest-spawn pick. A weapon origin is known
@@ -279,7 +274,7 @@ pub async fn run_scenario(
                                 .map(|pt| Steering::arrive_scale((pt - pos).length()))
                                 .unwrap_or(1.0);
                             let (fwd, side) = move_from_world_dir(world_move_dir, view_yaw, true);
-                            
+
                             // Stuck recovery (mirrors main.rs:790-825).
                             let has_nav_target = nav_driver.pursue_target(pos).is_some();
                             let rec_action = recovery.evaluate(
@@ -310,7 +305,7 @@ pub async fn run_scenario(
                                     mv.move_side(hside);
                                 }
                             }
-                            
+
                             if fwd > 0.0 || side.abs() > 0.0 {
                                 mv.look_at(view_yaw, 0.0);
                                 mv.move_forward(fwd * arrive);
@@ -452,15 +447,19 @@ fn farthest_spawn(spawns: &[[f32; 3]], from: [f32; 3]) -> [f32; 3] {
 /// The farthest DM spawn that is in the same nav graph component as the bot.
 /// Falls back to the farthest spawn by Euclidean distance if no spawns are in the same component.
 /// Excludes spawns that are too close to the bot's current position (< 100 units).
-fn farthest_reachable_spawn(spawns: &[[f32; 3]], from: [f32; 3], graph: &Arc<NavGraph>) -> [f32; 3] {
+fn farthest_reachable_spawn(
+    spawns: &[[f32; 3]],
+    from: [f32; 3],
+    graph: &Arc<NavGraph>,
+) -> [f32; 3] {
     let Some(from_node) = graph.nearest(&from) else {
         return farthest_spawn(spawns, from);
     };
-    
+
     // Find the component the bot is in
     let components = graph.components();
     let bot_component = components.iter().position(|c| c.contains(&from_node));
-    
+
     // Find spawns in the same component that are far enough away
     let mut same_component: Vec<([f32; 3], f32)> = Vec::new();
     for &sp in spawns {
@@ -477,13 +476,13 @@ fn farthest_reachable_spawn(spawns: &[[f32; 3]], from: [f32; 3], graph: &Arc<Nav
             }
         }
     }
-    
+
     // If we have spawns in the same component, pick the farthest one
     if !same_component.is_empty() {
         same_component.sort_by(|a, b| b.1.total_cmp(&a.1));
         return same_component[0].0;
     }
-    
+
     // No spawns in the same component - this means the bot is in an isolated component
     // with no other spawns. Return the bot's current position (no goal).
     tracing::warn!("no reachable spawns in same component as bot");

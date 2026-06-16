@@ -66,47 +66,36 @@ impl NavCache {
 
 /// Build the nav graph + roam nodes for `map` from the BSP on disk.
 fn build_map_nav(cfg: &Config, map: &str) -> Option<MapNav> {
-    let bsp = match world::Bsp::load(&cfg.paths.baseq2, map) {
+    let t0 = std::time::Instant::now();
+    let built = match world::generate_map_nav(&cfg.paths.baseq2, map) {
         Ok(b) => b,
         Err(e) => {
             tracing::warn!(map, "nav load failed: {e}  (no nav)");
             return None;
         }
     };
-    let cm = Arc::new(world::CollisionModel::from_bsp(&bsp));
-    let m = bsp.models.first().expect("bsp has models");
-    let t0 = std::time::Instant::now();
-    let mut g = world::NavGraph::generate(&cm, (m.mins, m.maxs), 24.0);
-    // Seed nodes at DM spawn origins so freshly-spawned bots always have a
-    // reachable nearest node (Plan 14 T3).
-    let spawn_origins: Vec<[f32; 3]> = bsp.spawn_points().iter().map(|s| s.origin).collect();
-    let seeded = g.seed_spawns(&cm, &spawn_origins);
-    let added_jumps = g.detect_jump_edges(&cm, 64.0);
-    // Check connectivity - if fragmented, this is a BUG in graph generation
-    let (in_largest, total_spawns) = g.spawns_in_largest_component(&spawn_origins);
-    let largest = g.components().into_iter().next().unwrap_or_default();
     tracing::info!(
         map,
-        nodes = g.node_count(),
-        edges = g.edge_count(),
-        largest = largest.len(),
-        seeded,
-        jump_edges = added_jumps,
+        nodes = built.graph.node_count(),
+        edges = built.graph.edge_count(),
+        largest = built.largest.len(),
+        seeded = built.seeded,
+        jump_edges = built.added_jumps,
         ms = t0.elapsed().as_millis() as u64,
         "nav graph ready"
     );
-    if in_largest < total_spawns {
+    if built.in_largest < built.total_spawns {
         tracing::warn!(
             map,
-            in_largest,
-            total_spawns,
+            in_largest = built.in_largest,
+            total_spawns = built.total_spawns,
             "some spawn points are not in the largest nav component - THIS IS A BUG, all spawns should be reachable"
         );
     }
     Some(MapNav {
-        graph: Arc::new(g),
-        cm,
-        roam_nodes: largest,
+        graph: Arc::new(built.graph),
+        cm: built.cm,
+        roam_nodes: built.largest,
     })
 }
 

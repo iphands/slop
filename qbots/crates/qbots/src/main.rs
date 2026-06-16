@@ -945,12 +945,12 @@ async fn run_scenario_cmd(
         let cfg = cfg.clone();
         let map = map_clone.clone();
         let goal = goal_clone.clone();
-        
+
         // Stagger spawns by 500ms when count > 1
         if i > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
-        
+
         let handle = tokio::task::spawn(async move {
             let bot_qport = crate::default_qport() + i as u16;
             match scenario::run_scenario(
@@ -1309,14 +1309,31 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        Cmd::Learn { map: _, addr: _, output: _ } => {
+        Cmd::Learn {
+            map: _,
+            addr: _,
+            output: _,
+        } => {
             tracing::info!("learning nav graph (stub)");
             // TODO: Implement learning logic
             tracing::warn!("Learn command not yet implemented - using grid sampling instead");
             ExitCode::FAILURE
         }
-        Cmd::SpawnToSpawn { map, addr, name, count } => {
-            run_scenario_cmd(&cfg, addr, name, map, scenario::ScenarioGoal::FarthestSpawn, count).await
+        Cmd::SpawnToSpawn {
+            map,
+            addr,
+            name,
+            count,
+        } => {
+            run_scenario_cmd(
+                &cfg,
+                addr,
+                name,
+                map,
+                scenario::ScenarioGoal::FarthestSpawn,
+                count,
+            )
+            .await
         }
         Cmd::SpawnToWeapon {
             weapon_name,

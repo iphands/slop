@@ -5,6 +5,7 @@
 //! by Plan 05: loader (T1) → collision trace (T2) → PVS (T3) → nav graph (T4).
 
 pub mod bsp;
+pub mod build;
 pub mod collision;
 pub mod learn;
 pub mod navgraph;
@@ -15,6 +16,7 @@ pub use bsp::{
     Brush, BrushSide, Bsp, BspEntity, Header, Leaf, Lump, Model, Node, Plane as BspPlane,
     SpawnPoint, NUM_LUMPS,
 };
+pub use build::{generate_map_nav, MapNavBuild, GRID_SPACING, JUMP_SPACING};
 pub use collision::{
     CollisionModel, Trace, CONTENTS_LAVA, CONTENTS_SLIME, CONTENTS_SOLID, CONTENTS_WATER,
     CONTENTS_WINDOW, MASK_SOLID, MASK_WATER,
