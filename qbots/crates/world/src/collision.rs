@@ -657,6 +657,17 @@ fn box_on_plane_side(b: &Aabb, p: &Plane) -> i8 {
 mod tests {
     use super::*;
 
+    /// Tripwire: these constants must stay pinned to the vendor source they cite.
+    /// A future refactor that drifts one of them away from parity should fail
+    /// this test, not silently ship a mismatch.
+    #[test]
+    fn vendor_constants_pinned() {
+        // collision.c:127
+        assert_eq!(DIST_EPSILON, 0.03125);
+        // pmove.c:32 `#define STEPSIZE 18`
+        assert_eq!(crate::navgraph::STEP, 18.0);
+    }
+
     /// A solid axis-aligned box brush at [0..10]³: six inward-facing planes.
     /// The BSP needs a node/leaf that references it; we build the minimal structure.
     fn box_world() -> CollisionModel {
