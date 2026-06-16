@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//home/iphands/prog/slop/vendor/**)",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/yquake2/yquake2/master/src/game/g_main.c\" -o /tmp/g_main.c)",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/yquake2/yquake2/master/src/game/g_save.c\" -o /tmp/g_save.c)",
+      "Read(//tmp/**)",
+      "Bash(just be-build *)",
+      "Bash(just be-test *)",
+      "Bash(git mv *)",
+      "Bash(just fe-all *)",
+      "Bash(npx tsc *)",
+      "Bash(echo \"tsc exit: $?\")",
+      "Bash(git commit *)"
+    ]
+  }
+}
