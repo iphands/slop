@@ -4,3 +4,14 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+world = { path = "../world" }
+brain = { path = "../brain" }
+client = { path = "../client" }
+q2proto = { path = "../q2proto" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+glam = { workspace = true }
+
+[[bin]]
+name = "bsp_verify"
+path = "src/bin/bsp_verify.rs"

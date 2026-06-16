@@ -11,3 +11,10 @@ members = [
 
 [workspace.package]
 edition = "2021"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+glam = "0.27"
+bytes = "1"
+serde = { version = "1", features = ["derive"] }

@@ -485,8 +485,10 @@ fn farthest_reachable_spawn(spawns: &[[f32; 3]], from: [f32; 3], graph: &Arc<Nav
         return same_component[0].0;
     }
     
-    // No spawns in the same component - fall back to farthest by Euclidean distance
-    farthest_spawn(spawns, from)
+    // No spawns in the same component - this means the bot is in an isolated component
+    // with no other spawns. Return the bot's current position (no goal).
+    tracing::warn!("no reachable spawns in same component as bot");
+    from
 }
 
 /// Dump the recorder log + emit the SUMMARY line; map outcome → exit code.
