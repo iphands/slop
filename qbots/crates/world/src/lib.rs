@@ -8,6 +8,7 @@ pub mod bsp;
 pub mod build;
 pub mod collision;
 pub mod learn;
+pub mod mapcache;
 pub mod navgraph;
 pub mod pak;
 pub mod vis;
@@ -21,6 +22,7 @@ pub use collision::{
     CollisionModel, Trace, CONTENTS_LAVA, CONTENTS_SLIME, CONTENTS_SOLID, CONTENTS_WATER,
     CONTENTS_WINDOW, MASK_SOLID, MASK_WATER,
 };
+pub use mapcache::{load as load_mapcache, save as save_mapcache, Fingerprint};
 pub use navgraph::{EdgeKind, NavGraph, HULL_MAXS, HULL_MINS};
 pub use pak::Pak;
 pub use vis::Pvs;

@@ -115,6 +115,51 @@ impl NavGraph {
         }
     }
 
+    /// Build a graph from pre-serialized components (mapcache deserialization).
+    /// `jump_triples` is a list of `(from, to, launch_yaw)`.
+    pub fn from_raw_with_jumps(
+        nodes: Vec<[f32; 3]>,
+        adj: Vec<Vec<(usize, f32)>>,
+        jump_triples: Vec<(usize, usize, f32)>,
+    ) -> Self {
+        assert_eq!(
+            nodes.len(),
+            adj.len(),
+            "nodes and adjacency vectors must have equal length"
+        );
+        let mut jump_edges = HashSet::new();
+        let mut jump_yaws = HashMap::new();
+        for (from, to, yaw) in jump_triples {
+            jump_edges.insert((from, to));
+            jump_yaws.insert((from, to), yaw);
+        }
+        Self {
+            nodes,
+            adj,
+            jump_edges,
+            jump_yaws,
+        }
+    }
+
+    /// Decompose the graph for serialization: returns `(nodes, adj, jump_triples)`.
+    /// `jump_triples` is `(from, to, launch_yaw)` sorted for determinism.
+    #[allow(clippy::type_complexity)]
+    pub fn into_raw_parts(
+        self,
+    ) -> (
+        Vec<[f32; 3]>,
+        Vec<Vec<(usize, f32)>>,
+        Vec<(usize, usize, f32)>,
+    ) {
+        let mut jump_triples: Vec<(usize, usize, f32)> = self
+            .jump_yaws
+            .into_iter()
+            .map(|((f, t), y)| (f, t, y))
+            .collect();
+        jump_triples.sort_by_key(|&(f, t, _)| (f, t));
+        (self.nodes, self.adj, jump_triples)
+    }
+
     /// Add a node to the graph and return its index.
     pub fn add_node(&mut self, node: [f32; 3]) -> usize {
         let idx = self.nodes.len();
