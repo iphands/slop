@@ -27,6 +27,7 @@ use brain::steer::{move_from_world_dir, Steering};
 use brain::{MovementController, MovementIntent, NavigationDriver};
 use client::{Conn, ConnState};
 use q2proto::Usercmd;
+use world::NavGraph;
 
 use crate::config::Config;
 use crate::supervisor::{spawn_signal_listener, Shutdown};
@@ -96,6 +97,8 @@ pub async fn run_scenario(
     let seeded = graph_mut.seed_spawns(&cm, &bsp_spawns);
     tracing::info!(seeded, "spawn seeding complete");
     let added_jumps = graph_mut.detect_jump_edges(&cm, 48.0);
+    let added_bridges = graph_mut.connect_components(&cm, 512.0);
+    
     let (in_largest, total_spawns) = graph_mut.spawns_in_largest_component(&bsp_spawns);
     
     // Log component sizes for debugging fragmentation
@@ -113,6 +116,8 @@ pub async fn run_scenario(
                 tracing::info!("  spawn[{}] at ({}, {}, {}) -> nearest node {} -> component {}", i, sp[0], sp[1], sp[2], nearest_idx, comp_idx);
             }
         }
+    } else {
+        tracing::info!("nav graph is fully connected (single component)");
     }
     tracing::info!(
         map,
@@ -120,6 +125,7 @@ pub async fn run_scenario(
         edges = graph_mut.edge_count(),
         seeded,
         added_jumps,
+        added_bridges,
         in_largest,
         total_spawns,
         "scenario nav graph (augmented)"
@@ -217,8 +223,12 @@ pub async fn run_scenario(
 
                             // Lazy goal resolution (farthest spawn) once per run.
                             let goal = resolved_goal.unwrap_or_else(|| {
-                                let g = farthest_spawn(&spawn_origins, origin_arr);
+                                let g = farthest_reachable_spawn(&spawn_origins, origin_arr, &graph);
                                 resolved_goal = Some(g);
+                                tracing::info!(
+                                    "goal selected: farthest reachable spawn at ({}, {}, {})",
+                                    g[0], g[1], g[2]
+                                );
                                 g
                             });
                             if recorder.is_none() {
@@ -437,6 +447,48 @@ fn farthest_spawn(spawns: &[[f32; 3]], from: [f32; 3]) -> [f32; 3] {
         .iter()
         .copied()
         .max_by(|a, b| dist3_sq(*a, from).total_cmp(&dist3_sq(*b, from)))
+        .unwrap_or(from)
+}
+
+/// The farthest DM spawn that is reachable from `from` (in the same nav graph component).
+/// If no spawns are reachable, falls back to the nearest spawn.
+fn farthest_reachable_spawn(spawns: &[[f32; 3]], from: [f32; 3], graph: &Arc<NavGraph>) -> [f32; 3] {
+    // Find which component the bot is in
+    let Some(from_node) = graph.nearest(&from) else {
+        return farthest_spawn(spawns, from);
+    };
+    let components = graph.components();
+    let bot_component = components.iter().position(|c| c.contains(&from_node));
+    
+    // Find spawns in the same component
+    let mut reachable: Vec<([f32; 3], f32)> = spawns
+        .iter()
+        .copied()
+        .filter_map(|sp| {
+            graph.nearest(&sp).and_then(|sp_node| {
+                let same_component = bot_component.is_some_and(|idx| {
+                    components.get(idx).is_some_and(|c| c.contains(&sp_node))
+                });
+                if same_component {
+                    Some((sp, dist3_sq(sp, from)))
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
+    
+    // If we have reachable spawns, pick the farthest one
+    if !reachable.is_empty() {
+        reachable.sort_by(|a, b| b.1.total_cmp(&a.1));
+        return reachable[0].0;
+    }
+    
+    // No reachable spawns - fall back to nearest
+    spawns
+        .iter()
+        .copied()
+        .min_by(|a, b| dist3_sq(*a, from).total_cmp(&dist3_sq(*b, from)))
         .unwrap_or(from)
 }
 

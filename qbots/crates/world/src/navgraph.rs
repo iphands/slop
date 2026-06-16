@@ -337,6 +337,9 @@ impl NavGraph {
     /// Call after `generate()` (+ optional `seed_spawns()`). The resulting edges are
     /// safe to traverse — Q2 ignores jump while airborne, so holding jump while
     /// approaching a ledge harmlessly fires once on landing.
+    ///
+    /// NOTE: This only creates DOWNWARD edges. For upward/horizontal connectivity,
+    /// call `connect_components()` afterward to bridge disconnected components.
     pub fn detect_jump_edges(&mut self, cm: &CollisionModel, spacing: f32) -> usize {
         const MAX_FALL: f32 = 256.0;
         const D: f32 = std::f32::consts::FRAC_1_SQRT_2;
@@ -412,6 +415,88 @@ impl NavGraph {
                 added += 1;
             }
         }
+        added
+    }
+
+    /// Bridge disconnected components by adding bidirectional walk edges between
+    /// nearby nodes in different components. This fixes the fundamental limitation
+    /// where grid-sampling creates isolated islands on multi-level maps.
+    ///
+    /// For each pair of components, finds the closest node pairs across components
+    /// and adds walk edges if the trace clears. Call after `generate()`,
+    /// `detect_jump_edges()`, and `seed_spawns()`. Returns the number of edges added.
+    ///
+    /// This is essential for maps like q2dm1 where natural multi-level design would
+    /// otherwise fragment the nav graph into unreachable islands.
+    pub fn connect_components(&mut self, cm: &CollisionModel, max_bridge_dist: f32) -> usize {
+        let mut added = 0;
+        let components = self.components();
+        if components.len() <= 1 {
+            return 0; // already connected
+        }
+
+        let mut bridges_added = Vec::new();
+
+        // Try to connect each pair of components
+        for i in 0..components.len() {
+            for j in (i + 1)..components.len() {
+                let comp_a = &components[i];
+                let comp_b = &components[j];
+
+                // Find the closest pair of nodes between these two components
+                let mut best_dist = max_bridge_dist * max_bridge_dist;
+                let mut best_pair: Option<(usize, usize)> = None;
+
+                // Sample: check nodes in the smaller component against all in the larger
+                let (small, large) = if comp_a.len() < comp_b.len() {
+                    (comp_a, comp_b)
+                } else {
+                    (comp_b, comp_a)
+                };
+
+                for &node_a in small {
+                    let pos_a = &self.nodes[node_a];
+                    for &node_b in large {
+                        let pos_b = &self.nodes[node_b];
+
+                        let d2_xy = {
+                            let dx = pos_a[0] - pos_b[0];
+                            let dy = pos_a[1] - pos_b[1];
+                            dx * dx + dy * dy
+                        };
+                        if d2_xy >= best_dist {
+                            continue;
+                        }
+
+                        // Check height difference (must be walkable)
+                        let dz = (pos_a[2] - pos_b[2]).abs();
+                        if dz > STEP {
+                            continue;
+                        }
+
+                        // Test if the edge is clear
+                        let t = cm.trace(pos_a, pos_b, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+                        if t.fraction < 1.0 || t.startsolid {
+                            continue;
+                        }
+
+                        // Found a valid bridge
+                        best_dist = d2_xy;
+                        best_pair = Some((node_a, node_b));
+                    }
+                }
+
+                // Add the best bridge if found
+                if let Some((a, b)) = best_pair {
+                    let cost = dist(&self.nodes[a], &self.nodes[b]);
+                    self.adj[a].push((b, cost));
+                    self.adj[b].push((a, cost));
+                    bridges_added.push((a, b));
+                    added += 1;
+                }
+            }
+        }
+
         added
     }
 

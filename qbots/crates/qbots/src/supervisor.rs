@@ -82,6 +82,7 @@ fn build_map_nav(cfg: &Config, map: &str) -> Option<MapNav> {
     let spawn_origins: Vec<[f32; 3]> = bsp.spawn_points().iter().map(|s| s.origin).collect();
     let seeded = g.seed_spawns(&cm, &spawn_origins);
     let added_jumps = g.detect_jump_edges(&cm, 64.0);
+    let added_bridges = g.connect_components(&cm, 512.0);
     let (in_largest, total_spawns) = g.spawns_in_largest_component(&spawn_origins);
     let largest = g.components().into_iter().next().unwrap_or_default();
     tracing::info!(
@@ -91,6 +92,7 @@ fn build_map_nav(cfg: &Config, map: &str) -> Option<MapNav> {
         largest = largest.len(),
         seeded,
         jump_edges = added_jumps,
+        bridges = added_bridges,
         ms = t0.elapsed().as_millis() as u64,
         "nav graph ready"
     );
