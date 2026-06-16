@@ -89,7 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test 5: Nav graph node verification
     println!("\n=== Test 5: Nav Graph Node Verification ===");
     let model = bsp.models.first().expect("BSP has models");
-    let mut graph = world::NavGraph::generate(&cm, (model.mins, model.maxs), 64.0);
+    let graph = world::NavGraph::generate(&cm, (model.mins, model.maxs), 64.0);
     println!("  Generated {} nodes", graph.node_count());
     
     // Check a sample of nodes

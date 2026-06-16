@@ -92,19 +92,19 @@ pub async fn run_scenario(
     for (i, sp) in bsp_spawns.iter().enumerate() {
         tracing::info!("  spawn[{}]: ({}, {}, {})", i, sp[0], sp[1], sp[2]);
     }
-    let mut graph_mut = world::NavGraph::generate(&cm, (model.mins, model.maxs), 32.0);
+    let mut graph_mut = world::NavGraph::generate(&cm, (model.mins, model.maxs), 24.0);
     tracing::info!(nodes = graph_mut.node_count(), "base nav graph generated");
     let seeded = graph_mut.seed_spawns(&cm, &bsp_spawns);
     tracing::info!(seeded, "spawn seeding complete");
     let added_jumps = graph_mut.detect_jump_edges(&cm, 48.0);
-    let added_bridges = graph_mut.connect_components(&cm, 512.0);
     
+    // Check connectivity - if fragmented, this is a BUG in graph generation
     let (in_largest, total_spawns) = graph_mut.spawns_in_largest_component(&bsp_spawns);
     
-    // Log component sizes for debugging fragmentation
+    // Log component sizes for debugging fragmentation (call ONCE, reuse result)
     let comps = graph_mut.components();
     if comps.len() > 1 {
-        tracing::warn!(count = comps.len(), "nav graph has multiple disconnected components");
+        tracing::warn!(count = comps.len(), "nav graph has multiple disconnected components - THIS IS A BUG");
         for (i, c) in comps.iter().take(5).enumerate() {
             tracing::warn!("  component[{}]: {} nodes", i, c.len());
         }
@@ -125,7 +125,6 @@ pub async fn run_scenario(
         edges = graph_mut.edge_count(),
         seeded,
         added_jumps,
-        added_bridges,
         in_largest,
         total_spawns,
         "scenario nav graph (augmented)"
@@ -134,7 +133,7 @@ pub async fn run_scenario(
         tracing::warn!(
             in_largest,
             total_spawns,
-            "some spawns not in the largest nav component — cross-component routes may fail"
+            "some spawns not in the largest nav component — THIS IS A BUG, all spawns should be reachable"
         );
     }
     let graph = Arc::new(graph_mut);

@@ -52,6 +52,25 @@ throughput and low CPU.
 
 ---
 
+## Critical Facts About Quake 2 Maps
+
+**ALL spawn points on ALL q2dm* maps are accessible from each other.** This is a fundamental design requirement of Quake 2 deathmatch maps - players must be able to reach all spawn points.
+
+If our bots cannot reach spawn points, it is **NOT** because:
+- The map has "inaccessible areas"
+- The nav graph is "naturally fragmented"
+- Some spawns require stairs, ramps, elevators, or long travel paths
+
+It IS because we have **BUGS** in:
+- BSP parsing (incorrect geometry, wrong lump sizes, endian issues)
+- Collision model (incorrect trace, wrong contents flags, broken hull traces)
+- Nav graph generation (nodes at wrong Z levels, edges through geometry, incorrect walkable detection)
+- Bridge logic (connecting nodes that aren't actually walkable)
+
+**The maps DO have spawn points on different levels that require stairs, ramps, or elevators to reach - but NONE are inaccessible.** Some paths may be long (potentially exceeding our 30s test timeout for slow bots), but all spawns are reachable. If our implementation says a spawn is unreachable, our implementation is wrong.
+
+---
+
 ## Architecture
 
 ### Stack

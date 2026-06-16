@@ -114,7 +114,24 @@ impl NavGraph {
         }
     }
 
+    /// Add a node to the graph and return its index.
+    pub fn add_node(&mut self, node: [f32; 3]) -> usize {
+        let idx = self.nodes.len();
+        self.nodes.push(node);
+        self.adj.push(Vec::new());
+        idx
+    }
+
+    /// Add a bidirectional edge between two nodes.
+    pub fn add_edge(&mut self, a: usize, b: usize, cost: f32) {
+        if a < self.adj.len() && b < self.adj.len() {
+            self.adj[a].push((b, cost));
+            self.adj[b].push((a, cost));
+        }
+    }
+
     /// Connected components (BFS). Useful for diagnosing multi-level fragmentation.
+    /// WARNING: O(n + e) - expensive for large graphs. Cache the result if calling multiple times.
     pub fn components(&self) -> Vec<Vec<usize>> {
         let n = self.nodes.len();
         let mut seen = vec![false; n];
@@ -338,8 +355,8 @@ impl NavGraph {
     /// safe to traverse — Q2 ignores jump while airborne, so holding jump while
     /// approaching a ledge harmlessly fires once on landing.
     ///
-    /// NOTE: This only creates DOWNWARD edges. For upward/horizontal connectivity,
-    /// call `connect_components()` afterward to bridge disconnected components.
+    /// NOTE: Only creates DOWNWARD edges. Full connectivity requires `generate()` to
+    /// find all walkable paths (stairs, ramps, etc.) through grid sampling.
     pub fn detect_jump_edges(&mut self, cm: &CollisionModel, spacing: f32) -> usize {
         const MAX_FALL: f32 = 256.0;
         const D: f32 = std::f32::consts::FRAC_1_SQRT_2;
@@ -418,85 +435,6 @@ impl NavGraph {
         added
     }
 
-    /// Bridge disconnected components by adding bidirectional walk edges between
-    /// nearby nodes in different components. This fixes the fundamental limitation
-    /// where grid-sampling creates isolated islands on multi-level maps.
-    ///
-    /// For each pair of components, finds ALL valid node pairs across components
-    /// and adds walk edges if the trace clears AND height diff is walkable.
-    /// Call after `generate()`, `detect_jump_edges()`, and `seed_spawns()`.
-    /// Returns the number of edges added.
-    ///
-    /// This is essential for maps like q2dm1 where natural multi-level design would
-    /// otherwise fragment the nav graph into unreachable islands.
-    pub fn connect_components(&mut self, cm: &CollisionModel, max_bridge_dist: f32) -> usize {
-        let mut added = 0;
-        let components = self.components();
-        if components.len() <= 1 {
-            return 0;
-        }
-
-        // Try to connect each pair of components with MULTIPLE bridges
-        for i in 0..components.len() {
-            for j in (i + 1)..components.len() {
-                let comp_a = &components[i];
-                let comp_b = &components[j];
-
-                // Find ALL valid bridges between these components (not just the closest)
-                let mut valid_bridges: Vec<(usize, usize, f32)> = Vec::new();
-
-                // Sample: check nodes in the smaller component against all in the larger
-                let (small, large) = if comp_a.len() < comp_b.len() {
-                    (comp_a, comp_b)
-                } else {
-                    (comp_b, comp_a)
-                };
-
-                for &node_a in small {
-                    let pos_a = &self.nodes[node_a];
-                    for &node_b in large {
-                        let pos_b = &self.nodes[node_b];
-
-                        let d2_xy = {
-                            let dx = pos_a[0] - pos_b[0];
-                            let dy = pos_a[1] - pos_b[1];
-                            dx * dx + dy * dy
-                        };
-                        if d2_xy >= max_bridge_dist * max_bridge_dist {
-                            continue;
-                        }
-
-                        // Check height difference - allow larger jumps for bridges
-                        // Use jump edges for large Z differences
-                        let dz = (pos_a[2] - pos_b[2]).abs();
-                        if dz > max_bridge_dist * 0.5 { // Allow up to ~256u Z diff
-                            continue;
-                        }
-
-                        // Test if the edge is clear
-                        let t = cm.trace(pos_a, pos_b, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
-                        if t.fraction < 1.0 || t.startsolid {
-                            continue;
-                        }
-
-                        // Valid bridge found
-                        valid_bridges.push((node_a, node_b, d2_xy.sqrt()));
-                    }
-                }
-
-                // Sort by distance and add the best bridges (up to 5 per component pair)
-                valid_bridges.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap());
-                for (a, b, _) in valid_bridges.iter().take(5) {
-                    let cost = dist(&self.nodes[*a], &self.nodes[*b]);
-                    self.adj[*a].push((*b, cost));
-                    self.adj[*b].push((*a, cost));
-                    added += 1;
-                }
-            }
-        }
-
-        added
-    }
 
     /// Returns the [`EdgeKind`] of edge `(from, to)`. Returns `Walk` if the
     /// edge is not in the jump-edge set (or doesn't exist).

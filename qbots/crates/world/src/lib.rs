@@ -6,6 +6,7 @@
 
 pub mod bsp;
 pub mod collision;
+pub mod learn;
 pub mod navgraph;
 pub mod pak;
 pub mod vis;

@@ -71,6 +71,17 @@ enum Cmd {
     Pvs { map: String },
     /// Generate the nav graph for a map and find a corner-to-corner path.
     Nav { map: String },
+    /// Learn a nav graph by running a bot through the map and recording its path.
+    Learn {
+        /// Map to learn from.
+        map: String,
+        /// Server address (defaults to config's server).
+        #[arg(long)]
+        addr: Option<String>,
+        /// Output path for the learned nav graph.
+        #[arg(long)]
+        output: Option<String>,
+    },
     /// Drive one bot from spawn to the farthest DM spawn point; log movement; stop.
     /// The measurement lens for movement quality (Plan 10).
     SpawnToSpawn {
@@ -1092,7 +1103,7 @@ async fn main() -> ExitCode {
                     );
                     // Frag leaders first.
                     let mut players = rep.players;
-                    players.sort_by(|a, b| b.score.cmp(&a.score));
+                    players.sort_by_key(|b| std::cmp::Reverse(b.score));
                     for p in &players {
                         tracing::info!("{:>4}  {:>4}ms  {}", p.score, p.ping, p.name);
                     }
@@ -1298,6 +1309,12 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Cmd::Learn { map: _, addr: _, output: _ } => {
+            tracing::info!("learning nav graph (stub)");
+            // TODO: Implement learning logic
+            tracing::warn!("Learn command not yet implemented - using grid sampling instead");
+            ExitCode::FAILURE
+        }
         Cmd::SpawnToSpawn { map, addr, name, count } => {
             run_scenario_cmd(&cfg, addr, name, map, scenario::ScenarioGoal::FarthestSpawn, count).await
         }
