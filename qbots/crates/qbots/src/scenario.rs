@@ -78,7 +78,31 @@ pub async fn run_scenario(
         .map_err(|e| io_err(format!("can't build nav for '{map}': {e}")))?;
     let cm = Arc::clone(&built.cm);
     let bsp_spawns = built.spawn_origins.clone();
+    let seeded = built.seeded;
+    let added_jumps = built.added_jumps;
+    let in_largest = built.in_largest;
+    let total_spawns = built.total_spawns;
     let bsp = built.bsp;
+    let mut graph = built.graph;
+
+    // 2. Resolve the scenario label + (when known up front) the goal origin + the
+    //    spawn origins for the lazy farthest-spawn pick. A weapon origin is known
+    //    now; the farthest spawn is picked once we know where we spawned.
+    //    Resolved early (before wrapping graph in Arc) so we can seed the goal.
+    let (scenario_name, goal_origin, goal_label, spawn_origins) =
+        resolve_goal(&bsp, &map, &goal_kind)?;
+
+    // Seed the scenario goal position as an exact nav node when it isn't already one
+    // of the DM spawns (T2). For FarthestSpawn the goal is always one of bsp_spawns
+    // (already seeded); for Weapon the goal is a single weapon origin that may lie
+    // between grid nodes, causing A* to snap to an imprecise neighbor on the wrong
+    // side of a doorway or stair lip.
+    if let Some(origin) = goal_origin {
+        let extra = graph.seed_spawns(&cm, &[origin]);
+        if extra > 0 {
+            tracing::info!("seeded scenario goal into nav graph (+{extra} node(s))");
+        }
+    }
 
     tracing::info!(count = bsp_spawns.len(), "bsp spawn points collected");
     for (i, sp) in bsp_spawns.iter().enumerate() {
@@ -86,7 +110,7 @@ pub async fn run_scenario(
     }
 
     // Diagnostic component logging.
-    let comps = built.graph.components();
+    let comps = graph.components();
     if comps.len() > 1 {
         tracing::warn!(
             count = comps.len(),
@@ -96,7 +120,7 @@ pub async fn run_scenario(
             tracing::warn!("  component[{}]: {} nodes", i, c.len());
         }
         for (i, sp) in bsp_spawns.iter().enumerate() {
-            if let Some(nearest_idx) = built.graph.nearest(sp) {
+            if let Some(nearest_idx) = graph.nearest(sp) {
                 let comp_idx = comps
                     .iter()
                     .position(|c| c.contains(&nearest_idx))
@@ -117,28 +141,22 @@ pub async fn run_scenario(
     }
     tracing::info!(
         map,
-        nodes = built.graph.node_count(),
-        edges = built.graph.edge_count(),
-        seeded = built.seeded,
-        added_jumps = built.added_jumps,
-        in_largest = built.in_largest,
-        total_spawns = built.total_spawns,
+        nodes = graph.node_count(),
+        edges = graph.edge_count(),
+        seeded,
+        added_jumps,
+        in_largest,
+        total_spawns,
         "scenario nav graph"
     );
-    if built.in_largest < built.total_spawns {
+    if in_largest < total_spawns {
         tracing::warn!(
-            in_largest = built.in_largest,
-            total_spawns = built.total_spawns,
+            in_largest,
+            total_spawns,
             "some spawns not in the largest nav component — THIS IS A BUG, all spawns should be reachable"
         );
     }
-    let graph = Arc::new(built.graph);
-
-    // 2. Resolve the scenario label + (when known up front) the goal origin + the
-    //    spawn origins for the lazy farthest-spawn pick. A weapon origin is known
-    //    now; the farthest spawn is picked once we know where we spawned.
-    let (scenario_name, goal_origin, goal_label, spawn_origins) =
-        resolve_goal(&bsp, &map, &goal_kind)?;
+    let graph = Arc::new(graph);
 
     // 3. Connect the bot (the same handshake `connect-one` uses).
     let sock = UdpSocket::bind("0.0.0.0:0").await?;
