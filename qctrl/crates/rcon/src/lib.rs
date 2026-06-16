@@ -24,6 +24,8 @@ pub struct RconClient {
     host: String,
     port: u16,
     password: String,
+    /// Mutex to serialize RCON calls and prevent response mixing
+    lock: tokio::sync::Mutex<()>,
 }
 
 impl RconClient {
@@ -32,10 +34,14 @@ impl RconClient {
             host: host.to_string(),
             port,
             password: password.to_string(),
+            lock: tokio::sync::Mutex::new(()),
         }
     }
 
     pub async fn execute(&self, command: &str) -> Result<String, RconError> {
+        // Serialize all RCON calls to prevent response mixing
+        let _guard = self.lock.lock().await;
+        
         tracing::info!("RCON executing: {}", command);
         
         let addr_str = format!("{}:{}", self.host, self.port);
@@ -48,6 +54,8 @@ impl RconClient {
         match self.execute_udp(addr, command).await {
             Ok(response) => {
                 tracing::info!("RCON UDP response ({} chars): {}", response.len(), response.lines().next().unwrap_or(""));
+                // Add delay to let q2pro server process the response before next command
+                tokio::time::sleep(Duration::from_millis(100)).await;
                 return Ok(response);
             }
             Err(RconError::Timeout) => {
@@ -58,6 +66,8 @@ impl RconClient {
 
         let response = self.execute_tcp(addr, command).await?;
         tracing::info!("RCON TCP response ({} chars): {}", response.len(), response.lines().next().unwrap_or(""));
+        // Add delay for TCP as well
+        tokio::time::sleep(Duration::from_millis(100)).await;
         Ok(response)
     }
 
