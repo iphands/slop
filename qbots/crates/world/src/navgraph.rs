@@ -20,6 +20,13 @@ pub const HULL_MAXS: [f32; 3] = [16.0, 16.0, 32.0];
 /// offsets (e.g. `STEPSIZE` in `brain::recover`) that happen to use a numerically nearby
 /// value for unrelated reasons.
 pub(crate) const STEP: f32 = 18.0;
+/// Maximum height difference for which the stair-climb trace is attempted (instead of
+/// immediate rejection). Set to `STEP + GRID_SPACING` (18 + 24 = 42 u) to handle the
+/// worst case: 8u×8u Q2 stairs sampled at 24u grid spacing can put adjacent floor probes
+/// 24u apart in Z, and diagonal neighbors (24√2 ≈ 34u apart) up to ~34u apart. Heights
+/// above this constant are treated as unclimbable ledges. Must be included in the cache
+/// fingerprint (`mapcache::Fingerprint`) so stale caches auto-invalidate on change.
+pub(crate) const STAIR_MAX: f32 = 42.0;
 /// Minimum edge cost in the weighted pathfinder, so a popularity overlay can't
 /// drive an edge to zero/negative (Plan 08 T3).
 const EPS: f32 = 1.0;
@@ -98,14 +105,24 @@ impl NavGraph {
                                 continue;
                             }
                             let b = nodes[j];
-                            if (a[2] - b[2]).abs() > STEP {
-                                continue;
+                            let dz = b[2] - a[2];
+                            if dz.abs() > STAIR_MAX {
+                                continue; // too steep for stairs — cliff or void
                             }
-                            let t = cm.trace(&a, &b, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
-                            if t.fraction < 1.0 || t.startsolid {
-                                continue;
+                            let ok = if dz.abs() <= STEP {
+                                // Flat or gentle slope: standard diagonal hull trace.
+                                let t = cm.trace(&a, &b, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+                                !t.startsolid && t.fraction >= 1.0
+                            } else {
+                                // Height diff in (STEP, STAIR_MAX]: the diagonal trace
+                                // would clip stair risers. Use the step-climb trace that
+                                // mirrors Q2 pmove's up→forward movement pattern.
+                                let (lower, upper) = if dz > 0.0 { (a, b) } else { (b, a) };
+                                walkable_stair(cm, lower, upper)
+                            };
+                            if ok {
+                                edges.push((j, dist(&a, &b)));
                             }
-                            edges.push((j, dist(&a, &b)));
                         }
                     }
                 }
@@ -378,7 +395,8 @@ impl NavGraph {
             // Connect to all existing nodes (pre-this-addition) within reach.
             for other_idx in 0..new_idx {
                 let other = self.nodes[other_idx];
-                if (wp[2] - other[2]).abs() >= STEP {
+                let dz = wp[2] - other[2];
+                if dz.abs() > STAIR_MAX {
                     continue;
                 }
                 let d2 = {
@@ -389,8 +407,14 @@ impl NavGraph {
                 if d2 > 128.0 * 128.0 {
                     continue;
                 }
-                let t = cm.trace(&wp, &other, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
-                if t.fraction < 1.0 || t.startsolid {
+                let connected = if dz.abs() <= STEP {
+                    let t = cm.trace(&wp, &other, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+                    !t.startsolid && t.fraction >= 1.0
+                } else {
+                    let (lower, upper) = if dz < 0.0 { (wp, other) } else { (other, wp) };
+                    walkable_stair(cm, lower, upper)
+                };
+                if !connected {
                     continue;
                 }
                 let cost = dist(&wp, &other);
@@ -601,6 +625,47 @@ fn floor_waypoint(
     }
     let stand = cm.trace(&wp, &wp, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
     (!stand.startsolid).then_some(wp)
+}
+
+/// Check whether a bot can walk *upward* from `lower` to `upper` via a staircase,
+/// for the case where the direct height difference is in `(STEP, STAIR_MAX]`.
+///
+/// A direct diagonal hull trace clips stair *risers* (the vertical walls between
+/// treads) even on fully walkable stairs. This function instead simulates Q2
+/// pmove's step-climb pattern: step up by `STEP` vertically, then advance
+/// horizontally by the proportional XY distance, repeating until reaching `upper`.
+/// Each sub-trace uses the full player hull, so actual walls and cliff faces still
+/// block the path. Stair risers don't block the upward vertical traces, and the
+/// horizontal traces at each stepped height clear any risers below that level.
+///
+/// `upper[2] > lower[2]` is assumed; `total_dz` must be in `(0, STAIR_MAX]`.
+fn walkable_stair(cm: &CollisionModel, lower: [f32; 3], upper: [f32; 3]) -> bool {
+    let total_dz = upper[2] - lower[2];
+    let steps = (total_dz / STEP).ceil() as usize;
+    let mut pos = lower;
+    for step in 0..steps {
+        let frac = (step + 1) as f32 / steps as f32;
+        let target_z = lower[2] + total_dz * frac;
+        // 1. Step up vertically at current XY.
+        let stepped = [pos[0], pos[1], target_z];
+        let up_t = cm.trace(&pos, &stepped, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+        if up_t.startsolid || up_t.fraction < 1.0 {
+            return false;
+        }
+        // 2. Move horizontally to the proportional XY fraction of the total path.
+        let forward = [
+            lower[0] + (upper[0] - lower[0]) * frac,
+            lower[1] + (upper[1] - lower[1]) * frac,
+            target_z,
+        ];
+        let h_t = cm.trace(&stepped, &forward, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+        if h_t.startsolid || h_t.fraction < 1.0 {
+            return false;
+        }
+        pos = forward;
+    }
+    // All sub-traces cleared; pos == upper.
+    true
 }
 
 fn dist(a: &[f32; 3], b: &[f32; 3]) -> f32 {

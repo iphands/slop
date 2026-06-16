@@ -26,7 +26,7 @@ use std::path::Path;
 
 use crate::bsp::Bsp;
 use crate::build::{GRID_SPACING, JUMP_SPACING};
-use crate::navgraph::{NavGraph, STEP};
+use crate::navgraph::{NavGraph, STAIR_MAX, STEP};
 
 const MAGIC: &[u8; 7] = b"QBNAVC2";
 const VERSION: u8 = 1;
@@ -41,8 +41,10 @@ pub struct Fingerprint {
     grid_spacing_bits: u32,
     step_bits: u32,
     jump_spacing_bits: u32,
-    /// Pad to 8 × u32 = 32 bytes so the format version can grow later.
-    _reserved: u32,
+    /// `STAIR_MAX` encoded as f32 bits — changes to the stair-climb logic invalidate
+    /// caches. Previously `_reserved: u32 = 0`; any cached file with the old zero
+    /// will be a fingerprint mismatch and regenerated automatically.
+    stair_max_bits: u32,
 }
 
 impl Fingerprint {
@@ -72,7 +74,7 @@ impl Fingerprint {
             grid_spacing_bits: GRID_SPACING.to_bits(),
             step_bits: STEP.to_bits(),
             jump_spacing_bits: JUMP_SPACING.to_bits(),
-            _reserved: 0,
+            stair_max_bits: STAIR_MAX.to_bits(),
         }
     }
 
@@ -85,7 +87,7 @@ impl Fingerprint {
             self.grid_spacing_bits,
             self.step_bits,
             self.jump_spacing_bits,
-            self._reserved,
+            self.stair_max_bits,
         ] {
             buf.extend_from_slice(&v.to_le_bytes());
         }
@@ -107,7 +109,7 @@ impl Fingerprint {
             grid_spacing_bits: fields[4],
             step_bits: fields[5],
             jump_spacing_bits: fields[6],
-            _reserved: fields[7],
+            stair_max_bits: fields[7],
         })
     }
 }
@@ -257,7 +259,7 @@ mod tests {
             grid_spacing_bits: GRID_SPACING.to_bits(),
             step_bits: STEP.to_bits(),
             jump_spacing_bits: JUMP_SPACING.to_bits(),
-            _reserved: 0,
+            stair_max_bits: STAIR_MAX.to_bits(),
         }
     }
 
