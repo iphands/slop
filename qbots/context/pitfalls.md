@@ -133,6 +133,42 @@ check uses a 32u forward probe to distinguish "step/ledge" (Jump) from "solid wa
 
 ---
 
+# Missing -1/+1 model-bounds margin made collision "too tight" — nodes rejected as solid
+
+## Problem
+
+`Bsp::parse_models` read `dmodel_t.mins/maxs` straight off the wire. yquake2's loader does
+not: `collision.c:1220-1223` applies a 1-unit margin in both directions —
+`out->mins[j] = LittleFloat(in->mins[j]) - 1; out->maxs[j] = LittleFloat(in->maxs[j]) + 1;`
+(comment: `/* spread the mins / maxs by a pixel */`). Without it our collision model was a
+pixel tighter than the real game's on every axis of every model — small enough to look like a
+rounding non-issue, but it meant nav-graph waypoint sampling (which traces against this exact
+boundary) intermittently classified legitimately walkable floor as `startsolid`, rejecting
+nodes near model edges. Symptom: nodes missing at the "wrong" Z levels, spawn points
+unreachable, and paths that looked like they should clear geometry getting blocked instead.
+It read like a nav-graph or pathfinding bug and took three separate analysis passes
+(`bsp_bug_analysis.md`, the original `16_bsp_parsing_fix.md` plan, and its summary doc) before
+the 1-pixel margin was identified as the actual root cause — exactly the kind of multi-attempt
+fix this file exists to capture, just never written down until now (commit `b72600ae2`).
+
+## Fix / How to avoid
+
+Apply the same `-1`/`+1` margin to `mins`/`maxs` when parsing `LUMP_MODELS`, matching
+`collision.c:1220-1223` exactly (don't "round" it away as insignificant — it changes whether
+boundary traces hit `startsolid`). Added `model_bounds_have_margin` test to lock this in
+(`crates/world/src/bsp.rs`). When a BSP-derived geometry value disagrees with the real game by
+a suspiciously small amount, check the vendor loader for an undocumented fudge-factor before
+assuming it's noise — Q2's collision code has several ("spread by a pixel" here; `DIST_EPSILON`
+elsewhere).
+
+## Sources
+- qbots: `crates/world/src/bsp.rs` (`parse_models`, `model_bounds_have_margin` test)
+- vendor: `vendor/yquake2/src/common/collision.c:1220-1223`
+- qbots: `context/plans/completed/16_bsp_parsing_fix.md`, `16_bsp_parsing_fix_summary.md`,
+  `bsp_bug_analysis.md` (the three docs it took to find this)
+
+---
+
 # Nav graph fragmentation: grid-sampling creates disconnected components on multi-level maps
 
 ## Problem
