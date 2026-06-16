@@ -222,3 +222,39 @@ connectivity).
 - qbots: `crates/world/src/navgraph.rs` (`NavGraph::connect_components()`, `components()`)
 - qbots: `crates/qbots/src/scenario.rs` (`farthest_reachable_spawn()`)
 - qbots: `crates/qbots/src/supervisor.rs` (bridge call in nav graph setup)
+
+---
+
+# Diagonal hull trace clips stair risers — only 3/10 spawns reachable
+
+## Problem
+
+`NavGraph::generate()` Phase 3 edge-building had two bugs that together prevented
+staircase connectivity on q2dm1 (only 3/10 spawn points in the largest component):
+
+1. **Height-diff gate too tight**: `if (a[2]-b[2]).abs() > STEP { continue; }` — with
+   `STEP=18.0` and `GRID_SPACING=24.0`, adjacent floor probes on 8u×8u Q2 stairs can
+   differ by ~24u in Z (> STEP), so all stair edges were silently skipped.
+
+2. **Diagonal trace clips stair risers**: Even when dz ≤ STEP, the diagonal hull trace
+   from node A `(x, y, floor+24)` to node B `(x+24, y, other_floor+24)` travels through
+   the stair riser (the vertical wall between treads). The hull bottom at intermediate X
+   positions overlaps the riser brush → `fraction < 1.0` → edge rejected.
+
+The same bugs existed in `seed_spawns()`, preventing spawn nodes from connecting to
+staircase grid nodes at height differences just above STEP.
+
+## Fix
+
+Add `walkable_stair(cm, lower, upper) -> bool` — iterative step-climb trace mirroring
+Q2 pmove's up→forward movement. For height diff in `(STEP, STAIR_MAX=42u]`, instead of
+a diagonal trace, step up by STEP vertically at current XY, then advance horizontally by
+the proportional XY fraction toward the target, repeating `ceil(dz/STEP)` times. Actual
+walls and cliffs block horizontal sub-traces; stair risers don't block vertical ones.
+Apply to both `generate()` Phase 3 and `seed_spawns()`. Add `STAIR_MAX` to the cache
+fingerprint so stale caches auto-invalidate. After the fix, regenerate with
+`cargo run --bin qbots -- generate-map-cache --map 'q2dm*' --jobs 4`.
+
+## Sources
+- qbots: `crates/world/src/navgraph.rs` (`generate()`, `seed_spawns()`, `walkable_stair()`)
+- qbots: `crates/world/src/mapcache.rs` (`Fingerprint::stair_max_bits`)
