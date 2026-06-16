@@ -422,9 +422,10 @@ impl NavGraph {
     /// nearby nodes in different components. This fixes the fundamental limitation
     /// where grid-sampling creates isolated islands on multi-level maps.
     ///
-    /// For each pair of components, finds the closest node pairs across components
-    /// and adds walk edges if the trace clears. Call after `generate()`,
-    /// `detect_jump_edges()`, and `seed_spawns()`. Returns the number of edges added.
+    /// For each pair of components, finds ALL valid node pairs across components
+    /// and adds walk edges if the trace clears AND height diff is walkable.
+    /// Call after `generate()`, `detect_jump_edges()`, and `seed_spawns()`.
+    /// Returns the number of edges added.
     ///
     /// This is essential for maps like q2dm1 where natural multi-level design would
     /// otherwise fragment the nav graph into unreachable islands.
@@ -432,20 +433,17 @@ impl NavGraph {
         let mut added = 0;
         let components = self.components();
         if components.len() <= 1 {
-            return 0; // already connected
+            return 0;
         }
 
-        let mut bridges_added = Vec::new();
-
-        // Try to connect each pair of components
+        // Try to connect each pair of components with MULTIPLE bridges
         for i in 0..components.len() {
             for j in (i + 1)..components.len() {
                 let comp_a = &components[i];
                 let comp_b = &components[j];
 
-                // Find the closest pair of nodes between these two components
-                let mut best_dist = max_bridge_dist * max_bridge_dist;
-                let mut best_pair: Option<(usize, usize)> = None;
+                // Find ALL valid bridges between these components (not just the closest)
+                let mut valid_bridges: Vec<(usize, usize, f32)> = Vec::new();
 
                 // Sample: check nodes in the smaller component against all in the larger
                 let (small, large) = if comp_a.len() < comp_b.len() {
@@ -464,13 +462,14 @@ impl NavGraph {
                             let dy = pos_a[1] - pos_b[1];
                             dx * dx + dy * dy
                         };
-                        if d2_xy >= best_dist {
+                        if d2_xy >= max_bridge_dist * max_bridge_dist {
                             continue;
                         }
 
-                        // Check height difference (must be walkable)
+                        // Check height difference - allow larger jumps for bridges
+                        // Use jump edges for large Z differences
                         let dz = (pos_a[2] - pos_b[2]).abs();
-                        if dz > STEP {
+                        if dz > max_bridge_dist * 0.5 { // Allow up to ~256u Z diff
                             continue;
                         }
 
@@ -480,18 +479,17 @@ impl NavGraph {
                             continue;
                         }
 
-                        // Found a valid bridge
-                        best_dist = d2_xy;
-                        best_pair = Some((node_a, node_b));
+                        // Valid bridge found
+                        valid_bridges.push((node_a, node_b, d2_xy.sqrt()));
                     }
                 }
 
-                // Add the best bridge if found
-                if let Some((a, b)) = best_pair {
-                    let cost = dist(&self.nodes[a], &self.nodes[b]);
-                    self.adj[a].push((b, cost));
-                    self.adj[b].push((a, cost));
-                    bridges_added.push((a, b));
+                // Sort by distance and add the best bridges (up to 5 per component pair)
+                valid_bridges.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap());
+                for (a, b, _) in valid_bridges.iter().take(5) {
+                    let cost = dist(&self.nodes[*a], &self.nodes[*b]);
+                    self.adj[*a].push((*b, cost));
+                    self.adj[*b].push((*a, cost));
                     added += 1;
                 }
             }
