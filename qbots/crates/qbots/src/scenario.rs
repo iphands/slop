@@ -85,9 +85,9 @@ pub async fn run_scenario(
         .iter()
         .map(|s| s.origin)
         .collect();
-    let mut graph_mut = world::NavGraph::generate(&cm, (model.mins, model.maxs), 64.0);
+    let mut graph_mut = world::NavGraph::generate(&cm, (model.mins, model.maxs), 48.0);
     let seeded = graph_mut.seed_spawns(&cm, &bsp_spawns);
-    let added_jumps = graph_mut.detect_jump_edges(&cm, 64.0);
+    let added_jumps = graph_mut.detect_jump_edges(&cm, 48.0);
     let (in_largest, total_spawns) = graph_mut.spawns_in_largest_component(&bsp_spawns);
     tracing::info!(
         map,
