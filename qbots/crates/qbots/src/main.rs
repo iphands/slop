@@ -934,7 +934,14 @@ async fn run_scenario_cmd(
         let cfg = cfg.clone();
         let map = map_clone.clone();
         let goal = goal_clone.clone();
+        
+        // Stagger spawns by 500ms when count > 1
+        if i > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        
         let handle = tokio::task::spawn(async move {
+            let bot_qport = crate::default_qport() + i as u16;
             match scenario::run_scenario(
                 &cfg,
                 addr,
@@ -942,6 +949,7 @@ async fn run_scenario_cmd(
                 map.as_deref(),
                 goal,
                 scenario::DEFAULT_MAX_SECS,
+                bot_qport,
             )
             .await
             {

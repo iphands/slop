@@ -62,6 +62,7 @@ pub async fn run_scenario(
     map_arg: Option<&str>,
     goal_kind: ScenarioGoal,
     max_secs: f32,
+    qport: u16,
 ) -> std::io::Result<ExitCode> {
     let map = map_arg
         .map(str::to_string)
@@ -139,7 +140,6 @@ pub async fn run_scenario(
         resolve_goal(&bsp, &map, &goal_kind)?;
 
     // 3. Connect the bot (the same handshake `connect-one` uses).
-    let qport = crate::default_qport();
     let sock = UdpSocket::bind("0.0.0.0:0").await?;
     sock.connect(addr).await?;
     let mut conn = Conn::new(addr, name, qport);
