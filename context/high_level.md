@@ -55,6 +55,12 @@
 
 ### Parallel Processing
 - **rayon** - Data parallelism library
-  - Used in: `ascii-rt-glm5`
+  - Used in: `ascii-rt-glm5`, `qbots/world` (nav graph generation)
   - Pros: Easy parallel iterators, work-stealing scheduler, excellent CPU utilization
   - Use for: CPU-based ray tracing, image processing, batch operations
+  - qbots note (Plan 18): parallelizes `NavGraph::generate`'s per-column floor probes and
+    per-node adjacency checks via `par_iter`. Collect into sorted `Vec` first for deterministic
+    node IDs, then build the spatial index sequentially. `generate-map-cache --jobs N` uses
+    `std::thread::scope` (not rayon) for the N-maps-at-once outer parallelism — rayon is
+    reserved for within-one-map work so the work-stealing scheduler isn't fighting the outer pool.
+    Result: 2.4× wall-clock speedup (8 q2dm maps: 22.9s → 9.5s at --jobs 4).
