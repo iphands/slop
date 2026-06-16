@@ -1,6 +1,6 @@
 # Plan 17 — BSP/Collision Hardening & Step-Size Correctness
 
-> **Status**: pending
+> **Status**: done
 > **Created**: 2026-06-16
 > **Depends on**: Plan 05 (world model)
 > **Goal**: Fix the confirmed `STEP` constant mismatch in nav-graph connectivity, close the one
@@ -172,10 +172,11 @@ tracker for Plan 19 to build on.
 
 ## Verification Checklist
 
-- [ ] T1: `cargo test -p world` green; q2dm1 node/edge/component counts recorded before/after
-- [ ] T2: `cargo test -p world` green; new comment test passes
-- [ ] T3: new constant-pin tests exist and pass
-- [ ] T4: `context/pitfalls.md` has the model-margin entry
-- [ ] T5: `bsp_verify` + single-bot `spawn-to-spawn` run unaffected (geometry counts match
-  `context/distilled.md`'s documented baselines)
-- [ ] `cargo build` + `cargo clippy -- -D warnings` + `cargo fmt` clean throughout
+- [x] T1: `cargo test -p world` green; q2dm1 node/edge/component counts recorded before/after
+      (unchanged at 64u spacing — see tracker)
+- [x] T2: `cargo test -p world` green; new comment test passes
+- [x] T3: new constant-pin tests exist and pass
+- [x] T4: `context/pitfalls.md` has the model-margin entry
+- [x] T5: `bsp_verify` + single-bot `spawn-to-spawn` run unaffected (geometry counts match;
+  spawn-to-spawn failure mode/magnitude matches Plan 10 baseline, not a regression)
+- [x] `cargo build` + `cargo clippy -- -D warnings` + `cargo fmt` clean throughout (touched files)
