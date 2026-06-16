@@ -3,7 +3,7 @@
 use serde::Deserialize;
 use std::path::PathBuf;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Config {
     pub server: Server,
     pub paths: Paths,
@@ -12,13 +12,13 @@ pub struct Config {
     pub fleet: Fleet,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Server {
     pub host: String,
     pub port: u16,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Paths {
     pub server_cfg: PathBuf,
     pub baseq2: PathBuf,

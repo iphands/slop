@@ -68,7 +68,7 @@ impl NavGraph {
                     }
                     if let Some(&j) = grid.get(&(gx + ddx, gy + ddy)) {
                         let b = nodes[j];
-                        if (a[2] - b[2]).abs() >= STEP {
+                        if (a[2] - b[2]).abs() > STEP {
                             continue; // too big a step
                         }
                         let t = cm.trace(&a, &b, &HULL_MINS, &HULL_MAXS, MASK_SOLID);

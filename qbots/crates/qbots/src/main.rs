@@ -80,9 +80,12 @@ enum Cmd {
         /// Server address (defaults to config's server).
         #[arg(long)]
         addr: Option<String>,
-        /// Bot display name.
+        /// Bot display name (appends _<timestamp> for multiple bots).
         #[arg(long)]
         name: Option<String>,
+        /// Number of bots to spawn (default 1).
+        #[arg(long, default_value = "1")]
+        count: u8,
     },
     /// Drive one bot from spawn to a named weapon's BSP origin; log movement; stop.
     SpawnToWeapon {
@@ -902,8 +905,9 @@ async fn run_scenario_cmd(
     name: Option<String>,
     map: Option<String>,
     goal: scenario::ScenarioGoal,
+    count: u8,
 ) -> ExitCode {
-    let name = name.unwrap_or_else(|| "qbots".to_string());
+    let base_name = name.unwrap_or_else(|| "qbots".to_string());
     let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
     let addr = match resolve_addr(&addr_str).await {
         Ok(a) => a,
@@ -912,22 +916,58 @@ async fn run_scenario_cmd(
             return ExitCode::FAILURE;
         }
     };
-    match scenario::run_scenario(
-        cfg,
-        addr,
-        &name,
-        map.as_deref(),
-        goal,
-        scenario::DEFAULT_MAX_SECS,
-    )
-    .await
-    {
-        Ok(code) => code,
-        Err(e) => {
-            tracing::error!("scenario: {e}");
-            ExitCode::FAILURE
+
+    let unix_ts = time::OffsetDateTime::now_utc().unix_timestamp();
+    let mut handles = Vec::new();
+    let map_clone = map.clone();
+    let goal_clone = goal.clone();
+
+    for i in 0..count {
+        let bot_name = if count > 1 {
+            format!("{}_{}", base_name, unix_ts + i as i64)
+        } else {
+            base_name.clone()
+        };
+
+        tracing::info!("spawning bot {}/{}: {}", i + 1, count, bot_name);
+
+        let cfg = cfg.clone();
+        let map = map_clone.clone();
+        let goal = goal_clone.clone();
+        let handle = tokio::task::spawn(async move {
+            match scenario::run_scenario(
+                &cfg,
+                addr,
+                &bot_name,
+                map.as_deref(),
+                goal,
+                scenario::DEFAULT_MAX_SECS,
+            )
+            .await
+            {
+                Ok(code) => code,
+                Err(e) => {
+                    tracing::error!("scenario for {}: {e}", bot_name);
+                    ExitCode::FAILURE
+                }
+            }
+        });
+        handles.push(handle);
+    }
+
+    // Wait for all bots to complete and return the first failure (or SUCCESS if all succeed)
+    let mut result = ExitCode::SUCCESS;
+    for handle in handles {
+        match handle.await {
+            Ok(code) if code != ExitCode::SUCCESS => result = code,
+            Err(e) => {
+                tracing::error!("task join error: {e}");
+                result = ExitCode::FAILURE;
+            }
+            _ => {}
         }
     }
+    result
 }
 
 #[tokio::main]
@@ -1250,8 +1290,8 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        Cmd::SpawnToSpawn { map, addr, name } => {
-            run_scenario_cmd(&cfg, addr, name, map, scenario::ScenarioGoal::FarthestSpawn).await
+        Cmd::SpawnToSpawn { map, addr, name, count } => {
+            run_scenario_cmd(&cfg, addr, name, map, scenario::ScenarioGoal::FarthestSpawn, count).await
         }
         Cmd::SpawnToWeapon {
             weapon_name,
@@ -1265,6 +1305,7 @@ async fn main() -> ExitCode {
                 name,
                 map,
                 scenario::ScenarioGoal::Weapon(weapon_name),
+                1, // count=1 for spawn-to-weapon
             )
             .await
         }

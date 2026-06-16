@@ -43,6 +43,7 @@ pub(crate) const DEFAULT_MAX_SECS: f32 = 30.0;
 const DEFAULT_MAP: &str = "q2dm1";
 
 /// What a scenario drives toward.
+#[derive(Clone)]
 pub enum ScenarioGoal {
     /// The DM spawn point farthest (3D) from where the bot spawns.
     FarthestSpawn,
@@ -89,12 +90,29 @@ pub async fn run_scenario(
     for (i, sp) in bsp_spawns.iter().enumerate() {
         tracing::info!("  spawn[{}]: ({}, {}, {})", i, sp[0], sp[1], sp[2]);
     }
-    let mut graph_mut = world::NavGraph::generate(&cm, (model.mins, model.maxs), 48.0);
+    let mut graph_mut = world::NavGraph::generate(&cm, (model.mins, model.maxs), 32.0);
     tracing::info!(nodes = graph_mut.node_count(), "base nav graph generated");
     let seeded = graph_mut.seed_spawns(&cm, &bsp_spawns);
     tracing::info!(seeded, "spawn seeding complete");
     let added_jumps = graph_mut.detect_jump_edges(&cm, 48.0);
     let (in_largest, total_spawns) = graph_mut.spawns_in_largest_component(&bsp_spawns);
+    
+    // Log component sizes for debugging fragmentation
+    let comps = graph_mut.components();
+    if comps.len() > 1 {
+        tracing::warn!(count = comps.len(), "nav graph has multiple disconnected components");
+        for (i, c) in comps.iter().take(5).enumerate() {
+            tracing::warn!("  component[{}]: {} nodes", i, c.len());
+        }
+        
+        // Log which component each spawn is in
+        for (i, sp) in bsp_spawns.iter().enumerate() {
+            if let Some(nearest_idx) = graph_mut.nearest(sp) {
+                let comp_idx = comps.iter().position(|c| c.contains(&nearest_idx)).unwrap_or(999);
+                tracing::info!("  spawn[{}] at ({}, {}, {}) -> nearest node {} -> component {}", i, sp[0], sp[1], sp[2], nearest_idx, comp_idx);
+            }
+        }
+    }
     tracing::info!(
         map,
         nodes = graph_mut.node_count(),
