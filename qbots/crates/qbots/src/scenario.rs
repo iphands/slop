@@ -72,8 +72,9 @@ pub async fn run_scenario(
         tracing::info!("no --map given; defaulting to {DEFAULT_MAP}");
     }
 
-    // 1. Load BSP + build collision model + nav graph via the consolidated pipeline.
-    let built = world::generate_map_nav(&cfg.paths.baseq2, &map)
+    // 1. Load BSP + build collision model + nav graph (cache-first, then live).
+    let cache_dir = std::path::Path::new("data/mapcache");
+    let built = world::cached_map_nav(&cfg.paths.baseq2, &map, Some(cache_dir))
         .map_err(|e| io_err(format!("can't build nav for '{map}': {e}")))?;
     let cm = Arc::clone(&built.cm);
     let bsp_spawns = built.spawn_origins.clone();

@@ -1130,7 +1130,7 @@ fn generate_map_cache(cfg: &Config, map_arg: &str, jobs: Option<usize>, out_dir:
                     };
                     let fp = world::Fingerprint::from_bsp(&built.bsp);
                     let cache_path = out_path.join(format!("{map}.qnav"));
-                    match world::save_mapcache(&cache_path, built.graph, &fp) {
+                    match world::save_mapcache(&cache_path, &built.graph, &fp) {
                         Ok(()) => {
                             tracing::info!(
                                 map,

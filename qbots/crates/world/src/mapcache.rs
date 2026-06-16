@@ -113,8 +113,8 @@ impl Fingerprint {
 }
 
 /// Write a nav graph to `path`. Overwrites any existing file.
-pub fn save(path: &Path, graph: NavGraph, fingerprint: &Fingerprint) -> io::Result<()> {
-    let (nodes, adj, jump_triples) = graph.into_raw_parts();
+pub fn save(path: &Path, graph: &NavGraph, fingerprint: &Fingerprint) -> io::Result<()> {
+    let (nodes, adj, jump_triples) = graph.raw_parts();
     let mut buf: Vec<u8> = Vec::with_capacity(
         8 + 32 + 4 + nodes.len() * 12 + nodes.len() * 4 + 4 + jump_triples.len() * 12,
     );
@@ -269,7 +269,7 @@ mod tests {
         // Serialize to a temp file, read back.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.qnav");
-        save(&path, g, &fp).expect("save failed");
+        save(&path, &g, &fp).expect("save failed");
 
         let loaded = load(&path, &fp).expect("load returned None");
         assert_eq!(loaded.node_count(), 3);
@@ -289,7 +289,7 @@ mod tests {
         let fp = test_fingerprint();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.qnav");
-        save(&path, g, &fp).expect("save failed");
+        save(&path, &g, &fp).expect("save failed");
 
         let mut wrong_fp = fp.clone();
         wrong_fp.plane_count = 99;
@@ -320,7 +320,7 @@ mod tests {
         let fp = test_fingerprint();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.qnav");
-        save(&path, g, &fp).expect("save failed");
+        save(&path, &g, &fp).expect("save failed");
 
         // Flip the version byte (offset 7).
         let mut data = fs::read(&path).unwrap();

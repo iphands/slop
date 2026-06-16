@@ -168,11 +168,12 @@ impl NavGraph {
         }
     }
 
-    /// Decompose the graph for serialization: returns `(nodes, adj, jump_triples)`.
-    /// `jump_triples` is `(from, to, launch_yaw)` sorted for determinism.
+    /// Borrow the graph's raw components for serialization. Returns clones of the
+    /// internal data so the graph remains usable afterward. `jump_triples` is sorted
+    /// `(from, to, launch_yaw)` for determinism across runs.
     #[allow(clippy::type_complexity)]
-    pub fn into_raw_parts(
-        self,
+    pub fn raw_parts(
+        &self,
     ) -> (
         Vec<[f32; 3]>,
         Vec<Vec<(usize, f32)>>,
@@ -180,11 +181,11 @@ impl NavGraph {
     ) {
         let mut jump_triples: Vec<(usize, usize, f32)> = self
             .jump_yaws
-            .into_iter()
-            .map(|((f, t), y)| (f, t, y))
+            .iter()
+            .map(|(&(f, t), &y)| (f, t, y))
             .collect();
         jump_triples.sort_by_key(|&(f, t, _)| (f, t));
-        (self.nodes, self.adj, jump_triples)
+        (self.nodes.clone(), self.adj.clone(), jump_triples)
     }
 
     /// Add a node to the graph and return its index.
