@@ -13,7 +13,8 @@ use crate::collision::{CollisionModel, MASK_SOLID, MASK_WATER};
 pub const HULL_MINS: [f32; 3] = [-16.0, -16.0, -24.0];
 pub const HULL_MAXS: [f32; 3] = [16.0, 16.0, 32.0];
 /// Max walkable height delta between adjacent waypoints (a "step").
-const STEP: f32 = 24.0;
+/// Matches Q2's real step-up height: `pmove.c:32` `#define STEPSIZE 18`.
+pub(crate) const STEP: f32 = 18.0;
 /// Minimum edge cost in the weighted pathfinder, so a popularity overlay can't
 /// drive an edge to zero/negative (Plan 08 T3).
 const EPS: f32 = 1.0;
@@ -435,7 +436,6 @@ impl NavGraph {
         added
     }
 
-
     /// Returns the [`EdgeKind`] of edge `(from, to)`. Returns `Walk` if the
     /// edge is not in the jump-edge set (or doesn't exist).
     pub fn edge_kind(&self, from: usize, to: usize) -> EdgeKind {
@@ -722,7 +722,7 @@ mod tests {
         // One existing node at origin; all-clear collision model.
         let cm = CollisionModel::half_space([1.0, 0.0, 0.0], -10000.0);
         let mut g = NavGraph::from_raw(vec![[0.0, 0.0, 0.0]], vec![vec![]]);
-        // Spawn 80 u away (within 128u connect radius; no existing node within STEP=24).
+        // Spawn 80 u away (within 128u connect radius; no existing node within STEP=18).
         let n_before = g.node_count();
         let added = g.seed_spawns(&cm, &[[80.0, 0.0, 0.0]]);
         assert_eq!(added, 1, "one node seeded");
@@ -739,7 +739,7 @@ mod tests {
     fn seed_spawns_skips_nearby_node() {
         let cm = CollisionModel::half_space([1.0, 0.0, 0.0], -10000.0);
         let mut g = NavGraph::from_raw(vec![[0.0, 0.0, 0.0]], vec![vec![]]);
-        // Spawn only 5 u away — within STEP=24, should be skipped.
+        // Spawn only 5 u away — within STEP=18, should be skipped.
         let added = g.seed_spawns(&cm, &[[5.0, 0.0, 0.0]]);
         assert_eq!(added, 0, "nearby spawn not duplicated");
     }
@@ -765,7 +765,7 @@ mod tests {
         // This gives a floor surface at z=0 for all x,y.
         let cm = CollisionModel::half_space([0.0, 0.0, 1.0], 0.0);
         // Node A is on a ledge at z=100; node B is on the floor at z=24.
-        // Height diff = 76 > STEP=24 → no walk edge was added.
+        // Height diff = 76 > STEP=18 → no walk edge was added.
         let mut g = NavGraph::from_raw(
             vec![
                 [0.0, 0.0, 100.0], // 0: A — ledge
