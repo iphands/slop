@@ -158,3 +158,67 @@ pub fn generate_map_nav(baseq2: &Path, map: &str) -> Result<MapNavBuild, String>
         largest,
     })
 }
+
+/// Returns `Ok(())` if every DM spawn point is reachable from the largest
+/// connected component of the nav graph. On failure returns a detailed
+/// multi-line diagnostic string intended as the body of a fatal error log.
+///
+/// All Q2 deathmatch maps guarantee mutual spawn reachability by design.
+/// A failure here is **always** a bug in BSP parsing, collision model, or
+/// nav graph generation — never a legitimate map property. Callers must treat
+/// the `Err` case as fatal: do not cache a broken graph, do not run bots on it.
+pub fn check_spawn_connectivity(built: &MapNavBuild) -> Result<(), String> {
+    if built.in_largest == built.total_spawns {
+        return Ok(());
+    }
+
+    let comps = built.graph.components();
+    let largest_set: std::collections::HashSet<usize> = comps
+        .first()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+
+    let mut msg = format!(
+        "NAV CONNECTIVITY BUG: only {}/{} spawn points are in the largest component.\n\
+         All Q2 deathmatch maps guarantee every spawn is mutually reachable by design.\n\
+         This is a bug in BSP parsing, collision model, or nav graph generation.\n\
+         See context/pitfalls.md for known issues.\n\
+         nodes={} edges={} total_components={} largest_component_size={}",
+        built.in_largest,
+        built.total_spawns,
+        built.graph.node_count(),
+        built.graph.edge_count(),
+        comps.len(),
+        comps.first().map_or(0, |c| c.len()),
+    );
+
+    msg.push_str("\n--- spawn diagnostics ---");
+    for (i, sp) in built.spawn_origins.iter().enumerate() {
+        let nearest = built.graph.nearest(sp);
+        let in_lg = nearest.is_some_and(|n| largest_set.contains(&n));
+        let comp_idx = nearest
+            .and_then(|n| comps.iter().position(|c| c.contains(&n)))
+            .unwrap_or(999);
+        msg.push_str(&format!(
+            "\n  spawn[{i}] ({:.0},{:.0},{:.0}) -> node={:?} component={} {}",
+            sp[0],
+            sp[1],
+            sp[2],
+            nearest,
+            comp_idx,
+            if in_lg { "[ok]" } else { "[BUG: not in largest]" },
+        ));
+    }
+
+    msg.push_str("\n--- component sizes (largest first) ---");
+    for (i, c) in comps.iter().enumerate().take(10) {
+        msg.push_str(&format!("\n  component[{i}]: {} nodes", c.len()));
+    }
+    if comps.len() > 10 {
+        msg.push_str(&format!("\n  ... {} more components omitted", comps.len() - 10));
+    }
+
+    Err(msg)
+}

@@ -78,6 +78,13 @@ fn build_map_nav(cfg: &Config, map: &str) -> Option<MapNav> {
             return None;
         }
     };
+    // Hard abort: a broken nav graph means no bot on this map can navigate.
+    // All Q2 dm maps guarantee full spawn reachability — failure is our bug.
+    if let Err(diag) = world::check_spawn_connectivity(&built) {
+        tracing::error!(map, "{diag}");
+        tracing::error!(map, "aborting: nav connectivity bug — bots cannot navigate this map");
+        std::process::exit(1);
+    }
     tracing::info!(
         map,
         nodes = built.graph.node_count(),
@@ -88,14 +95,6 @@ fn build_map_nav(cfg: &Config, map: &str) -> Option<MapNav> {
         ms = t0.elapsed().as_millis() as u64,
         "nav graph ready"
     );
-    if built.in_largest < built.total_spawns {
-        tracing::warn!(
-            map,
-            in_largest = built.in_largest,
-            total_spawns = built.total_spawns,
-            "some spawn points are not in the largest nav component - THIS IS A BUG, all spawns should be reachable"
-        );
-    }
     Some(MapNav {
         graph: Arc::new(built.graph),
         cm: built.cm,

@@ -1149,6 +1149,12 @@ fn generate_map_cache(cfg: &Config, map_arg: &str, jobs: Option<usize>, out_dir:
                             continue;
                         }
                     };
+                    // Don't cache a broken graph — fail the map so the caller knows.
+                    if let Err(diag) = world::check_spawn_connectivity(&built) {
+                        tracing::error!(map, "{diag}");
+                        failed.fetch_add(1, Ordering::Relaxed);
+                        continue;
+                    }
                     let fp = world::Fingerprint::from_bsp(&built.bsp);
                     let cache_path = out_path.join(format!("{map}.qnav"));
                     match world::save_mapcache(&cache_path, &built.graph, &fp) {

@@ -74,6 +74,17 @@ pub async fn run_scenario(
     let cache_dir = std::path::Path::new("data/mapcache");
     let built = world::cached_map_nav(&cfg.paths.baseq2, &map, Some(cache_dir))
         .map_err(|e| io_err(format!("can't build nav for '{map}': {e}")))?;
+
+    // Fail early: all Q2 dm maps guarantee full spawn reachability. If our nav
+    // graph can't reach every spawn it is a bug in our code — abort now rather
+    // than watching bots silently fail to navigate.
+    if let Err(diag) = world::check_spawn_connectivity(&built) {
+        tracing::error!("{diag}");
+        return Err(io_err(format!(
+            "nav graph connectivity bug for map '{map}' — all spawns must be reachable (see error above)"
+        )));
+    }
+
     let cm = Arc::clone(&built.cm);
     let bsp_spawns = built.spawn_origins.clone();
     let seeded = built.seeded;
@@ -147,13 +158,6 @@ pub async fn run_scenario(
         total_spawns,
         "scenario nav graph"
     );
-    if in_largest < total_spawns {
-        tracing::warn!(
-            in_largest,
-            total_spawns,
-            "some spawns not in the largest nav component — THIS IS A BUG, all spawns should be reachable"
-        );
-    }
     let graph = Arc::new(graph);
 
     // 3. Connect the bot (the same handshake `connect-one` uses).
