@@ -212,6 +212,7 @@ async fn remove_favorite(
 async fn get_status(State(state): State<SharedState>) -> Result<Json<StatusResponse>, StatusCode> {
     // Get base status (map, players)
     let base_output = state.rcon_client.execute("status").await;
+    tracing::trace!("Raw status output (first 800 chars): {}", &base_output.as_ref().unwrap_or(&String::new()).chars().take(800).collect::<String>());
 
     // Get server settings separately
     let dmflags_output = state.rcon_client.execute("dmflags").await;
@@ -220,11 +221,13 @@ async fn get_status(State(state): State<SharedState>) -> Result<Json<StatusRespo
 
     // Parse base status
     let mut status = match base_output {
-        Ok(output) => match parse_status_output(&output) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!("Failed to parse status: {}", e);
-                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        Ok(output) => {
+            match parse_status_output(&output) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Failed to parse status: {}", e);
+                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                }
             }
         },
         Err(e) => {

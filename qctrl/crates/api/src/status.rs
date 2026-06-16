@@ -108,12 +108,18 @@ pub fn parse_status_output(output: &str) -> Result<StatusResponse, StatusParseEr
 
     // Third pass: parse players (existing logic)
     let mut in_players = false;
+    let mut found_header = false;
     for line in &lines {
         let line = line.trim();
+        
+        // Debug: log each line being processed
+        tracing::debug!("Processing line: '{}'", line);
 
         // Find the header line and start parsing from the next line
         if line.starts_with("num") && line.contains("score") {
+            tracing::debug!("Found player header line");
             in_players = true;
+            found_header = true;
             continue;
         }
 
@@ -122,21 +128,41 @@ pub fn parse_status_output(output: &str) -> Result<StatusResponse, StatusParseEr
             continue;
         }
 
+        // Skip separator lines (yquake2 format)
+        if in_players && line.starts_with("---") {
+            tracing::debug!("Skipping separator line");
+            continue;
+        }
+
         // Stop at footer
         if line.starts_with("-----") || line.starts_with("connection") {
+            tracing::debug!("Reached footer, stopping player parsing");
             break;
         }
 
         if in_players {
+            tracing::debug!("Attempting to parse player line: '{}'", line);
             if let Some(player) = parse_player_line(line) {
+                tracing::debug!("Successfully parsed player: {}", player.name);
                 players.push(player);
+            } else {
+                tracing::debug!("Failed to parse player line (likely not a player line): '{}'", line);
             }
         }
+    }
+    
+    if found_header && players.is_empty() {
+        tracing::warn!("Found player header but no players parsed - check format!");
     }
 
     // Sort by score (descending)
     use std::cmp::Reverse;
     players.sort_by_key(|p| Reverse(p.score));
+
+    tracing::debug!("Parsed status: map={:?}, players count={}", map, players.len());
+    for player in &players {
+        tracing::debug!("  Player: {} (client_num={}, score={}, ping={})", player.name, player.client_num, player.score, player.ping);
+    }
 
     Ok(StatusResponse {
         map,
@@ -150,11 +176,13 @@ pub fn parse_status_output(output: &str) -> Result<StatusResponse, StatusParseEr
 /// Parse a single player line from status output.
 fn parse_player_line(line: &str) -> Option<Player> {
     // q2pro format: "num score ping name lastmsg address qport"
+    // yquake2 format: "num score ping name lastmsg address qport" (with multi-word names)
+    // yquake2 with brackets: " 0     0   11 RPI2                  9 [192.168.11.199]:4443842841"
     // Example: " 0    15    45  PlayerName     0  192.168.1.100:27  27"
-    // Minimum: num(0) + score(1) + ping(2) + name(3) + lastmsg(4) + address(5) + qport(6) = 7 fields
-
+    // Example: " 0    15    45 Player One    0  192.168.1.100:27     27"
+    
     let parts: Vec<&str> = line.split_whitespace().collect();
-    if parts.len() < 7 {
+    if parts.len() < 6 {
         return None;
     }
 
@@ -162,13 +190,29 @@ fn parse_player_line(line: &str) -> Option<Player> {
     let score = i32::from_str(parts[1]).ok()?;
     let ping = i32::from_str(parts[2]).ok()?;
     
-    // Address is at position 5 (0-indexed), before qport
-    let address = parts[5].to_string();
+    // Find the address by looking for a part containing "[" or ":" that looks like IP:port
+    // Address can be: "192.168.1.100:27" or "[192.168.11.199]:4443842841"
+    let mut address_idx = None;
+    for (idx, part) in parts.iter().enumerate().skip(3) {
+        // Look for IP address patterns: contains "[" or looks like IP:port
+        if part.contains('[') || (part.contains(':') && part.chars().filter(|c| c.is_ascii_digit()).count() > 5) {
+            address_idx = Some(idx);
+            break;
+        }
+    }
     
-    // Name is everything between ping (index 2) and lastmsg (index 4)
-    // So name is at index 3, but could contain spaces
-    // lastmsg is at index 4, address at 5, qport at 6
-    let name = parts[3].to_string();
+    let address_idx = address_idx?;
+    if address_idx < 5 {
+        return None;
+    }
+    
+    let address = parts[address_idx].to_string();
+    
+    // Name is everything from index 3 to address_idx - 1 (excluding lastmsg which is right before address)
+    // lastmsg is at address_idx - 1
+    // qport is the last element (if present)
+    let name_parts: Vec<&str> = parts[3..address_idx - 1].to_vec();
+    let name = name_parts.join(" ");
 
     Some(Player {
         client_num,
@@ -253,5 +297,27 @@ map              : q2dm1
         assert_eq!(result.timelimit, Some(20));
         assert_eq!(result.fraglimit, Some(50));
         assert_eq!(result.players.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_yquake2_status() {
+        let output = r#"
+--- server status ----------------------------------------------------------------
+ num score ping name            lastmsg address               qport 
+--- ----- ---- --------------- ------- --------------------- ------
+ 0    15    45 Player One          0  192.168.1.100:27     27
+ 1     8    78 Player Two          0  192.168.1.101:27     27
+---------------------------------------------------------------------------
+map              : q2dm1
+\dmflags\256\timelimit\20\fraglimit\50
+"#;
+
+        let result = parse_status_output(output).unwrap();
+        assert_eq!(result.map, Some("q2dm1".to_string()));
+        assert_eq!(result.players.len(), 2);
+        assert_eq!(result.players[0].name, "Player One");
+        assert_eq!(result.players[0].score, 15);
+        assert_eq!(result.players[0].ping, 45);
+        assert_eq!(result.players[0].address, "192.168.1.100:27");
     }
 }
