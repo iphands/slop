@@ -324,8 +324,13 @@ fn tokenize_entities(s: &str) -> Vec<String> {
             if i < bytes.len() {
                 i += 1; // closing quote
             }
+        } else if c == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+            // `// comment` — skip to end of line (COM_Parse, shared.c:1053-1062).
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
         } else {
-            // Whitespace / comments / stray bytes between tokens — skip.
+            // Whitespace / stray bytes between tokens — skip.
             i += 1;
         }
     }
@@ -587,6 +592,21 @@ mod tests {
             .expect("RL entity present");
         assert_eq!(rl.origin(), Some([0.0, 1024.0, 40.0]));
         assert_eq!(rl.fields.get("spawnflags").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn parse_entities_with_comments() {
+        // `//` comments mid-block must be skipped without eating the following
+        // key/value (COM_Parse parity, shared.c:1053-1062).
+        let block =
+            b"{ \"classname\" \"info_player_deathmatch\" //comment\n\"origin\" \"512 -128 24\" }";
+        let ents = parse_entities(block);
+        assert_eq!(ents.len(), 1);
+        assert_eq!(ents[0].classname, "info_player_deathmatch");
+        assert_eq!(
+            ents[0].fields.get("origin").map(String::as_str),
+            Some("512 -128 24")
+        );
     }
 
     #[test]
