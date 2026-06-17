@@ -391,7 +391,17 @@ impl NavigationDriver {
                             if let Some(si) = skip_idx {
                                 self.current_waypoint = Some(self.current_path[si]);
                             } else {
-                                // No same-floor node ahead; replan from current position.
+                                // No same-floor node ahead: the bot fell from a zone
+                                // that the remaining path can't recover from at the
+                                // current Z level. Blacklist the fell-from waypoint so
+                                // the next A* replan routes through a different approach
+                                // to that platform rather than repeating the fall.
+                                if !self.ledge_blacklist.contains(&wp_idx) {
+                                    self.ledge_blacklist.push_back(wp_idx);
+                                    if self.ledge_blacklist.len() > LEDGE_BLACKLIST_MAX {
+                                        self.ledge_blacklist.pop_front();
+                                    }
+                                }
                                 self.current_path.clear();
                                 self.current_waypoint = None;
                                 self.last_goal_node = None;

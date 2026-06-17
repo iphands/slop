@@ -384,23 +384,41 @@ endlessly: navigate to false upper waypoint → fall off ledge → renavigate �
 
 ## Fix / How to avoid
 
-Two independent guards reduce false edges:
+Four independent guards collectively reduce false edges:
 
-1. **seed_spawns SEED_MAX_DZ=54**: when seeding goal/weapon nodes into the graph,
-   limit z-connections to ≤3×STEP=54 u. Cross-floor connections via seed are invalid;
-   inter-floor connectivity is already handled by generate()+bridge.
-2. **smooth_path MAX_SMOOTH_DZ=48**: the point LOS trace used in path smoothing also
-   passes through staircase interiors, collapsing stair waypoints into one diagonal.
-   Cap the apex↔candidate dz at 48 u to preserve staircase node sequences.
+1. **seed_spawns SEED_MAX_DZ=54**: limit z-connections to ≤3×STEP=54u when seeding
+   goal/weapon nodes. Cross-floor connections via seed are invalid.
+2. **smooth_path MAX_SMOOTH_DZ=48**: cap apex↔candidate dz at 48u to preserve
+   staircase node sequences during path smoothing.
+3. **BRIDGE_HDIST=128** (was 512): adjacent grid cells are ≤64√2≈90u apart.
+   128u covers single-cell staircase gaps while blocking cross-floor false bridges
+   (observed hdist 146–510u). Reduced from 512 via 192; 128 leaves only 3 edges
+   (dz=112, hdist=120-122, slope≈0.93 — real connections).
+4. **walkable_stair floor-existence check**: at each stair step, probe downward
+   STEP×2=36u. A real tread is ≤24u below the bot's origin (found at fraction≈0.67).
+   A false open-air connection has its nearest floor at the lower endpoint, > 36u
+   below at intermediate steps → fraction=1.0 → edge rejected. This is the most
+   effective single fix: improved 32-bot 120s reach from 10→13 bots.
 
-The root cause (bridge_components creating large-dz walk edges via walkable_stair
-false-positive) is harder: floor probes and slope guards have all been tried. Floor
-probes at every step cause startsolid false-failures when interpolated z lands on a
-stair tread surface. Slope guards reject legitimate steep staircases. A SINGLE
-midpoint floor probe (`probe_from = [mid_x, mid_y, mid_z+1.0]` DOWN 36 u) works
-for generate()-adjacent edges but breaks winding staircases reconnected by
-bridge_components (midpoint is in open air away from actual tread geometry).
+### Approaches that were tried but DON'T WORK:
+- **Slope guard** (dz/hdist > threshold): rejects legitimate steep staircase edges,
+  breaking connectivity for areas where only steep connections exist. 11→6 regression.
+- **Midpoint floor probe**: works for straight edges but breaks winding staircases
+  where the path midpoint XY is in open air away from actual tread geometry.
+- **Cost penalty on high-dz edges**: penalty affects BOTH real paths and false ones,
+  degrading working paths. The 2 reaching bots dropped to 0. Reverted.
+- **GRID_SPACING=12**: 4x more nodes, 15x slower generation (492s vs 31s), no
+  significant improvement (1/8 same as baseline on 8-bot test).
+
+### Orbit-timeout discriminant (fell-off-ledge vs false-bridge):
+When orbit-timeout fires with dz > LEDGE_DZ=96u, check edge_dz = |prev_z − wp_z|:
+- edge_dz > LEDGE_DZ: the NAV EDGE itself goes steeply upward → FALSE BRIDGE →
+  blacklist the target node and replan.
+- edge_dz ≤ LEDGE_DZ: the nav edge is flat (both nodes at same z) → bot FELL OFF
+  LEDGE while navigating → skip forward in the remaining path to the first node near
+  the bot's current z (WP_REACH_DZ×3=72u tolerance).
 
 ## Sources
-- qbots: `crates/world/src/navgraph.rs` (`walkable_stair`, `seed_spawns`, `smooth_path`)
-- qbots: `crates/brain/src/nav.rs` (orbit-timeout dz logging)
+- qbots: `crates/world/src/navgraph.rs` (`walkable_stair`, `seed_spawns`, `smooth_path`, `bridge_pass`)
+- qbots: `crates/brain/src/nav.rs` (orbit-timeout discriminant, ledge_blacklist)
+- qbots: `crates/world/src/build.rs` (BRIDGE_HDIST)
