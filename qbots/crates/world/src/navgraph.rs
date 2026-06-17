@@ -21,15 +21,14 @@ pub const HULL_MAXS: [f32; 3] = [16.0, 16.0, 32.0];
 /// value for unrelated reasons.
 pub const STEP: f32 = 18.0;
 /// Maximum height difference for which the stair-climb trace is attempted instead of
-/// immediate rejection. Set high enough to cover the steepest realistic Q2 staircase
-/// geometry. At GRID_SPACING=24u grid spacing, diagonal neighbors are ~34u apart
-/// horizontally; at a 3:1 rise/run slope that is ~102u dz — well within 128u.
-/// Heights above STAIR_MAX are treated as unclimbable cliffs/ledges. The stair trace
-/// itself still rejects paths blocked by actual walls or ceilings, so raising this
-/// value is safe: it only causes more traces to be attempted, never creates false edges.
+/// immediate rejection. Must be large enough for the tallest single staircase flight
+/// in any q2dm* map. Empirically: q2dm3 has staircase nodes 144u apart vertically at
+/// the same XY column; 160u covers that with room. The stair trace itself rejects
+/// geometry-blocked paths, so raising this value is safe — it only causes more traces
+/// to be attempted, never creates false edges through walls or ceilings.
 /// Must stay in the cache fingerprint (`mapcache::Fingerprint`) so stale caches
 /// auto-invalidate on change.
-pub const STAIR_MAX: f32 = 128.0;
+pub const STAIR_MAX: f32 = 160.0;
 /// Minimum edge cost in the weighted pathfinder, so a popularity overlay can't
 /// drive an edge to zero/negative (Plan 08 T3).
 const EPS: f32 = 1.0;

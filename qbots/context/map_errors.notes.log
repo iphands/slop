@@ -90,3 +90,34 @@ D. Grid sampling gap — no floor nodes in the narrow passage connecting regions
 - q2dm6: PASS
 - q2dm7: 5/6 — spawn[0] water pit (known limitation)
 - q2dm8: PASS
+
+## 2026-06-16 Session 2 continued — STAIR_MAX fix
+
+### STAIR_MAX=128 too small for q2dm3 staircase (FIXED: bumped to 160)
+- nav-debug showed pairs like (815,295,24)↔(815,295,168) with dz=144 at the SAME XY.
+  The multi-floor probe found two floor levels at that column (bottom and top of a
+  staircase flight). With STAIR_MAX=128, dz=144 > 128 so bridge_pass SKIPPED those pairs.
+- With STAIR_MAX=160: the stair trace IS attempted; walkable_stair succeeds for the
+  actual staircase geometry, and q2dm3 goes from FAIL(3/7) → PASS(7/7).
+
+### q2dm7 spawn[0] in unreachable pit — NOT a water area (CONFIRMED LIMITATION)
+- The 206 nodes at z=-296 are NOT in water content (probe doesn't skip them), but
+  the area IS a deep pit: nearest other-comp nodes are at z=16 (dz=312 > STAIR_MAX=160).
+- MAX_FALL for jump edges is 256; the 312-unit drop from z=16 to floor_z=-320 exceeds
+  this limit, so no jump edge is added.
+- No func_plat/func_door/func_train can reach z=-296 (deepest lift goes to z=-153).
+- The pit is ONLY accessible by falling from the ledge above (one-way) — there is no
+  walkable return path. Bots spawning at spawn[0] are stranded in the pit.
+- This is NOT a bug. The spawn IS a deathmatch spawn (players fall into the pit, then
+  eventually die and respawn elsewhere). Walk-based nav cannot connect it.
+- Status: ACCEPTED LIMITATION. q2dm7 reports 5/6 spawns in largest component.
+
+### Final q2dm* status (STAIR_MAX=160, BRIDGE_HDIST=512, all-candidates bridge_pass)
+- q2dm1: PASS (10/10 spawns)
+- q2dm2: PASS (7/7 spawns)
+- q2dm3: PASS (7/7 spawns)
+- q2dm4: PASS
+- q2dm5: PASS (9/9 spawns)
+- q2dm6: PASS (8/8 spawns)
+- q2dm7: 5/6 spawns — spawn[0] in unreachable pit (accepted limitation)
+- q2dm8: PASS
