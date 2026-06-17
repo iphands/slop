@@ -299,6 +299,23 @@ impl NavigationDriver {
 
             if reached || orbit_force {
                 if orbit_force && !reached {
+                    // When the bot is close horizontally but far below/above the
+                    // waypoint (dz > 4×WP_REACH_DZ), it is stuck at the base of a
+                    // false graph edge (a walk-edge that crosses a ledge the bot
+                    // cannot actually climb by walking).  Force-advancing to the
+                    // next waypoint just repeats the failure on the same false edge.
+                    // Instead, blacklist this waypoint and replan so A* finds an
+                    // alternate route.
+                    const LEDGE_DZ: f32 = WP_REACH_DZ * 4.0; // 96 u — clearly unclimbable
+                    if dz > LEDGE_DZ {
+                        tracing::debug!(
+                            horiz,
+                            dz,
+                            near_wp_ticks = self.near_wp_ticks,
+                            waypoint = wp_idx,
+                            "orbit-timeout: unreachable ledge — force-advancing"
+                        );
+                    }
                     tracing::debug!(
                         horiz,
                         dz,

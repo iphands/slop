@@ -374,6 +374,18 @@ impl NavGraph {
             return path.to_vec();
         }
 
+        // Maximum allowed Z-delta when collapsing an intermediate node.
+        //
+        // A zero-size point trace between staircase landings clears solid geometry
+        // (the staircase interior is open air), so naive smoothing eliminates all
+        // intermediate stair nodes and leaves a diagonal path that exits the staircase
+        // edge and causes the bot to walk off into free-fall.  Capping dz preserves
+        // staircase sequences: each stair step is ~18 u (STEP), so 2.5 steps ≈ 48 u
+        // is safely above noise but well below a real staircase run (~136 u for a
+        // multi-floor flight).  Ramps on flat terrain accumulate < 24 u per node, so
+        // gentle slopes are still smoothable.
+        const MAX_SMOOTH_DZ: f32 = 48.0;
+
         let mut result = Vec::new();
         result.push(path[0]);
 
@@ -386,6 +398,12 @@ impl NavGraph {
             let zero = [0.0f32; 3];
             for (j, &node_idx) in path.iter().enumerate().skip(commit_idx + 1) {
                 let candidate = self.nodes[node_idx];
+                // Don't smooth across significant elevation changes: the point trace
+                // may clear staircase interiors even though the bot can't walk there
+                // directly (it needs the actual stair geometry underfoot).
+                if (candidate[2] - apex[2]).abs() > MAX_SMOOTH_DZ {
+                    break;
+                }
                 let t = cm.trace(&apex, &candidate, &zero, &zero, MASK_SOLID);
                 if t.fraction >= 1.0 && !t.startsolid {
                     furthest = j;
@@ -441,6 +459,13 @@ impl NavGraph {
             to_add.push(sp);
         }
 
+        // seed nodes use a tighter dz cap than STAIR_MAX: only connect to nodes
+        // within 3 stair steps (3×STEP=54u) of the seed position. Cross-floor
+        // connections (e.g. weapon node at z=912 to a platform at z=792) are
+        // invalid — the bot cannot walk 100+ units straight up — and the main
+        // graph (generate + bridge_components) already handles real staircase
+        // connections between floors.
+        const SEED_MAX_DZ: f32 = STEP * 3.0; // 54 u ≈ 3 stair steps
         let added = to_add.len();
         for wp in to_add {
             let new_idx = self.nodes.len();
@@ -450,7 +475,7 @@ impl NavGraph {
             for other_idx in 0..new_idx {
                 let other = self.nodes[other_idx];
                 let dz = wp[2] - other[2];
-                if dz.abs() > STAIR_MAX {
+                if dz.abs() > SEED_MAX_DZ {
                     continue;
                 }
                 let d2 = {
@@ -957,9 +982,9 @@ pub fn walkable_stair(cm: &CollisionModel, lower: [f32; 3], upper: [f32; 3]) -> 
         }
         pos = forward;
     }
-    // All sub-traces cleared; pos == upper.
     true
 }
+
 
 /// Can a bot walk between two waypoints `a` and `b`? For `|dz| <= STEP` this tries
 /// a direct hull trace, falling back to the step-climb trace (stair risers can clip
