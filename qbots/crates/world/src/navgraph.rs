@@ -335,6 +335,29 @@ impl NavGraph {
         self.path_inner(start, goal, |cur| overlay.get(cur).copied().unwrap_or(0.0))
     }
 
+    /// A* path from `start` to `goal`, excluding (heavily penalising) any node in
+    /// `blacklist`. Used by the navigation driver's give-up recovery: when a bot
+    /// repeatedly fails to traverse a waypoint, that node is blacklisted so the next
+    /// plan routes around it rather than retrying the same path.
+    pub fn path_excluding(
+        &self,
+        start: usize,
+        goal: usize,
+        blacklist: &HashSet<usize>,
+    ) -> Option<Vec<usize>> {
+        if blacklist.is_empty() {
+            return self.path(start, goal);
+        }
+        const PENALTY: f32 = 1_000_000.0;
+        self.path_inner(start, goal, |cur| {
+            if blacklist.contains(&cur) {
+                PENALTY
+            } else {
+                0.0
+            }
+        })
+    }
+
     /// String-pull smoothing (Plan 14 T1): collapse a grid path into the longest
     /// legal straight runs. From `from` (current bot position), scan forward through
     /// `path`; for each node the LOS trace is clear, keep extending; the first

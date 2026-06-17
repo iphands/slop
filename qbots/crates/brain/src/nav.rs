@@ -1,14 +1,18 @@
 //! Navigation driver — A* over the nav graph with stuck recovery.
 
 use glam::Vec3;
+use std::collections::HashSet;
 use std::sync::Arc;
 use world::{CollisionModel, EdgeKind, NavGraph};
 
 /// Hard cap on pursuing a single goal without reaching a waypoint. At 10 Hz
-/// this is ~8 s — past it we abandon the goal (Eraser's 4 s give-up is tighter,
-/// but we tolerate the slow nav-graph routing). Prevents infinite stale-enemy
-/// chases. (`eraser.md` §3 give-up watchdog.)
-const GOAL_GIVEUP_TICKS: i32 = 80;
+/// this is ~3 s — past it we blacklist the stuck waypoint and replan around it.
+/// Tighter than before (was 80 = 8 s) so bots recover faster from nav-graph
+/// gaps caused by in-game obstacles not modeled in the static BSP graph.
+const GOAL_GIVEUP_TICKS: i32 = 30;
+/// Maximum number of blacklisted waypoints at once. Once full, the oldest entry
+/// is dropped (the bot should have moved past the previously-stuck area).
+const BLACKLIST_MAX: usize = 8;
 /// Desperate-requery guard (Plan 08 T3): if a risk-weighted path is more than
 /// this many × the straight-line distance, the whole region is hot and we drop
 /// the overlay rather than pay an absurd detour ("desperate re-query with W_d=0").
@@ -64,6 +68,11 @@ pub struct NavigationDriver {
     near_wp_ticks: u32,
     /// Most recently completed waypoint (Plan 14 T2: jump-edge detection).
     prev_waypoint: Option<usize>,
+    /// Waypoints that caused repeated give-up failures. Passed to the next A* as
+    /// very-high-cost nodes so the planner routes around them rather than retrying
+    /// the same blocked path. Cleared when the overall goal is reached or on
+    /// `force_replan`. Capped at `BLACKLIST_MAX` entries (VecDeque oldest-first).
+    waypoint_blacklist: std::collections::VecDeque<usize>,
 }
 
 impl NavigationDriver {
@@ -79,6 +88,7 @@ impl NavigationDriver {
             risk_overlay: None,
             near_wp_ticks: 0,
             prev_waypoint: None,
+            waypoint_blacklist: std::collections::VecDeque::new(),
         }
     }
 
@@ -145,16 +155,35 @@ impl NavigationDriver {
         }
     }
 
+    /// Build the effective blacklist set for A*.
+    fn blacklist_set(&self) -> HashSet<usize> {
+        self.waypoint_blacklist.iter().copied().collect()
+    }
+
     /// Plan a path `start → target`, applying the risk overlay (Plan 08 T3) with
     /// a desperate fallback: weighted A\* first; if that yields no path or a
     /// degenerate (absurdly long) detour — the whole region is hot — re-query
     /// with the overlay dropped ("desperate re-query with W_d=0").
+    /// Also applies the waypoint blacklist to avoid repeatedly-stuck nodes.
     fn plan_path(&self, start: usize, target: usize) -> Option<Vec<usize>> {
-        // No overlay → plain unweighted A*.
+        let bl = self.blacklist_set();
+        // No overlay → blacklist-only A*.
         let Some(overlay) = self.risk_overlay.as_deref() else {
-            return self.nav_graph.path(start, target);
+            return self.nav_graph.path_excluding(start, target, &bl);
         };
-        let path = self.nav_graph.path_weighted(start, target, overlay)?;
+        // Weighted path with blacklist penalty already embedded in the overlay.
+        // Build a combined overlay: overlay[n] + PENALTY for blacklisted nodes.
+        let path = if bl.is_empty() {
+            self.nav_graph.path_weighted(start, target, overlay)?
+        } else {
+            const PENALTY: f32 = 1_000_000.0;
+            let combined: Vec<f32> = overlay
+                .iter()
+                .enumerate()
+                .map(|(i, &v)| if bl.contains(&i) { v + PENALTY } else { v })
+                .collect();
+            self.nav_graph.path_weighted(start, target, &combined)?
+        };
         // Degeneracy guard.
         let straight = Vec3::from(self.nav_graph.nodes[start])
             .distance(Vec3::from(self.nav_graph.nodes[target]));
@@ -166,7 +195,7 @@ impl NavigationDriver {
                     len,
                     "risk-weighted path degenerate; retrying unweighted"
                 );
-                return self.nav_graph.path(start, target);
+                return self.nav_graph.path_excluding(start, target, &bl);
             }
         }
         tracing::debug!("nav path found (weighted): {} nodes", path.len());
@@ -286,7 +315,8 @@ impl NavigationDriver {
                         self.prev_waypoint = Some(wp_idx);
                         self.current_waypoint = Some(self.current_path[idx + 1]);
                     } else {
-                        // Reached the goal; allow set_goal to plan a new one.
+                        // Reached the goal; clear blacklist and allow set_goal to plan a new one.
+                        self.waypoint_blacklist.clear();
                         self.prev_waypoint = None;
                         self.current_waypoint = None;
                         self.last_goal_node = None;
@@ -297,10 +327,17 @@ impl NavigationDriver {
                 // Still pursuing — age the goal toward the give-up cap.
                 self.goal_age_ticks += 1;
                 if self.goal_age_ticks > GOAL_GIVEUP_TICKS {
+                    // Blacklist the stuck waypoint so the next plan routes around it.
                     tracing::debug!(
                         age = self.goal_age_ticks,
-                        "goal give-up: abandoning stale goal"
+                        waypoint = wp_idx,
+                        "goal give-up: blacklisting waypoint and replanning"
                     );
+                    self.waypoint_blacklist.push_back(wp_idx);
+                    if self.waypoint_blacklist.len() > BLACKLIST_MAX {
+                        self.waypoint_blacklist.pop_front();
+                    }
+                    // Force a fresh plan (excluding the blacklisted node).
                     self.current_path.clear();
                     self.current_waypoint = None;
                     self.last_goal_node = None;
@@ -325,7 +362,8 @@ impl NavigationDriver {
 
     /// Force the next `set_goal` to replan from scratch, even if the goal is
     /// unchanged. Call after clearing an obstacle so the bot doesn't re-attempt
-    /// the same wedged waypoint.
+    /// the same wedged waypoint. Does NOT clear the blacklist — a stuck waypoint
+    /// that caused give-up should stay blacklisted until the goal is reached.
     pub fn force_replan(&mut self) {
         self.current_path.clear();
         self.current_waypoint = None;

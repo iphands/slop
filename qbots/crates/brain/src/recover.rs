@@ -9,8 +9,12 @@ use world::{CollisionModel, HULL_MAXS, HULL_MINS, MASK_SOLID, MASK_WATER};
 
 // ── StuckDetector (T1) ────────────────────────────────────────────────────────
 
-/// Deadband below which the bot is considered stationary (Eraser: 4 u).
-const DEADBAND: f32 = 4.0;
+/// Deadband: if the bot moves less than this (units) in `SAMPLE_EVERY_SECS`, it is
+/// considered stuck. Original Eraser value was 4 u, but bots oscillating against
+/// walls can move ~10 u/s (bouncing back and forth) and still make zero progress.
+/// 16 u/s is still well below normal walking speed (~300 u/s) so this catches all
+/// genuinely stuck bots without false positives.
+const DEADBAND: f32 = 16.0;
 /// How often to check for stall (seconds). Eraser checks every 1 s.
 const SAMPLE_EVERY_SECS: f32 = 1.0;
 /// After this many stuck seconds → `Mild` (jump once).

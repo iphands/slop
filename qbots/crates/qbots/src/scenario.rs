@@ -201,6 +201,9 @@ pub async fn run_scenario(
     // Farthest-spawn goal, resolved lazily on the first active frame.
     let mut resolved_goal: Option<[f32; 3]> = goal_origin;
     let mut reached = false;
+    // Ticks remaining in forced-backoff mode (set when BackOffThenRepath fires so the
+    // bot actually escapes the wall instead of immediately resuming forward nav).
+    let mut backoff_ticks: u32 = 0;
 
     loop {
         if shutdown.requested() {
@@ -315,7 +318,9 @@ pub async fn run_scenario(
                                     mv.move_side(dir);
                                 }
                                 RecoveryAction::BackOffThenRepath => {
-                                    mv.move_forward(-0.5);
+                                    // Hold backward motion for 8 ticks (≈0.8 s) so the
+                                    // bot actually clears the wall before nav resumes.
+                                    backoff_ticks = 8;
                                     nav_driver.force_replan();
                                 }
                                 RecoveryAction::UseHeading(yaw) => {
@@ -327,7 +332,11 @@ pub async fn run_scenario(
                                 }
                             }
 
-                            if fwd > 0.0 || side.abs() > 0.0 {
+                            if backoff_ticks > 0 {
+                                // Sustained back-off: move backward, don't let nav override.
+                                backoff_ticks -= 1;
+                                mv.move_forward(-1.0);
+                            } else if fwd > 0.0 || side.abs() > 0.0 {
                                 mv.look_at(view_yaw, 0.0);
                                 mv.move_forward(fwd * arrive);
                                 mv.move_side(side * arrive);
