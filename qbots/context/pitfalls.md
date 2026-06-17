@@ -364,3 +364,43 @@ each reroute attempt costs only 3s instead of 8s.
 ## Sources
 - qbots: `crates/brain/src/nav.rs` (`GOAL_GIVEUP_TICKS`, `waypoint_blacklist`, `plan_path`, `force_replan`)
 - qbots: `crates/world/src/navgraph.rs` (`path_excluding`, `path_inner`)
+
+---
+
+# False walk-edge: open staircase interior passes walkable_stair
+
+## Problem
+
+`walkable_stair` moves UP then FORWARD in STEP-sized increments using hull traces.
+In Q2, staircase volumes are hollow (open air between tread and ceiling). Two nav
+nodes on DIFFERENT FLOOR LEVELS (e.g. z=792 and z=912) that happen to be adjacent
+in the XY grid (64 u apart) pass `walkable_stair` because all vertical/horizontal
+traces go through open staircase air — no wall is ever hit. This creates a false
+bidirectional walk edge. The bot then targets the upper node, walks horizontally
+toward it at the lower level, reaches the platform edge, and falls off.
+
+Symptom: orbit-timeout fires with large dz (e.g. dz=127.9, horiz=33). Bot cycles
+endlessly: navigate to false upper waypoint → fall off ledge → renavigate → repeat.
+
+## Fix / How to avoid
+
+Two independent guards reduce false edges:
+
+1. **seed_spawns SEED_MAX_DZ=54**: when seeding goal/weapon nodes into the graph,
+   limit z-connections to ≤3×STEP=54 u. Cross-floor connections via seed are invalid;
+   inter-floor connectivity is already handled by generate()+bridge.
+2. **smooth_path MAX_SMOOTH_DZ=48**: the point LOS trace used in path smoothing also
+   passes through staircase interiors, collapsing stair waypoints into one diagonal.
+   Cap the apex↔candidate dz at 48 u to preserve staircase node sequences.
+
+The root cause (bridge_components creating large-dz walk edges via walkable_stair
+false-positive) is harder: floor probes and slope guards have all been tried. Floor
+probes at every step cause startsolid false-failures when interpolated z lands on a
+stair tread surface. Slope guards reject legitimate steep staircases. A SINGLE
+midpoint floor probe (`probe_from = [mid_x, mid_y, mid_z+1.0]` DOWN 36 u) works
+for generate()-adjacent edges but breaks winding staircases reconnected by
+bridge_components (midpoint is in open air away from actual tread geometry).
+
+## Sources
+- qbots: `crates/world/src/navgraph.rs` (`walkable_stair`, `seed_spawns`, `smooth_path`)
+- qbots: `crates/brain/src/nav.rs` (orbit-timeout dz logging)
