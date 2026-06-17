@@ -10,9 +10,12 @@ use world::{CollisionModel, EdgeKind, NavGraph};
 /// Tighter than before (was 80 = 8 s) so bots recover faster from nav-graph
 /// gaps caused by in-game obstacles not modeled in the static BSP graph.
 const GOAL_GIVEUP_TICKS: i32 = 30;
-/// Maximum number of blacklisted waypoints at once. Once full, the oldest entry
-/// is dropped (the bot should have moved past the previously-stuck area).
-const BLACKLIST_MAX: usize = 8;
+/// Give-up blacklist cap: small so a bursty stuck episode doesn't permanently
+/// poison large swaths of the graph. Evicts oldest when full.
+const GIVEUP_BLACKLIST_MAX: usize = 8;
+/// Ledge blacklist cap: persistent within a goal attempt; can be larger because
+/// ledge nodes are confirmed false-edge targets, not just transient obstacles.
+const LEDGE_BLACKLIST_MAX: usize = 32;
 /// Desperate-requery guard (Plan 08 T3): if a risk-weighted path is more than
 /// this many × the straight-line distance, the whole region is hot and we drop
 /// the overlay rather than pay an absurd detour ("desperate re-query with W_d=0").
@@ -68,11 +71,12 @@ pub struct NavigationDriver {
     near_wp_ticks: u32,
     /// Most recently completed waypoint (Plan 14 T2: jump-edge detection).
     prev_waypoint: Option<usize>,
-    /// Waypoints that caused repeated give-up failures. Passed to the next A* as
-    /// very-high-cost nodes so the planner routes around them rather than retrying
-    /// the same blocked path. Cleared when the overall goal is reached or on
-    /// `force_replan`. Capped at `BLACKLIST_MAX` entries (VecDeque oldest-first).
+    /// Waypoints that caused repeated give-up failures. Small cap — evicts oldest
+    /// when full so a bursty stuck episode doesn't poison the whole graph.
     waypoint_blacklist: std::collections::VecDeque<usize>,
+    /// Confirmed false-ledge nodes (dz > LEDGE_DZ orbit-timeout). Larger cap;
+    /// persists for the whole goal attempt so A* routes around them every replan.
+    ledge_blacklist: std::collections::VecDeque<usize>,
 }
 
 impl NavigationDriver {
@@ -89,6 +93,7 @@ impl NavigationDriver {
             near_wp_ticks: 0,
             prev_waypoint: None,
             waypoint_blacklist: std::collections::VecDeque::new(),
+            ledge_blacklist: std::collections::VecDeque::new(),
         }
     }
 
@@ -155,9 +160,13 @@ impl NavigationDriver {
         }
     }
 
-    /// Build the effective blacklist set for A*.
+    /// Build the effective blacklist set for A* (union of giveup + ledge lists).
     fn blacklist_set(&self) -> HashSet<usize> {
-        self.waypoint_blacklist.iter().copied().collect()
+        self.waypoint_blacklist
+            .iter()
+            .chain(self.ledge_blacklist.iter())
+            .copied()
+            .collect()
     }
 
     /// Plan a path `start → target`, applying the risk overlay (Plan 08 T3) with
@@ -205,6 +214,11 @@ impl NavigationDriver {
     /// Store the path and set the first *meaningful* waypoint (skip the start node,
     /// which is where the bot already is).
     fn commit_path(&mut self, path: Vec<usize>) {
+        tracing::debug!(
+            len = path.len(),
+            nodes = ?&path[..path.len().min(12)],
+            "commit_path"
+        );
         self.current_path = path;
         // path[0] == start (our position); skip it so we aim at the next node.
         let first = if self.current_path.len() > 1 {
@@ -308,13 +322,49 @@ impl NavigationDriver {
                     // alternate route.
                     const LEDGE_DZ: f32 = WP_REACH_DZ * 4.0; // 96 u — clearly unclimbable
                     if dz > LEDGE_DZ {
+                        let current_idx_dbg = self.current_path.iter().position(|&w| w == wp_idx);
+                        let prev_in_path = current_idx_dbg.and_then(|i| {
+                            if i > 0 {
+                                Some(self.current_path[i - 1])
+                            } else {
+                                None
+                            }
+                        });
+                        let wp_coords = self.nav_graph.nodes[wp_idx];
+                        let prev_coords = prev_in_path.map(|p| self.nav_graph.nodes[p]);
                         tracing::debug!(
                             horiz,
                             dz,
                             near_wp_ticks = self.near_wp_ticks,
                             waypoint = wp_idx,
-                            "orbit-timeout: unreachable ledge — force-advancing"
+                            prev_in_path = ?prev_in_path,
+                            wp_x = wp_coords[0] as i32,
+                            wp_y = wp_coords[1] as i32,
+                            wp_z = wp_coords[2] as i32,
+                            prev_x = ?prev_coords.map(|c| c[0] as i32),
+                            prev_y = ?prev_coords.map(|c| c[1] as i32),
+                            prev_z = ?prev_coords.map(|c| c[2] as i32),
+                            "orbit-timeout: unreachable ledge — blacklisting and replanning"
                         );
+                        // Add the unreachable ledge node to the PERSISTENT ledge
+                        // blacklist.  This list survives replans so A* routes around
+                        // the false open-air bridge every time, not just once.
+                        // Do NOT blacklist the source/prev node — it is a real
+                        // main-component node with many valid edges; removing it breaks
+                        // navigation in that entire area.
+                        if !self.ledge_blacklist.contains(&wp_idx) {
+                            self.ledge_blacklist.push_back(wp_idx);
+                            if self.ledge_blacklist.len() > LEDGE_BLACKLIST_MAX {
+                                self.ledge_blacklist.pop_front();
+                            }
+                        }
+                        self.near_wp_ticks = 0;
+                        self.current_path.clear();
+                        self.current_waypoint = None;
+                        self.last_goal_node = None;
+                        self.goal_age_ticks = 0;
+                        self.goal_abandoned = true;
+                        return false;
                     }
                     tracing::debug!(
                         horiz,
@@ -332,8 +382,9 @@ impl NavigationDriver {
                         self.prev_waypoint = Some(wp_idx);
                         self.current_waypoint = Some(self.current_path[idx + 1]);
                     } else {
-                        // Reached the goal; clear blacklist and allow set_goal to plan a new one.
+                        // Reached the goal; clear both blacklists.
                         self.waypoint_blacklist.clear();
+                        self.ledge_blacklist.clear();
                         self.prev_waypoint = None;
                         self.current_waypoint = None;
                         self.last_goal_node = None;
@@ -351,7 +402,7 @@ impl NavigationDriver {
                         "goal give-up: blacklisting waypoint and replanning"
                     );
                     self.waypoint_blacklist.push_back(wp_idx);
-                    if self.waypoint_blacklist.len() > BLACKLIST_MAX {
+                    if self.waypoint_blacklist.len() > GIVEUP_BLACKLIST_MAX {
                         self.waypoint_blacklist.pop_front();
                     }
                     // Force a fresh plan (excluding the blacklisted node).

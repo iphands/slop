@@ -656,6 +656,23 @@ impl NavGraph {
                             continue;
                         }
                         if walkable_link(cm, a, b) {
+                            let dz = (b[2] - a[2]).abs();
+                            let hdist = h2.sqrt();
+                            let slope = if hdist > 0.1 { dz / hdist } else { 999.0 };
+                            if dz > 100.0 {
+                                tracing::debug!(
+                                    slope = slope as u32,
+                                    dz = dz as u32,
+                                    hdist = hdist as u32,
+                                    ax = a[0] as i32,
+                                    ay = a[1] as i32,
+                                    az = a[2] as i32,
+                                    bx = b[0] as i32,
+                                    by = b[1] as i32,
+                                    bz = b[2] as i32,
+                                    "bridge: large-dz edge added"
+                                );
+                            }
                             candidates.push((i, j, dist(&a, &b)));
                         }
                     }
@@ -984,7 +1001,6 @@ pub fn walkable_stair(cm: &CollisionModel, lower: [f32; 3], upper: [f32; 3]) -> 
     }
     true
 }
-
 
 /// Can a bot walk between two waypoints `a` and `b`? For `|dz| <= STEP` this tries
 /// a direct hull trace, falling back to the step-climb trace (stair risers can clip
