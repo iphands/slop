@@ -21,10 +21,13 @@ pub const JUMP_SPACING: f32 = 64.0;
 /// disconnected-but-walkable fragments. Covers up to ~10 grid cells (GRID_SPACING=24).
 /// Empirically, some q2dm* maps have disconnected floor sections separated by up to
 /// ~300-unit wide areas with no sampled floor nodes (e.g. q2dm2 "The Killing Machine"
-/// has wide open voids around elevator shafts). The hull/stair trace rejects any path
-/// through solid geometry regardless, so a larger radius only attempts more traces.
-/// Must stay in the cache fingerprint so changing it auto-invalidates stale caches.
-pub const BRIDGE_HDIST: f32 = 512.0;
+/// Adjacent grid cells are at most 64√2 ≈ 90u apart (diagonal). Setting
+/// BRIDGE_HDIST to 128u (1.4 diagonal cells) bridges any single-cell staircase
+/// gap while blocking false long-range cross-floor connections (observed hdist
+/// 146–510u) that cause bots to navigate phantom staircases. If a specific map
+/// needs a longer bridge the value can be tuned, but must stay in the cache
+/// fingerprint so changing it auto-invalidates stale caches.
+pub const BRIDGE_HDIST: f32 = 128.0;
 
 /// Everything a caller needs after building a map's nav graph: the parsed BSP
 /// (for spawn points / entity lookups), the collision model (for traces/LOS),

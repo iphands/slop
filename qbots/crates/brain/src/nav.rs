@@ -313,17 +313,12 @@ impl NavigationDriver {
 
             if reached || orbit_force {
                 if orbit_force && !reached {
-                    // When the bot is close horizontally but far below/above the
-                    // waypoint (dz > 4×WP_REACH_DZ), it is stuck at the base of a
-                    // false graph edge (a walk-edge that crosses a ledge the bot
-                    // cannot actually climb by walking).  Force-advancing to the
-                    // next waypoint just repeats the failure on the same false edge.
-                    // Instead, blacklist this waypoint and replan so A* finds an
-                    // alternate route.
-                    const LEDGE_DZ: f32 = WP_REACH_DZ * 4.0; // 96 u — clearly unclimbable
+                    // When the bot is close horizontally but far from the waypoint
+                    // vertically (dz > 4×WP_REACH_DZ = 96u), two distinct cases apply.
+                    const LEDGE_DZ: f32 = WP_REACH_DZ * 4.0; // 96 u threshold
                     if dz > LEDGE_DZ {
-                        let current_idx_dbg = self.current_path.iter().position(|&w| w == wp_idx);
-                        let prev_in_path = current_idx_dbg.and_then(|i| {
+                        let current_idx_opt = self.current_path.iter().position(|&w| w == wp_idx);
+                        let prev_in_path = current_idx_opt.and_then(|i| {
                             if i > 0 {
                                 Some(self.current_path[i - 1])
                             } else {
@@ -332,39 +327,80 @@ impl NavigationDriver {
                         });
                         let wp_coords = self.nav_graph.nodes[wp_idx];
                         let prev_coords = prev_in_path.map(|p| self.nav_graph.nodes[p]);
-                        tracing::debug!(
-                            horiz,
-                            dz,
-                            near_wp_ticks = self.near_wp_ticks,
-                            waypoint = wp_idx,
-                            prev_in_path = ?prev_in_path,
-                            wp_x = wp_coords[0] as i32,
-                            wp_y = wp_coords[1] as i32,
-                            wp_z = wp_coords[2] as i32,
-                            prev_x = ?prev_coords.map(|c| c[0] as i32),
-                            prev_y = ?prev_coords.map(|c| c[1] as i32),
-                            prev_z = ?prev_coords.map(|c| c[2] as i32),
-                            "orbit-timeout: unreachable ledge — blacklisting and replanning"
-                        );
-                        // Add the unreachable ledge node to the PERSISTENT ledge
-                        // blacklist.  This list survives replans so A* routes around
-                        // the false open-air bridge every time, not just once.
-                        // Do NOT blacklist the source/prev node — it is a real
-                        // main-component node with many valid edges; removing it breaks
-                        // navigation in that entire area.
-                        if !self.ledge_blacklist.contains(&wp_idx) {
-                            self.ledge_blacklist.push_back(wp_idx);
-                            if self.ledge_blacklist.len() > LEDGE_BLACKLIST_MAX {
-                                self.ledge_blacklist.pop_front();
+
+                        // Discriminate: false-bridge (edge goes sharply upward from
+                        // prev → wp) vs. fell-off-ledge (prev and wp at the same Z,
+                        // the bot fell away from the platform while navigating it).
+                        //
+                        // edge_dz = |prev_z − wp_z|:
+                        //   > LEDGE_DZ → false-bridge target (ascending walk edge
+                        //     through open staircase air) → blacklist & replan.
+                        //   ≤ LEDGE_DZ → fell-off-ledge → skip forward in path to the
+                        //     first node near the bot's current Z level so the bot
+                        //     routes around the dangerous platform segment.
+                        let edge_dz =
+                            prev_coords.map_or(LEDGE_DZ + 1.0, |pc| (pc[2] - wp_coords[2]).abs());
+
+                        if edge_dz > LEDGE_DZ {
+                            // FALSE BRIDGE: ascending through open staircase air.
+                            tracing::debug!(
+                                horiz, dz, edge_dz,
+                                waypoint = wp_idx,
+                                prev_in_path = ?prev_in_path,
+                                wp_x = wp_coords[0] as i32,
+                                wp_y = wp_coords[1] as i32,
+                                wp_z = wp_coords[2] as i32,
+                                "orbit-timeout: false bridge — blacklisting and replanning"
+                            );
+                            if !self.ledge_blacklist.contains(&wp_idx) {
+                                self.ledge_blacklist.push_back(wp_idx);
+                                if self.ledge_blacklist.len() > LEDGE_BLACKLIST_MAX {
+                                    self.ledge_blacklist.pop_front();
+                                }
                             }
+                            self.near_wp_ticks = 0;
+                            self.current_path.clear();
+                            self.current_waypoint = None;
+                            self.last_goal_node = None;
+                            self.goal_age_ticks = 0;
+                            self.goal_abandoned = true;
+                            return false;
+                        } else {
+                            // FELL-OFF-LEDGE: bot was navigating at wp's floor level
+                            // and fell. Blacklisting wp (a real node) would cut off
+                            // the route. Instead, skip forward in the path to the
+                            // first waypoint near the bot's current Z level so the bot
+                            // navigates around the dangerous platform section.
+                            let bot_z = position.z;
+                            let skip_idx = current_idx_opt.and_then(|cur| {
+                                self.current_path[cur + 1..]
+                                    .iter()
+                                    .position(|&n| {
+                                        (self.nav_graph.nodes[n][2] - bot_z).abs()
+                                            <= WP_REACH_DZ * 3.0
+                                    })
+                                    .map(|off| cur + 1 + off)
+                            });
+                            tracing::debug!(
+                                horiz, dz, edge_dz,
+                                waypoint = wp_idx,
+                                skip_to = ?skip_idx.map(|i| self.current_path[i]),
+                                "orbit-timeout: fell-off-ledge — skipping to same-floor node"
+                            );
+                            self.near_wp_ticks = 0;
+                            if let Some(si) = skip_idx {
+                                self.current_waypoint = Some(self.current_path[si]);
+                            } else {
+                                // No same-floor node ahead; replan from current position.
+                                self.current_path.clear();
+                                self.current_waypoint = None;
+                                self.last_goal_node = None;
+                                self.goal_age_ticks = 0;
+                                self.goal_abandoned = true;
+                                return false;
+                            }
+                            return false;
                         }
-                        self.near_wp_ticks = 0;
-                        self.current_path.clear();
-                        self.current_waypoint = None;
-                        self.last_goal_node = None;
-                        self.goal_age_ticks = 0;
-                        self.goal_abandoned = true;
-                        return false;
                     }
                     tracing::debug!(
                         horiz,
