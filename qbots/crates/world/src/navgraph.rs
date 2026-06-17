@@ -19,14 +19,17 @@ pub const HULL_MAXS: [f32; 3] = [16.0, 16.0, 32.0];
 /// with arrival-tolerance constants (e.g. `WP_REACH_DZ` in `brain::nav`) or trace-lift
 /// offsets (e.g. `STEPSIZE` in `brain::recover`) that happen to use a numerically nearby
 /// value for unrelated reasons.
-pub(crate) const STEP: f32 = 18.0;
-/// Maximum height difference for which the stair-climb trace is attempted (instead of
-/// immediate rejection). Set to `STEP + GRID_SPACING` (18 + 24 = 42 u) to handle the
-/// worst case: 8u×8u Q2 stairs sampled at 24u grid spacing can put adjacent floor probes
-/// 24u apart in Z, and diagonal neighbors (24√2 ≈ 34u apart) up to ~34u apart. Heights
-/// above this constant are treated as unclimbable ledges. Must be included in the cache
-/// fingerprint (`mapcache::Fingerprint`) so stale caches auto-invalidate on change.
-pub(crate) const STAIR_MAX: f32 = 42.0;
+pub const STEP: f32 = 18.0;
+/// Maximum height difference for which the stair-climb trace is attempted instead of
+/// immediate rejection. Set high enough to cover the steepest realistic Q2 staircase
+/// geometry. At GRID_SPACING=24u grid spacing, diagonal neighbors are ~34u apart
+/// horizontally; at a 3:1 rise/run slope that is ~102u dz — well within 128u.
+/// Heights above STAIR_MAX are treated as unclimbable cliffs/ledges. The stair trace
+/// itself still rejects paths blocked by actual walls or ceilings, so raising this
+/// value is safe: it only causes more traces to be attempted, never creates false edges.
+/// Must stay in the cache fingerprint (`mapcache::Fingerprint`) so stale caches
+/// auto-invalidate on change.
+pub const STAIR_MAX: f32 = 128.0;
 /// Minimum edge cost in the weighted pathfinder, so a popularity overlay can't
 /// drive an edge to zero/negative (Plan 08 T3).
 const EPS: f32 = 1.0;
@@ -69,25 +72,41 @@ impl NavGraph {
             x += spacing;
         }
 
-        // --- Phase 2: parallel floor probe (CollisionModel is Sync) ---------------
+        // --- Phase 2: parallel multi-floor probe (CollisionModel is Sync) ----------
+        // Each column can yield multiple floors (e.g. roof-top + indoor level below).
+        // flat_map_iter keeps rayon work-stealing while returning a sequential iterator
+        // per column; the move captures (gx,gy) into each emitted pair.
         let mut hits: Vec<((i32, i32), [f32; 3])> = columns
             .par_iter()
-            .filter_map(|&(x, y, gx, gy)| floor_waypoint(cm, x, y, bounds).map(|wp| ((gx, gy), wp)))
+            .flat_map_iter(|&(x, y, gx, gy)| {
+                floor_waypoints_multi(cm, x, y, bounds)
+                    .into_iter()
+                    .map(move |wp| ((gx, gy), wp))
+            })
             .collect();
 
-        // Sort by grid key so node indices are deterministic across runs.
-        hits.sort_by_key(|((gx, gy), _)| (*gx, *gy));
+        // Sort by (grid_key, z) so node indices are deterministic across runs.
+        hits.sort_by(|((ax, ay), aw), ((bx, by), bw)| {
+            (*ax, *ay)
+                .cmp(&(*bx, *by))
+                .then_with(|| aw[2].total_cmp(&bw[2]))
+        });
 
+        // Grid maps each column to all node indices it contains (ordered by z asc).
         let mut nodes: Vec<[f32; 3]> = Vec::with_capacity(hits.len());
-        let mut grid: HashMap<(i32, i32), usize> = HashMap::with_capacity(hits.len());
+        let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::with_capacity(hits.len());
         for ((gx, gy), wp) in hits {
-            grid.insert((gx, gy), nodes.len());
+            let idx = nodes.len();
+            grid.entry((gx, gy)).or_default().push(idx);
             nodes.push(wp);
         }
 
         // --- Phase 3: parallel edge computation -----------------------------------
-        // Each node reads its 8 grid neighbours (read-only nodes/grid) and emits its
-        // own adjacency list. No shared mutable state during the parallel section.
+        // For each node, look at the 8 adjacent columns and try to connect to every
+        // node in each column whose |dz| is within STAIR_MAX. This handles the case
+        // where adjacent columns have nodes on different floors: the z-distance filter
+        // keeps only floor-level peers; the stair trace rejects walls.
+        // No shared mutable state during the parallel section.
         let adj: Vec<Vec<(usize, f32)>> = nodes
             .par_iter()
             .enumerate()
@@ -100,7 +119,10 @@ impl NavGraph {
                         if ddx == 0 && ddy == 0 {
                             continue;
                         }
-                        if let Some(&j) = grid.get(&(gx + ddx, gy + ddy)) {
+                        let Some(col) = grid.get(&(gx + ddx, gy + ddy)) else {
+                            continue;
+                        };
+                        for &j in col {
                             if j == i {
                                 continue;
                             }
@@ -110,9 +132,19 @@ impl NavGraph {
                                 continue; // too steep for stairs — cliff or void
                             }
                             let ok = if dz.abs() <= STEP {
-                                // Flat or gentle slope: standard diagonal hull trace.
+                                // Flat or gentle slope: try direct hull trace first.
+                                // Fall back to the step-climb trace when the direct trace
+                                // fails — stair risers can clip the diagonal even for
+                                // small height deltas.
                                 let t = cm.trace(&a, &b, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
-                                !t.startsolid && t.fraction >= 1.0
+                                if !t.startsolid && t.fraction >= 1.0 {
+                                    true
+                                } else if dz.abs() > 0.5 {
+                                    let (lower, upper) = if dz > 0.0 { (a, b) } else { (b, a) };
+                                    walkable_stair(cm, lower, upper)
+                                } else {
+                                    false
+                                }
                             } else {
                                 // Height diff in (STEP, STAIR_MAX]: the diagonal trace
                                 // would clip stair risers. Use the step-climb trace that
@@ -409,7 +441,14 @@ impl NavGraph {
                 }
                 let connected = if dz.abs() <= STEP {
                     let t = cm.trace(&wp, &other, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
-                    !t.startsolid && t.fraction >= 1.0
+                    if !t.startsolid && t.fraction >= 1.0 {
+                        true
+                    } else if dz.abs() > 0.5 {
+                        let (lower, upper) = if dz < 0.0 { (wp, other) } else { (other, wp) };
+                        walkable_stair(cm, lower, upper)
+                    } else {
+                        false
+                    }
                 } else {
                     let (lower, upper) = if dz < 0.0 { (wp, other) } else { (other, wp) };
                     walkable_stair(cm, lower, upper)
@@ -425,23 +464,217 @@ impl NavGraph {
         added
     }
 
-    /// Check how many of the given spawn positions are in the largest connected
-    /// component. Returns `(in_largest, total)`. Used to log a warning when spawns
-    /// are unreachable after `seed_spawns`.
+    /// Connect an already-added node at `idx` to all OTHER nodes in the graph that
+    /// are within `max_hdist` horizontally and `STAIR_MAX` vertically, using the
+    /// same hull/stair trace logic as `generate`. Bidirectional edges are added.
+    /// Returns the number of new edges added. Used to wire elevator (func_plat) nodes
+    /// into the existing walkable graph after the main generation pass.
+    pub fn connect_node_to_nearby(
+        &mut self,
+        cm: &CollisionModel,
+        idx: usize,
+        max_hdist: f32,
+    ) -> usize {
+        let wp = self.nodes[idx];
+        let mut added = 0;
+        let n = self.nodes.len();
+        for other_idx in 0..n {
+            if other_idx == idx {
+                continue;
+            }
+            let other = self.nodes[other_idx];
+            let dz = wp[2] - other[2];
+            if dz.abs() > STAIR_MAX {
+                continue;
+            }
+            let dx = wp[0] - other[0];
+            let dy = wp[1] - other[1];
+            if dx * dx + dy * dy > max_hdist * max_hdist {
+                continue;
+            }
+            if self.adj[idx].iter().any(|&(nb, _)| nb == other_idx) {
+                continue; // already connected
+            }
+            let connected = if dz.abs() <= STEP {
+                let t = cm.trace(&wp, &other, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+                if !t.startsolid && t.fraction >= 1.0 {
+                    true
+                } else if dz.abs() > 0.5 {
+                    let (lower, upper) = if dz > 0.0 { (other, wp) } else { (wp, other) };
+                    walkable_stair(cm, lower, upper)
+                } else {
+                    false
+                }
+            } else {
+                let (lower, upper) = if dz > 0.0 { (other, wp) } else { (wp, other) };
+                walkable_stair(cm, lower, upper)
+            };
+            if connected {
+                let cost = dist(&wp, &other);
+                self.adj[idx].push((other_idx, cost));
+                self.adj[other_idx].push((idx, cost));
+                added += 1;
+            }
+        }
+        added
+    }
+
+    /// Stitch together fragments of the nav graph that are *physically* walkable into
+    /// each other but were left in separate connected components because grid sampling
+    /// dropped the threshold column between them (a doorway, a 1–2 cell gap, a step
+    /// where the multi-floor probe landed on a different z per column).
+    ///
+    /// The strict 8-neighbour edge-builder in [`Self::generate`] only links nodes in
+    /// adjacent grid cells (`dh <= ~34 u`). When two walkable regions are sampled but
+    /// the cells exactly on their shared border aren't, the regions never connect even
+    /// though a player walks straight across. This pass looks for the *closest* node
+    /// pair between two different components within `max_hdist` horizontally and
+    /// `STAIR_MAX` vertically, and adds an edge iff [`walkable_link`] confirms a clear
+    /// hull/stair path. The trace guard makes it impossible to bridge across a wall,
+    /// ceiling, or floor (e.g. the unreachable roof component stays isolated).
+    ///
+    /// Runs repeatedly to a fixed point: bridging A↔B can expose a now-reachable C.
+    /// Uses a spatial hash bucketed at `max_hdist` so it stays near-linear, not O(n²).
+    /// Returns the total number of bridge edges added across all iterations.
+    pub fn bridge_components(&mut self, cm: &CollisionModel, max_hdist: f32) -> usize {
+        let mut total = 0;
+        // A handful of iterations reaches a fixed point on real maps; cap to be safe.
+        for _ in 0..8 {
+            let added = self.bridge_pass(cm, max_hdist);
+            total += added;
+            if added == 0 {
+                break;
+            }
+        }
+        total
+    }
+
+    /// One sweep of [`Self::bridge_components`]. Computes current components, then for
+    /// every node tries to connect it to the nearest node in a *different* component
+    /// within range. Returns the number of edges added this pass.
+    fn bridge_pass(&mut self, cm: &CollisionModel, max_hdist: f32) -> usize {
+        let n = self.nodes.len();
+        if n == 0 {
+            return 0;
+        }
+
+        // node → component id (so we only bridge across components, never within).
+        let comps = self.components();
+        let mut comp_id = vec![usize::MAX; n];
+        for (ci, c) in comps.iter().enumerate() {
+            for &node in c {
+                comp_id[node] = ci;
+            }
+        }
+        if comps.len() <= 1 {
+            return 0; // already fully connected
+        }
+
+        // Spatial hash bucketed at `max_hdist` so each node only examines the 3×3
+        // block of cells around it (any node within max_hdist lives in one of them).
+        let cell = max_hdist.max(1.0);
+        let key = |p: &[f32; 3]| ((p[0] / cell).floor() as i32, (p[1] / cell).floor() as i32);
+        let mut buckets: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+        for (i, p) in self.nodes.iter().enumerate() {
+            buckets.entry(key(p)).or_default().push(i);
+        }
+
+        // Enumerate every cross-component pair within range and test walkability.
+        // Using `j > i` enumerates each unordered pair exactly once, halving trace
+        // calls vs. the symmetric loop. Collect candidates first (immutable borrow),
+        // then add edges (mutable borrow).
+        let max_h2 = max_hdist * max_hdist;
+        let mut candidates: Vec<(usize, usize, f32)> = Vec::new();
+        for i in 0..n {
+            let a = self.nodes[i];
+            let (kx, ky) = key(&a);
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    let Some(cellnodes) = buckets.get(&(kx + dx, ky + dy)) else {
+                        continue;
+                    };
+                    for &j in cellnodes {
+                        if j <= i {
+                            continue; // enumerate each pair once
+                        }
+                        if comp_id[j] == comp_id[i] {
+                            continue; // same component — already linked
+                        }
+                        let b = self.nodes[j];
+                        if (b[2] - a[2]).abs() > STAIR_MAX {
+                            continue;
+                        }
+                        let h2 = (b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2);
+                        if h2 > max_h2 {
+                            continue;
+                        }
+                        if walkable_link(cm, a, b) {
+                            candidates.push((i, j, dist(&a, &b)));
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut added = 0;
+        for (i, j, cost) in candidates {
+            // Skip if a previous candidate this pass already linked these two.
+            if self.adj[i].iter().any(|&(nb, _)| nb == j) {
+                continue;
+            }
+            self.adj[i].push((j, cost));
+            self.adj[j].push((i, cost));
+            added += 1;
+        }
+        added
+    }
+
+    /// The **play component**: the connected component containing the most DM spawn
+    /// points. This is the area the game actually happens in — and the right set for
+    /// bots to roam. It is NOT necessarily the component with the most *nodes*: large
+    /// Q2 maps generate big spurious surface networks (perimeter wall-tops / ceilings
+    /// sampled by the floor probe) that no player can reach. Those out-size the play
+    /// area in node count but contain zero spawns. Spawn-presence is the true signal
+    /// of "this is where players are," so we rank components by spawn count, breaking
+    /// ties by node count. Returns the component's node indices (empty if no spawns).
+    pub fn largest_spawn_component(&self, spawns: &[[f32; 3]]) -> Vec<usize> {
+        let comps = self.components();
+        if comps.is_empty() {
+            return Vec::new();
+        }
+        let mut node_comp = vec![usize::MAX; self.nodes.len()];
+        for (ci, c) in comps.iter().enumerate() {
+            for &n in c {
+                node_comp[n] = ci;
+            }
+        }
+        let mut spawn_count = vec![0usize; comps.len()];
+        for sp in spawns {
+            if let Some(n) = self.nearest(sp) {
+                let ci = node_comp[n];
+                if ci != usize::MAX {
+                    spawn_count[ci] += 1;
+                }
+            }
+        }
+        // Pick the component with the most spawns; tie-break on node count (comps is
+        // already sorted by node count desc, so the first max wins the tie).
+        let best = (0..comps.len()).max_by_key(|&ci| (spawn_count[ci], comps[ci].len()));
+        best.map(|ci| comps[ci].clone()).unwrap_or_default()
+    }
+
+    /// Check how many of the given spawn positions are in the **play component**
+    /// (the largest spawn-bearing component, see [`Self::largest_spawn_component`]).
+    /// Returns `(in_play_component, total)`. When every spawn is mutually reachable
+    /// this is `(total, total)` — the contract `check_spawn_connectivity` enforces.
     pub fn spawns_in_largest_component(&self, spawns: &[[f32; 3]]) -> (usize, usize) {
         if spawns.is_empty() {
             return (0, 0);
         }
-        let largest: HashSet<usize> = self
-            .components()
-            .into_iter()
-            .next()
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+        let play: HashSet<usize> = self.largest_spawn_component(spawns).into_iter().collect();
         let connected = spawns
             .iter()
-            .filter(|sp| self.nearest(sp).is_some_and(|i| largest.contains(&i)))
+            .filter(|sp| self.nearest(sp).is_some_and(|i| play.contains(&i)))
             .count();
         (connected, spawns.len())
     }
@@ -602,33 +835,71 @@ impl NavGraph {
     }
 }
 
-/// Find the walkable floor waypoint at column (x,y): trace down for the surface, then
-/// confirm the player hull can stand there.
-fn floor_waypoint(
+/// Sample ALL walkable floors at grid column (x, y) by probing downward repeatedly,
+/// stepping through solid-brush layers to reach indoor floors.
+///
+/// The original single-probe approach only found the topmost floor (e.g. a roof),
+/// missing any indoor levels beneath a solid ceiling. Multi-floor probing is the
+/// fix: after each surface hit, walk downward through the solid brush in 8-unit
+/// steps until re-entering empty space, then probe again for the next floor.
+///
+/// Safe upper bound: Q2 maps never have more than 8 walkable floor levels per column
+/// (typical is 1-2). Each step through a brush takes at most O(thickness / 8) iters
+/// (~16 for a 128-unit thick ceiling), so the per-column cost stays small.
+fn floor_waypoints_multi(
     cm: &CollisionModel,
     x: f32,
     y: f32,
     bounds: ([f32; 3], [f32; 3]),
-) -> Option<[f32; 3]> {
-    let top = [x, y, bounds.1[2] + 200.0];
-    let bot = [x, y, bounds.0[2] - 200.0];
-    let down = cm.trace(&top, &bot, &[0.0; 3], &[0.0; 3], MASK_SOLID);
-    if down.fraction >= 1.0 || down.startsolid {
-        return None; // open shaft or started in solid
+) -> Vec<[f32; 3]> {
+    const MAX_FLOORS: usize = 8;
+    let floor_min_z = bounds.0[2] - 200.0;
+    let mut results = Vec::new();
+    let mut probe_z = bounds.1[2] + 200.0;
+
+    for _ in 0..MAX_FLOORS {
+        let top = [x, y, probe_z];
+        let bot = [x, y, floor_min_z];
+        let down = cm.trace(&top, &bot, &[0.0; 3], &[0.0; 3], MASK_SOLID);
+
+        if down.fraction >= 1.0 || down.startsolid {
+            break; // no more floors in this column
+        }
+
+        let floor_z = down.endpos[2];
+        // bot origin stands 24 u above the floor (hull mins.z = -24)
+        let wp = [x, y, floor_z + 24.0];
+
+        if cm.point_contents(&wp) & MASK_WATER == 0 {
+            let stand = cm.trace(&wp, &wp, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+            if !stand.startsolid {
+                results.push(wp);
+            }
+        }
+
+        // Step downward through the solid brush we just hit to find the next
+        // empty cavity below. Steps of 8 u handle the thinnest realistic Q2 brush.
+        let mut exit_z = floor_z - 8.0;
+        let mut found_next = false;
+        while exit_z > floor_min_z {
+            if cm.point_contents(&[x, y, exit_z]) & MASK_SOLID == 0 {
+                probe_z = exit_z;
+                found_next = true;
+                break;
+            }
+            exit_z -= 8.0;
+        }
+        if !found_next {
+            break;
+        }
     }
-    let floor_z = down.endpos[2];
-    // bot origin stands ~24 above the floor (hull mins.z = -24).
-    let wp = [x, y, floor_z + 24.0];
-    // Skip waypoints inside water, slime or lava.
-    if cm.point_contents(&wp) & MASK_WATER != 0 {
-        return None;
-    }
-    let stand = cm.trace(&wp, &wp, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
-    (!stand.startsolid).then_some(wp)
+
+    results
 }
 
 /// Check whether a bot can walk *upward* from `lower` to `upper` via a staircase,
 /// for the case where the direct height difference is in `(STEP, STAIR_MAX]`.
+/// Public so the `nav-debug` diagnostic command can call it directly.
 ///
 /// A direct diagonal hull trace clips stair *risers* (the vertical walls between
 /// treads) even on fully walkable stairs. This function instead simulates Q2
@@ -639,7 +910,7 @@ fn floor_waypoint(
 /// horizontal traces at each stepped height clear any risers below that level.
 ///
 /// `upper[2] > lower[2]` is assumed; `total_dz` must be in `(0, STAIR_MAX]`.
-fn walkable_stair(cm: &CollisionModel, lower: [f32; 3], upper: [f32; 3]) -> bool {
+pub fn walkable_stair(cm: &CollisionModel, lower: [f32; 3], upper: [f32; 3]) -> bool {
     let total_dz = upper[2] - lower[2];
     let steps = (total_dz / STEP).ceil() as usize;
     let mut pos = lower;
@@ -666,6 +937,36 @@ fn walkable_stair(cm: &CollisionModel, lower: [f32; 3], upper: [f32; 3]) -> bool
     }
     // All sub-traces cleared; pos == upper.
     true
+}
+
+/// Can a bot walk between two waypoints `a` and `b`? For `|dz| <= STEP` this tries
+/// a direct hull trace, falling back to the step-climb trace (stair risers can clip
+/// the diagonal hull even for small height deltas). For `STEP < |dz| <= STAIR_MAX`
+/// it uses the step-climb trace directly. `|dz| > STAIR_MAX` is rejected as a cliff.
+/// The trace guard means this never reports a link through a wall, ceiling, or floor.
+fn walkable_link(cm: &CollisionModel, a: [f32; 3], b: [f32; 3]) -> bool {
+    let dz = b[2] - a[2];
+    if dz.abs() > STAIR_MAX {
+        return false;
+    }
+    if dz.abs() <= STEP {
+        // Try both sweep directions: a swept-box hull trace is not symmetric (the
+        // start box may clip a lip the end box would clear), so a forward block does
+        // not mean the move is impossible — a real player walks it either way.
+        let fwd = cm.trace(&a, &b, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+        if !fwd.startsolid && fwd.fraction >= 1.0 {
+            return true;
+        }
+        let rev = cm.trace(&b, &a, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+        if !rev.startsolid && rev.fraction >= 1.0 {
+            return true;
+        }
+        if dz.abs() <= 0.5 {
+            return false;
+        }
+    }
+    let (lower, upper) = if dz > 0.0 { (a, b) } else { (b, a) };
+    walkable_stair(cm, lower, upper)
 }
 
 fn dist(a: &[f32; 3], b: &[f32; 3]) -> f32 {

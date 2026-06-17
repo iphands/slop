@@ -3,9 +3,9 @@
 //! Format (little-endian throughout):
 //! ```text
 //! [0..7]   magic    b"QBNAVC2"
-//! [7]      version  u8 = 1
-//! [8..40]  fingerprint (8 × u32, see Fingerprint)
-//! [40..44] node_count  u32
+//! [7]      version  u8
+//! [8..44]  fingerprint (9 × u32, see Fingerprint)
+//! [44..48] node_count  u32
 //! for each node:
 //!   x, y, z  f32 × 3
 //! for each node:
@@ -25,11 +25,14 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use crate::bsp::Bsp;
-use crate::build::{GRID_SPACING, JUMP_SPACING};
+use crate::build::{BRIDGE_HDIST, GRID_SPACING, JUMP_SPACING};
 use crate::navgraph::{NavGraph, STAIR_MAX, STEP};
 
 const MAGIC: &[u8; 7] = b"QBNAVC2";
-const VERSION: u8 = 1;
+// Version 2: multi-floor column probing (see navgraph::floor_waypoints_multi).
+// Version 3: func_plat elevator edges + component bridging (navgraph::bridge_components)
+// plus a 9th fingerprint field (BRIDGE_HDIST). Older caches are auto-rejected.
+const VERSION: u8 = 3;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]
@@ -45,6 +48,10 @@ pub struct Fingerprint {
     /// caches. Previously `_reserved: u32 = 0`; any cached file with the old zero
     /// will be a fingerprint mismatch and regenerated automatically.
     stair_max_bits: u32,
+    /// `BRIDGE_HDIST` encoded as f32 bits — changing the component-bridge radius
+    /// (`navgraph::bridge_components`) alters the generated graph, so it must
+    /// invalidate stale caches.
+    bridge_hdist_bits: u32,
 }
 
 impl Fingerprint {
@@ -75,6 +82,7 @@ impl Fingerprint {
             step_bits: STEP.to_bits(),
             jump_spacing_bits: JUMP_SPACING.to_bits(),
             stair_max_bits: STAIR_MAX.to_bits(),
+            bridge_hdist_bits: BRIDGE_HDIST.to_bits(),
         }
     }
 
@@ -88,16 +96,17 @@ impl Fingerprint {
             self.step_bits,
             self.jump_spacing_bits,
             self.stair_max_bits,
+            self.bridge_hdist_bits,
         ] {
             buf.extend_from_slice(&v.to_le_bytes());
         }
     }
 
     fn read(data: &[u8]) -> Option<Self> {
-        if data.len() < 32 {
+        if data.len() < 36 {
             return None;
         }
-        let mut fields = [0u32; 8];
+        let mut fields = [0u32; 9];
         for (i, f) in fields.iter_mut().enumerate() {
             *f = u32::from_le_bytes(data[i * 4..i * 4 + 4].try_into().ok()?);
         }
@@ -110,6 +119,7 @@ impl Fingerprint {
             step_bits: fields[5],
             jump_spacing_bits: fields[6],
             stair_max_bits: fields[7],
+            bridge_hdist_bits: fields[8],
         })
     }
 }
@@ -118,7 +128,7 @@ impl Fingerprint {
 pub fn save(path: &Path, graph: &NavGraph, fingerprint: &Fingerprint) -> io::Result<()> {
     let (nodes, adj, jump_triples) = graph.raw_parts();
     let mut buf: Vec<u8> = Vec::with_capacity(
-        8 + 32 + 4 + nodes.len() * 12 + nodes.len() * 4 + 4 + jump_triples.len() * 12,
+        8 + 36 + 4 + nodes.len() * 12 + nodes.len() * 4 + 4 + jump_triples.len() * 12,
     );
 
     // Header
@@ -183,11 +193,11 @@ fn parse(data: &[u8], expected: &Fingerprint) -> Option<NavGraph> {
     pos += 1;
 
     // Fingerprint
-    let fp = Fingerprint::read(data.get(pos..pos + 32)?)?;
+    let fp = Fingerprint::read(data.get(pos..pos + 36)?)?;
     if fp != *expected {
         return None;
     }
-    pos += 32;
+    pos += 36;
 
     // Nodes
     let nc = read_u32(data, &mut pos)? as usize;
@@ -260,6 +270,7 @@ mod tests {
             step_bits: STEP.to_bits(),
             jump_spacing_bits: JUMP_SPACING.to_bits(),
             stair_max_bits: STAIR_MAX.to_bits(),
+            bridge_hdist_bits: BRIDGE_HDIST.to_bits(),
         }
     }
 

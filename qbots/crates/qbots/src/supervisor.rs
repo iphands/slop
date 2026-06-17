@@ -82,7 +82,10 @@ fn build_map_nav(cfg: &Config, map: &str) -> Option<MapNav> {
     // All Q2 dm maps guarantee full spawn reachability — failure is our bug.
     if let Err(diag) = world::check_spawn_connectivity(&built) {
         tracing::error!(map, "{diag}");
-        tracing::error!(map, "aborting: nav connectivity bug — bots cannot navigate this map");
+        tracing::error!(
+            map,
+            "aborting: nav connectivity bug — bots cannot navigate this map"
+        );
         std::process::exit(1);
     }
     tracing::info!(

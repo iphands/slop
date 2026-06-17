@@ -1,0 +1,92 @@
+# q2dm1 nav connectivity investigation
+# Started: 2026-06-16
+
+## Observed failure (generate-map-cache q2dm1)
+- nodes=7377 edges=110337 total_components=5
+- Component sizes: 7126, 143, 69, 27, 12
+- Only 3/10 spawns in largest (component 0)
+- 7 spawns in minority components:
+  - C1 (143 nodes): spawn[4](1488,-48,664), spawn[5](1888,464,920),
+                     spawn[6](2016,-224,664), spawn[7](1512,-24,536)
+  - C2 (69 nodes):  spawn[0](544,352,482)
+  - C4 (12 nodes):  spawn[1](1552,600,352), spawn[2](1888,736,536)
+- C1 is LARGE (143 nodes, high-x area x=1488-2016) — whole right side of map disconnected
+- C4 is tiny (12 nodes) despite 2 spawns having navigable BSP positions
+
+## History
+- Previous fix (walkable_stair): main comp grew from 3495 → 7126 nodes.
+  Stair-riser clipping was the culprit then. Now something else blocks the last gaps.
+
+## Hypotheses (ranked by likelihood)
+A. STAIR_MAX=42 too small for steep geometry in q2dm1.
+   Diagonal grid neighbors 33.9u apart can have dz = 42 at 51° slope.
+   Any slope >51° diagonal => skipped. STAIR_MAX=42 is tight.
+   Fix: increase to 128u (safe — stair trace still rejects actual walls).
+
+B. Stair trace failing for covered/indoor staircase (ceiling blocks UP trace).
+   If the staircase going to the upper right area is under a ceiling,
+   our vertical UP sub-trace hits the ceiling and returns false.
+   Fix: needs a different trace strategy for covered stairs.
+
+C. Dynamic entity (func_plat elevator) is the only connection to C1.
+   The upper area (x>1488) might only be reachable via an elevator.
+   Our static collision model doesn't include inline BSP model brushes in its tree.
+   Fix: detect func_plat entities and add elevator edges.
+
+D. Grid sampling gap — no floor nodes in the narrow passage connecting regions.
+   Fix: smaller grid spacing (expensive) or targeted bridge generation.
+
+## Next actions
+1. Add NavDebug command: show boundary node pairs and why trace fails.
+2. Try STAIR_MAX=128 as first cheap fix.
+3. Run nav-debug on q2dm1 to confirm which hypothesis is correct.
+4. Fix root cause and verify all q2dm* maps pass.
+
+---
+
+## 2026-06-16 Session 2 — Continued investigation
+
+### bridge_pass ONLY-NEAREST bug (FIXED)
+- bridge_pass tracked a single `best` (nearest cross-comp node) per source node.
+  If that one walkable_link trace failed (wall between them), added ZERO edges
+  and `if added==0 { break; }` exited early — so entire bridge_components did NOTHING.
+- Fix: enumerate ALL cross-component pairs within range (j>i to avoid duplicates).
+  Try walkable_link on each. This collapses 38→25 components on q2dm2 and allowed
+  BRIDGE_HDIST=512 to fully fix q2dm2/5/6.
+
+### BRIDGE_HDIST=96 was too small for q2dm2/5/6 (FIXED: bumped to 512)
+- q2dm2 has wide elevator shafts with no sampled floor nodes across 250+ unit gaps.
+  Required BRIDGE_HDIST≥512 to cross. Performance hit: ~30s per map for generation
+  (cached; acceptable for one-time cost).
+
+### q2dm7 spawn[0] is a WATER PIT (KNOWN LIMITATION)
+- spawn[0] at z=-296, all 206 nodes in comp2 at exactly z=-296 (flat floor).
+  Nearest other-comp nodes (comp3, z=16) have dz=312 > STAIR_MAX=128.
+  The func_door lift only reaches z=-153 (player origin), not z=-296.
+  q2dm7 "The Edge" has a water pit in the lower area. Players swim up.
+  Our nav graph has no water-swimming support — this spawn is permanently
+  disconnected from the walking nav. NOT a bug in BSP/collision/nav generation;
+  it's a genuine water-access limitation.
+
+### q2dm3 inline-model transparency causes lift shaft blindness (OPEN)
+- Floor probe can't see inline model surfaces (func_plat, func_door platforms).
+  The probe falls through the platform and records the world floor below.
+  Result: NO floor nodes exist at the upper floor level accessed by the platform.
+  connect_node_to_nearby for the top node finds nothing nearby in the upper area.
+  So the func_plat/func_door lift nodes go into comp1 (lower floor), failing to
+  bridge comp1↔comp2.
+- nav-debug shows: C1:(-608,512,83) ↔ C2:(-601,511,152) → hull=BLOCKED, stair=FAIL.
+  The shaft walls (world geometry) block the trace between lift top and upper corridor.
+- Potential fix: probe world-floor at XY positions just OUTSIDE the shaft at each
+  lift level to get anchor nodes in the correct component, then connect_node_to_nearby
+  links them to the lift nodes.
+
+### Current q2dm* status (BRIDGE_HDIST=512, all-candidates bridge_pass)
+- q2dm1: PASS
+- q2dm2: PASS
+- q2dm3: FAIL 3/7 — lift transparency + shaft wall trace failure
+- q2dm4: PASS
+- q2dm5: PASS
+- q2dm6: PASS
+- q2dm7: 5/6 — spawn[0] water pit (known limitation)
+- q2dm8: PASS

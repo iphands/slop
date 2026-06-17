@@ -121,6 +121,18 @@ enum Cmd {
         #[arg(long, default_value = "30.0")]
         max_secs: f32,
     },
+    /// Diagnose disconnected nav-graph components: for each small component show
+    /// the closest boundary-node pair to the main component, distances, and
+    /// whether the direct hull trace / stair trace succeed. Run when
+    /// generate-map-cache reports a connectivity bug so you can see exactly what
+    /// geometry is blocking the connection.
+    NavDebug {
+        /// Map to analyse (e.g. `q2dm1`).
+        map: String,
+        /// Boundary pairs to show per minority component.
+        #[arg(long, default_value = "8")]
+        pairs: usize,
+    },
     /// Pre-generate the nav graph cache for one or more maps.
     ///
     /// Run once per map (or after changing BSP or generation constants) so
@@ -1076,6 +1088,230 @@ fn glob_matches(pattern: &str, name: &str) -> bool {
     }
 }
 
+/// `nav-debug` — generate the real nav graph (GRID_SPACING=24) and report exactly
+/// WHY each minority component is disconnected from the main component. For each
+/// boundary node pair it shows: distance, dz, whether the direct hull trace and
+/// the stair trace succeed, and a one-line diagnosis. Run this when
+/// `generate-map-cache` reports a connectivity bug.
+fn nav_debug(cfg: &Config, map: &str, pairs: usize) -> ExitCode {
+    use std::collections::HashSet;
+
+    let built = match world::generate_map_nav(&cfg.paths.baseq2, map) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::error!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let comps = built.graph.components();
+    tracing::info!(
+        map,
+        nodes = built.graph.node_count(),
+        edges = built.graph.edge_count(),
+        components = comps.len(),
+        in_largest = built.in_largest,
+        total_spawns = built.total_spawns,
+        "nav-debug"
+    );
+    for (i, c) in comps.iter().enumerate().take(16) {
+        // Bounding box of the component — reveals whether it's "the whole map"
+        // or a small pocket/roof. (The boundary-pair analysis below uses nearest
+        // euclidean node, which is misleading for vertically-stacked floors.)
+        let mut lo = [f32::INFINITY; 3];
+        let mut hi = [f32::NEG_INFINITY; 3];
+        for &n in c {
+            let p = built.graph.nodes[n];
+            for k in 0..3 {
+                lo[k] = lo[k].min(p[k]);
+                hi[k] = hi[k].max(p[k]);
+            }
+        }
+        tracing::info!(
+            "  component[{i}]: {} nodes  x[{:.0}..{:.0}] y[{:.0}..{:.0}] z[{:.0}..{:.0}]",
+            c.len(),
+            lo[0],
+            hi[0],
+            lo[1],
+            hi[1],
+            lo[2],
+            hi[2],
+        );
+    }
+    if comps.len() == 1 {
+        tracing::info!("fully connected — nothing to debug");
+        return ExitCode::SUCCESS;
+    }
+
+    let main_set: HashSet<usize> = comps[0].iter().copied().collect();
+    let nodes = &built.graph.nodes;
+    let cm = &built.cm;
+    let grid = world::GRID_SPACING;
+
+    // node → component index map, so the boundary scan can find the nearest node
+    // in ANY OTHER component (the play-area fragments must merge with each other,
+    // not with the roof at comp[0]).
+    let mut node_comp = vec![usize::MAX; nodes.len()];
+    for (ci, c) in comps.iter().enumerate() {
+        for &n in c {
+            node_comp[n] = ci;
+        }
+    }
+
+    // Which components contain a spawn — those are the ones that MUST merge.
+    let mut spawn_comps: HashSet<usize> = HashSet::new();
+    for sp in &built.spawn_origins {
+        if let Some(n) = built.graph.nearest(sp) {
+            spawn_comps.insert(node_comp[n]);
+        }
+    }
+    let mut spawn_comp_list: Vec<usize> = spawn_comps.iter().copied().collect();
+    spawn_comp_list.sort_unstable();
+    tracing::info!("spawn-bearing components: {:?}", spawn_comp_list);
+
+    // Analyze each spawn-bearing component: find its node closest to a node in a
+    // DIFFERENT component, and report why no edge bridges them.
+    for &ci in &spawn_comp_list {
+        let comp = &comps[ci];
+        tracing::info!(
+            "=== component[{ci}] ({} nodes) — cross-component boundary ===",
+            comp.len()
+        );
+
+        // For each node in this comp, find the nearest node in any other component.
+        let mut boundary: Vec<(usize, usize, f32)> = comp
+            .iter()
+            .filter_map(|&node| {
+                let pos = nodes[node];
+                nodes
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, _)| node_comp[*j] != ci)
+                    .map(|(j, mp)| {
+                        let d2 = (pos[0] - mp[0]).powi(2)
+                            + (pos[1] - mp[1]).powi(2)
+                            + (pos[2] - mp[2]).powi(2);
+                        (node, j, d2)
+                    })
+                    .min_by(|a, b| a.2.total_cmp(&b.2))
+            })
+            .collect();
+        boundary.sort_by(|a, b| a.2.total_cmp(&b.2));
+        boundary.dedup_by_key(|x| x.0);
+
+        for (node, main_node, d2) in boundary.iter().take(pairs) {
+            let pos = nodes[*node];
+            let mpos = nodes[*main_node];
+            let other_ci = node_comp[*main_node];
+            let d3 = d2.sqrt();
+            let dz = (pos[2] - mpos[2]).abs();
+            let dh = ((pos[0] - mpos[0]).powi(2) + (pos[1] - mpos[1]).powi(2)).sqrt();
+
+            // Is this pair grid-adjacent? (within one diagonal grid step + 10%)
+            let grid_adj = dh <= grid * 2.0_f32.sqrt() * 1.1;
+
+            // Why would the edge-builder have skipped this pair?
+            let skip = if !grid_adj {
+                format!(
+                    "NOT-GRID-ADJACENT (dh={dh:.0}>{:.0})",
+                    grid * 2.0_f32.sqrt()
+                )
+            } else if dz > world::STAIR_MAX {
+                format!("dz={dz:.0} > STAIR_MAX={}", world::STAIR_MAX)
+            } else {
+                "in-range — trace determines edge".to_string()
+            };
+
+            // Direct hull trace both directions.
+            let t_fwd = cm.trace(
+                &pos,
+                &mpos,
+                &world::HULL_MINS,
+                &world::HULL_MAXS,
+                world::MASK_SOLID,
+            );
+            let t_rev = cm.trace(
+                &mpos,
+                &pos,
+                &world::HULL_MINS,
+                &world::HULL_MAXS,
+                world::MASK_SOLID,
+            );
+            let direct = if !t_fwd.startsolid && t_fwd.fraction >= 1.0 {
+                "CLEAR"
+            } else if !t_rev.startsolid && t_rev.fraction >= 1.0 {
+                "CLEAR(rev)"
+            } else {
+                "BLOCKED"
+            };
+
+            // Stair trace (only meaningful when dz in (STEP, STAIR_MAX]).
+            let stair = if dz > world::STEP && dz <= world::STAIR_MAX {
+                let (lo, hi) = if pos[2] < mpos[2] {
+                    (pos, mpos)
+                } else {
+                    (mpos, pos)
+                };
+                if world::walkable_stair(cm, lo, hi) {
+                    "stair=OK"
+                } else {
+                    "stair=FAIL"
+                }
+            } else if dz <= world::STEP {
+                "flat-trace-only"
+            } else {
+                "dz-exceeds-STAIR_MAX"
+            };
+
+            // Point trace (ignores hull — useful to see if LoS exists at all).
+            let zero = [0.0f32; 3];
+            let tp = cm.trace(&pos, &mpos, &zero, &zero, world::MASK_SOLID);
+            let point = if !tp.startsolid && tp.fraction >= 1.0 {
+                "pt-CLEAR"
+            } else {
+                "pt-blocked"
+            };
+
+            tracing::info!(
+                "  C{ci}:{node}({:.0},{:.0},{:.0}) <-> C{other_ci}:{main_node}({:.0},{:.0},{:.0})\
+                 \n    d3={d3:.0} dh={dh:.0} dz={dz:.0}  adj={grid_adj}\
+                 \n    skip=[{skip}]\
+                 \n    hull={direct} {point} {stair}",
+                pos[0],
+                pos[1],
+                pos[2],
+                mpos[0],
+                mpos[1],
+                mpos[2],
+            );
+        }
+    }
+
+    // Also show spawn → nearest-main-node summary.
+    tracing::info!("=== spawn reachability ===");
+    for (i, sp) in built.spawn_origins.iter().enumerate() {
+        let nearest = built.graph.nearest(sp);
+        let in_main = nearest.is_some_and(|n| main_set.contains(&n));
+        let comp_idx = nearest
+            .and_then(|n| comps.iter().position(|c| c.contains(&n)))
+            .unwrap_or(999);
+        tracing::info!(
+            "  spawn[{i}] ({:.0},{:.0},{:.0}) node={:?} comp={comp_idx} {}",
+            sp[0],
+            sp[1],
+            sp[2],
+            nearest,
+            if in_main { "[ok]" } else { "[BUG]" }
+        );
+    }
+
+    if built.in_largest < built.total_spawns {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
 /// `generate-map-cache` handler (Plan 18 T3). Synchronous — nav graph generation
 /// is CPU-bound so we run it on plain threads, not tokio tasks.
 fn generate_map_cache(cfg: &Config, map_arg: &str, jobs: Option<usize>, out_dir: &str) -> ExitCode {
@@ -1557,6 +1793,7 @@ async fn main() -> ExitCode {
             )
             .await
         }
+        Cmd::NavDebug { map, pairs } => nav_debug(&cfg, &map, pairs),
         Cmd::GenerateMapCache { map, jobs, out_dir } => {
             generate_map_cache(&cfg, &map, jobs, &out_dir)
         }
@@ -1574,6 +1811,16 @@ async fn main() -> ExitCode {
                     bsp.leafbrushes.len(),
                     bsp.models.len(),
                 );
+                // Entity-class histogram — reveals area-connecting entities
+                // (teleporters, lifts, doors) the nav graph must account for.
+                let mut hist: std::collections::BTreeMap<&str, usize> =
+                    std::collections::BTreeMap::new();
+                for e in &bsp.entities {
+                    *hist.entry(e.classname.as_str()).or_default() += 1;
+                }
+                for (class, n) in &hist {
+                    tracing::info!("  {n:>3}  {class}");
+                }
                 ExitCode::SUCCESS
             }
             Err(e) => {

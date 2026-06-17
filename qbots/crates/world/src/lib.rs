@@ -26,6 +26,6 @@ pub use collision::{
     CONTENTS_WINDOW, MASK_SOLID, MASK_WATER,
 };
 pub use mapcache::{load as load_mapcache, save as save_mapcache, Fingerprint};
-pub use navgraph::{EdgeKind, NavGraph, HULL_MAXS, HULL_MINS};
+pub use navgraph::{walkable_stair, EdgeKind, NavGraph, HULL_MAXS, HULL_MINS, STAIR_MAX, STEP};
 pub use pak::Pak;
 pub use vis::Pvs;

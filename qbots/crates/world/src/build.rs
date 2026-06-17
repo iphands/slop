@@ -8,7 +8,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::bsp::Bsp;
+use crate::bsp::{Bsp, BspEntity};
 use crate::collision::CollisionModel;
 use crate::mapcache::{self, Fingerprint};
 use crate::navgraph::NavGraph;
@@ -17,6 +17,14 @@ use crate::navgraph::NavGraph;
 pub const GRID_SPACING: f32 = 24.0;
 /// Max probe distance (units) for `NavGraph::detect_jump_edges`'s ledge-drop search.
 pub const JUMP_SPACING: f32 = 64.0;
+/// Max horizontal distance (units) for `NavGraph::bridge_components` to stitch two
+/// disconnected-but-walkable fragments. Covers up to ~10 grid cells (GRID_SPACING=24).
+/// Empirically, some q2dm* maps have disconnected floor sections separated by up to
+/// ~300-unit wide areas with no sampled floor nodes (e.g. q2dm2 "The Killing Machine"
+/// has wide open voids around elevator shafts). The hull/stair trace rejects any path
+/// through solid geometry regardless, so a larger radius only attempts more traces.
+/// Must stay in the cache fingerprint so changing it auto-invalidates stale caches.
+pub const BRIDGE_HDIST: f32 = 512.0;
 
 /// Everything a caller needs after building a map's nav graph: the parsed BSP
 /// (for spawn points / entity lookups), the collision model (for traces/LOS),
@@ -65,11 +73,7 @@ pub fn cached_map_nav(
             let added_jumps = 0;
             let (in_largest, total_spawns) =
                 cached_graph.spawns_in_largest_component(&spawn_origins);
-            let largest = cached_graph
-                .components()
-                .into_iter()
-                .next()
-                .unwrap_or_default();
+            let largest = cached_graph.largest_spawn_component(&spawn_origins);
             tracing::info!(
                 map,
                 nodes = cached_graph.node_count(),
@@ -97,9 +101,11 @@ pub fn cached_map_nav(
     // Cache miss (or no cache dir): generate live.
     let mut graph = NavGraph::generate(&cm, bounds, GRID_SPACING);
     let seeded = graph.seed_spawns(&cm, &spawn_origins);
+    add_elevator_edges(&mut graph, &cm, &bsp);
+    graph.bridge_components(&cm, BRIDGE_HDIST);
     let added_jumps = graph.detect_jump_edges(&cm, JUMP_SPACING);
     let (in_largest, total_spawns) = graph.spawns_in_largest_component(&spawn_origins);
-    let largest = graph.components().into_iter().next().unwrap_or_default();
+    let largest = graph.largest_spawn_component(&spawn_origins);
 
     // Save the cache for next time.
     if let Some(dir) = cache_dir {
@@ -142,9 +148,11 @@ pub fn generate_map_nav(baseq2: &Path, map: &str) -> Result<MapNavBuild, String>
 
     let mut graph = NavGraph::generate(&cm, bounds, GRID_SPACING);
     let seeded = graph.seed_spawns(&cm, &spawn_origins);
+    add_elevator_edges(&mut graph, &cm, &bsp);
+    graph.bridge_components(&cm, BRIDGE_HDIST);
     let added_jumps = graph.detect_jump_edges(&cm, JUMP_SPACING);
     let (in_largest, total_spawns) = graph.spawns_in_largest_component(&spawn_origins);
-    let largest = graph.components().into_iter().next().unwrap_or_default();
+    let largest = graph.largest_spawn_component(&spawn_origins);
 
     Ok(MapNavBuild {
         bsp,
@@ -157,6 +165,161 @@ pub fn generate_map_nav(baseq2: &Path, map: &str) -> Result<MapNavBuild, String>
         total_spawns,
         largest,
     })
+}
+
+/// Parse `func_plat` (elevator) entities from the BSP and add nav nodes at the
+/// platform's top and bottom travel positions. Each elevator gets two nodes (top
+/// and bottom of its travel path) wired together and connected to nearby walkable
+/// nodes so the pathfinder can plan "ride the elevator" routes.
+///
+/// Q2DM maps that have no walkable staircase between two floor levels use
+/// `func_plat` as the ONLY vertical connector. Without this, the lower indoor
+/// areas are permanently disconnected from the upper outdoor areas.
+///
+/// Returns the number of elevator edge-pairs added (each pair = 1 top↔bottom edge
+/// plus however many edges connected those nodes to their local nav graphs).
+pub fn add_elevator_edges(graph: &mut NavGraph, cm: &CollisionModel, bsp: &Bsp) -> usize {
+    let mut added = 0;
+    // `func_plat`: auto-lowering platform, rests at top, travels down.
+    for entity in bsp.find_class("func_plat") {
+        if let Some(n) = try_add_plat(graph, cm, bsp, entity) {
+            added += n;
+        }
+    }
+    // `func_door` used as a vertical lift (angle -1 = up, -2 = down). Geometrically
+    // identical to a plat for nav: the brush's top surface occupies two z-levels.
+    // Horizontal doors are skipped — their doorway floor lives in world model 0 and
+    // is already sampled, so they never fragment the graph.
+    for entity in bsp.find_class("func_door") {
+        if let Some(n) = try_add_vertical_door(graph, cm, bsp, entity) {
+            added += n;
+        }
+    }
+    added
+}
+
+/// Resolve an entity's `"model" "*N"` field to its inline BSP model.
+fn entity_model<'a>(bsp: &'a Bsp, entity: &BspEntity) -> Option<&'a crate::bsp::Model> {
+    let model_idx: usize = entity
+        .fields
+        .get("model")
+        .and_then(|s| s.strip_prefix('*'))
+        .and_then(|s| s.trim().parse().ok())?;
+    bsp.models.get(model_idx)
+}
+
+/// Add a two-level vertical lift between top-surface world z-values `z_hi` and `z_lo`
+/// at the brush's XY center: a nav node per level, an edge for the ride itself, and
+/// trace-checked edges from each node to nearby walkable floor nodes. Returns the
+/// number of edges added (≥1 for the ride). `label` is for the debug log.
+fn add_lift(
+    graph: &mut NavGraph,
+    cm: &CollisionModel,
+    model: &crate::bsp::Model,
+    z_hi: f32,
+    z_lo: f32,
+    label: &str,
+) -> usize {
+    let cx = (model.mins[0] + model.maxs[0]) / 2.0;
+    let cy = (model.mins[1] + model.maxs[1]) / 2.0;
+    // Nav node = player origin = floor_surface_z + 24 (hull_mins.z = -24).
+    let top_node = [cx, cy, z_hi + 24.0];
+    let bot_node = [cx, cy, z_lo + 24.0];
+
+    tracing::debug!(cx, cy, z_hi, z_lo, travel = z_hi - z_lo, "{label}");
+
+    let top_idx = graph.add_node(top_node);
+    let bot_idx = graph.add_node(bot_node);
+    graph.add_edge(top_idx, bot_idx, (z_hi - z_lo).abs());
+    let mut n = 1;
+    // Generous radius (256 u): the platform may land away from sampled grid cells.
+    n += graph.connect_node_to_nearby(cm, top_idx, 256.0);
+    n += graph.connect_node_to_nearby(cm, bot_idx, 256.0);
+    n
+}
+
+fn try_add_plat(
+    graph: &mut NavGraph,
+    cm: &CollisionModel,
+    bsp: &Bsp,
+    entity: &BspEntity,
+) -> Option<usize> {
+    let model = entity_model(bsp, entity)?;
+
+    // Travel distance: the platform rests at the TOP in the BSP and travels DOWN.
+    // `lip` is how much it protrudes at the bottom (default 8). If `height` is set
+    // in the entity it overrides the default (model Z extent - lip).
+    // (`g_func.c:SP_func_plat`, lines 822-837.)
+    let lip: f32 = entity
+        .fields
+        .get("lip")
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(8.0_f32);
+    let travel: f32 = entity
+        .fields
+        .get("height")
+        .and_then(|s| s.trim().parse::<f32>().ok())
+        .filter(|&h| h > 0.0)
+        .unwrap_or_else(|| (model.maxs[2] - model.mins[2]) - lip);
+
+    if travel <= 0.0 {
+        return None;
+    }
+    Some(add_lift(
+        graph,
+        cm,
+        model,
+        model.maxs[2],
+        model.maxs[2] - travel,
+        "func_plat elevator bridge",
+    ))
+}
+
+fn try_add_vertical_door(
+    graph: &mut NavGraph,
+    cm: &CollisionModel,
+    bsp: &Bsp,
+    entity: &BspEntity,
+) -> Option<usize> {
+    // `angle` is the special move direction: -1 = up, -2 = down (`G_SetMovedir`,
+    // g_utils.c:381). Anything else is a horizontal door — not a lift; skip it.
+    let angle = entity
+        .fields
+        .get("angle")
+        .and_then(|s| s.trim().parse::<f32>().ok());
+    let dir = match angle {
+        Some(a) if (a - -1.0).abs() < 0.5 => 1.0,  // opens UP
+        Some(a) if (a - -2.0).abs() < 0.5 => -1.0, // opens DOWN
+        _ => return None,
+    };
+
+    let model = entity_model(bsp, entity)?;
+
+    // Travel = size_z - lip (lip default 8 for func_door, `g_func.c:1795-1813`).
+    let lip: f32 = entity
+        .fields
+        .get("lip")
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(8.0_f32);
+    let travel = (model.maxs[2] - model.mins[2]) - lip;
+    if travel <= 0.0 {
+        return None;
+    }
+
+    // The brush's spawn bounds sit at one rest position; the top surface also occupies
+    // `maxs[2] + dir*travel`. The two physical levels are independent of which one is
+    // "open" (DOOR_START_OPEN only swaps the rest pose), so take the hi/lo of the pair.
+    let other = model.maxs[2] + dir * travel;
+    let z_hi = model.maxs[2].max(other);
+    let z_lo = model.maxs[2].min(other);
+    Some(add_lift(
+        graph,
+        cm,
+        model,
+        z_hi,
+        z_lo,
+        "func_door lift bridge",
+    ))
 }
 
 /// Returns `Ok(())` if every DM spawn point is reachable from the largest
@@ -208,7 +371,11 @@ pub fn check_spawn_connectivity(built: &MapNavBuild) -> Result<(), String> {
             sp[2],
             nearest,
             comp_idx,
-            if in_lg { "[ok]" } else { "[BUG: not in largest]" },
+            if in_lg {
+                "[ok]"
+            } else {
+                "[BUG: not in largest]"
+            },
         ));
     }
 
@@ -217,7 +384,10 @@ pub fn check_spawn_connectivity(built: &MapNavBuild) -> Result<(), String> {
         msg.push_str(&format!("\n  component[{i}]: {} nodes", c.len()));
     }
     if comps.len() > 10 {
-        msg.push_str(&format!("\n  ... {} more components omitted", comps.len() - 10));
+        msg.push_str(&format!(
+            "\n  ... {} more components omitted",
+            comps.len() - 10
+        ));
     }
 
     Err(msg)
