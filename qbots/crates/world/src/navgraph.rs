@@ -997,6 +997,25 @@ pub fn walkable_stair(cm: &CollisionModel, lower: [f32; 3], upper: [f32; 3]) -> 
         if h_t.startsolid || h_t.fraction < 1.0 {
             return false;
         }
+        // 3. Floor-existence check: a real staircase tread is within STEP*2 below the
+        //    bot's current position.  A false "folded-staircase" shortcut through open
+        //    staircase air has NO intermediate floor — the nearest floor is the lower
+        //    endpoint, > STEP*2 below at any intermediate step.  Probing STEP*2 down
+        //    (36u) is deep enough to find a tread (the bot's hull min is -24u, so a
+        //    tread surface at hull_min below the origin is found at fraction ≈ 0.67)
+        //    but shallow enough to miss the lower floor at this step height.
+        let floor_probe = cm.trace(
+            &forward,
+            &[forward[0], forward[1], forward[2] - STEP * 2.0],
+            &HULL_MINS,
+            &HULL_MAXS,
+            MASK_SOLID,
+        );
+        if floor_probe.startsolid || floor_probe.fraction >= 1.0 {
+            // startsolid: bot is inside geometry (invalid step position).
+            // fraction=1.0: no floor within STEP*2 below — bot would be floating.
+            return false;
+        }
         pos = forward;
     }
     true
