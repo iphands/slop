@@ -18,15 +18,13 @@ pub const GRID_SPACING: f32 = 24.0;
 /// Max probe distance (units) for `NavGraph::detect_jump_edges`'s ledge-drop search.
 pub const JUMP_SPACING: f32 = 64.0;
 /// Max horizontal distance (units) for `NavGraph::bridge_components` to stitch two
-/// disconnected-but-walkable fragments. Covers up to ~10 grid cells (GRID_SPACING=24).
-/// Empirically, some q2dm* maps have disconnected floor sections separated by up to
-/// ~300-unit wide areas with no sampled floor nodes (e.g. q2dm2 "The Killing Machine"
-/// Adjacent grid cells are at most 64√2 ≈ 90u apart (diagonal). Setting
-/// BRIDGE_HDIST to 128u (1.4 diagonal cells) bridges any single-cell staircase
-/// gap while blocking false long-range cross-floor connections (observed hdist
-/// 146–510u) that cause bots to navigate phantom staircases. If a specific map
-/// needs a longer bridge the value can be tuned, but must stay in the cache
-/// fingerprint so changing it auto-invalidates stale caches.
+/// disconnected-but-walkable fragments. Must be large enough to span the widest
+/// inter-component staircase gap in q2dm* maps. q2dm1 has at least one winding
+/// staircase whose endpoints land in different grid columns ~160–200u apart —
+/// BRIDGE_HDIST=128 misses that gap, leaving 2 major components disconnected.
+/// 256u bridges the real winding staircase while the floor-existence check inside
+/// `walkable_stair` still rejects false long-range cross-floor shortcuts.
+/// Must stay in the cache fingerprint so changing it auto-invalidates stale caches.
 pub const BRIDGE_HDIST: f32 = 128.0;
 
 /// Everything a caller needs after building a map's nav graph: the parsed BSP

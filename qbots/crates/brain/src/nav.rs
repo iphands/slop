@@ -15,7 +15,7 @@ const GOAL_GIVEUP_TICKS: i32 = 30;
 const GIVEUP_BLACKLIST_MAX: usize = 8;
 /// Ledge blacklist cap: persistent within a goal attempt; can be larger because
 /// ledge nodes are confirmed false-edge targets, not just transient obstacles.
-const LEDGE_BLACKLIST_MAX: usize = 32;
+const LEDGE_BLACKLIST_MAX: usize = 64;
 /// Desperate-requery guard (Plan 08 T3): if a risk-weighted path is more than
 /// this many × the straight-line distance, the whole region is hot and we drop
 /// the overlay rather than pay an absurd detour ("desperate re-query with W_d=0").
@@ -77,6 +77,10 @@ pub struct NavigationDriver {
     /// Confirmed false-ledge nodes (dz > LEDGE_DZ orbit-timeout). Larger cap;
     /// persists for the whole goal attempt so A* routes around them every replan.
     ledge_blacklist: std::collections::VecDeque<usize>,
+    /// Specific (prev, dest) edges confirmed to cause falls. More surgical than
+    /// node blacklisting: lets A* still reach `dest` via other incoming edges
+    /// (different approach directions) while avoiding the exact dangerous path.
+    edge_blacklist: HashSet<(usize, usize)>,
 }
 
 impl NavigationDriver {
@@ -94,6 +98,7 @@ impl NavigationDriver {
             prev_waypoint: None,
             waypoint_blacklist: std::collections::VecDeque::new(),
             ledge_blacklist: std::collections::VecDeque::new(),
+            edge_blacklist: HashSet::new(),
         }
     }
 
@@ -176,9 +181,11 @@ impl NavigationDriver {
     /// Also applies the waypoint blacklist to avoid repeatedly-stuck nodes.
     fn plan_path(&self, start: usize, target: usize) -> Option<Vec<usize>> {
         let bl = self.blacklist_set();
-        // No overlay → blacklist-only A*.
+        // No overlay → blacklist-only A* (with edge blacklist applied).
         let Some(overlay) = self.risk_overlay.as_deref() else {
-            return self.nav_graph.path_excluding(start, target, &bl);
+            return self
+                .nav_graph
+                .path_excluding_edges(start, target, &bl, &self.edge_blacklist);
         };
         // Weighted path with blacklist penalty already embedded in the overlay.
         // Build a combined overlay: overlay[n] + PENALTY for blacklisted nodes.
@@ -384,24 +391,35 @@ impl NavigationDriver {
                             tracing::debug!(
                                 horiz, dz, edge_dz,
                                 waypoint = wp_idx,
+                                wp_x = wp_coords[0] as i32,
+                                wp_y = wp_coords[1] as i32,
+                                wp_z = wp_coords[2] as i32,
+                                bot_x = position.x as i32,
+                                bot_y = position.y as i32,
+                                bot_z = position.z as i32,
                                 skip_to = ?skip_idx.map(|i| self.current_path[i]),
                                 "orbit-timeout: fell-off-ledge — skipping to same-floor node"
                             );
+                            // Blacklist the specific EDGE (prev → wp) that caused the
+                            // fall, not the destination node. This lets A* still reach
+                            // wp_idx via other incoming edges (different approach angles)
+                            // while avoiding the exact dangerous staircase approach.
+                            // Only fall back to node-blacklisting when prev is unknown
+                            // (bot fell from the very first path node with no predecessor).
+                            if let Some(prev_idx) = prev_in_path {
+                                self.edge_blacklist.insert((prev_idx, wp_idx));
+                            } else if !self.ledge_blacklist.contains(&wp_idx) {
+                                self.ledge_blacklist.push_back(wp_idx);
+                                if self.ledge_blacklist.len() > LEDGE_BLACKLIST_MAX {
+                                    self.ledge_blacklist.pop_front();
+                                }
+                            }
                             self.near_wp_ticks = 0;
                             if let Some(si) = skip_idx {
                                 self.current_waypoint = Some(self.current_path[si]);
                             } else {
-                                // No same-floor node ahead: the bot fell from a zone
-                                // that the remaining path can't recover from at the
-                                // current Z level. Blacklist the fell-from waypoint so
-                                // the next A* replan routes through a different approach
-                                // to that platform rather than repeating the fall.
-                                if !self.ledge_blacklist.contains(&wp_idx) {
-                                    self.ledge_blacklist.push_back(wp_idx);
-                                    if self.ledge_blacklist.len() > LEDGE_BLACKLIST_MAX {
-                                        self.ledge_blacklist.pop_front();
-                                    }
-                                }
+                                // No same-floor node ahead: force replan so A* finds
+                                // a route that avoids the now-blacklisted fell-from node.
                                 self.current_path.clear();
                                 self.current_waypoint = None;
                                 self.last_goal_node = None;

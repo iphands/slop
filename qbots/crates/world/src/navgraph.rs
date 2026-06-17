@@ -358,6 +358,65 @@ impl NavGraph {
         })
     }
 
+    /// Like `path_excluding` but also penalises specific directed edges `(from, to)`.
+    /// Node blacklist and edge blacklist are applied independently and additively.
+    /// Used by the fell-off-ledge recovery to avoid the exact staircase approach
+    /// that caused a fall without blocking all routes through those nodes.
+    pub fn path_excluding_edges(
+        &self,
+        start: usize,
+        goal: usize,
+        node_bl: &HashSet<usize>,
+        edge_bl: &HashSet<(usize, usize)>,
+    ) -> Option<Vec<usize>> {
+        if node_bl.is_empty() && edge_bl.is_empty() {
+            return self.path(start, goal);
+        }
+        const PENALTY: f32 = 1_000_000.0;
+        if start == goal {
+            return Some(vec![start]);
+        }
+        let n = self.nodes.len();
+        let mut g = vec![f32::INFINITY; n];
+        let mut came: Vec<Option<usize>> = vec![None; n];
+        let mut closed = vec![false; n];
+        g[start] = 0.0;
+        let mut open: BinaryHeap<Reverse<(FOrd, usize)>> = BinaryHeap::new();
+        open.push(Reverse((
+            FOrd(dist(&self.nodes[start], &self.nodes[goal])),
+            start,
+        )));
+
+        while let Some(Reverse((_, cur))) = open.pop() {
+            if cur == goal {
+                return Some(reconstruct(&came, start, goal));
+            }
+            if closed[cur] {
+                continue;
+            }
+            closed[cur] = true;
+            let node_cost = if node_bl.contains(&cur) { PENALTY } else { 0.0 };
+            for &(nb, cost) in &self.adj[cur] {
+                if closed[nb] {
+                    continue;
+                }
+                let edge_cost = if edge_bl.contains(&(cur, nb)) {
+                    PENALTY
+                } else {
+                    0.0
+                };
+                let ng = g[cur] + (cost + node_cost + edge_cost).max(EPS);
+                if ng < g[nb] {
+                    g[nb] = ng;
+                    came[nb] = Some(cur);
+                    let f = ng + dist(&self.nodes[nb], &self.nodes[goal]);
+                    open.push(Reverse((FOrd(f), nb)));
+                }
+            }
+        }
+        None
+    }
+
     /// String-pull smoothing (Plan 14 T1): collapse a grid path into the longest
     /// legal straight runs. From `from` (current bot position), scan forward through
     /// `path`; for each node the LOS trace is clear, keep extending; the first
@@ -576,8 +635,8 @@ impl NavGraph {
     /// the cells exactly on their shared border aren't, the regions never connect even
     /// though a player walks straight across. This pass looks for the *closest* node
     /// pair between two different components within `max_hdist` horizontally and
-    /// `STAIR_MAX` vertically, and adds an edge iff [`walkable_link`] confirms a clear
-    /// hull/stair path. The trace guard makes it impossible to bridge across a wall,
+    /// `STAIR_MAX` vertically, and adds an edge iff `walkable_link_bridge` confirms a
+    /// clear hull/stair path. The trace guard makes it impossible to bridge across a wall,
     /// ceiling, or floor (e.g. the unreachable roof component stays isolated).
     ///
     /// Runs repeatedly to a fixed point: bridging A↔B can expose a now-reachable C.
@@ -655,7 +714,7 @@ impl NavGraph {
                         if h2 > max_h2 {
                             continue;
                         }
-                        if walkable_link(cm, a, b) {
+                        if walkable_stair_link_orig(cm, a, b) {
                             let dz = (b[2] - a[2]).abs();
                             let hdist = h2.sqrt();
                             let slope = if hdist > 0.1 { dz / hdist } else { 999.0 };
@@ -1021,20 +1080,16 @@ pub fn walkable_stair(cm: &CollisionModel, lower: [f32; 3], upper: [f32; 3]) -> 
     true
 }
 
-/// Can a bot walk between two waypoints `a` and `b`? For `|dz| <= STEP` this tries
-/// a direct hull trace, falling back to the step-climb trace (stair risers can clip
-/// the diagonal hull even for small height deltas). For `STEP < |dz| <= STAIR_MAX`
-/// it uses the step-climb trace directly. `|dz| > STAIR_MAX` is rejected as a cliff.
-/// The trace guard means this never reports a link through a wall, ceiling, or floor.
-fn walkable_link(cm: &CollisionModel, a: [f32; 3], b: [f32; 3]) -> bool {
+/// Can a bot walk between `a` and `b` for the purpose of bridging two disconnected
+/// nav-graph components? Uses the same logic as the generate()-phase edge builder:
+/// direct hull trace for small dz, `walkable_stair` (with floor-existence check) for
+/// large dz. This is the only function called by `bridge_pass`.
+fn walkable_stair_link_orig(cm: &CollisionModel, a: [f32; 3], b: [f32; 3]) -> bool {
     let dz = b[2] - a[2];
     if dz.abs() > STAIR_MAX {
         return false;
     }
     if dz.abs() <= STEP {
-        // Try both sweep directions: a swept-box hull trace is not symmetric (the
-        // start box may clip a lip the end box would clear), so a forward block does
-        // not mean the move is impossible — a real player walks it either way.
         let fwd = cm.trace(&a, &b, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
         if !fwd.startsolid && fwd.fraction >= 1.0 {
             return true;

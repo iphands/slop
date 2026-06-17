@@ -111,6 +111,28 @@ pub async fn run_scenario(
         if extra > 0 {
             tracing::info!("seeded scenario goal into nav graph (+{extra} node(s))");
         }
+        // Ensure the goal node is connected to the main component. The normal
+        // BRIDGE_HDIST=128 may not reach a weapon node in an isolated floor pocket
+        // (e.g. a high platform accessible via a staircase that is >128u horizontal
+        // from the weapon origin itself). Run a wider-radius bridge from the goal
+        // node specifically — walkable_stair still filters false connections.
+        if let Some(goal_idx) = graph.nearest(&origin) {
+            let bridged = graph.connect_node_to_nearby(&cm, goal_idx, 384.0);
+            if bridged > 0 {
+                tracing::info!(
+                    goal_idx,
+                    bridged,
+                    "extended bridge: connected scenario goal to nearby nodes"
+                );
+            }
+            // Quick connectivity check: can A* reach goal from spawn?
+            let comps_check = graph.components();
+            let goal_comp = comps_check
+                .iter()
+                .position(|c| c.contains(&goal_idx))
+                .unwrap_or(999);
+            tracing::info!(goal_idx, goal_comp, "weapon goal component after bridging");
+        }
     }
 
     tracing::info!(count = bsp_spawns.len(), "bsp spawn points collected");
@@ -126,7 +148,28 @@ pub async fn run_scenario(
             "nav graph has multiple disconnected components - THIS IS A BUG"
         );
         for (i, c) in comps.iter().take(5).enumerate() {
-            tracing::warn!("  component[{}]: {} nodes", i, c.len());
+            let (mut mnx, mut mny, mut mnz) = (f32::MAX, f32::MAX, f32::MAX);
+            let (mut mxx, mut mxy, mut mxz) = (f32::MIN, f32::MIN, f32::MIN);
+            for &ni in c {
+                let p = graph.nodes[ni];
+                mnx = mnx.min(p[0]);
+                mxx = mxx.max(p[0]);
+                mny = mny.min(p[1]);
+                mxy = mxy.max(p[1]);
+                mnz = mnz.min(p[2]);
+                mxz = mxz.max(p[2]);
+            }
+            tracing::warn!(
+                "  component[{}]: {} nodes bbox x={:.0}..{:.0} y={:.0}..{:.0} z={:.0}..{:.0}",
+                i,
+                c.len(),
+                mnx,
+                mxx,
+                mny,
+                mxy,
+                mnz,
+                mxz
+            );
         }
         for (i, sp) in bsp_spawns.iter().enumerate() {
             if let Some(nearest_idx) = graph.nearest(sp) {
