@@ -25,5 +25,21 @@ T6 requires a live q2dm1 server.
 
 | Run | Command | Reached | Notes |
 |-----|---------|---------|-------|
-| | `spawn-to-spawn --count 8 --max-secs 60` | _/8 | |
-| | `spawn-to-weapon rocketlauncher --count 8 --max-secs 60` | _/8 | |
+| baseline (before fixes) | `spawn-to-spawn --count 8 --max-secs 60` | 1/8 | bots stuck, DEADBAND=4, no blacklisting |
+| baseline (before fixes) | `spawn-to-weapon rocketlauncher --count 8 --max-secs 60` | 0/8 | path_efficiency ~0.2, high wrong_turns |
+| after blacklist+DEADBAND+backoff fixes | `spawn-to-spawn --count 8 --max-secs 60` | 2/8 | GOAL_GIVEUP=30, BackOff timer 8 ticks, blacklisting |
+| after blacklist+DEADBAND+backoff fixes | `spawn-to-weapon rocketlauncher --count 8 --max-secs 60` | 0/8 | mean_speed 67-114, wrong_turns 17-71, still not reaching |
+
+## Bugs found and fixed during T6
+
+| Bug | Symptom | Fix | Commit |
+|-----|---------|-----|--------|
+| BackOffThenRepath cancelled | scenario.rs: nav fwd block AFTER recovery match overwrites -0.5 backward | added `backoff_ticks` counter (8 ticks ≈ 0.8s) so backward motion persists | 4edb5415d |
+| GOAL_GIVEUP infinite loop | bot blacklists waypoint, force_replan clears blacklist → same path → loop | force_replan() does NOT clear blacklist; only goal-reached clears it | 4edb5415d |
+| DEADBAND too small | bots oscillating 9-10 u/s at walls not triggering stuck detection | raised DEADBAND 4→16 | 4edb5415d |
+| STAIR_MAX too small | q2dm3 3/7 spawns reachable (144u staircase pairs skipped at 128 limit) | raised STAIR_MAX 128→160 | 29c782201 |
+
+## Remaining issues
+- spawn-to-spawn 2/8: 6 bots still fail with high wrong_turns (25-93), high bumps (57-120)
+- spawn-to-weapon 0/8: fast bots (mean_speed 78-114) but path_efficiency low (~0.2)
+- Root cause candidates: wrong_turns = circuitous path from overcrowded server bots blocking corridors; high hindered frames from geometry near some spawn points

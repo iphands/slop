@@ -288,3 +288,79 @@ false edges. To determine whether any future map has pairs beyond 160u: run
 ## Sources
 - qbots: `crates/world/src/navgraph.rs` (`STAIR_MAX`, `bridge_pass`, `walkable_stair`)
 - qbots: `context/map_errors.notes.log` (q2dm3 session 2 analysis)
+
+---
+
+# BackOffThenRepath nav-override: recovery backward motion silently cancelled
+
+## Problem
+
+In `scenario.rs`, the recovery action match runs BEFORE the forward-nav block:
+
+```rust
+match rec_action {
+    RecoveryAction::BackOffThenRepath => { mv.move_forward(-0.5); nav.force_replan(); }
+    ...
+}
+// ⚠️ This runs AFTER the match and overwrites -0.5 with positive fwd:
+if fwd > 0.0 || side.abs() > 0.0 {
+    mv.move_forward(fwd * arrive);  // ← cancels the backward motion
+}
+```
+
+`mv.move_forward()` is a setter (not an adder), so the last call wins. Because the
+nav-forward block comes AFTER the recovery match, BackOffThenRepath never actually
+moved the bot backward — the bot stayed glued to the wall, triggering BackOff again
+5 seconds later in an endless loop. `main.rs` doesn't have this bug because its nav
+block is BEFORE the recovery match (correct order), but scenario.rs was written with
+the opposite ordering and the bug went unnoticed since symptom looks like "general
+stuck" rather than "recovery not working."
+
+## Fix / How to avoid
+
+In scenario.rs, add a `backoff_ticks` counter. When `BackOffThenRepath` fires, set
+`backoff_ticks = 8` (≈0.8 s). In the nav-forward block, gate on `!backing_off`:
+
+```rust
+let backing_off = backoff_ticks > 0;
+if backing_off { backoff_ticks -= 1; mv.move_forward(-1.0); }
+else if fwd > 0.0 { mv.move_forward(fwd * arrive); ... }
+```
+
+This ensures the bot sustains backward motion for ~0.8 s before resuming forward nav.
+Whenever you add a recovery action that sets movement, ensure the nav-motion block
+either runs BEFORE (so recovery can override it) or is gated to skip during recovery.
+
+## Sources
+- qbots: `crates/qbots/src/scenario.rs` (BackOffThenRepath match arm + nav-forward block)
+- qbots: `crates/qbots/src/main.rs` (correct ordering — nav fwd set before recovery match)
+
+---
+
+# GOAL_GIVEUP infinite loop: giveup fires → replans same blocked path → loops
+
+## Problem
+
+When a bot is stuck at waypoint N for too long (GOAL_GIVEUP_TICKS), the first
+implementation:
+1. Cleared `current_path`, `current_waypoint`, `last_goal_node`
+2. Called A* again on the next tick with the same nav graph → same path → same waypoint N → fires again in 4 seconds → infinite loop
+
+The bot oscillated between: stuck at N → giveup → replan → same N → stuck → repeat.
+Each cycle wasted 4-8 seconds (GOAL_GIVEUP_TICKS × tick_dt). With 30+ waypoints
+ahead in the path, if the first one is blocked by geometry or another player, the
+bot never makes progress. Symptom: bot remains stationary for the entire 60s test,
+giveup fires ~8 times per minute, speed=0, endless `goal give-up: replanning` logs.
+
+## Fix / How to avoid
+
+On giveup, push the stuck waypoint index into a `waypoint_blacklist: VecDeque<usize>`
+(max 8 entries). Then use `path_excluding()` (A* with 1e6 penalty on blacklisted
+nodes) so the next plan avoids the same node. Clear the blacklist ONLY when the goal
+is successfully reached (not on force_replan or giveup — those must preserve the
+blacklist so alternatives accumulate). GOAL_GIVEUP_TICKS was also reduced 80→30 so
+each reroute attempt costs only 3s instead of 8s.
+
+## Sources
+- qbots: `crates/brain/src/nav.rs` (`GOAL_GIVEUP_TICKS`, `waypoint_blacklist`, `plan_path`, `force_replan`)
+- qbots: `crates/world/src/navgraph.rs` (`path_excluding`, `path_inner`)
