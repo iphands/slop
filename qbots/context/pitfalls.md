@@ -258,3 +258,33 @@ fingerprint so stale caches auto-invalidate. After the fix, regenerate with
 ## Sources
 - qbots: `crates/world/src/navgraph.rs` (`generate()`, `seed_spawns()`, `walkable_stair()`)
 - qbots: `crates/world/src/mapcache.rs` (`Fingerprint::stair_max_bits`)
+
+---
+
+# STAIR_MAX too small for multi-flight staircases — q2dm3 3/7 spawns reachable
+
+## Problem
+
+`STAIR_MAX=42` (original) then `STAIR_MAX=128` (raised in prior fix) were both
+too small for q2dm3 ("The Frag Chamber"). The multi-floor column probe finds two
+floor surfaces at the **same XY** that are 144u apart vertically — the bottom and
+top landings of a staircase flight. In `bridge_components`, pairs with `dz > STAIR_MAX`
+are skipped entirely (the check is cheap, before any trace). With `STAIR_MAX=128`,
+dz=144 pairs were silently dropped, leaving comp1 and comp2 permanently disconnected
+(q2dm3 showed 3/7 spawn points in the largest component — a false NAV BUG report).
+
+Raising to 128 (from 42) fixed q2dm1/2/5/6 but still missed q2dm3's dz=144 pairs.
+This required a second adjustment to 160 before q2dm3 passed.
+
+## Fix
+
+Set `STAIR_MAX = 160.0`. The `walkable_stair` trace is the real gatekeeper: actual
+walls block horizontal sub-traces; stair-riser vertical clearance is not an issue
+(the vertical portion of each step goes through open air in the staircase column).
+A larger STAIR_MAX only causes **more** traces to be attempted — it never creates
+false edges. To determine whether any future map has pairs beyond 160u: run
+`cargo run -p qbots -- nav-debug <map>` and look for `dz=N > STAIR_MAX` lines.
+
+## Sources
+- qbots: `crates/world/src/navgraph.rs` (`STAIR_MAX`, `bridge_pass`, `walkable_stair`)
+- qbots: `context/map_errors.notes.log` (q2dm3 session 2 analysis)
