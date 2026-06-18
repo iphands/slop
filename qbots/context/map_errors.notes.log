@@ -419,3 +419,14 @@ new grid is a big rabbit hole and finer sampling alone does NOT model the drop-o
    + create a landing node if none is sampled).
 3. Connect the ledge → RL (the bending walkable area).
 This is a multi-step nav-graph feature, separate from the now-solved spawn-to-spawn work.
+
+### RESOLVED: why grid changes broke us — the connection RADIUS, not the grid.
+The load-bearing quantity is CONNECT_CELLS × GRID_SPACING (absolute connect radius ~72u),
+NOT the grid spacing itself. My naive 24→16 kept CONNECT_CELLS=3 → radius fell 72→48u →
+under-connection → 16/24. Holding the radius at 72u (e.g. grid=18/CC=4) restores ~20/24.
+Both bigger (80u) and smaller (64u) radii hurt. FIX (committed): CONNECT_RADIUS=72.0 const +
+connect_cells(spacing)=round(72/spacing); generate() derives cells from it, so GRID_SPACING
+is now safe to change and the radius auto-stays correct. Fingerprint keys on CONNECT_RADIUS.
+Residual: even at the correct radius, finer grid is slightly worse (grid=18 ~20/24 vs grid=24
+24/24, ~2× bumps) AND does NOT sample the narrow RL ledge — so finer grid is NOT the RL fix.
+grid=24 remains the best spawn-to-spawn config; the RL needs the targeted drop-onto-ledge work.
