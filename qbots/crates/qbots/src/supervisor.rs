@@ -28,6 +28,10 @@ pub struct MapNav {
     /// rebuilding it.
     pub cm: Arc<world::CollisionModel>,
     pub roam_nodes: Vec<usize>,
+    /// World-model bounds (`models[0].mins/maxs`) — the navmesh backend builds its
+    /// heightfield over this extent. Retained so a `--mode navmesh` bot can build the
+    /// mesh via [`get_or_build_navmesh`] without reparsing the BSP.
+    pub bounds: ([f32; 3], [f32; 3]),
 }
 
 /// Process-wide cache of nav graphs keyed by map name. The first bot to discover
@@ -104,10 +108,13 @@ fn build_map_nav(cfg: &Config, map: &str) -> Option<MapNav> {
         ms = t0.elapsed().as_millis() as u64,
         "nav graph ready"
     );
+    let model = &built.bsp.models[0];
+    let bounds = (model.mins, model.maxs);
     Some(MapNav {
         graph: Arc::new(built.graph),
         cm: built.cm,
         roam_nodes: built.largest,
+        bounds,
     })
 }
 
@@ -216,12 +223,19 @@ struct FleetShared {
     nav: NavCache,
     shutdown: Shutdown,
     stats: FleetStats,
+    /// Navigation backend every bot in this fleet drives (`--mode`).
+    mode: crate::NavMode,
 }
 
 /// Run the full fleet from config: shared nav cache + shutdown, one task per bot,
 /// staggered connects, reconnect-on-disconnect with backoff. Returns when all
-/// bot tasks have exited (typically after shutdown is requested).
-pub async fn run_fleet(cfg: Arc<Config>, addr: SocketAddr) -> std::io::Result<()> {
+/// bot tasks have exited (typically after shutdown is requested). `mode` selects the
+/// navigation backend (`--mode`) for the whole fleet.
+pub async fn run_fleet(
+    cfg: Arc<Config>,
+    addr: SocketAddr,
+    mode: crate::NavMode,
+) -> std::io::Result<()> {
     // Apply the maxclients guard: never spawn more than `max_bots` (leave slots
     // for humans). 0 = uncapped.
     let mut count = cfg.fleet.count;
@@ -252,6 +266,7 @@ pub async fn run_fleet(cfg: Arc<Config>, addr: SocketAddr) -> std::io::Result<()
         nav: nav_cache,
         shutdown: shutdown.clone(),
         stats: stats.clone(),
+        mode,
     };
 
     tracing::info!(count, "launching fleet to {addr}");
@@ -327,6 +342,7 @@ async fn bot_supervisor_loop(
             &shared.nav,
             &shared.shutdown,
             &shared.stats,
+            shared.mode,
         )
         .await
         {
@@ -361,12 +377,13 @@ pub async fn run_single(
     addr: SocketAddr,
     name: &str,
     qport: u16,
+    mode: crate::NavMode,
 ) -> std::io::Result<()> {
     let nav = NavCache::new();
     let shutdown = Shutdown::new();
     let stats = FleetStats::new();
     let _signals = spawn_signal_listener(shutdown.clone());
-    let res = crate::bot_task(addr, name, qport, cfg, &nav, &shutdown, &stats).await;
+    let res = crate::bot_task(addr, name, qport, cfg, &nav, &shutdown, &stats, mode).await;
     // bot_task has disconnected (or errored) — emit the single-bot tally.
     log_final_stats(&stats);
     res

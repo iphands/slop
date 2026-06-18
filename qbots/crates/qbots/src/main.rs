@@ -57,12 +57,21 @@ enum Cmd {
         /// Client qport (defaults to a per-process value; must be unique across bots).
         #[arg(long)]
         qport: Option<u16>,
+        /// Navigation backend: `astar` (waypoint graph, default) or `navmesh` (polygon
+        /// mesh + funnel). The navmesh backend requires `generate-map-cache --map <m>` first.
+        #[arg(long, value_enum, default_value_t = NavMode::Astar)]
+        mode: NavMode,
     },
     /// Launch the full bot fleet from the config's `[fleet]` roster.
     Run {
         /// Server address (defaults to config's server).
         #[arg(long)]
         addr: Option<String>,
+        /// Navigation backend for the whole fleet: `astar` (waypoint graph, default) or
+        /// `navmesh` (polygon mesh + funnel). The navmesh backend requires the map's nav
+        /// cache to be present (`generate-map-cache --map <m>`).
+        #[arg(long, value_enum, default_value_t = NavMode::Astar)]
+        mode: NavMode,
     },
     /// Print the loaded config (server + paths + fleet) and exit.
     Config,
@@ -404,6 +413,7 @@ async fn resolve_addr(addr: &str) -> Result<SocketAddr, String> {
 /// One bot's connection → frames → brain loop. Shares the nav graph via
 /// `nav_cache` (built once per map across the whole fleet) and exits when
 /// `shutdown` is requested or the connection drops.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn bot_task(
     addr: SocketAddr,
     name: &str,
@@ -412,6 +422,7 @@ pub(crate) async fn bot_task(
     nav_cache: &supervisor::NavCache,
     shutdown: &supervisor::Shutdown,
     stats: &supervisor::FleetStats,
+    mode: NavMode,
 ) -> std::io::Result<()> {
     use brain::fsm::{BehaviorIntent, BehaviorState};
     use brain::nav::NavGoal;
@@ -419,7 +430,7 @@ pub(crate) async fn bot_task(
     use brain::steer::{move_from_world_dir, Steering};
     use brain::{
         BotSkill, CombatDriver, DangerDriver, MovementController, MovementIntent, NavigationDriver,
-        Recovery, RecoveryAction,
+        Navigator, NavmeshDriver, Recovery, RecoveryAction,
     };
     use client::{Conn, ConnState};
     use q2proto::Usercmd;
@@ -454,7 +465,14 @@ pub(crate) async fn bot_task(
     let mut move_ctrl = MovementController::new();
     let mut skill = BotSkill::default();
     let mut steering = Steering::new(skill.combat());
-    let mut nav_driver: Option<NavigationDriver> = None;
+    // Boxed behind the `Navigator` trait so the tick loop is backend-agnostic: `--mode`
+    // picks A* (waypoint graph) or navmesh (polygons + funnel) at map load. `+ Send`
+    // because this future is spawned on tokio and holds the driver across awaits.
+    let mut nav_driver: Option<Box<dyn Navigator + Send>> = None;
+    // Roam goals are node indices into the A* graph; the navmesh backend ignores
+    // `NavGoal::Waypoint`, so a navmesh bot resolves them to world positions via this
+    // graph handle. Set alongside `nav_driver` at map load.
+    let mut nav_graph: Option<Arc<world::NavGraph>> = None;
     // Collision model the nav graph was built from — for LOS gating (Plan 11) and
     // reactive wall probes (Plan 13). Set when the map loads.
     let mut collision: Option<Arc<world::CollisionModel>> = None;
@@ -549,8 +567,20 @@ pub(crate) async fn bot_task(
                             // Shared across the fleet: built once per map, reused as Arc.
                             if let Some(map_nav) = nav_cache.get_or_build(cfg, &map) {
                                 roam_nodes = map_nav.roam_nodes.clone();
-                                nav_driver =
-                                    Some(NavigationDriver::new(Arc::clone(&map_nav.graph)));
+                                nav_graph = Some(Arc::clone(&map_nav.graph));
+                                nav_driver = Some(match mode {
+                                    NavMode::Astar => {
+                                        Box::new(NavigationDriver::new(Arc::clone(&map_nav.graph)))
+                                    }
+                                    NavMode::Navmesh => {
+                                        let mesh = supervisor::get_or_build_navmesh(
+                                            &map,
+                                            &map_nav.cm,
+                                            map_nav.bounds,
+                                        );
+                                        Box::new(NavmeshDriver::new(mesh, 16.0))
+                                    }
+                                });
                                 collision = Some(Arc::clone(&map_nav.cm));
                                 heatmap_obs = Some(brain::HeatmapObserver::new(
                                     Arc::clone(&map_nav.graph),
@@ -753,7 +783,15 @@ pub(crate) async fn bot_task(
                                     roam_idx = (roam_idx + roam_nodes.len() / 7 + 1)
                                         % roam_nodes.len();
                                 }
-                                NavGoal::Waypoint(roam_nodes[roam_idx])
+                                let node = roam_nodes[roam_idx];
+                                // The navmesh backend doesn't index the A* graph's nodes, so
+                                // express the roam target as a world position it can path to.
+                                match (mode, nav_graph.as_deref()) {
+                                    (NavMode::Navmesh, Some(g)) => {
+                                        NavGoal::Position(Vec3::from(g.node_pos(node)))
+                                    }
+                                    _ => NavGoal::Waypoint(node),
+                                }
                             } else {
                                 NavGoal::Position(pos)
                             };
@@ -1518,7 +1556,12 @@ async fn main() -> ExitCode {
     };
 
     match cli.cmd {
-        Cmd::ConnectOne { addr, name, qport } => {
+        Cmd::ConnectOne {
+            addr,
+            name,
+            qport,
+            mode,
+        } => {
             let name = name.unwrap_or_else(|| "qbots".to_string());
             let qport = qport.unwrap_or_else(default_qport);
             let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
@@ -1531,7 +1574,7 @@ async fn main() -> ExitCode {
             };
             tracing::info!("connecting '{name}' to {addr} (qport {qport})…  Ctrl-C to stop.");
 
-            match supervisor::run_single(&cfg, addr, &name, qport).await {
+            match supervisor::run_single(&cfg, addr, &name, qport, mode).await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     tracing::error!("{e}");
@@ -1539,7 +1582,7 @@ async fn main() -> ExitCode {
                 }
             }
         }
-        Cmd::Run { addr } => {
+        Cmd::Run { addr, mode } => {
             if !cfg.fleet.enabled() {
                 tracing::error!("no fleet configured — set [fleet].count in config.yaml");
                 return ExitCode::FAILURE;
@@ -1552,7 +1595,7 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            match supervisor::run_fleet(Arc::new(cfg), addr).await {
+            match supervisor::run_fleet(Arc::new(cfg), addr, mode).await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     tracing::error!("{e}");
