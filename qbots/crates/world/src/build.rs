@@ -83,13 +83,6 @@ pub fn cached_map_nav(
 ) -> Result<MapNavBuild, String> {
     let bsp = Bsp::load(baseq2, map)?;
     let cm = Arc::new(CollisionModel::from_bsp(&bsp));
-    let bounds = {
-        let model = bsp
-            .models
-            .first()
-            .ok_or_else(|| format!("BSP for '{map}' has no models"))?;
-        (model.mins, model.maxs)
-    };
     let spawn_origins: Vec<[f32; 3]> = bsp.spawn_points().iter().map(|s| s.origin).collect();
     let fp = Fingerprint::from_bsp(&bsp, lift_penalty, spacing);
 
@@ -122,68 +115,17 @@ pub fn cached_map_nav(
                 largest,
             });
         }
-        tracing::info!(
-            map,
-            "nav graph: no fresh cache — run 'qbots generate-map-cache --map {map}' to speed up future runs"
-        );
     }
 
-    // Cache miss (or no cache dir): generate live. Each phase is timed (debug) so the
-    // dominant cost at any grid spacing is visible — important since fine grids make the
-    // pipeline expensive and we need to know WHICH phase to optimise.
-    macro_rules! timed {
-        ($name:expr, $body:expr) => {{
-            let _t = std::time::Instant::now();
-            let r = $body;
-            tracing::info!(
-                map,
-                phase = $name,
-                ms = _t.elapsed().as_millis() as u64,
-                "build phase"
-            );
-            r
-        }};
-    }
-    let mut graph = timed!("generate", NavGraph::generate(&cm, bounds, spacing));
-    let seeded = timed!("seed_spawns", graph.seed_spawns(&cm, &spawn_origins));
-    timed!(
-        "add_elevator_edges",
-        add_elevator_edges(&mut graph, &cm, &bsp, lift_penalty)
-    );
-    timed!(
-        "bridge_components",
-        graph.bridge_components(&cm, BRIDGE_HDIST)
-    );
-    let pruned = timed!("prune", graph.prune_long_blocked_edges(&cm, PRUNE_MAX_HD));
-    tracing::info!(map, pruned, "pruned long hull-blocked false edges");
-    let added_jumps = timed!(
-        "detect_jump_edges",
-        graph.detect_jump_edges(&cm, JUMP_SPACING)
-    );
-    let (in_largest, total_spawns) = graph.spawns_in_largest_component(&spawn_origins);
-    let largest = graph.largest_spawn_component(&spawn_origins);
-
-    // Save the cache for next time (per-spacing subdir; save() creates parent dirs).
-    if let Some(dir) = cache_dir {
-        let cache_path = dir
-            .join(spacing_subdir(spacing))
-            .join(format!("{map}.qnav"));
-        if let Err(e) = mapcache::save(&cache_path, &graph, &fp) {
-            tracing::warn!(map, "nav graph cache save failed: {e}");
-        }
-    }
-
-    Ok(MapNavBuild {
-        bsp,
-        cm,
-        graph,
-        spawn_origins,
-        seeded,
-        added_jumps,
-        in_largest,
-        total_spawns,
-        largest,
-    })
+    // Load-only: nav graphs are generated AHEAD of time with `generate-map-cache`, NEVER on
+    // demand. A scenario runs `run_scenario` once per bot, so generating here meant N
+    // concurrent regenerations of the same graph plus a cache-file write race. Instead, fail
+    // with a clear instruction so the user generates the cache once, up front.
+    let sp = spacing_subdir(spacing);
+    Err(format!(
+        "no fresh nav-graph cache for '{map}' at spacing {sp}. Generate it first:\n  \
+         qbots generate-map-cache --map {map} --spacing {sp}"
+    ))
 }
 
 /// Run the full build pipeline for `map` under `baseq2`: load the BSP, build the
