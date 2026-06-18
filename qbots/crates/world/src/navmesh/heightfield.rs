@@ -97,8 +97,9 @@ impl Heightfield {
         let dirs = [(1i64, 0i64), (-1, 0), (0, 1), (0, -1)];
 
         // A span is a border if any side lacks a span within STEP (a wall OR a ledge/drop edge).
-        // We erode BOTH so the eroded mesh sits off ledge edges too (bots don't drift off and
-        // fall); intentional drops are re-added as off-mesh links from the full heightfield.
+        // Both are eroded so the eroded mesh sits off ledge edges too (bots don't drift off and
+        // fall). Intentional drops are re-added as off-mesh links from the full heightfield. Use
+        // a small radius (1 cell) so thin ~32u ledges keep a centerline; the RL route depends on it.
         for ci in 0..nx * ny {
             let ix = (ci % nx) as i64;
             let iy = (ci / nx) as i64;
