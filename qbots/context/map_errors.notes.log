@@ -430,3 +430,35 @@ is now safe to change and the radius auto-stays correct. Fingerprint keys on CON
 Residual: even at the correct radius, finer grid is slightly worse (grid=18 ~20/24 vs grid=24
 24/24, ~2× bumps) AND does NOT sample the narrow RL ledge — so finer grid is NOT the RL fix.
 grid=24 remains the best spawn-to-spawn config; the RL needs the targeted drop-onto-ledge work.
+
+---
+
+## 2026-06-17 Session 6 — making the grid changeable (TWO grid-coupled quantities)
+
+Goal: 100% spawn-to-spawn at grid 16/18/20 (so we can later use a finer grid for the RL).
+The user's hypothesis (CORRECT): multiple things must scale with grid, some by fractional
+ratios when the grid doesn't divide evenly.
+
+### Coupling #1 — connection RADIUS (world units), not cell count.
+connect_cells=round(72/spacing) rounded to an integer → wrong radius for grids that don't
+divide 72: grid=16→round(4.5)=5→80u, grid=20→round(3.6)=4→80u; only 18/24 hit 72u.
+FIX (committed): connect_cells=ceil(72/spacing) to over-cover, then generate() filters
+candidates to EXACTLY ±CONNECT_RADIUS (72u) per axis. Radius now identical for every grid.
+Behaviour-preserving at grid=24 (±72u == old ±3 cells, pruned 7544, 24/24).
+
+### Coupling #2 — steering constants are RATIOS to node spacing.
+WP_REACH_HORIZ/WP_REACH_DZ/ORBIT_RADIUS/LOOKAHEAD were tuned for 24u spacing. Held fixed at
+finer grid, the bot advances/looks-ahead too far RELATIVE to waypoint spacing → corner-cuts
++ bumps. grid=18 fixed consts = 14/24; scaled ×0.75 = 22/24. FIX (committed): derive them
+from world::GRID_SPACING (×4 / ×4/3 / ×1 / ×2) so the ratios are fixed. Same 96/32/24/48 at
+grid=24.
+
+### Important caveat — VARIANCE.
+spawn-to-spawn is NOT deterministic: even grid=24 swings 22-24/24 run to run, from bot-on-bot
+collisions (bots stack). So "100%" really means "~24/24 typical". Single-run comparisons
+across grids are noisy; need 2-3 runs each. (Full sweep results appended below once measured.)
+
+### Still TODO for the RL (separate from grid):
+Finer grid (even at correct radius+constants) did NOT sample the narrow RL ledge at the
+points probed — it bends. The RL still needs the drop-onto-ledge feature (sampling + one-way
+drop edge + ledge→RL connectivity). Grid flexibility is the enabler, not the fix itself.
