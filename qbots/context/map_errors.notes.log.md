@@ -563,3 +563,36 @@ remains and blocks fine grids → blocks narrow-ledge sampling → blocks the RL
 needs understanding why denser A* paths put bots where they jam (likely nodes hugging walls/
 corners; the pursue_target_safe fallback aiming at a wall-adjacent node). Open.
 Pure-pursuit is kept regardless (grid=24 win). The RL is still ~4/24.
+
+---
+
+## 2026-06-18 Session 6 — KEY: fine grid opens the RL route (but nav must be reliable)
+
+Decisive finding via `QBOTS_SPACING=12 navinspect ... path`:
+- grid=24: spawn5→RL = 23 hops, detours DOWN off z=920 (the RL platform is poorly connected).
+- grid=12: spawn5→RL = 44 hops but stays ENTIRELY at z=920 — a DIRECT platform route
+  (1879,423,920 → 1759,-9 → 1543,-21 → ... → 715,99 = the RL). The finer sampling connects
+  the z=920 platform that grid=24 misses. So FINER GRID does open the RL (no narrow-ledge
+  drop needed — the platform itself connects).
+
+BUT the weapon test is WORSE at grid=12: RL reach grid=24=6/24 vs grid=12=3/24. Because
+grid=12 NAVIGATION is worse (spawn-to-spawn 24/24 vs ~14/24). The better connectivity is
+cancelled by worse nav. => The RL is gated on grid=12 nav RELIABILITY, not connectivity.
+
+### grid=12 nav: progress + remaining
+Fixes that helped: pure-pursuit steering (grid=24 stable 24/24), corner-escape recovery
+(steer toward find_best_direction's open dir during backoff; grid=12 11→~14-15/24),
+MAX_CONNECT_CELLS=3 (sparse fine graphs, 90→27 edges/node). Tried + reverted: projection-
+sync advance (broke orbit test, marginal), forward-node fallback (neutral/slightly worse).
+
+Remaining grid=12 failure: bots get HINDERED ~20s pressing corner/wall-adjacent nodes;
+high variance (10-18/24); count=10 = 4-8/10 (vs grid=24 10/10), so it's nav quality not
+crowding. The reach/orbit/give-up progress logic is reach-based (density-sensitive) and
+mismatched with pure-pursuit at 32u/tick over 12u nodes. NEXT (proposed): rewrite update()
+progress + give-up to be PROJECTION-based (density-robust), removing the reach/orbit logic.
+Substantial + risks the grid=24 24/24 — flag before doing.
+
+### Infra wins this session (enable fast iteration):
+- --spacing CLI + per-spacing cache dirs (data/mapcache/<spacing>/).
+- cached_map_nav is LOAD-ONLY (fixed N× concurrent regen bug when spawning N bots).
+- parallelized prune/jump/bridge (grid=24 regen 40s→2.6s; grid=12 10m→34s).
