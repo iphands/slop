@@ -19,3 +19,7 @@ path = "src/bin/bsp_verify.rs"
 [[bin]]
 name = "navinspect"
 path = "src/bin/navinspect.rs"
+
+[[bin]]
+name = "gridscan"
+path = "src/bin/gridscan.rs"
