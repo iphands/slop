@@ -25,7 +25,7 @@ pub const JUMP_SPACING: f32 = 64.0;
 /// 256u bridges the real winding staircase while the floor-existence check inside
 /// `walkable_stair` still rejects false long-range cross-floor shortcuts.
 /// Must stay in the cache fingerprint so changing it auto-invalidates stale caches.
-pub const BRIDGE_HDIST: f32 = 128.0;
+pub const BRIDGE_HDIST: f32 = 256.0;
 
 /// Everything a caller needs after building a map's nav graph: the parsed BSP
 /// (for spawn points / entity lookups), the collision model (for traces/LOS),

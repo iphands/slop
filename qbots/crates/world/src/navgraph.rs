@@ -283,6 +283,25 @@ impl NavGraph {
         comps
     }
 
+    /// Number of outgoing edges from node `idx` (for diagnostics).
+    pub fn adj_count(&self, idx: usize) -> usize {
+        self.adj.get(idx).map_or(0, |v| v.len())
+    }
+
+    /// Sorted list of unique Z-levels of all neighbors of node `idx` (for diagnostics).
+    pub fn adj_neighbor_z_levels(&self, idx: usize) -> Vec<i32> {
+        let Some(neighbors) = self.adj.get(idx) else {
+            return vec![];
+        };
+        let mut zs: std::collections::BTreeSet<i32> = std::collections::BTreeSet::new();
+        for &(nb, _) in neighbors {
+            if let Some(p) = self.nodes.get(nb) {
+                zs.insert(p[2] as i32);
+            }
+        }
+        zs.into_iter().collect()
+    }
+
     /// Nearest waypoint to `p` (linear; graphs are modest).
     pub fn nearest(&self, p: &[f32; 3]) -> Option<usize> {
         self.nodes
@@ -444,6 +463,12 @@ impl NavGraph {
         // multi-floor flight).  Ramps on flat terrain accumulate < 24 u per node, so
         // gentle slopes are still smoothable.
         const MAX_SMOOTH_DZ: f32 = 48.0;
+        // Cap horizontal lookahead: point traces clear staircase interiors and
+        // platform voids (the Z-delta cap handles stairs; the hdist cap limits
+        // how far the bot races before it can react to an edge).  5 grid cells
+        // (120u) is enough to shortcut local wall corners without sending the bot
+        // 600u across an open platform toward a distant waypoint it may overshoot.
+        const MAX_SMOOTH_HDIST: f32 = 120.0;
 
         let mut result = Vec::new();
         result.push(path[0]);
@@ -461,6 +486,12 @@ impl NavGraph {
                 // may clear staircase interiors even though the bot can't walk there
                 // directly (it needs the actual stair geometry underfoot).
                 if (candidate[2] - apex[2]).abs() > MAX_SMOOTH_DZ {
+                    break;
+                }
+                // Cap horizontal range: a bot aiming for a far node can overshoot
+                // ledge edges at full speed before it can correct course.
+                let hdist2 = (candidate[0] - apex[0]).powi(2) + (candidate[1] - apex[1]).powi(2);
+                if hdist2 > MAX_SMOOTH_HDIST * MAX_SMOOTH_HDIST {
                     break;
                 }
                 let t = cm.trace(&apex, &candidate, &zero, &zero, MASK_SOLID);
@@ -949,7 +980,22 @@ impl NavGraph {
                 if ng < g[nb] {
                     g[nb] = ng;
                     came[nb] = Some(cur);
-                    let f = ng + dist(&self.nodes[nb], &self.nodes[goal]);
+                    // Penalise nodes that are below the goal height: being
+                    // 1u lower than the goal adds 0.5u to the heuristic.
+                    // This discourages A* from routing DOWN when the goal is
+                    // above the current node (e.g. weapon at z=920 — the
+                    // Euclidean-only heuristic incorrectly prefers z=472 nodes
+                    // that are "closer" in 3D but require a longer actual path).
+                    // Makes the heuristic inadmissible but prevents catastrophic
+                    // down-then-up detours that cost 30-40 s of extra travel.
+                    let goal_z = self.nodes[goal][2];
+                    let nb_z = self.nodes[nb][2];
+                    // Factor ≥2.5 is required: at z=920→weapon the horizontal
+                    // distance savings (1237u→591u) for a z=664 detour outweigh
+                    // a 0.5 factor (128u), so A* still routes down. 3.0 tips
+                    // the balance: 256u drop × 3.0 = 768u > the 646u h-saving.
+                    let vpen = (goal_z - nb_z).max(0.0) * 3.0;
+                    let f = ng + dist(&self.nodes[nb], &self.nodes[goal]) + vpen;
                     open.push(Reverse((FOrd(f), nb)));
                 }
             }
@@ -1102,6 +1148,16 @@ fn walkable_stair_link_orig(cm: &CollisionModel, a: [f32; 3], b: [f32; 3]) -> bo
             return false;
         }
     }
+    // Reject near-vertical edges for bridge_pass: real Q2 staircases have
+    // hdist/dz ≈ 1.0+ (each tread ≈ 18u wide, each riser ≈ 18u tall).
+    // A slope < 0.3 means almost straight up — not a real staircase, so reject.
+    // Known-good NW staircase bridge: hdist=120, dz=102 → slope=1.18 (well above 0.3).
+    let dx = b[0] - a[0];
+    let dy = b[1] - a[1];
+    let hdist = (dx * dx + dy * dy).sqrt();
+    if hdist / dz.abs() < 0.3 {
+        return false;
+    }
     let (lower, upper) = if dz > 0.0 { (a, b) } else { (b, a) };
     walkable_stair(cm, lower, upper)
 }
@@ -1236,20 +1292,21 @@ mod tests {
     // ── smooth_path tests (Plan 14 T1) ──────────────────────────────────────
 
     /// Straight-line path A→B→C in open air: string-pull collapses to [A, C].
+    /// Nodes are 50u apart so the 120u MAX_SMOOTH_HDIST cap can see C from A (100u).
     #[test]
     fn smooth_path_straight_run_collapses() {
         let g = NavGraph::from_raw(
-            vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [200.0, 0.0, 0.0]],
+            vec![[0.0, 0.0, 0.0], [50.0, 0.0, 0.0], [100.0, 0.0, 0.0]],
             vec![
-                vec![(1, 100.0)],
-                vec![(0, 100.0), (2, 100.0)],
-                vec![(1, 100.0)],
+                vec![(1, 50.0)],
+                vec![(0, 50.0), (2, 50.0)],
+                vec![(1, 50.0)],
             ],
         );
         let cm = CollisionModel::half_space([1.0, 0.0, 0.0], -10000.0); // all-clear
         let path = vec![0, 1, 2];
         let smoothed = g.smooth_path(&cm, &path, [0.0, 0.0, 0.0]);
-        // A→C is LOS-clear, so the middle node (1) should be skipped.
+        // A→C (100u < 120u cap) is LOS-clear, so the middle node (1) is skipped.
         assert!(
             smoothed.len() < path.len(),
             "straight run: smoothed path ({}) should be shorter than raw ({})",
@@ -1261,31 +1318,28 @@ mod tests {
 
     /// L-shaped path A→B→C→D in open space (all-clear model): the string-pull
     /// should collapse all intermediate nodes since A has direct LOS to D.
-    /// This verifies maximum compression in obstacle-free environments.
-    /// Note: testing "corner preservation when a wall blocks the shortcut" requires
-    /// a finite-obstacle BSP model; a half_space's PLANE_X shortcut ignores normal
-    /// sign, making negative-normal walls unreliable for this purpose.
+    /// Nodes are 50u apart so A→D diagonal (112u) fits within MAX_SMOOTH_HDIST=120u.
     #[test]
     fn smooth_path_l_shape_open_collapses() {
         let g = NavGraph::from_raw(
             vec![
-                [0.0, 0.0, 0.0],     // 0: A
-                [100.0, 0.0, 0.0],   // 1: B
-                [100.0, 100.0, 0.0], // 2: C
-                [100.0, 200.0, 0.0], // 3: D
+                [0.0, 0.0, 0.0],    // 0: A
+                [50.0, 0.0, 0.0],   // 1: B
+                [50.0, 50.0, 0.0],  // 2: C
+                [50.0, 100.0, 0.0], // 3: D  — A→D = sqrt(50²+100²) ≈ 112u < 120u cap
             ],
             vec![
-                vec![(1, 100.0)],
-                vec![(0, 100.0), (2, 100.0)],
-                vec![(1, 100.0), (3, 100.0)],
-                vec![(2, 100.0)],
+                vec![(1, 50.0)],
+                vec![(0, 50.0), (2, 50.0)],
+                vec![(1, 50.0), (3, 50.0)],
+                vec![(2, 50.0)],
             ],
         );
         // All-clear model: wall at x<-10000 (never in range).
         let cm = CollisionModel::half_space([1.0, 0.0, 0.0], -10000.0);
         let path = vec![0, 1, 2, 3];
         let smoothed = g.smooth_path(&cm, &path, [0.0, 0.0, 0.0]);
-        // All nodes are in LOS from A, so A→D is clear → collapsed to [A, D].
+        // All nodes within 120u of A → collapsed to [A, D].
         assert_eq!(smoothed[0], 0, "first node is A");
         assert_eq!(*smoothed.last().unwrap(), 3, "goal D is preserved");
         assert!(

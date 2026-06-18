@@ -682,7 +682,7 @@ pub(crate) async fn bot_task(
                         last_serverframe = Some(current_sf);
 
                         if let Some(nav) = nav_driver.as_mut() {
-                            nav.update(pos);
+                            nav.update(pos, None);
 
                             // Give-up watchdog: if we've chased this goal too long
                             // without reaching a waypoint, abandon the current

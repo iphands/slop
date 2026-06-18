@@ -132,6 +132,31 @@ pub async fn run_scenario(
                 .position(|c| c.contains(&goal_idx))
                 .unwrap_or(999);
             tracing::info!(goal_idx, goal_comp, "weapon goal component after bridging");
+            // Diagnostic: log adj neighbors of goal node (pos + count)
+            let goal_pos = graph.nodes[goal_idx];
+            let adj_count = graph.adj_count(goal_idx);
+            let neighbor_zs = graph.adj_neighbor_z_levels(goal_idx);
+            tracing::info!(
+                goal_idx,
+                goal_pos = ?[goal_pos[0] as i32, goal_pos[1] as i32, goal_pos[2] as i32],
+                adj_count,
+                neighbor_z_levels = ?neighbor_zs,
+                "goal node adj info"
+            );
+            // Check A* from each spawn to goal
+            for (i, sp) in bsp_spawns.iter().enumerate() {
+                if let Some(sp_idx) = graph.nearest(sp) {
+                    let can_reach = graph.path(sp_idx, goal_idx).is_some();
+                    let sp_pos = graph.nodes[sp_idx];
+                    tracing::info!(
+                        spawn = i,
+                        sp_idx,
+                        sp_pos = ?[sp_pos[0] as i32, sp_pos[1] as i32, sp_pos[2] as i32],
+                        can_reach,
+                        "spawn→goal A* check"
+                    );
+                }
+            }
         }
     }
 
@@ -305,7 +330,7 @@ pub async fn run_scenario(
                             }
 
                             // Drive nav to the goal — no combat.
-                            nav_driver.update(pos);
+                            nav_driver.update(pos, Some(&cm));
                             nav_driver.set_goal(NavGoal::Position(Vec3::from(goal)), pos);
                             nav_driver.smooth_with_cm(&cm, pos);
 
@@ -363,7 +388,11 @@ pub async fn run_scenario(
                                 RecoveryAction::BackOffThenRepath => {
                                     // Hold backward motion for 8 ticks (≈0.8 s) so the
                                     // bot actually clears the wall before nav resumes.
+                                    // If a hull trace confirms the waypoint is physically
+                                    // blocked, blacklist it so the next plan avoids the
+                                    // false edge.
                                     backoff_ticks = 8;
+                                    nav_driver.blacklist_waypoint_if_blocked(pos, &cm);
                                     nav_driver.force_replan();
                                 }
                                 RecoveryAction::UseHeading(yaw) => {

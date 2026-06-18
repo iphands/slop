@@ -3,7 +3,8 @@
 use glam::Vec3;
 use std::collections::HashSet;
 use std::sync::Arc;
-use world::{CollisionModel, EdgeKind, NavGraph};
+use world::{navgraph::{HULL_MAXS, HULL_MINS}, CollisionModel, EdgeKind, NavGraph};
+use world::collision::MASK_SOLID;
 
 /// Hard cap on pursuing a single goal without reaching a waypoint. At 10 Hz
 /// this is ~3 s — past it we blacklist the stuck waypoint and replan around it.
@@ -26,9 +27,10 @@ const DEGEN_MIN_STRAIGHT: f32 = 256.0;
 /// Look-ahead distance for `pursue_target`: steer at a point this far ahead along
 /// the path instead of the raw next node. Cuts corners + reduces grid zig.
 pub const LOOKAHEAD: f32 = 96.0;
-/// Z-aware waypoint-reach threshold (horizontal). Eraser uses `horiz < 12` +
-/// `|dz| < 16`; we loosen slightly for the coarser 64-unit nav graph.
-const WP_REACH_HORIZ: f32 = 16.0;
+/// Z-aware waypoint-reach threshold (horizontal). The nav grid is 24u so a
+/// reach of 24u (exactly one grid cell) handles 300 u/s overshoot (30u/frame)
+/// without skipping across wall boundaries.
+const WP_REACH_HORIZ: f32 = 24.0;
 /// Z-aware waypoint-reach threshold (vertical) — a waypoint **arrival** tolerance,
 /// not a step-climb constant. Larger than Eraser (16 u) to tolerate the coarser
 /// 64-unit grid and step heights on ledges where the bot's XY is already past the
@@ -38,7 +40,10 @@ const WP_REACH_DZ: f32 = 24.0;
 /// Orbit watchdog: if the bot stays within this horizontal radius of the current
 /// waypoint for `ORBIT_FRAMES` ticks without reaching it, force-advance to the next
 /// node. Kills "rotating in one spot" when the node is unreachable by 1-2 u.
-const ORBIT_RADIUS: f32 = 80.0;
+/// Keep small (48u = 2 grid cells) to avoid firing when the bot is genuinely
+/// navigating around a nearby corner — the 5-second StuckLevel::Hard handles
+/// that case with a full replan rather than a premature force-advance.
+const ORBIT_RADIUS: f32 = 48.0;
 /// Ticks close to the current waypoint before we force-advance (1.5 s at 10 Hz).
 const ORBIT_FRAMES: u32 = 15;
 
@@ -147,12 +152,29 @@ impl NavigationDriver {
         else {
             return;
         };
+        let sp = self.nav_graph.nodes[start];
+        tracing::debug!(
+            start,
+            start_pos = ?[sp[0] as i32, sp[1] as i32, sp[2] as i32],
+            "set_goal: planning from start node"
+        );
 
         if let Some(path) = self.plan_path(start, target) {
             self.commit_path(path);
         } else {
             // Different components: path within start's component toward target.
             let target_pos = self.nav_graph.nodes[target];
+            let sc = self.nav_graph.nodes[start];
+            let tc = self.nav_graph.nodes[target];
+            tracing::debug!(
+                start,
+                start_pos = ?[sc[0] as i32, sc[1] as i32, sc[2] as i32],
+                target,
+                target_pos = ?[tc[0] as i32, tc[1] as i32, tc[2] as i32],
+                bl_nodes = self.waypoint_blacklist.len() + self.ledge_blacklist.len(),
+                bl_edges = self.edge_blacklist.len(),
+                "A* failed — falling back to nearest_reachable_from"
+            );
             if let Some(alt) = self.nav_graph.nearest_reachable_from(start, &target_pos) {
                 if let Some(path) = self.plan_path(start, alt) {
                     self.commit_path(path);
@@ -221,9 +243,18 @@ impl NavigationDriver {
     /// Store the path and set the first *meaningful* waypoint (skip the start node,
     /// which is where the bot already is).
     fn commit_path(&mut self, path: Vec<usize>) {
+        let coords: Vec<[i32; 3]> = path
+            .iter()
+            .take(6)
+            .map(|&n| {
+                let p = self.nav_graph.nodes[n];
+                [p[0] as i32, p[1] as i32, p[2] as i32]
+            })
+            .collect();
         tracing::debug!(
             len = path.len(),
-            nodes = ?&path[..path.len().min(12)],
+            nodes = ?&path[..path.len().min(6)],
+            coords = ?coords,
             "commit_path"
         );
         self.current_path = path;
@@ -294,7 +325,7 @@ impl NavigationDriver {
         Some(Vec3::from(self.nav_graph.nodes[last]))
     }
 
-    pub fn update(&mut self, position: Vec3) -> bool {
+    pub fn update(&mut self, position: Vec3, cm: Option<&CollisionModel>) -> bool {
         self.goal_abandoned = false;
 
         if let Some(wp_idx) = self.current_waypoint {
@@ -323,6 +354,27 @@ impl NavigationDriver {
                     // When the bot is close horizontally but far from the waypoint
                     // vertically (dz > 4×WP_REACH_DZ = 96u), two distinct cases apply.
                     const LEDGE_DZ: f32 = WP_REACH_DZ * 4.0; // 96 u threshold
+
+                    // If the bot has climbed significantly ABOVE the waypoint (e.g. rode
+                    // a slope onto the roof) force an immediate replan: force-advancing
+                    // to the next node would send the bot in the wrong direction.
+                    let wp_z = self.nav_graph.nodes[wp_idx][2];
+                    if position.z > wp_z + LEDGE_DZ {
+                        tracing::debug!(
+                            bot_z = position.z as i32,
+                            wp_z = wp_z as i32,
+                            waypoint = wp_idx,
+                            "orbit-timeout: bot above waypoint — replanning"
+                        );
+                        self.near_wp_ticks = 0;
+                        self.current_path.clear();
+                        self.current_waypoint = None;
+                        self.last_goal_node = None;
+                        self.goal_age_ticks = 0;
+                        self.goal_abandoned = true;
+                        return false;
+                    }
+
                     if dz > LEDGE_DZ {
                         let current_idx_opt = self.current_path.iter().position(|&w| w == wp_idx);
                         let prev_in_path = current_idx_opt.and_then(|i| {
@@ -430,6 +482,35 @@ impl NavigationDriver {
                             return false;
                         }
                     }
+                    // Flat-wall check: if the waypoint is blocked by solid geometry
+                    // (same floor level), replanning finds a better route rather than
+                    // force-advancing into an unreachable node.
+                    if let Some(cm) = cm {
+                        let wp_pos = self.nav_graph.nodes[wp_idx];
+                        let bot_pos = [position.x, position.y, position.z];
+                        let t = cm.trace(&bot_pos, &wp_pos, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+                        if !t.startsolid && t.fraction < 0.9 {
+                            tracing::debug!(
+                                horiz, dz,
+                                fraction = t.fraction,
+                                waypoint = wp_idx,
+                                "orbit-timeout: wall blocks waypoint — replanning"
+                            );
+                            self.near_wp_ticks = 0;
+                            if !self.waypoint_blacklist.contains(&wp_idx) {
+                                self.waypoint_blacklist.push_back(wp_idx);
+                                if self.waypoint_blacklist.len() > GIVEUP_BLACKLIST_MAX {
+                                    self.waypoint_blacklist.pop_front();
+                                }
+                            }
+                            self.current_path.clear();
+                            self.current_waypoint = None;
+                            self.last_goal_node = None;
+                            self.goal_age_ticks = 0;
+                            self.goal_abandoned = true;
+                            return false;
+                        }
+                    }
                     tracing::debug!(
                         horiz,
                         dz,
@@ -443,8 +524,16 @@ impl NavigationDriver {
                 let current_idx = self.current_path.iter().position(|&w| w == wp_idx);
                 if let Some(idx) = current_idx {
                     if idx + 1 < self.current_path.len() {
+                        let next_wp = self.current_path[idx + 1];
+                        let nw = self.nav_graph.nodes[next_wp];
+                        tracing::trace!(
+                            from = wp_idx,
+                            to = next_wp,
+                            to_pos = ?[nw[0] as i32, nw[1] as i32, nw[2] as i32],
+                            "wp advance"
+                        );
                         self.prev_waypoint = Some(wp_idx);
-                        self.current_waypoint = Some(self.current_path[idx + 1]);
+                        self.current_waypoint = Some(next_wp);
                     } else {
                         // Reached the goal; clear both blacklists.
                         self.waypoint_blacklist.clear();
@@ -502,6 +591,32 @@ impl NavigationDriver {
         self.last_goal_node = None;
     }
 
+    /// Trace from `position` to the current waypoint. If solid blocks the hull
+    /// path, blacklist the waypoint so the next A* plan routes around the false
+    /// edge. Call this before `force_replan` on BackOffThenRepath to avoid
+    /// blacklisting waypoints that are reachable via a different approach angle.
+    pub fn blacklist_waypoint_if_blocked(&mut self, position: Vec3, cm: &CollisionModel) {
+        let Some(wp_idx) = self.current_waypoint else {
+            return;
+        };
+        let wp_pos = self.nav_graph.nodes[wp_idx];
+        let bot_pos = [position.x, position.y, position.z];
+        let t = cm.trace(&bot_pos, &wp_pos, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+        if !t.startsolid && t.fraction < 0.9 {
+            tracing::debug!(
+                waypoint = wp_idx,
+                fraction = t.fraction,
+                "BackOff: wall blocks waypoint — blacklisting"
+            );
+            if !self.waypoint_blacklist.contains(&wp_idx) {
+                self.waypoint_blacklist.push_back(wp_idx);
+                if self.waypoint_blacklist.len() > GIVEUP_BLACKLIST_MAX {
+                    self.waypoint_blacklist.pop_front();
+                }
+            }
+        }
+    }
+
     pub fn path_length(&self) -> usize {
         self.current_path.len()
     }
@@ -520,6 +635,7 @@ impl NavigationDriver {
             .smooth_path(cm, &self.current_path, [from.x, from.y, from.z]);
         if smoothed.len() < self.current_path.len() {
             let old_wp = self.current_waypoint;
+            let old_len = self.current_path.len();
             self.current_path = smoothed;
             // Re-anchor the current waypoint to the first valid node in the new path.
             let new_wp = if self.current_path.len() > 1 {
@@ -532,6 +648,17 @@ impl NavigationDriver {
             } else {
                 self.current_path.first().copied()
             };
+            let nw = new_wp.map(|n| {
+                let p = self.nav_graph.nodes[n];
+                [p[0] as i32, p[1] as i32, p[2] as i32]
+            });
+            tracing::debug!(
+                old_len,
+                new_len = self.current_path.len(),
+                new_wp = ?new_wp,
+                new_wp_pos = ?nw,
+                "smooth_with_cm: path shortened"
+            );
             self.current_waypoint = new_wp;
         }
     }
