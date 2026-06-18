@@ -720,3 +720,41 @@ location, and walkable_stair's leniency still admits false climbs.
 2. One-way DROP links: model 704→664 as down-only (jump/drop), not a bidirectional stair.
 3. Bridge-point = the real stair entrance, and the funnel must route to it (not cut the wall).
 The navmesh GEOMETRY + funnel are good (smooth paths); stair/ledge correctness is the blocker.
+
+---
+
+## 2026-06-18 Session 7 (cont.3) — navmesh 0 → 10/24; remaining = stair-climb wedges + drops
+
+Big architectural fixes this session took navmesh spawn-to-spawn from 0/24 to **8-10/24**
+(astar 21-24/24). Committed:
+- **climbable_walk**: strict pmove-accurate climb validator (≤STEP rise/8u increment, real
+  tread + hull fit) — replaces walkable_stair's leniency that false-positived 40u ledges.
+- **Cell-step adjacency**: rects connect when their REAL per-cell floors (new `col_floor`,
+  not seed `oz`) are within STEP across a shared edge → staircases link tread-to-tread,
+  >18u ledges don't. Removed the false 664→704 climb; dropped the slow false bridge (21s→fast).
+- **nearest_poly by cell-floor** (not far rect center): fixed spawn6 mapping to a wrong z=824
+  isolated poly (Δz=160). Spawn connectivity 8→9/10.
+- Rectangle merge (34k→550 polys, wide portals → funnel straightens), two-point bridges.
+
+### Remaining failures (count=24 sample, ~14 fails)
+- **Step-climb WEDGE (~50%)**: bot rushes to a low area, wedges at the FIRST ~18u step trying
+  to climb out (e.g. stuck at (359,776,336), goal z=792). navpath from there is a clean gentle
+  climb (336→354→400→446, all ≤18u) — so the PATH is valid, but the bot can't commit up the
+  step. Not falling (no >25u/frame drops). Recovery escapes backward then re-approaches →
+  re-wedge loop. This is fine stair-traversal/approach mechanics (the hard part astar's driver
+  already paid for): the bot needs forward commitment into the step + a stair-aware
+  pursue_target_safe (the diagonal hull trace clips risers → fallback may not drive forward).
+- **z=920 platform isolated (~20%)**: spawns 5/8 on the z=920 platform are comp 9 — it connects
+  DOWN only (a drop >STEP), which cell-step adjacency (climb-only) won't link. Needs one-way
+  DROP links (walk off edge → land below). Bots starting there can't leave.
+
+### Next steps to 24/24
+1. Stair traversal: make the navmesh driver commit forward into ≤STEP steps (don't let the
+   riser-clipping hull trace stall it); possibly densify the path across a step into a short
+   on-surface segment so the bot has a near aim point (like astar's dense stair waypoints).
+2. One-way DROP links for the z=920 platform (and similar): directed high→low edges where a
+   walk-off lands on a lower walkable cell within fall range.
+3. Keep paths a touch off drop edges (without eroding thin ledges like the RL) for momentum
+   margin.
+The navmesh geometry + funnel are sound (when a path is valid the bot glides smoothly); the
+blocker is vertical traversal mechanics. astar stays 24/24, default, untouched.
