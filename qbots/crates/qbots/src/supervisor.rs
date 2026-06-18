@@ -231,14 +231,19 @@ struct FleetShared {
 /// staggered connects, reconnect-on-disconnect with backoff. Returns when all
 /// bot tasks have exited (typically after shutdown is requested). `mode` selects the
 /// navigation backend (`--mode`) for the whole fleet.
+///
+/// `count_override` (CLI `--count`) replaces `[fleet].count`; `name_override` (CLI
+/// `--name`) replaces the roster's naming, yielding `<name>_1`, `<name>_2`, … (1-based).
 pub async fn run_fleet(
     cfg: Arc<Config>,
     addr: SocketAddr,
     mode: crate::NavMode,
+    name_override: Option<String>,
+    count_override: Option<usize>,
 ) -> std::io::Result<()> {
     // Apply the maxclients guard: never spawn more than `max_bots` (leave slots
-    // for humans). 0 = uncapped.
-    let mut count = cfg.fleet.count;
+    // for humans). 0 = uncapped. `--count` overrides the config roster size first.
+    let mut count = count_override.unwrap_or(cfg.fleet.count);
     if cfg.fleet.max_bots > 0 && count > cfg.fleet.max_bots {
         tracing::warn!(
             requested = count,
@@ -273,7 +278,11 @@ pub async fn run_fleet(
 
     let mut tasks = Vec::new();
     for i in 0..count {
-        let name = cfg.fleet.bot_name(i);
+        // `--name foo` → `foo_1, foo_2, …` (1-based); else the config roster name.
+        let name = match name_override.as_deref() {
+            Some(prefix) => format!("{prefix}_{}", i + 1),
+            None => cfg.fleet.bot_name(i),
+        };
         let qport = cfg.fleet.bot_qport(i);
         let cfg = Arc::clone(&cfg);
         let shared = shared.clone();

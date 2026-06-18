@@ -72,6 +72,14 @@ enum Cmd {
         /// cache to be present (`generate-map-cache --map <m>`).
         #[arg(long, value_enum, default_value_t = NavMode::Astar)]
         mode: NavMode,
+        /// Name prefix override; bots are named `<name>_1`, `<name>_2`, … (1-based).
+        /// Defaults to the config's `[fleet].name_prefix` (named `<prefix>0`, `<prefix>1`, …).
+        #[arg(long)]
+        name: Option<String>,
+        /// Number of bots to spawn; overrides `[fleet].count`. Still clamped by
+        /// `[fleet].max_bots` (server maxclients headroom).
+        #[arg(long)]
+        count: Option<usize>,
     },
     /// Print the loaded config (server + paths + fleet) and exit.
     Config,
@@ -1582,9 +1590,19 @@ async fn main() -> ExitCode {
                 }
             }
         }
-        Cmd::Run { addr, mode } => {
-            if !cfg.fleet.enabled() {
-                tracing::error!("no fleet configured — set [fleet].count in config.yaml");
+        Cmd::Run {
+            addr,
+            mode,
+            name,
+            count,
+        } => {
+            // `--count` can enable a fleet even when the config roster is empty (and a
+            // `--count 0` disables one the config would otherwise enable).
+            let fleet_enabled = count.map_or(cfg.fleet.enabled(), |c| c > 0);
+            if !fleet_enabled {
+                tracing::error!(
+                    "no fleet configured — set [fleet].count in config.yaml or pass --count"
+                );
                 return ExitCode::FAILURE;
             }
             let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
@@ -1595,7 +1613,7 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            match supervisor::run_fleet(Arc::new(cfg), addr, mode).await {
+            match supervisor::run_fleet(Arc::new(cfg), addr, mode, name, count).await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     tracing::error!("{e}");
