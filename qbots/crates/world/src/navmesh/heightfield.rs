@@ -5,12 +5,11 @@
 //! (multi-level: Q2 maps stack floors). Built on `CollisionModel` traces — the same
 //! primitive the waypoint graph uses — so it needs no game DLL.
 //!
-//! Walkability is deliberately **not** eroded by the agent radius here: a full-hull fit test
-//! would sever Q2 doorways (a 32u doorway = 2× the hull radius has no cell center where the
-//! ±16u hull fits, so the passage gets cut and the mesh fragments). Instead the mask stays
-//! connected, and wall clearance is enforced later by **insetting portals by the agent
-//! radius in the funnel** — which threads narrow doorways down their centerline rather than
-//! deleting them. `pursue_target_safe` hull-validates the final steering target as a backstop.
+//! `column_floors` does NOT erode (a per-cell hull-fit test severs Q2 doorways — a 32u door's
+//! only hull-fit point is its exact center, unsampled by any grid). Wall clearance is instead a
+//! separate [`Heightfield::erode`] pass: a Recast-style distance field that drops the near-wall
+//! ring (where the hull jams) while keeping passage centerlines, run at a fine `cell_size` so
+//! doorways survive. The funnel's portal inset + `pursue_target_safe` are further backstops.
 
 use rayon::prelude::*;
 
@@ -81,6 +80,7 @@ impl Heightfield {
     /// hull would jam in solid, while a passage's centerline (max distance) survives — so the bot
     /// is routed through hull-fitting space, not pinned to a wall. Use a small `radius_cells`
     /// (≈1) so 32u-wide Q2 doorways (exactly the hull width) keep a centerline.
+    #[allow(clippy::needless_range_loop)] // parallel cell/span arrays read the same index
     pub fn erode(&mut self, radius_cells: u32) {
         use std::collections::VecDeque;
         if radius_cells == 0 {
