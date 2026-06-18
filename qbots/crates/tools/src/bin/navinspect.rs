@@ -109,7 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let t = std::time::Instant::now();
         let hf = world::Heightfield::build(cm, bounds, params);
         let mut mesh = world::NavMesh::build(&hf, params.walkable_climb);
-        let bridged = mesh.bridge_components(cm, 192.0);
+        let bridged = mesh.bridge_components(cm, 256.0);
         let ms = t.elapsed().as_millis();
         let edges: usize = mesh.adj.iter().map(Vec::len).sum();
         let comps = mesh.components();
@@ -181,7 +181,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         let hf = world::Heightfield::build(cm, (model.mins, model.maxs), params);
         let mut mesh = world::NavMesh::build(&hf, params.walkable_climb);
-        mesh.bridge_components(cm, 192.0);
+        mesh.bridge_components(cm, 256.0);
         match mesh.path(s, goal, radius) {
             Some(path) => {
                 let mut total = 0.0;
