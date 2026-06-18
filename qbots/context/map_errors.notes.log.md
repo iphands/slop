@@ -534,3 +534,32 @@ B. A non-graph DIRECT nav mode: when the bot has LOS to the goal/next-far-node, 
    like the z=920 platform once they reach it. Medium; orthogonal to the graph.
 C. Accept the long path: the RL IS reachable (23 hops); the 60s weapon cap is a TEST
    artifact (real DM bots roam continuously and would arrive). Cheapest; least satisfying.
+
+---
+
+## 2026-06-18 Session 6 — (A) density-robust navigation: pure-pursuit
+
+Chose path (A): make path-following density-robust so fine grids (and thus narrow-ledge
+sampling for the RL) become viable.
+
+### DONE: pure-pursuit steering (committed).
+Old steering walked LOOKAHEAD from the current WAYPOINT NODE. New: project the bot onto the
+path polyline (project_onto_path) and aim LOOKAHEAD ahead from the projection (point_ahead).
+Geometric → density-independent. LOOKAHEAD made a FIXED 96u (was grid-scaled, which made fine
+grids jaggier). Win: grid=24 now STABLE 24/24 (was 22-24 variance); path_efficiency on hard
+routes 0.14→0.3-0.5.
+
+### NOT enough for fine grids — a SECOND density effect remains.
+grid=12 with pure-pursuit: still 12-15/24. Failure profile changed: path_efficiency is now
+OK (0.3-0.55, steering IS smooth) but hindered_frames is huge (~250/600 = 25s grounded +
+intending-to-move + speed<100). So bots are PHYSICALLY STUCK, not wandering. Tried a
+projection-based waypoint-advance (give-up reset on projection progress, not reach) — helped
+marginally (13-15) and broke the orbit test; reverted. So the remaining fine-grid failure is
+physical sticking against geometry the denser graph routes bots into, NOT steering or give-up.
+
+### Honest status on the RL via fine grids:
+Pure-pursuit fixed the STEERING half of the density problem. The PHYSICAL-STICKING half
+remains and blocks fine grids → blocks narrow-ledge sampling → blocks the RL. Cracking it
+needs understanding why denser A* paths put bots where they jam (likely nodes hugging walls/
+corners; the pursue_target_safe fallback aiming at a wall-adjacent node). Open.
+Pure-pursuit is kept regardless (grid=24 win). The RL is still ~4/24.
