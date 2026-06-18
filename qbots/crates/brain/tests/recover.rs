@@ -199,13 +199,16 @@ fn reach_mild(rec: &mut Recovery, pos: Vec3) {
 
 /// Advance until the detector reaches Hard, returning the first Hard-level action.
 /// `BackOffThenRepath` resets the detector, so we must capture within the loop.
+/// Mild stuck now also strafes, so for the engaging case (which strafes at Hard too)
+/// we only accept a strafe once enough time has passed to be Hard (≥3.5 s = 35 ticks).
 fn first_hard_action(rec: &mut Recovery, pos: Vec3, engaging: bool) -> RecoveryAction {
-    for _ in 0..80 {
+    for i in 0..80 {
         let action = rec.evaluate(pos, 0.1, None, 0.0, true, engaging);
-        if matches!(
-            action,
-            RecoveryAction::BackOffThenRepath | RecoveryAction::Strafe { .. }
-        ) {
+        if !engaging {
+            if matches!(action, RecoveryAction::BackOffThenRepath) {
+                return action;
+            }
+        } else if i >= 35 && matches!(action, RecoveryAction::Strafe { .. }) {
             return action;
         }
     }
@@ -222,17 +225,17 @@ fn evaluate_not_stuck_returns_none() {
     assert_eq!(action, RecoveryAction::None, "first tick: not stuck");
 }
 
-/// Mild stuck, no CM → no wall check → `Jump`.
+/// Mild stuck → `Strafe` (pogo-jump recovery was removed; a side-step breaks the
+/// stall without bouncing the bot in place or dropping it off a ledge).
 #[test]
-fn evaluate_mild_stuck_jumps() {
+fn evaluate_mild_stuck_strafes() {
     let mut rec = Recovery::new();
     let pos = Vec3::new(50.0, 0.0, 0.0);
     reach_mild(&mut rec, pos);
     let action = rec.evaluate(pos, 0.1, None, 0.0, true, false);
-    assert_eq!(
-        action,
-        RecoveryAction::Jump,
-        "Mild stuck, no wall ahead (no CM) → Jump"
+    assert!(
+        matches!(action, RecoveryAction::Strafe { .. }),
+        "Mild stuck → Strafe; got {action:?}"
     );
 }
 
