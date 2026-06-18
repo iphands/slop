@@ -462,3 +462,35 @@ across grids are noisy; need 2-3 runs each. (Full sweep results appended below o
 Finer grid (even at correct radius+constants) did NOT sample the narrow RL ledge at the
 points probed — it bends. The RL still needs the drop-onto-ledge feature (sampling + one-way
 drop edge + ledge→RL connectivity). Grid flexibility is the enabler, not the fix itself.
+
+---
+
+## 2026-06-18 Session 6 (cont.) — parallelizing the regen pipeline (rayon, ncpus)
+
+Motivation: fine grids make regen brutally slow (grid=12 = 10m32s), blocking experiments.
+A subagent suggested parallelizing the PRUNE; we did, but per-phase timing (new `timed!`
+macro in build.rs) revealed the prune was NEVER the bottleneck (0.09s). The real hogs:
+
+grid=24 phase profile (before → after parallelization):
+- generate:           0.29s (already parallel)
+- bridge_components:  9.0s → 0.49s   (18.5×)
+- prune:              0.09s (parallelized anyway; was a red herring)
+- detect_jump_edges:  28.7s → 1.5s   (19×)  ← the real bottleneck
+
+detect_jump_edges is O(n²): each node does 8 directional probes, each calling nearest()
+(an O(n) linear scan). bridge_pass is the cross-component pair search (walkable_stair
+traces). Both are read-only per-node work → same rayon pattern as the prune:
+  Phase 1 (parallel): per-node classify/collect, all cm.trace/nearest calls fan out across
+    cores (rayon global pool = ncpus). flat_map_iter preserves order.
+  Phase 2 (sequential): apply results in order — distinct node index per list, so keys
+    never collide → byte-identical graph (verified: pruned=7544, added_jumps=35597,
+    in_largest=10/10 all unchanged; new test prune_classify_par_matches_seq).
+
+RESULT: grid=12 full regen 10m32s → **41s** (15×); user=18m26s shows 32-core spread.
+grid=24 pipeline phases ~38s → ~2.4s.
+
+Remaining: detect_jump_edges is still 23s at grid=12 (O(n²) nearest()); a spatial index
+(like bridge_pass's bucket hash) would make it near-linear. Future optimisation.
+
+Caveat unchanged: finer grids still NAVIGATE worse (density), so this speeds up EXPERIMENTS
+but isn't itself the fine-grid-quality fix.
