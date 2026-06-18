@@ -338,3 +338,41 @@ Hypothesis: a finer grid (24→16→12→8) may collapse pre-bridge fragmentatio
 shrink/remove bridging at the root. Added tools/gridscan to measure components vs spacing
 pre-bridge (decisive experiment). gridscan NOT yet run — world crate was mid-refactor
 (did not compile: UnionFind). Run it and fill the table in bridges.md.
+
+---
+
+## 2026-06-17 Session 5 summary — big wins (msec, generate, elevator)
+
+Baseline at session start: spawn-to-spawn ~17-20/32 (53-63%), weapon ~5/32.
+
+Fixes landed this session (each its own commit):
+1. **msec=33 → dt-derived** (THE big one): bots ran at 1/3 speed because usercmd msec was
+   hardcoded. Now full pm_maxspeed. spawn-to-spawn 17→24/32.
+2. **WP_REACH_HORIZ 24→32**: full-speed bots overshot the 24u reach radius (a 1/3-speed
+   tuning artifact). spawn-to-spawn 24→26-28/32.
+3. **Removed pogo-jump recovery**: Mild stuck now strafes, not jump-in-place (the "hover").
+4. **Corner-cut-safe pursue_target**: hull + floor validated steering point so bots don't
+   cut corners into walls or across gaps.
+5. **Connectivity-preserving prune of false bridge edges**: union-find keeps load-bearing
+   bridges, drops redundant false hubs (node 10300: 19→8 edges).
+6. **generate() wider connection (CONNECT_CELLS=3)**: ROOT FIX for the fragmentation the
+   user suspected was a bug. compgaps proved generate missed 934 walkable links (only
+   linked ±1 cell). Now ±3 cells: components 66→31, spawns-in-largest 2/10→8/10, prune
+   14788→2316. Edge count tripled (524k) but A* fine.
+7. **Elevator penalty + --lift-penalty switch**: func_plat deadlock (bots hold the lift up).
+   Interim hack penalises lift ride edges so A* prefers stairs. TODO-marked everywhere +
+   context/elevator_todo.md forcing doc. spawn[3] failures 6→1.
+
+New tools: navinspect, gridscan, compgaps (crates/tools/src/bin/).
+
+Current standing (24 bots, default lift-penalty=5000):
+- spawn-to-spawn: 19-22/24 (79-92%, variance from bot-on-bot collisions)
+- spawn-to-weapon (rocketlauncher): ~5/24 — STILL the laggard
+
+### Remaining frontier: spawn-to-weapon (z=920 climb)
+Low-level spawns (z=352-664) must climb stairs to the weapon at z=920. Bots reach the
+right level then get stuck at z-transition ledges (e.g. stuck at z=792 bumping walls when
+goal is z=472). This is a MOVEMENT-through-transitions problem, not graph connectivity.
+Also: high run-to-run variance suggests bot-stacking collisions matter — fewer bots = higher
+rate. NEXT: investigate the z-transition ledge navigation (descend/ascend smoothing) and
+the weapon-specific path quality.
