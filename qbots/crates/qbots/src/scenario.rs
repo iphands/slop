@@ -707,7 +707,11 @@ fn get_or_build_navmesh(
         ..Default::default()
     };
     let mut hf = world::Heightfield::build(cm, bounds, params);
-    hf.erode((params.agent_radius / params.cell_size).round() as u32);
+    let erode = std::env::var("QBOTS_ERODE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or((params.agent_radius / params.cell_size).round() as u32);
+    hf.erode(erode);
     let mesh = world::NavMesh::build(&hf, params.walkable_climb, Some(cm));
     tracing::info!(
         map,
