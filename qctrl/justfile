@@ -1,7 +1,37 @@
 # qctrl development commands
 
+# node_modules env key: explicit QCTRL_ENV wins, else /etc/os-release ID (gentoo, fedora, ...).
+# Each environment gets its own frontend/node_modules.<env> so native esbuild/rollup
+# binaries are never shared across a bind-mounted host+container (avoids vite SIGSEGV).
+nm_env := env_var_or_default("QCTRL_ENV", `. /etc/os-release 2>/dev/null; echo "${ID:-unknown}"`)
+
+# NOTE: frontend tools run OUTSIDE just (e.g. an IDE) use whatever frontend/node_modules
+# currently points at. Run `just fe-deps` after switching environments if you bypass just.
+
+# Ensure frontend/node_modules points at the per-env tree (installs on first use)
+_nm:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd frontend
+    env="{{nm_env}}"
+    target="node_modules.$env"
+    marker="$target/.qctrl-env"
+    if [ -f "$marker" ]; then
+        ln -sfn "$target" node_modules        # already built: just point at it
+        exit 0
+    fi
+    echo ">> First-time node_modules setup for env '$env' -> $target"
+    rm -rf node_modules                       # drop legacy real dir OR stale symlink (link only)
+    npm ci                                    # installs a fresh REAL ./node_modules
+    mv node_modules "$target"                 # stash under per-env name
+    echo "$env" > "$marker"
+    ln -sfn "$target" node_modules
+
+# Point frontend/node_modules at the current env's tree (installs on first use)
+fe-deps: _nm
+
 # Frontend all-in-one checks
-fe-all:
+fe-all: _nm
     cd frontend && npm run build && npm run lint && npm run testall
 
 # Backend all-in-one checks (fails on any warning)
@@ -11,11 +41,11 @@ be-all:
     RUSTFLAGS="-D warnings" cargo build --release
 
 # Frontend tests
-fe-test:
+fe-test: _nm
     cd frontend && npm run testall
 
 # Frontend build
-fe-build:
+fe-build: _nm
     cd frontend && npm run build
 
 # Rust format all crates
@@ -31,7 +61,7 @@ be-build:
     RUSTFLAGS="-D warnings" cargo build --release
 
 # Full CI check: fmt, clippy, build, frontend tests
-ci:
+ci: _nm
     cargo fmt --check
     cargo clippy --all-targets --all-features -- -D warnings
     RUSTFLAGS="-D warnings" cargo build --release
@@ -46,9 +76,9 @@ be-test:
     cargo test --all-targets --all-features
 
 # Run e2e tests
-fe-e2e:
+fe-e2e: _nm
     cd frontend && node e2e-test.js
 
 # Format and check frontend
-fe-lint:
+fe-lint: _nm
     cd frontend && npm run lint
