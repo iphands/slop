@@ -220,3 +220,38 @@ The staircase path from low-level spawns to z=920 passes through intermediate fl
 some transitions have false edges (walkable_stair accepts them but in-game physics can't navigate).
 When false edges are blacklisted, A* routes through detours that are also invalid.
 Only ~15% of bots (z=920 spawns + lucky low-level paths) successfully navigate in 60s.
+
+---
+
+## 2026-06-17 Session 4 (cont.) — ROOT CAUSE FOUND: usercmd msec was 1/3 speed
+
+### THE BIG ONE: msec hardcoded to 33 → bots moved at 1/3 human speed.
+MovementController::build_cmd set `msec: 33` (a stale "30 Hz client" assumption).
+The bot loop runs at the server's 10 Hz frame cadence (1 usercmd per svc_frame, 100 ms
+apart). Q2 server runs PM_Move once per usercmd with `pml.frametime = cmd.msec * 0.001`,
+so a 33 ms timestep on a 100 ms tick = ONE THIRD of pm_maxspeed. forwardmove was full 320
+the whole time, but the server only integrated 33 ms of it per tick.
+
+### Fix: MovementController::set_msec(dt) called each tick from measured serverframe delta.
+- spawn-to-spawn: 17-20/32 → 24-25/32 (53-63% → 75-78%)
+- spawn-to-weapon: 5/32 → 3-6/32 (no consistent change yet — weapon failures are dominated
+  by low-level-spawn stair-climb false edges, not speed)
+- per-frame mean_speed: 95 → 150-250 u/s (matches a real player now)
+
+### IMPORTANT meta-lesson for future tuning:
+The slow speed MASKED nav bugs and INFLATED the apparent need for several constants.
+Many timeout/giveup/orbit values were tuned against 1/3-speed behavior. Now that speed
+is correct, RE-EVALUATE before trusting old tuning:
+- BackOff is 8 ticks of move_forward(-1.0): was ~85u backward at 1/3 speed, now ~256u at
+  full speed — may overshoot. Watch for bots backing into new problem areas.
+- ORBIT_FRAMES=25 / GOAL_GIVEUP_TICKS=15: tick-based, so unchanged in TIME, but at full
+  speed the bot reaches or hits-wall faster, so giveup/orbit fire less often (good).
+- LOOKAHEAD=96u: covered in 3 ticks now vs 9 — still fine.
+
+### Remaining weapon failures (3-6/32) profile (post-msec-fix):
+Failing bots: hindered_frames 264-385 of ~600 (stuck against walls HALF the run),
+path_efficiency 0.17-0.23, bumps 58-105. These are low-level spawns (z=352-664) whose
+stair-climb route to z=920 hits false nav edges. They press into walls at full speed now
+(bump count went UP because they MOVE faster into the same bad geometry). The real fix
+remains nav graph quality at the staircase transition zones — speed alone can't fix a
+path that routes through a wall.

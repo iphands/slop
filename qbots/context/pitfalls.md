@@ -5,6 +5,52 @@ Template: `# Title → Problem → Fix → Source`.
 
 ---
 
+# usercmd `msec` hardcoded → bots move at 1/3 human speed (and it masks nav bugs)
+
+## Problem
+
+`MovementController` hardcoded `msec = 33` (a "~30 Hz client rate" assumption).
+But the bot loop runs at the **server frame cadence of 10 Hz** (one usercmd per
+`svc_frame`, 100 ms apart). The Q2 server runs `PM_Move` **once per received
+usercmd**, using `cmd.msec` as the physics timestep
+(`pmove.c`: `pml.frametime = pm->cmd.msec * 0.001`). So sending `msec=33` for a
+100 ms tick advanced physics only 33 ms — bots ran at **one-third of
+`pm_maxspeed`** even though `forwardmove` was a full 320.
+
+A real client at 60 fps sends ~6 usercmds per server tick (each `msec≈16`),
+totalling ~96 ms of physics per tick. Our single `msec=33` usercmd is the bug:
+the human covers 3× the ground per server tick.
+
+This is insidious because it **masquerades as a navigation/pathing problem.**
+For weeks the symptom ("bots are slow, path_efficiency is low, they get stuck")
+was chased through nav-graph quality, orbit/giveup tuning, LOOKAHEAD, and
+face_then_go throttling — none of which were the root cause. The slow speed also
+*inflated* the apparent value of timeout/giveup constants (a bot that crawls
+looks "stuck" long before a full-speed bot would).
+
+## Fix / How to avoid
+
+Set `msec` from the **measured server-frame delta** each tick, not a constant:
+`move_ctrl.set_msec(dt)` where `dt = (serverframe_delta * 0.1).clamp(...)`.
+`set_msec` does `(dt_secs * 1000).clamp(1, 250) as u8`. Call it in **both** the
+scenario loop and the main bot loop, right before `build_cmd`.
+
+Result: spawn-to-spawn 17→24/32 (53%→75%); per-frame mean_speed 95→150-250 u/s;
+bots visibly match a real player's run speed.
+
+**General lesson:** when "bots are slow / stuck", FIRST verify the physics
+timestep the server actually integrates (`cmd.msec`) before touching nav/steer
+constants. A wrong `msec` is a single fundamental bug that corrupts BOTH speed
+AND pathing metrics simultaneously.
+
+## Sources
+- qbots: `crates/brain/src/move_ctrl.rs` (`MovementController::set_msec`)
+- qbots: `crates/qbots/src/scenario.rs`, `crates/qbots/src/main.rs` (call sites)
+- vendor: `yquake2/src/common/pmove.c` (`pml.frametime = cmd.msec * 0.001`)
+- vendor: `yquake2/src/server/sv_user.c` (server runs pmove per usercmd)
+
+---
+
 # `delta_angles` rotates every usercmd view angle — aim AND movement
 
 ## Problem
