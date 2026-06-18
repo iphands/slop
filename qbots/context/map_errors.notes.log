@@ -311,3 +311,20 @@ but smoothing reintroduces hull-INVALID shortcuts.
 Prior note claims a full-hull trace here gave 0/8 ("ceiling z=952 startsolid"). That was
 at 1/3 speed — RE-TEST now; do not assume it still holds. Plan: hull-trace smoothing,
 possibly with a slightly inset hull to tolerate exact-fit ceilings/floors.
+
+### Finding 3 — FALSE BRIDGE HUB: walkable_stair false-positives on long spans.
+Wrote crates/tools/src/bin/navinspect — dumps nav nodes+edges near a point with a
+live hull-trace + walkable_stair re-check. Found the spawn[3] (-80,800,472) failure
+cause: node 10300 (1567,543,568) is a FALSE HUB with 19 edges, ~16 of them BLOCKED by
+a live hull trace. The big ones (dz=±80-96, hd=187-255) report stair=OK — i.e.
+walkable_stair APPROVES them — but they are not real staircases (slope 0.32-0.38;
+real q2dm1 stairs are slope ~1.0, hd ≲ 136 for one flight). They were added by
+bridge_components with BRIDGE_HDIST=256 (bumped from 128 to span one real gap). A few
+edges (9583, 9787, 10696) are false by BOTH tests (stair=NO, hull=BLOCKED).
+A* sees 10300's cheap long edges, routes bots through it, they can't traverse → thrash.
+This is THE cause of the clustered goal=(-80,800,472) failures (6 of 7 in one run).
+Root: walkable_stair's step probe passes when sampled points happen to land on
+surfaces across open space; BRIDGE_HDIST=256 lets it span far enough to do real damage.
+FIX PLAN: post-build prune of edges that are hull-BLOCKED AND span hd > a real stair
+flight (≈144). Verify spawn connectivity still holds after pruning (dense 24u grid +
+legit short stairs should keep everything connected).
