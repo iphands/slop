@@ -596,3 +596,16 @@ Substantial + risks the grid=24 24/24 — flag before doing.
 - --spacing CLI + per-spacing cache dirs (data/mapcache/<spacing>/).
 - cached_map_nav is LOAD-ONLY (fixed N× concurrent regen bug when spawning N bots).
 - parallelized prune/jump/bridge (grid=24 regen 40s→2.6s; grid=12 10m→34s).
+
+### grid=12 nav: what works vs what doesn't (clear pattern)
+ARCHITECTURAL fixes worked: pure-pursuit steering (grid=24 stable 24/24), corner-escape
+recovery (grid=12 11→14). PARAMETER/HEURISTIC tweaks ALL hurt or neutral: projection-sync
+advance, forward-node fallback, progress-based give-up reset (dropped grid=24 to 16!),
+wall-avoidance steering (grid=12 9-13). Reason: each tweak FIGHTS the existing reach/orbit/
+give-up progress logic — two progress systems disagreeing at high density. The remaining
+fine-grid stall (bots press corner/wall-adjacent nodes ~20s) needs an ARCHITECTURAL fix:
+REPLACE the reach/orbit/give-up advancement with a single projection-native progress model
+(advance + give-up + reached all driven by the bot's arc-length projection on the path).
+Surgical add-ons to the current logic backfire; only a clean replacement will work. That is
+a substantial, risky rewrite of NavigationDriver::update() — best done as its own plan, not
+at the tail of a huge session. grid=24 stays 24/24; the RL is gated behind it.
