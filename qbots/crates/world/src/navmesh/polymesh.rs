@@ -90,6 +90,9 @@ pub struct NavMesh {
     /// (a's side, then b's), so the bot walks the stair surface. Storing a single midpoint
     /// instead put the pinch INSIDE the step's solid (bot aimed into a wall and wedged).
     bridge_points: std::collections::HashMap<(u32, u32), [[f32; 3]; 2]>,
+    /// `ledge[p]` = rect `p` sits next to a drop (a place to fall off), set from `find_drops`.
+    /// Narrow ledge rects are pinned by the funnel so the bot doesn't get cut off the ledge.
+    ledge: Vec<bool>,
 }
 
 impl NavMesh {
@@ -112,6 +115,15 @@ impl NavMesh {
             self.min[1] + (iy as f32 + 0.5) * self.cell_size,
             z,
         ]
+    }
+
+    /// True if rect `p` is a narrow **flat** ledge (≤3 cells wide, and all its neighbours are at
+    /// roughly its own height — so it's a thin walkway, not a stair step whose neighbours differ
+    /// by ~STEP). The funnel routes through these polys' centers instead of straightening across
+    /// them, so the bot follows a winding thin ledge (the RL route) rather than cutting off it —
+    /// while stairs still straighten normally (pinning them regressed spawn-to-spawn).
+    pub fn is_narrow_ledge(&self, p: usize) -> bool {
+        self.polys[p].w.min(self.polys[p].h) <= 3 && self.ledge.get(p).copied().unwrap_or(false)
     }
 
     /// World position of rectangle `p`'s center (at its height).
@@ -298,8 +310,10 @@ impl NavMesh {
             col_polys,
             col_floor,
             bridge_points: std::collections::HashMap::new(),
+            ledge: Vec::new(),
         };
         mesh.adj = mesh.build_adjacency(cm);
+        mesh.ledge = vec![false; mesh.polys.len()];
         mesh
     }
 
@@ -314,6 +328,7 @@ impl NavMesh {
             let (Some(a), Some(b)) = (self.nearest_poly(edge), self.nearest_poly(land)) else {
                 continue;
             };
+            self.ledge[a] = true; // the high rect sits on a drop edge (a place to fall off)
             if a != b
                 && (self.polys[a].oz - self.polys[b].oz) > STEP
                 && !self.adj[a].contains(&(b as u32))

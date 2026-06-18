@@ -132,6 +132,13 @@ impl NavMesh {
 
         for w in corridor.windows(2) {
             let (a, b) = (w[0], w[1]);
+            // Pin the path to a narrow flat ledge's center so the funnel can't straighten across
+            // and cut the bot off it (stairs are excluded — they straighten normally).
+            if self.is_narrow_ledge(a) {
+                let c = self.poly_center(a);
+                left.push([c[0], c[1]]);
+                right.push([c[0], c[1]]);
+            }
             if !self.grid_adjacent(a, b) {
                 // A bridged stair/ramp link: no shared grid edge. Route the funnel through BOTH
                 // walkable cell centers (a's side, then b's) so the bot walks the stair surface;
