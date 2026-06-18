@@ -166,6 +166,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    // NAVPATH mode: `navinspect <baseq2> <map> navpath <sx> <sy> <sz> <gx> <gy> <gz> [cell]`
+    // Builds the navmesh, plans a funnel path start→goal, and prints the polyline + per-segment
+    // hull-clearance check. Validates Phase 3 (and e.g. RL reachability).
+    if args[3] == "navpath" {
+        let s = [args[4].parse()?, args[5].parse()?, args[6].parse()?];
+        let goal = [args[7].parse()?, args[8].parse()?, args[9].parse()?];
+        let cell: f32 = args.get(10).and_then(|s| s.parse().ok()).unwrap_or(16.0);
+        let model = &built.bsp.models[0];
+        let params = world::VoxelParams {
+            cell_size: cell,
+            ..Default::default()
+        };
+        let hf = world::Heightfield::build(cm, (model.mins, model.maxs), params);
+        let mut mesh = world::NavMesh::build(&hf, params.walkable_climb);
+        mesh.bridge_components(cm, 192.0);
+        match mesh.path(s, goal, params.agent_radius) {
+            Some(path) => {
+                let mut total = 0.0;
+                let mut clear = true;
+                for w in path.windows(2) {
+                    let d = ((w[1][0] - w[0][0]).powi(2)
+                        + (w[1][1] - w[0][1]).powi(2)
+                        + (w[1][2] - w[0][2]).powi(2))
+                    .sqrt();
+                    total += d;
+                    let t = cm.trace(&w[0], &w[1], &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+                    if t.startsolid || t.fraction < 1.0 {
+                        clear = false;
+                    }
+                }
+                println!(
+                    "navpath OK: {} points, length {total:.0}u, all-segments-hull-clear={clear}",
+                    path.len()
+                );
+                for p in &path {
+                    println!("  ({:.0},{:.0},{:.0})", p[0], p[1], p[2]);
+                }
+            }
+            None => println!("navpath: NO PATH (start or goal off-mesh, or disconnected)"),
+        }
+        return Ok(());
+    }
+
     // SCAN mode: `navinspect <baseq2> <map> scan <x0> <y0> <x1> <y1> <zq> <step> <tz> <band>`
     // Floor-probes a grid and prints a heatmap of where walkable floor near `tz` exists and
     // whether it is SAMPLED (a nav node within `step`). 'X' = floor in band + node nearby;

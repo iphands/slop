@@ -130,6 +130,16 @@ impl NavMesh {
         out
     }
 
+    /// True if polys `a` and `b` are 4-neighbour cells (share a grid edge → a real portal).
+    /// Bridged edges connect non-adjacent cells and have no shared edge.
+    pub fn grid_adjacent(&self, a: usize, b: usize) -> bool {
+        let pa = &self.polys[a];
+        let pb = &self.polys[b];
+        let dx = (pa.ix as i64 - pb.ix as i64).abs();
+        let dy = (pa.iy as i64 - pb.iy as i64).abs();
+        dx + dy == 1
+    }
+
     /// A poly is on a component boundary if it has fewer than 4 walked neighbours — i.e. some
     /// grid direction is a wall, drop, or step it can't directly cross. Bridges only need to
     /// start from these, which keeps the (otherwise quadratic) search cheap.

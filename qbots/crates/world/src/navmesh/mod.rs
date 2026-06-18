@@ -11,6 +11,7 @@
 
 pub mod heightfield;
 pub mod polymesh;
+pub mod query;
 
 pub use heightfield::{Heightfield, VoxelParams};
 pub use polymesh::{NavMesh, Poly};
