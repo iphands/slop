@@ -349,11 +349,9 @@ fn orbit_timeout_advances_after_n_ticks_near_waypoint() {
     let mut nav = NavigationDriver::new(Arc::clone(&g));
     nav.set_goal(NavGoal::Waypoint(2), Vec3::ZERO);
 
-    // Simulate hovering at (55, 5, 0) — inside ORBIT_RADIUS=80 of node 1 (50,0,0)
-    // but outside the Z-aware reach gate (horiz=~7 but dz=0, WP_REACH_HORIZ=16 — actually
-    // that would reach it! Use a position that stays outside the strict gate.
-    // horiz to node 1 = sqrt(30² + 0²) = 30 > WP_REACH_HORIZ=16 → not reached.
-    let hover_pos = Vec3::new(20.0, 0.0, 0.0); // 30u horizontal from node 1 at (50,0,0)
+    // Hover inside ORBIT_RADIUS=48 of node 1 (50,0,0) but outside the Z-aware reach
+    // gate (WP_REACH_HORIZ=32): horiz to node 1 = 40 > 32 → not reached, < 48 → orbiting.
+    let hover_pos = Vec3::new(10.0, 0.0, 0.0); // 40u horizontal from node 1 at (50,0,0)
 
     // The nav driver starts at node 0's path; first advance to node 1:
     // Position at (0,0,0) is the start — set_goal commits to node 1 as current_waypoint.

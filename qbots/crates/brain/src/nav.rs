@@ -33,7 +33,7 @@ pub const LOOKAHEAD: f32 = 96.0;
 /// Z-aware waypoint-reach threshold (horizontal). The nav grid is 24u so a
 /// reach of 24u (exactly one grid cell) handles 300 u/s overshoot (30u/frame)
 /// without skipping across wall boundaries.
-const WP_REACH_HORIZ: f32 = 24.0;
+const WP_REACH_HORIZ: f32 = 32.0;
 /// Z-aware waypoint-reach threshold (vertical) — a waypoint **arrival** tolerance,
 /// not a step-climb constant. Larger than Eraser (16 u) to tolerate the coarser
 /// 64-unit grid and step heights on ledges where the bot's XY is already past the
