@@ -6,6 +6,7 @@
 
 mod config;
 mod scenario;
+mod skins;
 mod stats;
 mod status;
 mod supervisor;
@@ -86,6 +87,17 @@ enum Cmd {
         /// reproducible qports.
         #[arg(long)]
         qport_base: Option<u16>,
+        /// Skin for every bot: `model/skin` (e.g. `male/grunt`) or a bare skin name
+        /// resolved to its model (e.g. `sniper` → male/sniper, `cobalt` → female/cobalt).
+        /// Mutually exclusive with the random-skin flags.
+        #[arg(long, group = "skin_sel")]
+        skin: Option<String>,
+        /// Give each bot a random male skin.
+        #[arg(long, group = "skin_sel")]
+        skin_random_male: bool,
+        /// Give each bot a random female skin.
+        #[arg(long, group = "skin_sel")]
+        skin_random_female: bool,
     },
     /// Print the loaded config (server + paths + fleet) and exit.
     Config,
@@ -444,6 +456,7 @@ pub(crate) async fn bot_task(
     addr: SocketAddr,
     name: &str,
     qport: u16,
+    skin: Option<&str>,
     cfg: &Config,
     nav_cache: &supervisor::NavCache,
     shutdown: &supervisor::Shutdown,
@@ -476,6 +489,11 @@ pub(crate) async fn bot_task(
     let sock = UdpSocket::bind("0.0.0.0:0").await?;
     sock.connect(addr).await?;
     let mut conn = Conn::new(addr, name, qport);
+    if let Some(s) = skin {
+        // Userinfo skin is sent in the `connect` handshake, so set it before `start`.
+        conn.userinfo.set("skin", s);
+        tracing::info!(skin = s, "using skin");
+    }
 
     if let Some(pkt) = conn.start() {
         sock.send(&pkt).await?;
@@ -1614,6 +1632,9 @@ async fn main() -> ExitCode {
             name,
             count,
             qport_base,
+            skin,
+            skin_random_male,
+            skin_random_female,
         } => {
             // `--count` can enable a fleet even when the config roster is empty (and a
             // `--count 0` disables one the config would otherwise enable).
@@ -1624,6 +1645,19 @@ async fn main() -> ExitCode {
                 );
                 return ExitCode::FAILURE;
             }
+            let skin_sel = match skins::SkinSelection::from_cli(
+                &cfg.paths.baseq2,
+                skin.as_deref(),
+                skin_random_male,
+                skin_random_female,
+            ) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("{e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            tracing::info!(?skin_sel, "fleet skin selection");
             let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
             let addr = match resolve_addr(&addr_str).await {
                 Ok(a) => a,
@@ -1632,7 +1666,17 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            match supervisor::run_fleet(Arc::new(cfg), addr, mode, name, count, qport_base).await {
+            match supervisor::run_fleet(
+                Arc::new(cfg),
+                addr,
+                mode,
+                name,
+                count,
+                qport_base,
+                skin_sel,
+            )
+            .await
+            {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     tracing::error!("{e}");

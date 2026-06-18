@@ -37,6 +37,7 @@ export interface StatusResponse {
   dmflags?: number;
   timelimit?: number;
   fraglimit?: number;
+  maxclients?: number;
 }
 
 export interface QueueStatus {

@@ -36,6 +36,7 @@ pub struct StatusResponse {
     pub dmflags: Option<i32>,
     pub timelimit: Option<i32>,
     pub fraglimit: Option<i32>,
+    pub maxclients: Option<i32>,
     pub players: Vec<Player>,
 }
 
@@ -60,10 +61,11 @@ pub fn parse_status_output(output: &str) -> Result<StatusResponse, StatusParseEr
         }
     }
 
-    // Second pass: parse server settings (dmflags, timelimit, fraglimit)
+    // Second pass: parse server settings (dmflags, timelimit, fraglimit, maxclients)
     let mut dmflags: Option<i32> = None;
     let mut timelimit: Option<i32> = None;
     let mut fraglimit: Option<i32> = None;
+    let mut maxclients: Option<i32> = None;
 
     for line in &lines {
         let line = line.trim();
@@ -100,6 +102,17 @@ pub fn parse_status_output(output: &str) -> Result<StatusResponse, StatusParseEr
                 if value_end > 0 {
                     if let Ok(val) = rest[..value_end].trim().parse() {
                         fraglimit = Some(val);
+                    }
+                }
+            }
+        }
+        if search_line.contains(r"\maxclients\") {
+            if let Some(start) = search_line.find(r"\maxclients\") {
+                let rest = &search_line[start + 12..];
+                let value_end = rest.find('\\').unwrap_or(rest.len());
+                if value_end > 0 {
+                    if let Ok(val) = rest[..value_end].trim().parse() {
+                        maxclients = Some(val);
                     }
                 }
             }
@@ -169,6 +182,7 @@ pub fn parse_status_output(output: &str) -> Result<StatusResponse, StatusParseEr
         dmflags,
         timelimit,
         fraglimit,
+        maxclients,
         players,
     })
 }
@@ -280,6 +294,7 @@ map              : q2dm1
         assert_eq!(result.dmflags, None);
         assert_eq!(result.timelimit, None);
         assert_eq!(result.fraglimit, None);
+        assert_eq!(result.maxclients, None);
         assert_eq!(result.players.len(), 0);
     }
 
@@ -288,7 +303,7 @@ map              : q2dm1
         let output = r#"
 --- server status ----------------------------------------------------------------
 map              : q2dm1
-\dmflags\256\timelimit\20\fraglimit\50
+\dmflags\256\timelimit\20\fraglimit\50\maxclients\64
 "#;
 
         let result = parse_status_output(output).unwrap();
@@ -296,6 +311,7 @@ map              : q2dm1
         assert_eq!(result.dmflags, Some(256));
         assert_eq!(result.timelimit, Some(20));
         assert_eq!(result.fraglimit, Some(50));
+        assert_eq!(result.maxclients, Some(64));
         assert_eq!(result.players.len(), 0);
     }
 

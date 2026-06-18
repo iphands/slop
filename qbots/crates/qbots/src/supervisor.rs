@@ -245,6 +245,7 @@ pub async fn run_fleet(
     name_override: Option<String>,
     count_override: Option<usize>,
     qport_base_override: Option<u16>,
+    skin: crate::skins::SkinSelection,
 ) -> std::io::Result<()> {
     // Apply the maxclients guard: never spawn more than `max_bots` (leave slots
     // for humans). 0 = uncapped. `--count` overrides the config roster size first.
@@ -285,6 +286,8 @@ pub async fn run_fleet(
     let qport_base = qport_base_override.unwrap_or_else(crate::default_fleet_qport_base);
     tracing::info!(count, qport_base, "launching fleet to {addr}");
 
+    // One RNG for the whole fleet so random skins vary bot-to-bot within this run.
+    let mut skin_rng = crate::skins::Rng::new();
     let mut tasks = Vec::new();
     for i in 0..count {
         // `--name foo` → `foo_1, foo_2, …` (1-based); else the config roster name.
@@ -293,10 +296,12 @@ pub async fn run_fleet(
             None => cfg.fleet.bot_name(i),
         };
         let qport = qport_base.wrapping_add(i as u16);
+        // Drawn once per bot (kept across reconnects); `None` keeps the userinfo default.
+        let bot_skin = skin.per_bot(&mut skin_rng);
         let cfg = Arc::clone(&cfg);
         let shared = shared.clone();
         tasks.push(tokio::spawn(async move {
-            bot_supervisor_loop(addr, name, qport, cfg, shared, reconnect).await;
+            bot_supervisor_loop(addr, name, qport, bot_skin, cfg, shared, reconnect).await;
         }));
         // Stagger connects so we don't burst the server's connectionless handler.
         time::sleep(Duration::from_millis(stagger)).await;
@@ -338,10 +343,12 @@ pub async fn run_fleet(
 
 /// Per-bot supervisor: run `bot_task`, and if it exits due to a disconnect
 /// (not shutdown), reconnect with exponential backoff up to `max_reconnects`.
+#[allow(clippy::too_many_arguments)]
 async fn bot_supervisor_loop(
     addr: SocketAddr,
     name: String,
     qport: u16,
+    skin: Option<String>,
     cfg: Arc<Config>,
     shared: FleetShared,
     reconnect: Reconnect,
@@ -356,6 +363,7 @@ async fn bot_supervisor_loop(
             addr,
             &name,
             qport,
+            skin.as_deref(),
             &cfg,
             &shared.nav,
             &shared.shutdown,
@@ -401,7 +409,7 @@ pub async fn run_single(
     let shutdown = Shutdown::new();
     let stats = FleetStats::new();
     let _signals = spawn_signal_listener(shutdown.clone());
-    let res = crate::bot_task(addr, name, qport, cfg, &nav, &shutdown, &stats, mode).await;
+    let res = crate::bot_task(addr, name, qport, None, cfg, &nav, &shutdown, &stats, mode).await;
     // bot_task has disconnected (or errored) — emit the single-bot tally.
     log_final_stats(&stats);
     res

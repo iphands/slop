@@ -56,7 +56,7 @@ export function Dashboard() {
         <div className="grid grid-cols-2 gap-4">
           <div className="p-3 bg-gray-700 rounded">
             <div className="text-sm text-gray-400">Players</div>
-            <div className="text-xl font-bold">{players.length}/25</div>
+            <div className="text-xl font-bold">{players.length}/{status?.maxclients ?? '—'}</div>
           </div>
           <div className="p-3 bg-gray-700 rounded">
             <div className="text-sm text-gray-400">Map</div>
