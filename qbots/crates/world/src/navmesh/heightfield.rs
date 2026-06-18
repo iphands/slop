@@ -1,19 +1,21 @@
 //! Phase 1 — voxel heightfield of walkable spans.
 //!
 //! Rasterizes the map into a grid of columns at `cell_size`. Each column holds the
-//! player-origin Z of every surface the player **hull fits on** (multi-level: Q2 maps stack
-//! floors). Built on `CollisionModel` traces — the same primitive the waypoint graph uses —
-//! so it needs no game DLL. The full-hull "stand" test means a cell is walkable only where
-//! the ±16u hull fits, which **erodes the walkable area by the agent radius for free**: the
-//! navmesh built from these cells sits ≥16u off every wall, so funnel paths never scrape.
+//! player-origin Z of every surface with a solid floor and player-height **headroom**
+//! (multi-level: Q2 maps stack floors). Built on `CollisionModel` traces — the same
+//! primitive the waypoint graph uses — so it needs no game DLL.
 //!
-//! Mirrors `navgraph::floor_waypoints_multi` deliberately (the navmesh module stays
-//! self-contained) but yields a dense grid rather than sparse waypoints.
+//! Walkability is deliberately **not** eroded by the agent radius here: a full-hull fit test
+//! would sever Q2 doorways (a 32u doorway = 2× the hull radius has no cell center where the
+//! ±16u hull fits, so the passage gets cut and the mesh fragments). Instead the mask stays
+//! connected, and wall clearance is enforced later by **insetting portals by the agent
+//! radius in the funnel** — which threads narrow doorways down their centerline rather than
+//! deleting them. `pursue_target_safe` hull-validates the final steering target as a backstop.
 
 use rayon::prelude::*;
 
 use crate::collision::{CollisionModel, MASK_SOLID, MASK_WATER};
-use crate::navgraph::{HULL_MAXS, HULL_MINS, STEP};
+use crate::navgraph::STEP;
 
 /// Build-time voxelization parameters. `cell_size` is a *resolution* knob (finer = more
 /// build cost, NOT worse navigation). `walkable_climb`/`agent_radius` are consumed by later
@@ -102,11 +104,15 @@ impl Heightfield {
 }
 
 /// Probe one column for every walkable floor (player-origin Z). Downward point-traces find
-/// each solid floor top; the full-hull stand test keeps only floors where the ±16×56 player
-/// hull fits (headroom + radius erosion). Then it steps down through the solid into the next
-/// cavity and repeats, up to `MAX_FLOORS` stacked levels.
+/// each solid floor top; a point **headroom** trace keeps only floors with the player's full
+/// 56u standing height clear above (rejects crawlspaces / low ceilings) and non-liquid. No
+/// horizontal hull test (that would erode doorways — see module docs). Then it steps down
+/// through the solid into the next cavity and repeats, up to `MAX_FLOORS` stacked levels.
 fn column_floors(cm: &CollisionModel, x: f32, y: f32, bounds: ([f32; 3], [f32; 3])) -> Vec<f32> {
     const MAX_FLOORS: usize = 8;
+    // Player hull is -24..+32 (56u tall). Standing at origin = floor + 24, the head reaches
+    // floor + 56. Require that column clear of solid (with a small slack off the surfaces).
+    const PLAYER_HEIGHT: f32 = 56.0;
     let zero = [0.0f32; 3];
     let floor_min_z = bounds.0[2] - 200.0;
     let mut probe_z = bounds.1[2] + 200.0;
@@ -122,12 +128,12 @@ fn column_floors(cm: &CollisionModel, x: f32, y: f32, bounds: ([f32; 3], [f32; 3
 
         let floor_z = down.endpos[2];
         let oz = floor_z + 24.0; // player origin sits 24u above the floor (hull mins.z = -24)
-        let stand_pos = [x, y, oz];
-        if cm.point_contents(&stand_pos) & MASK_WATER == 0 {
-            let stand = cm.trace(&stand_pos, &stand_pos, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
-            if !stand.startsolid {
-                out.push(oz);
-            }
+        let head_bot = [x, y, floor_z + 2.0];
+        let head_top = [x, y, floor_z + PLAYER_HEIGHT];
+        let up = cm.trace(&head_bot, &head_top, &zero, &zero, MASK_SOLID);
+        let headroom = up.fraction >= 1.0 && !up.startsolid;
+        if headroom && cm.point_contents(&[x, y, oz]) & MASK_WATER == 0 {
+            out.push(oz);
         }
 
         // Step down through the solid brush we just landed on to find the next cavity.

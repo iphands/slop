@@ -94,6 +94,76 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    // NAVMESH mode: `navinspect <baseq2> <map> navmesh [cell_size]`
+    // Builds heightfield → polygon navmesh and reports poly/portal counts, component count,
+    // and whether all DM spawns land in ONE component (the navmesh analog of
+    // check_spawn_connectivity). The spike's Phase 2 validation.
+    if args[3] == "navmesh" {
+        let cell: f32 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(16.0);
+        let model = &built.bsp.models[0];
+        let bounds = (model.mins, model.maxs);
+        let params = world::VoxelParams {
+            cell_size: cell,
+            ..Default::default()
+        };
+        let t = std::time::Instant::now();
+        let hf = world::Heightfield::build(cm, bounds, params);
+        let mesh = world::NavMesh::build(&hf, params.walkable_climb);
+        let ms = t.elapsed().as_millis();
+        let edges: usize = mesh.adj.iter().map(Vec::len).sum();
+        let comps = mesh.components();
+        println!(
+            "navmesh map={map} cell={cell} polys={} portals={} components={} build={ms}ms",
+            mesh.polys.len(),
+            edges / 2,
+            comps.len()
+        );
+        // Spawn connectivity: map each DM spawn to its nearest poly + component.
+        let mut comp_of = vec![usize::MAX; mesh.polys.len()];
+        for (ci, c) in comps.iter().enumerate() {
+            for &p in c {
+                comp_of[p] = ci;
+            }
+        }
+        let mut spawn_comps = std::collections::BTreeMap::new();
+        let mut unmapped = 0;
+        for (si, sp) in built.spawn_origins.iter().enumerate() {
+            match mesh.nearest_poly(*sp) {
+                Some(p) => {
+                    let c = comp_of[p];
+                    *spawn_comps.entry(c).or_insert(0) += 1;
+                    println!(
+                        "  spawn[{si}] ({:.0},{:.0},{:.0}) → poly {p} comp {c} (size {})",
+                        sp[0],
+                        sp[1],
+                        sp[2],
+                        comps[c].len()
+                    );
+                }
+                None => unmapped += 1,
+            }
+        }
+        println!(
+            "  {} DM spawns → components {:?} (unmapped={unmapped})",
+            built.spawn_origins.len(),
+            spawn_comps
+        );
+        let biggest = comps.iter().map(Vec::len).max().unwrap_or(0);
+        println!(
+            "  largest component = {biggest} polys ({:.0}% of mesh)",
+            100.0 * biggest as f32 / mesh.polys.len().max(1) as f32
+        );
+        if spawn_comps.len() == 1 && unmapped == 0 {
+            println!("  OK: all spawns in ONE component");
+        } else {
+            println!(
+                "  WARN: spawns split across {} components",
+                spawn_comps.len()
+            );
+        }
+        return Ok(());
+    }
+
     // SCAN mode: `navinspect <baseq2> <map> scan <x0> <y0> <x1> <y1> <zq> <step> <tz> <band>`
     // Floor-probes a grid and prints a heatmap of where walkable floor near `tz` exists and
     // whether it is SAMPLED (a nav node within `step`). 'X' = floor in band + node nearby;

@@ -28,6 +28,6 @@ pub use collision::{
 };
 pub use mapcache::{load as load_mapcache, save as save_mapcache, Fingerprint};
 pub use navgraph::{walkable_stair, EdgeKind, NavGraph, HULL_MAXS, HULL_MINS, STAIR_MAX, STEP};
-pub use navmesh::{Heightfield, VoxelParams};
+pub use navmesh::{Heightfield, NavMesh, VoxelParams};
 pub use pak::Pak;
 pub use vis::Pvs;
