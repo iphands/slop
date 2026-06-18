@@ -29,13 +29,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let map = &args[2];
 
     let cache = Path::new("data/mapcache");
-    let built = cached_map_nav(
-        baseq2,
-        map,
-        Some(cache),
-        world::ELEVATOR_PENALTY,
-        world::GRID_SPACING,
-    )?;
+    // Inspect a non-default grid via `QBOTS_SPACING=12 navinspect ...` (loads that
+    // spacing's cache subdir), so the tool matches whatever spacing the run used.
+    let spacing: f32 = std::env::var("QBOTS_SPACING")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(world::GRID_SPACING);
+    let built = cached_map_nav(baseq2, map, Some(cache), world::ELEVATOR_PENALTY, spacing)?;
     let g = &built.graph;
     let cm = &built.cm;
 

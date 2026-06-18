@@ -41,7 +41,7 @@ const MAGIC: &[u8; 7] = b"QBNAVC2";
 // (lift_penalty_bits); fingerprint is now 48 bytes. Older caches auto-rejected.
 // Version 8: prune_long_blocked_edges also drops FLAT hull-blocked edges (false
 // same-level wall-crossings), not just long ones. Algorithm change → invalidate caches.
-const VERSION: u8 = 11;
+const VERSION: u8 = 12;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]

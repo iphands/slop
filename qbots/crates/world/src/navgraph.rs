@@ -40,14 +40,19 @@ pub const STAIR_MAX: f32 = 160.0;
 /// In the cache fingerprint so changing it invalidates stale caches.
 pub const CONNECT_RADIUS: f32 = 72.0;
 
-/// Number of grid cells to scan per axis to fully COVER [`CONNECT_RADIUS`] at a given
-/// `spacing`. Uses `ceil` (not `round`) so the scan always reaches ≥ the radius; the
-/// generate() loop then filters candidates to the exact ±`CONNECT_RADIUS` per-axis window.
-/// This decouples the connection radius from the integer cell count — critical for grid
-/// spacings that don't divide the radius evenly (e.g. round(72/16)=5→80u was wrong; ceil
-/// →5 cells scanned, then trimmed to exactly 72u). `≥1` always.
+/// Hard cap on the per-axis cell connection radius. Without it, a FIXED world-unit
+/// `CONNECT_RADIUS` at a fine grid reaches many cells (72u at 12u spacing = ±6 cells →
+/// ~90 edges/node), turning the graph into a dense MESH that A* routes along walls and
+/// bots jam in. The missed-links that motivated a wide radius are a COARSE-grid artifact
+/// (no intermediate node sampled); at a fine grid the dense sampling already provides the
+/// intermediate nodes, so ±3 cells suffices for connectivity and keeps the graph SPARSE.
+const MAX_CONNECT_CELLS: i32 = 3;
+
+/// Per-axis grid-cell connection radius for `spacing`: cover [`CONNECT_RADIUS`] (ceil) but
+/// never exceed [`MAX_CONNECT_CELLS`] so fine grids stay sparse. At spacing 24 → 3 cells
+/// (72u, the original); at spacing 12 → 3 cells (36u, not the dense ±6). `≥1` always.
 pub fn connect_cells(spacing: f32) -> i32 {
-    ((CONNECT_RADIUS / spacing).ceil() as i32).max(1)
+    ((CONNECT_RADIUS / spacing).ceil() as i32).clamp(1, MAX_CONNECT_CELLS)
 }
 /// Minimum edge cost in the weighted pathfinder, so a popularity overlay can't
 /// drive an edge to zero/negative (Plan 08 T3).
