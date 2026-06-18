@@ -376,3 +376,46 @@ goal is z=472). This is a MOVEMENT-through-transitions problem, not graph connec
 Also: high run-to-run variance suggests bot-stacking collisions matter — fewer bots = higher
 rate. NEXT: investigate the z-transition ledge navigation (descend/ascend smoothing) and
 the weapon-specific path quality.
+
+---
+
+## 2026-06-17 Session 5 (cont.) — RL weapon route + grid-size experiments
+
+### The real RL route (from the user, who plays q2dm1):
+NOT stairs. chaingun room (1400,1280,784) has stairs UP to the grenade launcher
+(1576,936,1040, the highest point). From the GL platform you DROP DOWN (~143u, one-way
+fall) onto a NARROW ledge (~z=897, near elevator-2 top at 1378,1104). Follow the ledge
+through an opening → spawn[8] (1327,1215,920) + armor shards → navigate a corner/bend →
+the rocket launcher (704,104,920). The elevator is OPTIONAL (a second way onto the ledge).
+
+### Why our graph can't do it (diagnosed with navinspect path mode + floor probe):
+- The RL sits on a z=920 island. Our graph connects it to the lower map ONLY via a FALSE
+  cliff edge (3972→3978, dz=128 hd=96, stair=NO, hull=BLOCKED) — unfollowable — plus the
+  penalized elevator and a 36-93 hop NE detour through false edges. So low spawns can't
+  reach it; only z=920 spawns + lucky bots do (~2-6/24).
+- The narrow ledge is UNDER-SAMPLED: ~1 node at z~897 near elevator-2; ZERO nodes along
+  the SW ledge toward the RL. The floor probe confirms the ledge FLOOR EXISTS and a hull
+  fits (WALKABLE) — so it is a SAMPLING gap, not a BSP/collision gap.
+- The DROP edge (GL platform → ledge) doesn't exist: detect_jump_edges probes only
+  spacing*1.5=36u out and needs a SAMPLED landing node within STEP*2=36u. The narrow ledge
+  has no nodes to land on.
+
+### Grid-size experiments (answering "should we use a finer grid?"):
+| grid | CONNECT_CELLS | radius | regen | spawn-to-spawn | weapon |
+|------|--------------:|-------:|------:|---------------:|-------:|
+| 24   | 3 | 72u | 38s   | **24/24** | 6/24 |
+| 20   | 4 | 80u | 1m24s | 7/24      | 2/24 |
+| 16   | 4 | 64u | 3m20s | 16/24     | 5/24 |
+
+VERDICT: grid=24/CC=3 is the validated sweet spot. Finer grids DESTABILIZE spawn-to-spawn
+and do NOT help the weapon. Likely cause: the movement constants (WP_REACH_HORIZ=32,
+LOOKAHEAD=96, ORBIT_RADIUS=48) are tuned for ~24u waypoint spacing; finer grids change
+waypoint density and the steering/give-up behaviour degrades. Re-tuning all of those for a
+new grid is a big rabbit hole and finer sampling alone does NOT model the drop-onto-ledge.
+
+### Conclusion: the RL needs a TARGETED feature, not grid tuning:
+1. Sample the narrow ledge (adaptive finer sampling near ledges, OR seed the known route).
+2. Create the one-way DROP edge from the GL platform onto the ledge (wider jump-edge probe
+   + create a landing node if none is sampled).
+3. Connect the ledge → RL (the bending walkable area).
+This is a multi-step nav-graph feature, separate from the now-solved spawn-to-spawn work.
