@@ -215,6 +215,38 @@ impl NavGraph {
         self.adj.iter().map(|e| e.len()).sum()
     }
 
+    /// Classify every undirected edge for the prune, in PARALLEL (the trace work). Order
+    /// is preserved (`flat_map_iter` over ascending node indices, then adjacency order), so
+    /// the output equals the sequential classifier — see `classify_prune_edges_seq` and the
+    /// `prune_classify_par_matches_seq` test.
+    fn classify_prune_edges_par(&self, cm: &CollisionModel, max_hd: f32) -> Vec<EdgeClass> {
+        let nodes = &self.nodes;
+        let adj = &self.adj;
+        (0..nodes.len())
+            .into_par_iter()
+            .flat_map_iter(|a| {
+                adj[a]
+                    .iter()
+                    .filter_map(move |&(b, _)| classify_prune_edge(nodes, cm, max_hd, a, b))
+            })
+            .collect()
+    }
+
+    /// Sequential twin of [`Self::classify_prune_edges_par`] — same logic, single-threaded.
+    /// Kept for the equality test that guards the parallel version.
+    #[cfg(test)]
+    fn classify_prune_edges_seq(&self, cm: &CollisionModel, max_hd: f32) -> Vec<EdgeClass> {
+        let mut v = Vec::new();
+        for a in 0..self.nodes.len() {
+            for &(b, _) in &self.adj[a] {
+                if let Some(c) = classify_prune_edge(&self.nodes, cm, max_hd, a, b) {
+                    v.push(c);
+                }
+            }
+        }
+        v
+    }
+
     /// Prune **redundant** hull-blocked edges that the bot cannot physically follow,
     /// while keeping every load-bearing one. Two classes of false edge are removed:
     ///
@@ -235,38 +267,24 @@ impl NavGraph {
     /// Removes both directions. Returns directed edges removed. Re-check spawn connectivity.
     pub fn prune_long_blocked_edges(&mut self, cm: &CollisionModel, max_hd: f32) -> usize {
         let n = self.nodes.len();
-        let max_hd2 = max_hd * max_hd;
+
+        // Phase 1 (PARALLEL): classify every undirected edge. ALL the cm.trace /
+        // walkable_stair calls happen here — pure read-only collision queries with no
+        // shared mutable state — so they fan out across cores via rayon. This is the
+        // dominant cost (millions of traces at fine grids). `flat_map_iter` preserves
+        // order, so the classification Vec is identical to a sequential pass (asserted by
+        // the `prune_classify_par_matches_seq` test), which keeps the result deterministic.
+        let classes = self.classify_prune_edges_par(cm, max_hd);
+
+        // Phase 2 (SEQUENTIAL): union-find merge. Final component membership is independent
+        // of union order, but the keep/drop decision must process candidates in sorted order
+        // against the accumulated component state, so this stays single-threaded.
         let mut uf = UnionFind::new(n);
-        // Candidate undirected edges (false: long-blocked or flat-blocked), span for sort.
         let mut candidates: Vec<(usize, usize, f32)> = Vec::new();
-        for a in 0..n {
-            let pa = self.nodes[a];
-            for &(b, _) in &self.adj[a] {
-                if a >= b {
-                    continue; // visit each undirected edge once
-                }
-                let pb = self.nodes[b];
-                let hd2 = (pb[0] - pa[0]).powi(2) + (pb[1] - pa[1]).powi(2);
-                let dz = (pb[2] - pa[2]).abs();
-                let t = cm.trace(&pa, &pb, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
-                let blocked = t.startsolid || t.fraction < 0.999;
-                if !blocked {
-                    uf.union(a, b); // hull-clear: trustworthy, part of the base graph
-                    continue;
-                }
-                // Blocked straight line. A short steep edge MIGHT be a real staircase the
-                // bot climbs via pmove stepping — confirm with walkable_stair. If that also
-                // fails (stair=NO), it is a false cliff edge (e.g. the q2dm1 weapon's
-                // 3972→3978 dz=128 hd=96) that traps bots at a fake shortcut → candidate.
-                if hd2 <= max_hd2 && dz > STEP {
-                    let (lo, hi) = if pa[2] < pb[2] { (pa, pb) } else { (pb, pa) };
-                    if walkable_stair(cm, lo, hi) {
-                        uf.union(a, b); // real stair
-                        continue;
-                    }
-                }
-                // Flat-blocked, long-blocked, or steep-but-not-a-stair → false edge.
-                candidates.push((a, b, hd2));
+        for c in classes {
+            match c {
+                EdgeClass::Trustworthy(a, b) => uf.union(a, b),
+                EdgeClass::Candidate(a, b, hd2) => candidates.push((a, b, hd2)),
             }
         }
         // Shortest candidate bridges first so we keep the tightest real connection.
@@ -1247,6 +1265,50 @@ pub fn segment_has_floor(cm: &CollisionModel, a: [f32; 3], b: [f32; 3]) -> bool 
 /// horizontal traces at each stepped height clear any risers below that level.
 ///
 /// `upper[2] > lower[2]` is assumed; `total_dz` must be in `(0, STAIR_MAX]`.
+/// Classification of one undirected edge for `prune_long_blocked_edges`. Pure function of
+/// (nodes, collision model) — computed in parallel, merged sequentially.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum EdgeClass {
+    /// Hull-clear or a confirmed real stair — part of the trustworthy base graph.
+    Trustworthy(usize, usize),
+    /// Blocked + not a real stair (flat-blocked, long-blocked, or steep-non-stair). The
+    /// `f32` is the squared horizontal span, used to sort candidates shortest-first.
+    Candidate(usize, usize, f32),
+}
+
+/// Classify the undirected edge `(a, b)` for the prune. Returns `None` for `a >= b` so each
+/// undirected edge is visited once. Read-only: safe to call concurrently across edges.
+fn classify_prune_edge(
+    nodes: &[[f32; 3]],
+    cm: &CollisionModel,
+    max_hd: f32,
+    a: usize,
+    b: usize,
+) -> Option<EdgeClass> {
+    if a >= b {
+        return None; // visit each undirected edge once
+    }
+    let pa = nodes[a];
+    let pb = nodes[b];
+    let hd2 = (pb[0] - pa[0]).powi(2) + (pb[1] - pa[1]).powi(2);
+    let dz = (pb[2] - pa[2]).abs();
+    let t = cm.trace(&pa, &pb, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+    let blocked = t.startsolid || t.fraction < 0.999;
+    if !blocked {
+        return Some(EdgeClass::Trustworthy(a, b)); // hull-clear base edge
+    }
+    // Blocked straight line. A short steep edge MIGHT be a real staircase the bot climbs
+    // via pmove stepping — confirm with walkable_stair. If that also fails (stair=NO) it is
+    // a false cliff (e.g. q2dm1 weapon 3972→3978 dz=128 hd=96) that traps bots → candidate.
+    if hd2 <= max_hd * max_hd && dz > STEP {
+        let (lo, hi) = if pa[2] < pb[2] { (pa, pb) } else { (pb, pa) };
+        if walkable_stair(cm, lo, hi) {
+            return Some(EdgeClass::Trustworthy(a, b)); // real stair
+        }
+    }
+    Some(EdgeClass::Candidate(a, b, hd2)) // flat/long/steep-non-stair false edge
+}
+
 pub fn walkable_stair(cm: &CollisionModel, lower: [f32; 3], upper: [f32; 3]) -> bool {
     let total_dz = upper[2] - lower[2];
     let steps = (total_dz / STEP).ceil() as usize;
@@ -1599,6 +1661,47 @@ mod tests {
         let (connected, total) = g.spawns_in_largest_component(&[[1.0, 0.0, 0.0]]);
         assert_eq!(total, 1);
         assert_eq!(connected, 1, "spawn maps to some component");
+    }
+
+    /// The PARALLEL prune classification must produce byte-for-byte the same result as a
+    /// sequential pass — same edges, same order, same Trustworthy/Candidate split — so the
+    /// parallelised prune is guaranteed deterministic and identical to the original.
+    #[test]
+    fn prune_classify_par_matches_seq() {
+        // Solid below z=50, empty above (floor surface at z=50).
+        let cm = CollisionModel::half_space([0.0, 0.0, 1.0], 50.0);
+        // ~120 nodes, mostly at z=100 (clear) with every 7th at z=24 (below the floor → its
+        // incoming edges trace into solid → Candidate). Enough nodes that rayon splits work.
+        let mut nodes = Vec::new();
+        for i in 0..120 {
+            let z = if i % 7 == 0 { 24.0 } else { 100.0 };
+            nodes.push([(i as f32) * 30.0, 0.0, z]);
+        }
+        let mut adj: Vec<Vec<(usize, f32)>> = vec![Vec::new(); nodes.len()];
+        for i in 0..nodes.len() {
+            for j in (i + 1)..(i + 5).min(nodes.len()) {
+                let d = ((nodes[j][0] - nodes[i][0]).powi(2) + (nodes[j][2] - nodes[i][2]).powi(2))
+                    .sqrt();
+                adj[i].push((j, d));
+                adj[j].push((i, d));
+            }
+        }
+        let g = NavGraph::from_raw(nodes, adj);
+        let max_hd = 100.0;
+        let par = g.classify_prune_edges_par(&cm, max_hd);
+        let seq = g.classify_prune_edges_seq(&cm, max_hd);
+        assert_eq!(
+            par, seq,
+            "parallel classification must equal sequential, in order"
+        );
+        assert!(
+            par.iter().any(|c| matches!(c, EdgeClass::Trustworthy(..))),
+            "expected some Trustworthy edges"
+        );
+        assert!(
+            par.iter().any(|c| matches!(c, EdgeClass::Candidate(..))),
+            "expected some Candidate edges (blocked, non-stair)"
+        );
     }
 
     /// detect_jump_edges creates a ledge-drop edge where a height-gapped pair
