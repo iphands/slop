@@ -216,6 +216,11 @@ impl NavGraph {
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
+    /// World position of node `idx`. Used to express a roam waypoint as a concrete
+    /// position goal for backends (navmesh) that don't index this graph's nodes.
+    pub fn node_pos(&self, idx: usize) -> [f32; 3] {
+        self.nodes[idx]
+    }
     pub fn edge_count(&self) -> usize {
         self.adj.iter().map(|e| e.len()).sum()
     }
