@@ -494,3 +494,43 @@ Remaining: detect_jump_edges is still 23s at grid=12 (O(n²) nearest()); a spati
 
 Caveat unchanged: finer grids still NAVIGATE worse (density), so this speeds up EXPERIMENTS
 but isn't itself the fine-grid-quality fix.
+
+---
+
+## 2026-06-18 Session 6 — RL narrow-ledge: the density tension (KEY finding)
+
+Goal: a GENERIC fix for narrow walkways (the RL ledge is one instance, others exist).
+
+### Implemented: generic narrow-surface sub-sampling in generate() (Phase 2.5).
+generate() only probes the exact grid point, so a walkable surface narrower than the grid,
+or whose walkable centre doesn't align to a grid point, is missed (point-trace finds the
+floor below; or the hull stand-check at the centre pokes into the adjacent wall → rejected).
+Fix: sub-sample each cell on a spacing/3 offset grid; add any walkable surface (the hull
+stand-check in floor_waypoints_multi already rejects too-narrow wall-tops) not already
+covered by a node. Bounded by a `surface_covered` check + spacing-resolution dedup so only
+GAPS fill, not densify. Clean, deterministic, parallel.
+
+### Result: it did NOT work, and revealed a fundamental tension.
+- Added only +210 nodes (12890→13100) — bounded, as designed.
+- BUT the RL ledge's winding MIDDLE was still not sampled/connected (spawn5→RL still 23 hops;
+  weapon still 4/24). The ledge ENDPOINTS (elevator-2 top, spawn8, RL platform) ARE sampled;
+  the narrow middle isn't detected as a connected walkable path even at 8u sub-resolution.
+- AND it HURT spawn-to-spawn: 19/21/17/24 (vs 24/24 baseline). Reverted.
+
+### THE FUNDAMENTAL TENSION (reframes the whole RL problem):
+- The RL needs MORE nodes (to sample the narrow ledge → a short direct path).
+- But MORE nodes DEGRADE navigation — proven 3×: finer grid (grid=12 exact-radius=11/24),
+  and now sub-sampling (+210 nodes → 17-21/24). The bot's waypoint-follower handles denser
+  graphs worse (more waypoints → jaggier paths → more bumps/wander).
+So the obvious "sample the ledge" approaches can't win: the nodes they add hurt navigation
+more than the ledge helps. The real bottleneck is NAVIGATION'S sensitivity to graph density,
+not the sampler.
+
+### Realistic paths forward (need a decision):
+A. Make path-following robust to density (waypoint advance by projection not reach-radius;
+   density-independent smoothing). Fundamental; would unlock sampling solutions. Big.
+B. A non-graph DIRECT nav mode: when the bot has LOS to the goal/next-far-node, steer
+   straight (collision-aware) instead of node-by-node. Lets bots beeline across open areas
+   like the z=920 platform once they reach it. Medium; orthogonal to the graph.
+C. Accept the long path: the RL IS reachable (23 hops); the 60s weapon cap is a TEST
+   artifact (real DM bots roam continuously and would arrive). Cheapest; least satisfying.
