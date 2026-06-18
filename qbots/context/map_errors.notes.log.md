@@ -609,3 +609,44 @@ REPLACE the reach/orbit/give-up advancement with a single projection-native prog
 Surgical add-ons to the current logic backfire; only a clean replacement will work. That is
 a substantial, risky rewrite of NavigationDriver::update() — best done as its own plan, not
 at the tail of a huge session. grid=24 stays 24/24; the RL is gated behind it.
+
+---
+
+## 2026-06-18 Session 7 — navmesh driver iteration: per-cell portals are too narrow (THE blocker)
+
+Goal: drive navmesh spawn-to-spawn to 24/24, then RL. Baseline: navmesh ~4-7/24 (astar 24/24).
+
+### Diagnosis (conclusive)
+Ran count=8 navmesh, dumped per-bot trajectories. Two failure modes:
+- **Stalled** (high hindered_frames 96-134): wedged against a wall, e.g. (1359,64,664) spd=0
+  for 40s — same y=64 wall the astar grid=12 bots jammed on.
+- **Lost/wander** (LOW hindered 2-14): moving smoothly but ending far from goal — one bot rode
+  up to the z=928 platform while its goal was z=664. NOT a stall (recovery never fires).
+
+Root cause found via `navinspect navpath ... <cell> <radius>` (added a radius arg): a path to a
+FLAT goal had **56-70 points zig-zagging cell-by-cell** — the funnel was NOT straightening.
+Varying the funnel portal inset:
+  radius=16 → 56 pts | radius=8 → 56 | radius=4 → 53 | radius=0 → 25 pts.
+=> **Per-cell portals are `cell_size` (16u) wide; insetting them by the agent radius (16u)
+collapses them to near-points, pinning the funnel to cell centers.** A per-cell-quad navmesh
+fundamentally can't inset portals — the portal (a single cell edge) is always ≤ the agent
+radius. Even inset=0 leaves 25 jagged points (and then no wall clearance → hull-clips).
+
+### What was tried on the driver (all regressed or neutral — the PATH is the problem)
+- Remove update()'s clear-on-stall (so recovery corner-escapes with a live target): **2/24**.
+  (Removing the clear lost a roam-fallback that was stumbling bots to goals.)
+- Add a poly **blacklist** + `path_excluding` A* (route around wedged polys, astar-style): 3/8.
+- inset=0 (straighter funnel): 2/8.
+Net: blacklist+no-clear+inset0 = **2/24**, WORSE than the baseline 7/24. Lesson: the navmesh
+paths are so jaggy that *roaming beats following them*, so no driver tweak gets past ~7/24.
+The astar bots follow tight Q2 corridors fine (24/24) because their waypoint paths + pure-
+pursuit are tuned; the navmesh's per-cell funnel paths are too jagged to follow.
+
+### THE fix (next): rectangle-merged polygons
+Merge walkable cells into maximal **rectangles** (z-coherent within walkable_climb). Then portals
+are the *overlap of two rects' touching edges* — many cells wide → the agent-radius inset works
+→ the funnel straightens AND clears walls. Also cuts polys 34k→hundreds (faster A*). This is
+`rcBuildPolyMesh`'s role. Requires: Poly{ix,iy,w,h,oz}; portal() = edge overlap; nearest_poly =
+point-in-rect; adapt bridge/adjacency. Keep the blacklist infra (committed) for the new driver.
+
+### Kept (committed): `NavMesh::path_excluding` (blacklist A*) + `navinspect navpath <cell> <radius>`.

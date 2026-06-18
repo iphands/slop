@@ -173,6 +173,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let s = [args[4].parse()?, args[5].parse()?, args[6].parse()?];
         let goal = [args[7].parse()?, args[8].parse()?, args[9].parse()?];
         let cell: f32 = args.get(10).and_then(|s| s.parse().ok()).unwrap_or(16.0);
+        let radius: f32 = args.get(11).and_then(|s| s.parse().ok()).unwrap_or(16.0);
         let model = &built.bsp.models[0];
         let params = world::VoxelParams {
             cell_size: cell,
@@ -181,7 +182,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let hf = world::Heightfield::build(cm, (model.mins, model.maxs), params);
         let mut mesh = world::NavMesh::build(&hf, params.walkable_climb);
         mesh.bridge_components(cm, 192.0);
-        match mesh.path(s, goal, params.agent_radius) {
+        match mesh.path(s, goal, radius) {
             Some(path) => {
                 let mut total = 0.0;
                 let mut clear = true;

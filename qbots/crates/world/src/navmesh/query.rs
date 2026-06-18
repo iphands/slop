@@ -10,7 +10,7 @@
 //! Funnel reference: Mikko Mononen, "Simple Stupid Funnel Algorithm".
 
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashSet};
 
 use crate::navmesh::polymesh::NavMesh;
 
@@ -47,17 +47,30 @@ impl NavMesh {
         goal: [f32; 3],
         agent_radius: f32,
     ) -> Option<Vec<[f32; 3]>> {
+        self.path_excluding(start, goal, agent_radius, &HashSet::new())
+    }
+
+    /// Like [`Self::path`] but A* avoids the `blacklist` polys (stuck-recovery re-routing).
+    /// The start/goal polys themselves are never excluded.
+    pub fn path_excluding(
+        &self,
+        start: [f32; 3],
+        goal: [f32; 3],
+        agent_radius: f32,
+        blacklist: &HashSet<usize>,
+    ) -> Option<Vec<[f32; 3]>> {
         let s = self.nearest_poly(start)?;
         let g = self.nearest_poly(goal)?;
         if s == g {
             return Some(vec![start, goal]);
         }
-        let corridor = self.astar(s, g)?;
+        let corridor = self.astar(s, g, blacklist)?;
         Some(self.funnel(start, goal, &corridor, agent_radius))
     }
 
-    /// A* over the portal graph from poly `s` to poly `g`. Returns the polygon corridor.
-    fn astar(&self, s: usize, g: usize) -> Option<Vec<usize>> {
+    /// A* over the portal graph from poly `s` to poly `g`, skipping `blacklist` polys (except
+    /// `s`/`g`). Returns the polygon corridor.
+    fn astar(&self, s: usize, g: usize, blacklist: &HashSet<usize>) -> Option<Vec<usize>> {
         let n = self.polys.len();
         let mut g_score = vec![f32::INFINITY; n];
         let mut came: Vec<u32> = vec![u32::MAX; n];
@@ -86,6 +99,9 @@ impl NavMesh {
             let base = g_score[p];
             for &q in &self.adj[p] {
                 let qi = q as usize;
+                if qi != g && blacklist.contains(&qi) {
+                    continue; // routed around a stuck/blocked poly
+                }
                 let tentative = base + dist(pc, self.poly_center(qi));
                 if tentative < g_score[qi] {
                     g_score[qi] = tentative;
