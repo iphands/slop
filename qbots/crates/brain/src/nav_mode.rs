@@ -43,4 +43,10 @@ pub trait Navigator {
     fn goal_abandoned(&self) -> bool {
         false
     }
+
+    /// Forward-speed multiplier for the bot's current position (1.0 = full). A backend can
+    /// slow the bot on narrow geometry (thin ledges) so momentum doesn't carry it off the edge.
+    fn speed_scale(&self, _pos: Vec3) -> f32 {
+        1.0
+    }
 }

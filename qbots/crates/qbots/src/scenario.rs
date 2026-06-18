@@ -459,10 +459,13 @@ pub async fn run_scenario(
                                     escape_yaw = None;
                                 }
                             } else if fwd > 0.0 || side.abs() > 0.0 {
+                                // Slow on narrow geometry (thin ledges) so momentum doesn't carry
+                                // the bot off the edge (navmesh backend; astar returns 1.0).
+                                let sp = arrive * nav_driver.speed_scale(pos);
                                 mv.look_at(view_yaw, 0.0);
-                                mv.move_forward(fwd * arrive);
-                                mv.move_side(side * arrive);
-                                intent_forward = fwd * arrive;
+                                mv.move_forward(fwd * sp);
+                                mv.move_side(side * sp);
+                                intent_forward = fwd * sp;
                             }
                             if nav_driver.current_edge_is_jump() {
                                 mv.jump();
