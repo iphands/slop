@@ -22,7 +22,7 @@ use tokio::net::UdpSocket;
 use brain::nav::NavGoal;
 use brain::perception::Worldview;
 use brain::recorder::{CmWallProbe, MovementRecorder, Sample, WallProbe};
-use brain::recover::{Recovery, RecoveryAction};
+use brain::recover::{find_best_direction, Recovery, RecoveryAction};
 use brain::steer::{move_from_world_dir, Steering};
 use brain::{MovementController, MovementIntent, NavigationDriver};
 use client::{Conn, ConnState};
@@ -285,6 +285,10 @@ pub async fn run_scenario(
     // Ticks remaining in forced-backoff mode (set when BackOffThenRepath fires so the
     // bot actually escapes the wall instead of immediately resuming forward nav).
     let mut backoff_ticks: u32 = 0;
+    // World-yaw of the most-open direction found when a hard-stuck recovery fires; the bot
+    // steers toward it during the backoff to physically CLEAR a corner (straight-back alone
+    // re-presses the adjacent wall), then nav repaths from the now-open spot.
+    let mut escape_yaw: Option<f32> = None;
 
     loop {
         if shutdown.requested() {
@@ -401,14 +405,15 @@ pub async fn run_scenario(
                                     mv.move_side(dir);
                                 }
                                 RecoveryAction::BackOffThenRepath => {
-                                    // Hold backward motion for 8 ticks (≈0.8 s) so the
-                                    // bot actually clears the wall before nav resumes.
-                                    // (Tried 4 ticks after the msec fix — too short, bots
-                                    // don't clear the wall: 18/32 vs 28/32 spawn-to-spawn.)
-                                    // If a hull trace confirms the waypoint is physically
-                                    // blocked, blacklist it so the next plan avoids the
-                                    // false edge.
+                                    // Hard stuck (≈3.5 s no progress). Steer toward the
+                                    // most-OPEN direction for 8 ticks (≈0.8 s) to clear the
+                                    // wall/corner the bot is jammed against — straight-back
+                                    // alone just re-presses the adjacent wall in a corner
+                                    // (the dominant fine-grid failure). Then nav repaths from
+                                    // the now-open spot. find_best_direction fans 7 rays and
+                                    // returns the openest; None (fully boxed in) → straight back.
                                     backoff_ticks = 8;
+                                    escape_yaw = find_best_direction(&cm, pos, view_yaw).map(|(y, _)| y);
                                     nav_driver.blacklist_waypoint_if_blocked(pos, &cm);
                                     nav_driver.force_replan();
                                 }
@@ -422,9 +427,23 @@ pub async fn run_scenario(
                             }
 
                             if backoff_ticks > 0 {
-                                // Sustained back-off: move backward, don't let nav override.
+                                // Sustained escape: move toward the open direction (regardless
+                                // of facing, so the bot slides out of a corner) rather than
+                                // straight back into the adjacent wall. Falls back to straight
+                                // back when no open direction was found.
                                 backoff_ticks -= 1;
-                                mv.move_forward(-1.0);
+                                if let Some(ey) = escape_yaw {
+                                    let edir =
+                                        Vec3::new(ey.to_radians().cos(), ey.to_radians().sin(), 0.0);
+                                    let (efwd, eside) = move_from_world_dir(edir, view_yaw, false);
+                                    mv.move_forward(efwd);
+                                    mv.move_side(eside);
+                                } else {
+                                    mv.move_forward(-1.0);
+                                }
+                                if backoff_ticks == 0 {
+                                    escape_yaw = None;
+                                }
                             } else if fwd > 0.0 || side.abs() > 0.0 {
                                 mv.look_at(view_yaw, 0.0);
                                 mv.move_forward(fwd * arrive);
