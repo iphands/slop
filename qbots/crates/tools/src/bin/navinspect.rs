@@ -105,6 +105,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
     near.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
 
+    // Floor-walkability probe at the query column: trace straight down to find the floor,
+    // then test whether a player hull can stand there (not startsolid). This distinguishes
+    // "the grid just didn't sample this walkable surface" (floor present + hull fits) from
+    // "there is no walkable floor here" (collision-model / BSP gap).
+    {
+        let top = [qx, qy, qz + 64.0];
+        let bot = [qx, qy, qz - 512.0];
+        let down = cm.trace(&top, &bot, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+        if down.fraction >= 1.0 && !down.startsolid {
+            println!("FLOOR PROBE @ ({qx},{qy},{qz}): NO floor within 512u below — void/wall");
+        } else if down.startsolid {
+            println!("FLOOR PROBE @ ({qx},{qy},{qz}): startsolid (query point inside geometry)");
+        } else {
+            let fz = down.endpos[2];
+            let stand = [qx, qy, fz];
+            let st = cm.trace(&stand, &stand, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+            let walk = if st.startsolid {
+                "HULL BLOCKED"
+            } else {
+                "hull fits (WALKABLE)"
+            };
+            println!("FLOOR PROBE @ ({qx},{qy},{qz}): floor at z={fz:.0} ({walk})");
+        }
+    }
+
     println!("{} nodes within radius:\n", near.len());
     for (i, d) in &near {
         let p = g.nodes[*i];
