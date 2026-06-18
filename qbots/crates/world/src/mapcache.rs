@@ -26,7 +26,7 @@ use std::path::Path;
 
 use crate::bsp::Bsp;
 use crate::build::{BRIDGE_HDIST, GRID_SPACING, JUMP_SPACING, PRUNE_MAX_HD};
-use crate::navgraph::{NavGraph, CONNECT_CELLS, STAIR_MAX, STEP};
+use crate::navgraph::{NavGraph, CONNECT_RADIUS, STAIR_MAX, STEP};
 
 const MAGIC: &[u8; 7] = b"QBNAVC2";
 // Version 2: multi-floor column probing (see navgraph::floor_waypoints_multi).
@@ -41,7 +41,7 @@ const MAGIC: &[u8; 7] = b"QBNAVC2";
 // (lift_penalty_bits); fingerprint is now 48 bytes. Older caches auto-rejected.
 // Version 8: prune_long_blocked_edges also drops FLAT hull-blocked edges (false
 // same-level wall-crossings), not just long ones. Algorithm change → invalidate caches.
-const VERSION: u8 = 9;
+const VERSION: u8 = 10;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]
@@ -65,9 +65,9 @@ pub struct Fingerprint {
     /// (`navgraph::prune_long_blocked_edges`) alters the generated graph, so changing
     /// it must invalidate stale caches.
     prune_max_hd_bits: u32,
-    /// `CONNECT_CELLS` — `generate()`'s neighbour-connection cell radius. Changing it
+    /// `CONNECT_RADIUS` (f32 bits) — generate()'s world-unit connection radius (the
     /// changes which edges generate adds, so it must invalidate stale caches.
-    connect_cells: u32,
+    connect_radius_bits: u32,
     /// `lift_penalty` (f32 bits) — extra A* cost baked into elevator ride edges. A
     /// runtime knob (`--lift-penalty`), so it must be part of the cache key.
     /// TODO(elevator-hack): remove with the penalty once real lift behaviour exists.
@@ -105,7 +105,7 @@ impl Fingerprint {
             stair_max_bits: STAIR_MAX.to_bits(),
             bridge_hdist_bits: BRIDGE_HDIST.to_bits(),
             prune_max_hd_bits: PRUNE_MAX_HD.to_bits(),
-            connect_cells: CONNECT_CELLS as u32,
+            connect_radius_bits: CONNECT_RADIUS.to_bits(),
             lift_penalty_bits: lift_penalty.to_bits(),
         }
     }
@@ -122,7 +122,7 @@ impl Fingerprint {
             self.stair_max_bits,
             self.bridge_hdist_bits,
             self.prune_max_hd_bits,
-            self.connect_cells,
+            self.connect_radius_bits,
             self.lift_penalty_bits,
         ] {
             buf.extend_from_slice(&v.to_le_bytes());
@@ -148,7 +148,7 @@ impl Fingerprint {
             stair_max_bits: fields[7],
             bridge_hdist_bits: fields[8],
             prune_max_hd_bits: fields[9],
-            connect_cells: fields[10],
+            connect_radius_bits: fields[10],
             lift_penalty_bits: fields[11],
         })
     }
@@ -305,7 +305,7 @@ mod tests {
             stair_max_bits: STAIR_MAX.to_bits(),
             bridge_hdist_bits: BRIDGE_HDIST.to_bits(),
             prune_max_hd_bits: PRUNE_MAX_HD.to_bits(),
-            connect_cells: CONNECT_CELLS as u32,
+            connect_radius_bits: CONNECT_RADIUS.to_bits(),
             lift_penalty_bits: 5000.0_f32.to_bits(),
         }
     }

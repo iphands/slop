@@ -29,12 +29,23 @@ pub const STEP: f32 = 18.0;
 /// Must stay in the cache fingerprint (`mapcache::Fingerprint`) so stale caches
 /// auto-invalidate on change.
 pub const STAIR_MAX: f32 = 160.0;
-/// Grid-cell radius `generate()` connects each node within (Manhattan, per-axis).
-/// `1` = the classic 8-neighbour connection (±1 cell); higher values connect a wider
-/// neighbourhood so walkable links spanning 2-4 cells (ramps/steps with no intermediate
-/// sampled node) are not missed. Proven necessary by `tools/compgaps`. In the cache
-/// fingerprint (`mapcache::Fingerprint`) so changing it invalidates stale caches.
-pub const CONNECT_CELLS: i32 = 3;
+/// Target WORLD-UNIT radius that `generate()` connects each node within. This is the
+/// load-bearing quantity — NOT the cell count. Experiments (q2dm1, 2026-06-17) showed
+/// the graph quality depends on the absolute connection radius, not the grid: holding
+/// this at ~72u, spawn-to-spawn stays good across grid spacings; letting it drift (by
+/// keeping a fixed cell count while changing the grid) re-fragments the graph (e.g. 24→16
+/// with CONNECT_CELLS fixed dropped the radius 72→48u → 16/24). So the cell radius is
+/// DERIVED from this and the grid via [`connect_cells`], which means GRID_SPACING can be
+/// changed freely and the connection radius stays correct automatically.
+/// In the cache fingerprint so changing it invalidates stale caches.
+pub const CONNECT_RADIUS: f32 = 72.0;
+
+/// Per-axis grid-cell connection radius for a given `spacing`, derived from
+/// [`CONNECT_RADIUS`] so the absolute connect radius is grid-independent. `≥1` always
+/// (at least the classic 8-neighbour ring).
+pub fn connect_cells(spacing: f32) -> i32 {
+    ((CONNECT_RADIUS / spacing).round() as i32).max(1)
+}
 /// Minimum edge cost in the weighted pathfinder, so a popularity overlay can't
 /// drive an edge to zero/negative (Plan 08 T3).
 const EPS: f32 = 1.0;
@@ -112,6 +123,9 @@ impl NavGraph {
         // where adjacent columns have nodes on different floors: the z-distance filter
         // keeps only floor-level peers; the stair trace rejects walls.
         // No shared mutable state during the parallel section.
+        // Cell radius derived from the world-unit CONNECT_RADIUS, so changing `spacing`
+        // keeps the absolute connection radius constant (see CONNECT_RADIUS docs).
+        let cells = connect_cells(spacing);
         let adj: Vec<Vec<(usize, f32)>> = nodes
             .par_iter()
             .enumerate()
@@ -119,15 +133,15 @@ impl NavGraph {
                 let gx = (a[0] / spacing).round() as i32;
                 let gy = (a[1] / spacing).round() as i32;
                 let mut edges = Vec::new();
-                // Connect a neighbourhood of ±CONNECT_CELLS grid cells, not just the 8
-                // immediate neighbours. A ±1 (24u) connection misses real walkable links
-                // that span 2-4 cells — e.g. across a ramp/step where the intermediate
-                // column has no sampled node — which fragments the graph into dozens of
-                // false components (proven by tools/compgaps: 934 missed walkable links on
-                // q2dm1). The per-pair hull/stair check below still rejects wall-separated
-                // pairs, so widening only adds genuinely walkable edges.
-                for ddx in -CONNECT_CELLS..=CONNECT_CELLS {
-                    for ddy in -CONNECT_CELLS..=CONNECT_CELLS {
+                // Connect a neighbourhood of ±cells grid cells, not just the 8 immediate
+                // neighbours. A ±1 (24u) connection misses real walkable links that span
+                // 2-4 cells — e.g. across a ramp/step where the intermediate column has no
+                // sampled node — which fragments the graph into dozens of false components
+                // (proven by tools/compgaps: 934 missed walkable links on q2dm1). The
+                // per-pair hull/stair check below still rejects wall-separated pairs, so
+                // widening only adds genuinely walkable edges.
+                for ddx in -cells..=cells {
+                    for ddy in -cells..=cells {
                         if ddx == 0 && ddy == 0 {
                             continue;
                         }
