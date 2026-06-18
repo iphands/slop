@@ -39,7 +39,9 @@ const MAGIC: &[u8; 7] = b"QBNAVC2";
 // Version 6: elevator ride edges carry ELEVATOR_PENALTY cost (A* avoids lifts).
 // Version 7: lift penalty is a runtime --lift-penalty knob + a 12th fingerprint field
 // (lift_penalty_bits); fingerprint is now 48 bytes. Older caches auto-rejected.
-const VERSION: u8 = 7;
+// Version 8: prune_long_blocked_edges also drops FLAT hull-blocked edges (false
+// same-level wall-crossings), not just long ones. Algorithm change → invalidate caches.
+const VERSION: u8 = 8;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]

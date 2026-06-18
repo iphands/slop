@@ -189,26 +189,29 @@ impl NavGraph {
         self.adj.iter().map(|e| e.len()).sum()
     }
 
-    /// Prune **redundant** long edges that a live hull trace shows are blocked, while
-    /// keeping every load-bearing one. The bridge/seed passes add long edges (up to
-    /// `BRIDGE_HDIST`) that `walkable_stair` accepts by sampling surfaces across open
-    /// space; the bot cannot follow them (straight-line steering aims at the far node
-    /// and clips the wall between). A blunt "drop all long blocked edges" prune shatters
-    /// the graph because some of those edges are the *only* link across a winding
-    /// staircase. So this is connectivity-preserving:
+    /// Prune **redundant** hull-blocked edges that the bot cannot physically follow,
+    /// while keeping every load-bearing one. Two classes of false edge are removed:
     ///
-    /// 1. Union all NON-candidate edges (short, or hull-clear) — the trustworthy graph.
-    /// 2. Sort candidate edges (long + hull-blocked) by span, shortest first.
-    /// 3. Keep a candidate only if its endpoints are still in different components
-    ///    (it bridges a real gap) and union them; otherwise it is redundant — prune it.
+    /// - **Long** blocked edges (`hd > max_hd`): bridge/seed passes add these (up to
+    ///   `BRIDGE_HDIST`); `walkable_stair` accepts them by sampling surfaces across open
+    ///   space, but straight-line steering clips the wall between → unfollowable.
+    /// - **Flat** blocked edges (`|dz| ≤ STEP`): a same-level edge with a wall in the
+    ///   straight line is unambiguously false — there is no stair to climb, so the bot
+    ///   just jams into the wall. These cause replan churn (the bot is sent to a waypoint
+    ///   65-120u away across a wall, gives up, replans to another false-flat node, repeats)
+    ///   and tank path efficiency. They survived the long-only prune (hd 96-120 < 144).
     ///
-    /// Removes both directions. Returns the number of directed edges removed. Run after
-    /// all edge-adding passes; re-check spawn connectivity afterward (it must hold).
+    /// Real **short steep** edges (`|dz| > STEP`, `hd ≤ max_hd`) are kept untraced — a
+    /// blocked straight line is NORMAL for a staircase the bot climbs via pmove stepping.
+    ///
+    /// Connectivity-preserving: union all trustworthy edges, then keep a candidate only if
+    /// its endpoints are still in different components (a real bridge), else drop it.
+    /// Removes both directions. Returns directed edges removed. Re-check spawn connectivity.
     pub fn prune_long_blocked_edges(&mut self, cm: &CollisionModel, max_hd: f32) -> usize {
         let n = self.nodes.len();
         let max_hd2 = max_hd * max_hd;
         let mut uf = UnionFind::new(n);
-        // Candidate undirected edges (long + hull-blocked), with squared span for sort.
+        // Candidate undirected edges (false: long-blocked or flat-blocked), span for sort.
         let mut candidates: Vec<(usize, usize, f32)> = Vec::new();
         for a in 0..n {
             let pa = self.nodes[a];
@@ -218,12 +221,15 @@ impl NavGraph {
                 }
                 let pb = self.nodes[b];
                 let hd2 = (pb[0] - pa[0]).powi(2) + (pb[1] - pa[1]).powi(2);
-                let blocked = if hd2 > max_hd2 {
-                    let t = cm.trace(&pa, &pb, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
-                    t.startsolid || t.fraction < 0.999
-                } else {
-                    false
-                };
+                let dz = (pb[2] - pa[2]).abs();
+                // Short steep edges are presumed real stairs — keep without a trace.
+                if hd2 <= max_hd2 && dz > STEP {
+                    uf.union(a, b);
+                    continue;
+                }
+                // Long OR flat: trace to see if it's actually blocked.
+                let t = cm.trace(&pa, &pb, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+                let blocked = t.startsolid || t.fraction < 0.999;
                 if blocked {
                     candidates.push((a, b, hd2));
                 } else {
