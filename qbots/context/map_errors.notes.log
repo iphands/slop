@@ -255,3 +255,26 @@ stair-climb route to z=920 hits false nav edges. They press into walls at full s
 (bump count went UP because they MOVE faster into the same bad geometry). The real fix
 remains nav graph quality at the staircase transition zones — speed alone can't fix a
 path that routes through a wall.
+
+### Speed-consequence audit (constants tuned against the old 1/3 speed):
+At the corrected msec the bot moves 32 u/tick (was ~11). Re-evaluated every distance-based
+constant:
+- **WP_REACH_HORIZ 24→32**: WIN. 24 u let the bot pass a waypoint tangentially without the
+  path pointer advancing → pursue_target pulled backward → wrong_turns. 32 u = one tick of
+  travel. spawn-to-spawn 24-25 → 26-28/32. (Old note "32 u skips near walls" was a 1/3-speed
+  artifact, no longer true.)
+- **BackOff 8→4 ticks**: LOSS, reverted. Hypothesis was 8 ticks = 256 u backward at full
+  speed lunges bots off z=920 ledges. But 4 ticks (128 u) is too short to clear a wall hull:
+  18/32 vs 28/32. Keep 8. The ledge-lunge risk is real but clearing the wall matters more.
+- **ORBIT_RADIUS 48, ARRIVE_RADIUS 80, DEADBAND 16, ORBIT_FRAMES/GOAL_GIVEUP tick-based**:
+  left as-is. Tick-based timers are unchanged in TIME; arrive/deadband still have adequate
+  margin at full speed. No evidence they need retuning.
+
+### Climb-then-fall pattern (the weapon-test killer, traced 2026-06-17):
+Bot from spawn[4] (1495,-57,664) REACHED z=921 at t=28s (start_pos=[1378,1104,921]) — it was
+on the weapon level! But the weapon is at XY (704,104); the bot at (1378,1104) is ~1200 u away
+across the top floor. The top-level nav graph near (1378,1104) does not cleanly connect to the
+weapon area, so after a give-up the replan routed the bot back DOWN (z=921→536→472) and it
+thrashed the rest of the run. Confirmed: this is a top-level (z=920) nav-graph connectivity
+gap, not a speed or climb problem. The climb now works; crossing the top floor to the weapon
+does not. NEXT: inspect z=920 nodes/edges between (1378,1104) and (704,104) for the gap.

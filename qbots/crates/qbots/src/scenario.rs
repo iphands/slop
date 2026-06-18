@@ -387,6 +387,8 @@ pub async fn run_scenario(
                                 RecoveryAction::BackOffThenRepath => {
                                     // Hold backward motion for 8 ticks (≈0.8 s) so the
                                     // bot actually clears the wall before nav resumes.
+                                    // (Tried 4 ticks after the msec fix — too short, bots
+                                    // don't clear the wall: 18/32 vs 28/32 spawn-to-spawn.)
                                     // If a hull trace confirms the waypoint is physically
                                     // blocked, blacklist it so the next plan avoids the
                                     // false edge.
