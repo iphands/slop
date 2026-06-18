@@ -176,6 +176,74 @@ impl NavGraph {
         self.adj.iter().map(|e| e.len()).sum()
     }
 
+    /// Prune **redundant** long edges that a live hull trace shows are blocked, while
+    /// keeping every load-bearing one. The bridge/seed passes add long edges (up to
+    /// `BRIDGE_HDIST`) that `walkable_stair` accepts by sampling surfaces across open
+    /// space; the bot cannot follow them (straight-line steering aims at the far node
+    /// and clips the wall between). A blunt "drop all long blocked edges" prune shatters
+    /// the graph because some of those edges are the *only* link across a winding
+    /// staircase. So this is connectivity-preserving:
+    ///
+    /// 1. Union all NON-candidate edges (short, or hull-clear) — the trustworthy graph.
+    /// 2. Sort candidate edges (long + hull-blocked) by span, shortest first.
+    /// 3. Keep a candidate only if its endpoints are still in different components
+    ///    (it bridges a real gap) and union them; otherwise it is redundant — prune it.
+    ///
+    /// Removes both directions. Returns the number of directed edges removed. Run after
+    /// all edge-adding passes; re-check spawn connectivity afterward (it must hold).
+    pub fn prune_long_blocked_edges(&mut self, cm: &CollisionModel, max_hd: f32) -> usize {
+        let n = self.nodes.len();
+        let max_hd2 = max_hd * max_hd;
+        let mut uf = UnionFind::new(n);
+        // Candidate undirected edges (long + hull-blocked), with squared span for sort.
+        let mut candidates: Vec<(usize, usize, f32)> = Vec::new();
+        for a in 0..n {
+            let pa = self.nodes[a];
+            for &(b, _) in &self.adj[a] {
+                if a >= b {
+                    continue; // visit each undirected edge once
+                }
+                let pb = self.nodes[b];
+                let hd2 = (pb[0] - pa[0]).powi(2) + (pb[1] - pa[1]).powi(2);
+                let blocked = if hd2 > max_hd2 {
+                    let t = cm.trace(&pa, &pb, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+                    t.startsolid || t.fraction < 0.999
+                } else {
+                    false
+                };
+                if blocked {
+                    candidates.push((a, b, hd2));
+                } else {
+                    uf.union(a, b); // trustworthy edge — part of the base graph
+                }
+            }
+        }
+        // Shortest candidate bridges first so we keep the tightest real connection.
+        candidates.sort_by(|x, y| x.2.partial_cmp(&y.2).unwrap());
+        let mut drop: Vec<(usize, usize)> = Vec::new();
+        for (a, b, _) in candidates {
+            if uf.find(a) == uf.find(b) {
+                drop.push((a, b)); // already connected without it → redundant false edge
+            } else {
+                uf.union(a, b); // load-bearing bridge → keep
+            }
+        }
+        let mut removed = 0;
+        for (a, b) in drop {
+            let before = self.adj[a].len();
+            self.adj[a].retain(|&(nb, _)| nb != b);
+            removed += before - self.adj[a].len();
+            let before = self.adj[b].len();
+            self.adj[b].retain(|&(nb, _)| nb != a);
+            removed += before - self.adj[b].len();
+            self.jump_edges.remove(&(a, b));
+            self.jump_edges.remove(&(b, a));
+            self.jump_yaws.remove(&(a, b));
+            self.jump_yaws.remove(&(b, a));
+        }
+        removed
+    }
+
     /// Build a graph directly from nodes + adjacency (each adjacency entry is
     /// `(neighbor index, edge cost)`). Intended for tests that need a nav graph
     /// without running the BSP sampler. `nodes` and `adj` must align in length.
@@ -1242,6 +1310,53 @@ impl PartialOrd for FOrd {
 impl Ord for FOrd {
     fn cmp(&self, o: &Self) -> Ordering {
         self.0.total_cmp(&o.0)
+    }
+}
+
+/// Disjoint-set (union-find) with path compression + union by rank. Used by
+/// [`NavGraph::prune_long_blocked_edges`] to keep load-bearing bridges while pruning
+/// redundant false edges in a single near-linear pass.
+struct UnionFind {
+    parent: Vec<usize>,
+    rank: Vec<u8>,
+}
+
+impl UnionFind {
+    fn new(n: usize) -> Self {
+        Self {
+            parent: (0..n).collect(),
+            rank: vec![0; n],
+        }
+    }
+
+    fn find(&mut self, x: usize) -> usize {
+        let mut root = x;
+        while self.parent[root] != root {
+            root = self.parent[root];
+        }
+        // Path compression.
+        let mut cur = x;
+        while self.parent[cur] != root {
+            let next = self.parent[cur];
+            self.parent[cur] = root;
+            cur = next;
+        }
+        root
+    }
+
+    fn union(&mut self, a: usize, b: usize) {
+        let (ra, rb) = (self.find(a), self.find(b));
+        if ra == rb {
+            return;
+        }
+        match self.rank[ra].cmp(&self.rank[rb]) {
+            Ordering::Less => self.parent[ra] = rb,
+            Ordering::Greater => self.parent[rb] = ra,
+            Ordering::Equal => {
+                self.parent[rb] = ra;
+                self.rank[ra] += 1;
+            }
+        }
     }
 }
 

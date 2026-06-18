@@ -26,6 +26,13 @@ pub const JUMP_SPACING: f32 = 64.0;
 /// `walkable_stair` still rejects false long-range cross-floor shortcuts.
 /// Must stay in the cache fingerprint so changing it auto-invalidates stale caches.
 pub const BRIDGE_HDIST: f32 = 256.0;
+/// Max horizontal span (units) for a hull-blocked edge to survive
+/// `NavGraph::prune_long_blocked_edges`. Real q2dm1 staircase flights are climbed via
+/// short hull-blocked edges (hd ≲ 136); longer hull-blocked edges are false bridges
+/// that `walkable_stair` accepted by sampling surfaces across open space — the bot
+/// cannot follow them with straight-line steering. 144u keeps real flights, drops the
+/// node-10300-style false hubs (hd 187-255). In the cache fingerprint.
+pub const PRUNE_MAX_HD: f32 = 144.0;
 
 /// Everything a caller needs after building a map's nav graph: the parsed BSP
 /// (for spawn points / entity lookups), the collision model (for traces/LOS),
@@ -104,6 +111,8 @@ pub fn cached_map_nav(
     let seeded = graph.seed_spawns(&cm, &spawn_origins);
     add_elevator_edges(&mut graph, &cm, &bsp);
     graph.bridge_components(&cm, BRIDGE_HDIST);
+    let pruned = graph.prune_long_blocked_edges(&cm, PRUNE_MAX_HD);
+    tracing::info!(map, pruned, "pruned long hull-blocked false edges");
     let added_jumps = graph.detect_jump_edges(&cm, JUMP_SPACING);
     let (in_largest, total_spawns) = graph.spawns_in_largest_component(&spawn_origins);
     let largest = graph.largest_spawn_component(&spawn_origins);
@@ -151,6 +160,8 @@ pub fn generate_map_nav(baseq2: &Path, map: &str) -> Result<MapNavBuild, String>
     let seeded = graph.seed_spawns(&cm, &spawn_origins);
     add_elevator_edges(&mut graph, &cm, &bsp);
     graph.bridge_components(&cm, BRIDGE_HDIST);
+    let pruned = graph.prune_long_blocked_edges(&cm, PRUNE_MAX_HD);
+    tracing::info!(map, pruned, "pruned long hull-blocked false edges");
     let added_jumps = graph.detect_jump_edges(&cm, JUMP_SPACING);
     let (in_largest, total_spawns) = graph.spawns_in_largest_component(&spawn_origins);
     let largest = graph.largest_spawn_component(&spawn_origins);
