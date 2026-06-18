@@ -44,10 +44,11 @@ pub struct NavMesh {
     pub adj: Vec<Vec<u32>>,
     /// `col_polys[iy*nx + ix]` = poly indices whose rectangle covers cell `(ix, iy)`.
     col_polys: Vec<Vec<u32>>,
-    /// Connection point for each bridged (non-edge-sharing) rect pair — the world point where
-    /// `walkable_stair` succeeded. The funnel pinches the path here, not at the rects'
-    /// far-apart center-midpoint (which for big rects lands in mid-air off the stair).
-    bridge_points: std::collections::HashMap<(u32, u32), [f32; 3]>,
+    /// For each bridged (non-edge-sharing) rect pair `(a, b)`, the two WALKABLE cell centers
+    /// the stair connects — `[point_on_a, point_on_b]`. The funnel routes the path through both
+    /// (a's side, then b's), so the bot walks the stair surface. Storing a single midpoint
+    /// instead put the pinch INSIDE the step's solid (bot aimed into a wall and wedged).
+    bridge_points: std::collections::HashMap<(u32, u32), [[f32; 3]; 2]>,
 }
 
 impl NavMesh {
@@ -251,8 +252,8 @@ impl NavMesh {
         mesh
     }
 
-    /// World connection point for a bridged rect pair (where the stair was found), if any.
-    pub fn bridge_point(&self, a: usize, b: usize) -> Option<[f32; 3]> {
+    /// The two walkable cell centers a bridge connects, `[on_a, on_b]`, if `(a, b)` is bridged.
+    pub fn bridge_point(&self, a: usize, b: usize) -> Option<[[f32; 3]; 2]> {
         self.bridge_points.get(&(a as u32, b as u32)).copied()
     }
 
@@ -328,12 +329,12 @@ impl NavMesh {
             // for every cell of a non-largest-component rect, ring-search nearby cells; if a
             // real walkable_stair connects the two CELL CENTERS, bridge the two RECTS. Rect-edge
             // sampling under-bridged because the climbable span isn't always at a rect edge.
-            let bridges: Vec<(u32, u32, [f32; 3])> = (0..nx * ny)
+            let bridges: Vec<(u32, u32, [f32; 3], [f32; 3])> = (0..nx * ny)
                 .into_par_iter()
                 .flat_map_iter(|ci| {
                     let ix = ci % nx;
                     let iy = ci / nx;
-                    let mut out: Vec<(u32, u32, [f32; 3])> = Vec::new();
+                    let mut out: Vec<(u32, u32, [f32; 3], [f32; 3])> = Vec::new();
                     for &r in &self.col_polys[ci] {
                         if comp_of[r as usize] == largest {
                             continue;
@@ -358,17 +359,19 @@ impl NavMesh {
                                     let c1 = self.cell_center(nxi as usize, nyi as usize, qz);
                                     let hd =
                                         ((c1[0] - c0[0]).powi(2) + (c1[1] - c0[1]).powi(2)).sqrt();
-                                    if hd > max_hdist {
+                                    // Reject too-steep links. A real Q2 staircase rises ~16u per
+                                    // tread over a ≥ comparable run (slope ≲ 1). walkable_stair
+                                    // false-positives on a tall ledge/wall climbed over a short
+                                    // run (it finds the lower floor "within a step below" each
+                                    // probe even with no real tread), so the bot wedges at the
+                                    // base trying to climb. Require a stair-like run: hd ≥ 1.5·dz.
+                                    if hd > max_hdist || hd < (qz - rz).abs() {
                                         continue;
                                     }
                                     let (lo, hi) = if rz <= qz { (c0, c1) } else { (c1, c0) };
                                     if walkable_stair(cm, lo, hi) {
-                                        let mid = [
-                                            (c0[0] + c1[0]) * 0.5,
-                                            (c0[1] + c1[1]) * 0.5,
-                                            (c0[2] + c1[2]) * 0.5,
-                                        ];
-                                        out.push((r, q, mid));
+                                        // Carry BOTH walkable cell centers (r's side, q's side).
+                                        out.push((r, q, c0, c1));
                                     }
                                 }
                             }
@@ -381,7 +384,7 @@ impl NavMesh {
             if bridges.is_empty() {
                 break;
             }
-            for (a, b, mid) in bridges {
+            for (a, b, ca, cb) in bridges {
                 if !self.adj[a as usize].contains(&b) {
                     self.adj[a as usize].push(b);
                     added += 1;
@@ -390,8 +393,8 @@ impl NavMesh {
                     self.adj[b as usize].push(a);
                     added += 1;
                 }
-                self.bridge_points.entry((a, b)).or_insert(mid);
-                self.bridge_points.entry((b, a)).or_insert(mid);
+                self.bridge_points.entry((a, b)).or_insert([ca, cb]);
+                self.bridge_points.entry((b, a)).or_insert([cb, ca]);
             }
         }
         added

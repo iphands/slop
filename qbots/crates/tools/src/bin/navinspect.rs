@@ -166,6 +166,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    // NAVQUERY mode: `navinspect <baseq2> <map> navquery <x> <y> <z> [cell]`
+    // Builds the navmesh and reports what nearest_poly returns for the point + every poly whose
+    // rectangle covers that cell column (their heights + components), so a z-level mismatch
+    // between where a bot stands and where the mesh routes it is visible.
+    if args[3] == "navquery" {
+        let q = [args[4].parse::<f32>()?, args[5].parse()?, args[6].parse()?];
+        let cell: f32 = args.get(7).and_then(|s| s.parse().ok()).unwrap_or(16.0);
+        let model = &built.bsp.models[0];
+        let params = world::VoxelParams {
+            cell_size: cell,
+            ..Default::default()
+        };
+        let hf = world::Heightfield::build(cm, (model.mins, model.maxs), params);
+        let mut mesh = world::NavMesh::build(&hf, params.walkable_climb);
+        mesh.bridge_components(cm, 256.0);
+        let comps = mesh.components();
+        let mut comp_of = vec![usize::MAX; mesh.polys.len()];
+        for (ci, c) in comps.iter().enumerate() {
+            for &p in c {
+                comp_of[p] = ci;
+            }
+        }
+        println!(
+            "navquery @ ({:.0},{:.0},{:.0}) cell={cell}",
+            q[0], q[1], q[2]
+        );
+        match mesh.nearest_poly(q) {
+            Some(p) => {
+                let c = mesh.poly_center(p);
+                println!(
+                    "  nearest_poly = {p} center=({:.0},{:.0},{:.0}) Δz={:.0} comp={} (size {})",
+                    c[0],
+                    c[1],
+                    c[2],
+                    c[2] - q[2],
+                    comp_of[p],
+                    comps[comp_of[p]].len()
+                );
+            }
+            None => println!("  nearest_poly = NONE (off-mesh)"),
+        }
+        // All heightfield spans in this column (the raw walkable Z-levels).
+        let ix = ((q[0] - hf.min[0]) / hf.cell_size).floor() as i64;
+        let iy = ((q[1] - hf.min[1]) / hf.cell_size).floor() as i64;
+        if ix >= 0 && iy >= 0 && (ix as usize) < hf.nx && (iy as usize) < hf.ny {
+            let spans = &hf.columns[iy as usize * hf.nx + ix as usize];
+            println!("  heightfield spans (origin Z) at this cell: {spans:?}");
+        }
+        return Ok(());
+    }
+
     // NAVPATH mode: `navinspect <baseq2> <map> navpath <sx> <sy> <sz> <gx> <gy> <gz> [cell]`
     // Builds the navmesh, plans a funnel path start→goal, and prints the polyline + per-segment
     // hull-clearance check. Validates Phase 3 (and e.g. RL reachability).
