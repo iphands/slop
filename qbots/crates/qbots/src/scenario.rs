@@ -24,7 +24,7 @@ use brain::perception::Worldview;
 use brain::recorder::{CmWallProbe, MovementRecorder, Sample, WallProbe};
 use brain::recover::{find_best_direction, Recovery, RecoveryAction};
 use brain::steer::{move_from_world_dir, Steering};
-use brain::{MovementController, MovementIntent, NavigationDriver, Navigator};
+use brain::{MovementController, MovementIntent, NavigationDriver, Navigator, NavmeshDriver};
 use client::{Conn, ConnState};
 use q2proto::Usercmd;
 use world::NavGraph;
@@ -72,13 +72,6 @@ pub async fn run_scenario(
     // Navigation backend (`--mode`): the `astar` waypoint graph or the `navmesh` polygon mesh.
     mode: crate::NavMode,
 ) -> std::io::Result<ExitCode> {
-    // The navmesh backend is built incrementally (plan phases 1-5); until its driver lands,
-    // fail fast with a clear message rather than silently falling back to astar.
-    if matches!(mode, crate::NavMode::Navmesh) {
-        return Err(io_err(
-            "navmesh mode is not yet built — re-run with --mode astar (default)".to_string(),
-        ));
-    }
     let map = map_arg
         .map(str::to_string)
         .unwrap_or_else(|| DEFAULT_MAP.to_string());
@@ -262,11 +255,31 @@ pub async fn run_scenario(
     // 4. Brain primitives + recorder scaffolding.
     let mut move_ctrl = MovementController::new();
     let mut steering = Steering::new(3.0); // mid-skill for scenario runs
-                                           // Drive through the `Navigator` trait so the tick loop is backend-agnostic (the navmesh
-                                           // backend will slot in here as a different `Box<dyn Navigator>` in a later phase).
-                                           // `+ Send` because this future is spawned on tokio and holds the driver across awaits.
-    let mut nav_driver: Box<dyn Navigator + Send> =
-        Box::new(NavigationDriver::new(Arc::clone(&graph)));
+
+    // Drive through the `Navigator` trait so the tick loop is backend-agnostic. `+ Send`
+    // because this future is spawned on tokio and holds the driver across awaits.
+    let mut nav_driver: Box<dyn Navigator + Send> = match mode {
+        crate::NavMode::Astar => Box::new(NavigationDriver::new(Arc::clone(&graph))),
+        crate::NavMode::Navmesh => {
+            // Build the polygon navmesh from the same collision model the A* graph used
+            // (heightfield → mesh → stair/ramp bridge). Cell 16 balances poly count vs detail.
+            // NOTE: built per-bot for now; Phase 5 adds a cached navmesh like the A* graph.
+            let model = &bsp.models[0];
+            let params = world::VoxelParams {
+                cell_size: 16.0,
+                ..Default::default()
+            };
+            let hf = world::Heightfield::build(&cm, (model.mins, model.maxs), params);
+            let mut mesh = world::NavMesh::build(&hf, params.walkable_climb);
+            let bridged = mesh.bridge_components(&cm, 192.0);
+            tracing::info!(
+                polys = mesh.polys.len(),
+                bridged,
+                "navmesh built (mode=navmesh)"
+            );
+            Box::new(NavmeshDriver::new(Arc::new(mesh), params.agent_radius))
+        }
+    };
     let mut recovery = Recovery::new();
     let mut last_serverframe: Option<i32> = None;
     let shutdown = Shutdown::new();
