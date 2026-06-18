@@ -15,3 +15,7 @@ glam = { workspace = true }
 [[bin]]
 name = "bsp_verify"
 path = "src/bin/bsp_verify.rs"
+
+[[bin]]
+name = "navinspect"
+path = "src/bin/navinspect.rs"

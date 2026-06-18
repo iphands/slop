@@ -288,6 +288,11 @@ impl NavGraph {
         self.adj.get(idx).map_or(0, |v| v.len())
     }
 
+    /// Outgoing edges `(neighbor_idx, cost)` from node `idx` (for diagnostics/tools).
+    pub fn neighbors(&self, idx: usize) -> &[(usize, f32)] {
+        self.adj.get(idx).map_or(&[], |v| v.as_slice())
+    }
+
     /// Sorted list of unique Z-levels of all neighbors of node `idx` (for diagnostics).
     pub fn adj_neighbor_z_levels(&self, idx: usize) -> Vec<i32> {
         let Some(neighbors) = self.adj.get(idx) else {
