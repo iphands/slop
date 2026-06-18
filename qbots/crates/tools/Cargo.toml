@@ -23,3 +23,7 @@ path = "src/bin/navinspect.rs"
 [[bin]]
 name = "gridscan"
 path = "src/bin/gridscan.rs"
+
+[[bin]]
+name = "compgaps"
+path = "src/bin/compgaps.rs"
