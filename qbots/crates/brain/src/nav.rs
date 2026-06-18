@@ -754,6 +754,46 @@ impl NavigationDriver {
     }
 }
 
+/// The waypoint-graph (`astar`) backend's implementation of the shared [`Navigator`]
+/// contract — delegates to the inherent methods so the scenario tick loop can drive it
+/// interchangeably with the navmesh backend. `current_waypoint_pos` resolves the node
+/// index through the graph so the loop never reaches into `NavGraph` directly.
+impl crate::nav_mode::Navigator for NavigationDriver {
+    fn set_goal(&mut self, goal: NavGoal, from: Vec3) {
+        NavigationDriver::set_goal(self, goal, from)
+    }
+    fn update(&mut self, pos: Vec3, cm: Option<&CollisionModel>) -> bool {
+        NavigationDriver::update(self, pos, cm)
+    }
+    fn pursue_target(&self, from: Vec3) -> Option<Vec3> {
+        NavigationDriver::pursue_target(self, from)
+    }
+    fn pursue_target_safe(&self, from: Vec3, cm: &CollisionModel) -> Option<Vec3> {
+        NavigationDriver::pursue_target_safe(self, from, cm)
+    }
+    fn current_edge_is_jump(&self) -> bool {
+        NavigationDriver::current_edge_is_jump(self)
+    }
+    fn force_replan(&mut self) {
+        NavigationDriver::force_replan(self)
+    }
+    fn blacklist_waypoint_if_blocked(&mut self, pos: Vec3, cm: &CollisionModel) {
+        NavigationDriver::blacklist_waypoint_if_blocked(self, pos, cm)
+    }
+    fn current_waypoint(&self) -> Option<usize> {
+        NavigationDriver::current_waypoint(self)
+    }
+    fn current_waypoint_pos(&self) -> Option<[f32; 3]> {
+        NavigationDriver::current_waypoint(self).map(|i| self.nav_graph.nodes[i])
+    }
+    fn smooth_with_cm(&mut self, cm: &CollisionModel, from: Vec3) {
+        NavigationDriver::smooth_with_cm(self, cm, from)
+    }
+    fn goal_abandoned(&self) -> bool {
+        NavigationDriver::goal_abandoned(self)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StuckAction {
     Jump,

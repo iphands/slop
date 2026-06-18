@@ -15,6 +15,7 @@ pub mod items;
 pub mod los;
 pub mod move_ctrl;
 pub mod nav;
+pub mod nav_mode;
 pub mod observed;
 pub mod perception;
 pub mod recorder;
@@ -28,6 +29,7 @@ pub use danger::{DangerDriver, DodgeAction};
 pub use heatmap::Heatmap;
 pub use move_ctrl::{MovementController, MovementIntent};
 pub use nav::{NavGoal, NavigationDriver};
+pub use nav_mode::Navigator;
 pub use observed::{parse_obituary, HeatmapObserver, HeatmapSnapshot, Obituary};
 pub use perception::{EntityClass, PerceivedEntity, SelfState, Worldview};
 pub use recorder::{

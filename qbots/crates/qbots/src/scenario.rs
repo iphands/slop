@@ -24,7 +24,7 @@ use brain::perception::Worldview;
 use brain::recorder::{CmWallProbe, MovementRecorder, Sample, WallProbe};
 use brain::recover::{find_best_direction, Recovery, RecoveryAction};
 use brain::steer::{move_from_world_dir, Steering};
-use brain::{MovementController, MovementIntent, NavigationDriver};
+use brain::{MovementController, MovementIntent, NavigationDriver, Navigator};
 use client::{Conn, ConnState};
 use q2proto::Usercmd;
 use world::NavGraph;
@@ -69,7 +69,16 @@ pub async fn run_scenario(
     lift_penalty: f32,
     // Grid spacing of the nav graph to load/build (`--spacing`); cached per-spacing.
     spacing: f32,
+    // Navigation backend (`--mode`): the `astar` waypoint graph or the `navmesh` polygon mesh.
+    mode: crate::NavMode,
 ) -> std::io::Result<ExitCode> {
+    // The navmesh backend is built incrementally (plan phases 1-5); until its driver lands,
+    // fail fast with a clear message rather than silently falling back to astar.
+    if matches!(mode, crate::NavMode::Navmesh) {
+        return Err(io_err(
+            "navmesh mode is not yet built — re-run with --mode astar (default)".to_string(),
+        ));
+    }
     let map = map_arg
         .map(str::to_string)
         .unwrap_or_else(|| DEFAULT_MAP.to_string());
@@ -253,7 +262,11 @@ pub async fn run_scenario(
     // 4. Brain primitives + recorder scaffolding.
     let mut move_ctrl = MovementController::new();
     let mut steering = Steering::new(3.0); // mid-skill for scenario runs
-    let mut nav_driver = NavigationDriver::new(Arc::clone(&graph));
+                                           // Drive through the `Navigator` trait so the tick loop is backend-agnostic (the navmesh
+                                           // backend will slot in here as a different `Box<dyn Navigator>` in a later phase).
+                                           // `+ Send` because this future is spawned on tokio and holds the driver across awaits.
+    let mut nav_driver: Box<dyn Navigator + Send> =
+        Box::new(NavigationDriver::new(Arc::clone(&graph)));
     let mut recovery = Recovery::new();
     let mut last_serverframe: Option<i32> = None;
     let shutdown = Shutdown::new();
@@ -457,11 +470,13 @@ pub async fn run_scenario(
                             move_ctrl.set_msec(dt);
                             let cmd = move_ctrl.build_cmd(mv);
 
-                            // Sample the recorder with this frame's telemetry.
-                            let (wp, wp_pos) = match nav_driver.current_waypoint() {
-                                Some(idx) => (Some(idx), graph.nodes.get(idx).copied()),
-                                None => (None, None),
-                            };
+                            // Sample the recorder with this frame's telemetry. Pull the target
+                            // position through the trait (not `graph` directly) so the loop stays
+                            // backend-agnostic.
+                            let (wp, wp_pos) = (
+                                nav_driver.current_waypoint(),
+                                nav_driver.current_waypoint_pos(),
+                            );
                             let vel = self_st.velocity;
                             let grounded = self_st.flags & PMF_ON_GROUND != 0;
                             if let Some(rec) = recorder.as_mut() {

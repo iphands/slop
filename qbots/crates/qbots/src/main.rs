@@ -16,9 +16,19 @@ use std::net::SocketAddr;
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use config::Config;
 use glam::Vec3;
+
+/// Which navigation backend a movement scenario drives the bot with. Two co-maintained
+/// representations behind one flag (`--mode`); the steering loop is identical for both.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum NavMode {
+    /// Waypoint-graph backend: A* over grid-sampled nodes (the default, proven backend).
+    Astar,
+    /// Navmesh backend: A* over walkable polygons + funnel (Recast-style).
+    Navmesh,
+}
 
 #[derive(Parser)]
 #[command(
@@ -110,6 +120,10 @@ enum Cmd {
         /// --spacing <n>`. Default 24.
         #[arg(long, default_value = "24")]
         spacing: f32,
+        /// Navigation backend: `astar` (waypoint graph, default) or `navmesh` (polygon
+        /// mesh + funnel). The navmesh backend requires `generate-navmesh --map <m>` first.
+        #[arg(long, value_enum, default_value_t = NavMode::Astar)]
+        mode: NavMode,
     },
     /// Drive one bot from spawn to a named weapon's BSP origin; log movement; stop.
     SpawnToWeapon {
@@ -140,6 +154,10 @@ enum Cmd {
         /// --spacing <n>`. Default 24.
         #[arg(long, default_value = "24")]
         spacing: f32,
+        /// Navigation backend: `astar` (waypoint graph, default) or `navmesh` (polygon
+        /// mesh + funnel). The navmesh backend requires `generate-navmesh --map <m>` first.
+        #[arg(long, value_enum, default_value_t = NavMode::Astar)]
+        mode: NavMode,
     },
     /// Diagnose disconnected nav-graph components: for each small component show
     /// the closest boundary-node pair to the main component, distances, and
@@ -983,6 +1001,7 @@ async fn run_scenario_cmd(
     max_secs: f32,
     lift_penalty: f32,
     spacing: f32,
+    mode: NavMode,
 ) -> ExitCode {
     let base_name = name.unwrap_or_else(|| "qbots".to_string());
     let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
@@ -1031,6 +1050,7 @@ async fn run_scenario_cmd(
                 bot_qport,
                 lift_penalty,
                 spacing,
+                mode,
             )
             .await
             {
@@ -1813,6 +1833,7 @@ async fn main() -> ExitCode {
             max_secs,
             lift_penalty,
             spacing,
+            mode,
         } => {
             run_scenario_cmd(
                 &cfg,
@@ -1824,6 +1845,7 @@ async fn main() -> ExitCode {
                 max_secs,
                 lift_penalty,
                 spacing,
+                mode,
             )
             .await
         }
@@ -1836,6 +1858,7 @@ async fn main() -> ExitCode {
             max_secs,
             lift_penalty,
             spacing,
+            mode,
         } => {
             run_scenario_cmd(
                 &cfg,
@@ -1847,6 +1870,7 @@ async fn main() -> ExitCode {
                 max_secs,
                 lift_penalty,
                 spacing,
+                mode,
             )
             .await
         }
