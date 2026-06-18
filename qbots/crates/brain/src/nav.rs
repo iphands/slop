@@ -792,6 +792,9 @@ impl crate::nav_mode::Navigator for NavigationDriver {
     fn goal_abandoned(&self) -> bool {
         NavigationDriver::goal_abandoned(self)
     }
+    fn set_risk_overlay(&mut self, overlay: Vec<f32>) {
+        NavigationDriver::set_risk_overlay(self, overlay)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

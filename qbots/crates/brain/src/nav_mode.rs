@@ -39,6 +39,9 @@ pub trait Navigator {
     }
     /// String-pull/smooth the current path (A*-only; navmesh paths are already smooth).
     fn smooth_with_cm(&mut self, _cm: &CollisionModel, _from: Vec3) {}
+    /// Apply a per-node risk/popularity cost overlay for the next replan (A* heatmap
+    /// planning, Plan 08). No-op for backends without a node graph (navmesh).
+    fn set_risk_overlay(&mut self, _overlay: Vec<f32>) {}
     /// True for one tick after the give-up watchdog abandons a stale goal.
     fn goal_abandoned(&self) -> bool {
         false
