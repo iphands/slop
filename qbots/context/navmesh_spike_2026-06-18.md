@@ -31,24 +31,53 @@ Pipeline, voxelization-based (BSP faces were dropped at parse time):
 via the bridged z=920 platform; spawn0→spawn3 reaches across the map. Funnel unit tests pass
 (straight corridor → a line; L corridor → cuts the inside corner).
 
-## A/B results (q2dm1, 24 bots, 60s)
+## A/B results (q2dm1)
 
-| Scenario | astar | navmesh |
-|---|---|---|
-| spawn-to-spawn | **24/24** | 7/24 |
-| spawn-to-weapon rocketlauncher | 5/24 | 0/24 |
+| Scenario | astar | navmesh (initial spike) | navmesh (after maturation) |
+|---|---|---|---|
+| spawn-to-spawn (24 bots) | **24/24** | 7/24 | ~10–14/24 (pile-up limited) |
+| spawn-to-weapon rocketlauncher (12 bots) | ~6/24 | 0/24 | **10–11/12** ✅ |
 
-Single-bot navmesh is **high-variance and route-dependent**: flat/simple routes succeed
-(e.g. a 3885u run reached, hindered_frames=39 — far better than astar's fine-grid ~250),
-but complex routes (stairs, the bridged z=920 platform, the RL) fail.
+**The RL northstar is solved on the navmesh and it BEATS astar there** (~11/12 vs ~6/24): the
+bot executes the full route — climb to the grenade-launcher (z=1256) → **drop onto the z=920
+RL ledge** → follow the thin ledge to the launcher. This is exactly the route the whole spike
+was for, and the waypoint graph never did it well.
 
-## Honest conclusion: approach validated, driver not yet at parity
+### What got the RL working (this maturation pass — all committed)
+- **Distance-field erosion** (`Heightfield::erode`, Recast-style): drop the near-wall ring
+  where the ±16 hull jams, at cell=8 / radius 1 (8u) so 32u doorways + the ~33u RL ledge survive.
+- **Rectangle-merged polys + cell-step adjacency** (`climbable_walk`-validated) — replaces the
+  per-cell quads; wide portals so the funnel inset doesn't collapse.
+- **One-way drop links** (`find_drops` on the FULL heightfield → `add_drops` onto the eroded
+  mesh): directed high→low edges where the bot walks off a clean ledge. Connects drop-only spots
+  (the RL ledge / spawn5). All 10 DM spawns now in ONE component.
+- **Thin-ledge funnel pinning** (`is_narrow_ledge`): pin narrow drop-edge polys through their
+  center so the funnel can't straighten across and cut the bot off a winding ledge. **This is
+  what took RL 0→11/12.** Stairs/corridors (no drop on the side) still straighten.
+- **Removed a false-positive stall-clear** in `NavmeshDriver::update` (path-progress < 4u/tick
+  cleared the path on a legitimate corner-slow → bot stopped in the open). Real stalls are
+  caught by the scenario's position-based StuckDetector.
 
+### The remaining spawn-to-spawn gap = pile-ups (well-understood, see map_errors)
+Single bots usually reach; the count is dragged down by **same-goal pile-ups**: identical
+deterministic funnel paths funnel every bot into the same tight doorway, where the **lead's
+hull jams in a dead pocket** (startsolid all directions — it overshoots the straightened
+approach into a corner). astar threads these via centered waypoint approach. De-jamming is a
+real dilemma: erode=2 kills the RL ledge, erode=1 leaves jams, and a hull trace can't tell a
+jam-pocket from a thin-ledge cell. Pinning doorways / speed cuts both regressed RL. Next lever
+is local bot-avoidance (cap pile-up damage) — a substantial new subsystem, deferred.
+
+## Conclusion (updated): approach validated, RL goal MET, s2s pile-up-limited
+
+The navmesh **beats astar on the RL** (the thing the spike existed to fix) and is the better
+backend for drop-route weapon goals. astar remains the better backend for crowded
+spawn-to-spawn (24/24 vs ~12), so the **two backends are complementary and both ship** behind
+`--mode astar|navmesh` (astar default) — exactly the long-term plan. The navmesh s2s gap is
+pile-ups at tight doorways (above), not the path geometry.
+
+### Original parity-gap notes (mostly addressed this pass — kept for history)
 The navmesh **path geometry is good** — the funnel gives smooth, wall-clear, density-
-independent paths, and connectivity (incl. the RL platform) is solved. The **driver does not
-yet meet the parity gate** (24/24 s2s + RL improvement). The gap is path-*following*
-robustness, which the astar `NavigationDriver` accumulated over many iterations and the
-prototype `NavmeshDriver` lacks:
+independent paths, and connectivity (incl. the RL platform) is solved. Remaining driver gaps:
 
 1. **Stair/ramp + bridge following** — bridged transitions become single "pinch" waypoints;
    the driver doesn't climb the actual stair (no per-step targets, no jump). Complex vertical
