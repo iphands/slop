@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use world::collision::MASK_SOLID;
 use world::{
-    navgraph::{HULL_MAXS, HULL_MINS},
+    navgraph::{segment_has_floor, HULL_MAXS, HULL_MINS},
     CollisionModel, EdgeKind, NavGraph,
 };
 
@@ -327,6 +327,27 @@ impl NavigationDriver {
         // Path shorter than LOOKAHEAD — return the final node.
         let last = *self.current_path.last()?;
         Some(Vec3::from(self.nav_graph.nodes[last]))
+    }
+
+    /// Corner-cut-safe pursuit target. The raw `pursue_target` interpolates a point
+    /// `LOOKAHEAD` units ahead **as a straight line through the path nodes**, which can
+    /// cut across an inside corner (the bot's hull clips the wall) or across an open gap
+    /// (the bot walks off into a fall). This validates the straight line from `from` to
+    /// that point with a hull trace (walls) plus a floor-continuity probe (gaps); if
+    /// either fails it falls back to the current waypoint node — a graph node that is
+    /// hull- and floor-valid by construction, so steering at it never cuts a corner.
+    pub fn pursue_target_safe(&self, from: Vec3, cm: &CollisionModel) -> Option<Vec3> {
+        let raw = self.pursue_target(from)?;
+        let a = [from.x, from.y, from.z];
+        let b = [raw.x, raw.y, raw.z];
+        let t = cm.trace(&a, &b, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+        let wall_blocked = t.startsolid || t.fraction < 1.0;
+        if !wall_blocked && segment_has_floor(cm, a, b) {
+            return Some(raw);
+        }
+        // Unsafe straight line — steer at the next graph node instead.
+        let wp = self.current_waypoint?;
+        Some(Vec3::from(self.nav_graph.nodes[wp]))
     }
 
     pub fn update(&mut self, position: Vec3, cm: Option<&CollisionModel>) -> bool {

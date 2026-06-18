@@ -346,8 +346,11 @@ pub async fn run_scenario(
                             let mut mv = MovementIntent::new();
                             let mut intent_forward = 0.0;
 
-                            // Steer via pursue_target (T3 look-ahead) with face-then-go.
-                            let pursue_pos = nav_driver.pursue_target(pos);
+                            // Steer via the corner-cut-safe look-ahead (hull + floor
+                            // validated) so the bot never cuts a corner into a wall or
+                            // across a gap. Falls back to the next graph node when the
+                            // straight line is unsafe.
+                            let pursue_pos = nav_driver.pursue_target_safe(pos, &cm);
                             let (ideal_yaw, world_move_dir) = if let Some(pt) = pursue_pos {
                                 let delta = pt - pos;
                                 if delta.length_squared() > 1.0 {
