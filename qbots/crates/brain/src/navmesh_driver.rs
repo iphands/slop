@@ -157,4 +157,13 @@ impl Navigator for NavmeshDriver {
     fn goal_abandoned(&self) -> bool {
         false // navmesh never self-abandons a goal; recovery handles real stalls
     }
+
+    /// Tunable global speed (default 1.0). A cut reduces tight-doorway overshoot but slows long
+    /// routes into timeouts (0.7 regressed both s2s and RL), so it's left at full speed.
+    fn speed_scale(&self, _pos: Vec3) -> f32 {
+        std::env::var("QBOTS_SPEED")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1.0)
+    }
 }
