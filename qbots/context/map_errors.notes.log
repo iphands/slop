@@ -328,3 +328,13 @@ surfaces across open space; BRIDGE_HDIST=256 lets it span far enough to do real 
 FIX PLAN: post-build prune of edges that are hull-BLOCKED AND span hd > a real stair
 flight (≈144). Verify spawn connectivity still holds after pruning (dense 24u grid +
 legit short stairs should keep everything connected).
+
+### Bridges — dedicated writeup + grid-size question → context/bridges.md
+Documented WHAT bridges are (cross-component stitching only; zero added if generate()
+is already single-component), WHY fragmentation happens (stairs/winding flights,
+under-sampled doorways, lifts; one-way pits are irreducible), and the COST (BRIDGE_HDIST
+creep 128→256→512 + walkable_stair false-positives = false hubs like node 10300).
+Hypothesis: a finer grid (24→16→12→8) may collapse pre-bridge fragmentation and let us
+shrink/remove bridging at the root. Added tools/gridscan to measure components vs spacing
+pre-bridge (decisive experiment). gridscan NOT yet run — world crate was mid-refactor
+(did not compile: UnionFind). Run it and fill the table in bridges.md.
