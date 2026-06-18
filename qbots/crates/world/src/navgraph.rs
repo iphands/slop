@@ -1009,60 +1009,70 @@ impl NavGraph {
         ];
         let zero = [0.0f32; 3];
         let probe_dist = spacing * 1.5;
-        let mut added = 0;
         let n = self.nodes.len();
+        let graph: &NavGraph = self;
 
-        for a in 0..n {
-            let an = self.nodes[a];
-            for (dx, dy) in DIRS {
-                let px = an[0] + dx * probe_dist;
-                let py = an[1] + dy * probe_dist;
+        // Phase 1 (PARALLEL): per node, find the ledge-drop jump edges to add. Read-only —
+        // each probe is independent cm.trace + nearest() lookups (nearest is an O(n) scan,
+        // so this whole pass is O(n²) and the dominant build cost — parallelising it across
+        // cores is the big win). Returns per-node lists of (b, cost, launch_yaw), deduped by
+        // b within the node (matching the original's "skip if already added this node").
+        let per_node: Vec<Vec<(usize, f32, f32)>> = (0..n)
+            .into_par_iter()
+            .map(|a| {
+                let an = graph.nodes[a];
+                let mut found: Vec<(usize, f32, f32)> = Vec::new();
+                for (dx, dy) in DIRS {
+                    let px = an[0] + dx * probe_dist;
+                    let py = an[1] + dy * probe_dist;
+                    // Down-trace from above the probe to A - MAX_FALL.
+                    let top = [px, py, an[2] + 200.0];
+                    let bot = [px, py, an[2] - MAX_FALL];
+                    let down = cm.trace(&top, &bot, &zero, &zero, MASK_SOLID);
+                    if down.fraction >= 1.0 || down.startsolid {
+                        continue; // no floor below
+                    }
+                    let floor_z = down.endpos[2];
+                    let drop = an[2] - floor_z;
+                    if !(STEP..=MAX_FALL).contains(&drop) {
+                        continue; // not a meaningful downward ledge
+                    }
+                    let landing = [px, py, floor_z + 24.0];
+                    let Some(b) = graph.nearest(&landing) else {
+                        continue;
+                    };
+                    let bn = graph.nodes[b];
+                    if b == a {
+                        continue;
+                    }
+                    // B must be close to landing horizontally.
+                    let dx2 = (bn[0] - landing[0]).powi(2) + (bn[1] - landing[1]).powi(2);
+                    if dx2 > (STEP * 2.0).powi(2) {
+                        continue;
+                    }
+                    // Skip if a walk edge already exists, or we already picked this b for a.
+                    if graph.adj[a].iter().any(|&(nb, _)| nb == b)
+                        || found.iter().any(|&(bb, _, _)| bb == b)
+                    {
+                        continue;
+                    }
+                    // Ensure the first half of the path A→B is clear (no wall).
+                    let t = cm.trace(&an, &bn, &zero, &zero, MASK_SOLID);
+                    if t.startsolid || t.fraction < 0.4 {
+                        continue;
+                    }
+                    let launch_yaw = dy.atan2(dx).to_degrees();
+                    found.push((b, dist(&an, &bn), launch_yaw));
+                }
+                found
+            })
+            .collect();
 
-                // Down-trace from above probe to below A - MAX_FALL.
-                let top = [px, py, an[2] + 200.0];
-                let bot = [px, py, an[2] - MAX_FALL];
-                let down = cm.trace(&top, &bot, &zero, &zero, MASK_SOLID);
-                if down.fraction >= 1.0 || down.startsolid {
-                    continue; // no floor below
-                }
-                let floor_z = down.endpos[2];
-                let drop = an[2] - floor_z;
-                if !(STEP..=MAX_FALL).contains(&drop) {
-                    continue; // not a meaningful downward ledge
-                }
-                let landing = [px, py, floor_z + 24.0];
-
-                // Find the nearest sampled node B at the landing site.
-                let Some(b) = self.nearest(&landing) else {
-                    continue;
-                };
-                let bn = self.nodes[b];
-                if b == a {
-                    continue;
-                }
-                // B must be close to landing horizontally and within height band.
-                let dx2 = (bn[0] - landing[0]).powi(2) + (bn[1] - landing[1]).powi(2);
-                if dx2 > (STEP * 2.0).powi(2) {
-                    continue;
-                }
-
-                // Skip if a walk edge already exists.
-                if self.adj[a].iter().any(|&(nb, _)| nb == b) {
-                    continue;
-                }
-                // Skip if jump edge already recorded.
-                if self.jump_edges.contains(&(a, b)) {
-                    continue;
-                }
-
-                // Ensure the first half of the path from A to B is clear (no wall).
-                let t = cm.trace(&an, &bn, &zero, &zero, MASK_SOLID);
-                if t.startsolid || t.fraction < 0.4 {
-                    continue;
-                }
-
-                let launch_yaw = dy.atan2(dx).to_degrees();
-                let cost = dist(&an, &bn);
+        // Phase 2 (SEQUENTIAL): apply. Each node has a distinct `a`, so jump-edge keys (a, b)
+        // never collide across nodes — the result equals the original in-place version.
+        let mut added = 0;
+        for (a, list) in per_node.into_iter().enumerate() {
+            for (b, cost, launch_yaw) in list {
                 self.adj[a].push((b, cost));
                 self.jump_edges.insert((a, b));
                 self.jump_yaws.insert((a, b), launch_yaw);

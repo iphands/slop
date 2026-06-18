@@ -116,14 +116,38 @@ pub fn cached_map_nav(
         );
     }
 
-    // Cache miss (or no cache dir): generate live.
-    let mut graph = NavGraph::generate(&cm, bounds, GRID_SPACING);
-    let seeded = graph.seed_spawns(&cm, &spawn_origins);
-    add_elevator_edges(&mut graph, &cm, &bsp, lift_penalty);
-    graph.bridge_components(&cm, BRIDGE_HDIST);
-    let pruned = graph.prune_long_blocked_edges(&cm, PRUNE_MAX_HD);
+    // Cache miss (or no cache dir): generate live. Each phase is timed (debug) so the
+    // dominant cost at any grid spacing is visible — important since fine grids make the
+    // pipeline expensive and we need to know WHICH phase to optimise.
+    macro_rules! timed {
+        ($name:expr, $body:expr) => {{
+            let _t = std::time::Instant::now();
+            let r = $body;
+            tracing::info!(
+                map,
+                phase = $name,
+                ms = _t.elapsed().as_millis() as u64,
+                "build phase"
+            );
+            r
+        }};
+    }
+    let mut graph = timed!("generate", NavGraph::generate(&cm, bounds, GRID_SPACING));
+    let seeded = timed!("seed_spawns", graph.seed_spawns(&cm, &spawn_origins));
+    timed!(
+        "add_elevator_edges",
+        add_elevator_edges(&mut graph, &cm, &bsp, lift_penalty)
+    );
+    timed!(
+        "bridge_components",
+        graph.bridge_components(&cm, BRIDGE_HDIST)
+    );
+    let pruned = timed!("prune", graph.prune_long_blocked_edges(&cm, PRUNE_MAX_HD));
     tracing::info!(map, pruned, "pruned long hull-blocked false edges");
-    let added_jumps = graph.detect_jump_edges(&cm, JUMP_SPACING);
+    let added_jumps = timed!(
+        "detect_jump_edges",
+        graph.detect_jump_edges(&cm, JUMP_SPACING)
+    );
     let (in_largest, total_spawns) = graph.spawns_in_largest_component(&spawn_origins);
     let largest = graph.largest_spawn_component(&spawn_origins);
 
