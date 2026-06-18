@@ -80,6 +80,12 @@ enum Cmd {
         /// `[fleet].max_bots` (server maxclients headroom).
         #[arg(long)]
         count: Option<usize>,
+        /// Base qport for the fleet; bot *i* uses `<base>+i`. Defaults to a per-process
+        /// value so two concurrent `run` fleets don't collide on the server's
+        /// `(ip, qport)` client-slot key (which ignores UDP source port). Pin it for
+        /// reproducible qports.
+        #[arg(long)]
+        qport_base: Option<u16>,
     },
     /// Print the loaded config (server + paths + fleet) and exit.
     Config,
@@ -1595,6 +1601,7 @@ async fn main() -> ExitCode {
             mode,
             name,
             count,
+            qport_base,
         } => {
             // `--count` can enable a fleet even when the config roster is empty (and a
             // `--count 0` disables one the config would otherwise enable).
@@ -1613,7 +1620,7 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            match supervisor::run_fleet(Arc::new(cfg), addr, mode, name, count).await {
+            match supervisor::run_fleet(Arc::new(cfg), addr, mode, name, count, qport_base).await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     tracing::error!("{e}");
@@ -1626,7 +1633,8 @@ async fn main() -> ExitCode {
             tracing::info!("server_cfg  : {}", cfg.paths.server_cfg.display());
             tracing::info!("baseq2      : {}", cfg.paths.baseq2.display());
             tracing::info!(
-                "fleet       : {} bots (prefix '{}', qport {}+)",
+                "fleet       : {} bots (prefix '{}'); qport base is per-process unless \
+                 `run --qport-base` pins it (config seed {})",
                 cfg.fleet.count,
                 cfg.fleet.name_prefix,
                 cfg.fleet.qport_base

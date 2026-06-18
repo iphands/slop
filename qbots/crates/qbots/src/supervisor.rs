@@ -234,12 +234,17 @@ struct FleetShared {
 ///
 /// `count_override` (CLI `--count`) replaces `[fleet].count`; `name_override` (CLI
 /// `--name`) replaces the roster's naming, yielding `<name>_1`, `<name>_2`, … (1-based).
+/// `qport_base_override` (CLI `--qport-base`) pins the qport base; when `None` a
+/// per-process value (`default_qport`) is used so two concurrent fleets on the same host
+/// don't collide on the server's `(ip, qport)` client-slot key.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_fleet(
     cfg: Arc<Config>,
     addr: SocketAddr,
     mode: crate::NavMode,
     name_override: Option<String>,
     count_override: Option<usize>,
+    qport_base_override: Option<u16>,
 ) -> std::io::Result<()> {
     // Apply the maxclients guard: never spawn more than `max_bots` (leave slots
     // for humans). 0 = uncapped. `--count` overrides the config roster size first.
@@ -274,7 +279,11 @@ pub async fn run_fleet(
         mode,
     };
 
-    tracing::info!(count, "launching fleet to {addr}");
+    // Per-process default so concurrent `run` fleets get disjoint qport ranges (the
+    // server keys client slots on base-IP + qport, ignoring UDP source port). `--qport-base`
+    // pins it for reproducibility.
+    let qport_base = qport_base_override.unwrap_or_else(crate::default_qport);
+    tracing::info!(count, qport_base, "launching fleet to {addr}");
 
     let mut tasks = Vec::new();
     for i in 0..count {
@@ -283,7 +292,7 @@ pub async fn run_fleet(
             Some(prefix) => format!("{prefix}_{}", i + 1),
             None => cfg.fleet.bot_name(i),
         };
-        let qport = cfg.fleet.bot_qport(i);
+        let qport = qport_base.wrapping_add(i as u16);
         let cfg = Arc::clone(&cfg);
         let shared = shared.clone();
         tasks.push(tokio::spawn(async move {

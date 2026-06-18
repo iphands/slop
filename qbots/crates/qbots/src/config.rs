@@ -65,11 +65,6 @@ impl Fleet {
         format!("{}{}", self.name_prefix, i)
     }
 
-    /// The qport for bot `i`.
-    pub fn bot_qport(&self, i: usize) -> u16 {
-        self.qport_base.wrapping_add(i as u16)
-    }
-
     /// Is the fleet enabled (any bots to spawn)?
     pub fn enabled(&self) -> bool {
         self.count > 0
@@ -139,8 +134,7 @@ fleet:
         assert!(cfg.fleet.enabled());
         assert_eq!(cfg.fleet.bot_name(0), "bot0");
         assert_eq!(cfg.fleet.bot_name(5), "bot5");
-        assert_eq!(cfg.fleet.bot_qport(0), 28000);
-        assert_eq!(cfg.fleet.bot_qport(5), 28005);
+        assert_eq!(cfg.fleet.qport_base, 28000);
         assert_eq!(cfg.fleet.connect_stagger_ms, 300);
     }
 }
