@@ -42,6 +42,56 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         g.node_count()
     );
 
+    // Path mode: if a goal point (gx gy gz) is given after the radius, print the A*
+    // path from the query point to it (node coords + dz/hd + live hull/stair re-check),
+    // so a route that funnels bots through a false/unfollowable edge is visible.
+    if args.len() >= 10 {
+        let gx: f32 = args[7].parse()?;
+        let gy: f32 = args[8].parse()?;
+        let gz: f32 = args[9].parse()?;
+        let s = g.nearest(&[qx, qy, qz]).ok_or("no start node")?;
+        let t = g.nearest(&[gx, gy, gz]).ok_or("no goal node")?;
+        println!(
+            "PATH from node {s} {:?} to node {t} {:?}",
+            g.nodes[s].map(|v| v as i32),
+            g.nodes[t].map(|v| v as i32)
+        );
+        match g.path(s, t) {
+            None => println!("  NO PATH"),
+            Some(p) => {
+                for w in p.windows(2) {
+                    let (a, b) = (w[0], w[1]);
+                    let pa = g.nodes[a];
+                    let pb = g.nodes[b];
+                    let dz = pb[2] - pa[2];
+                    let hd = ((pb[0] - pa[0]).powi(2) + (pb[1] - pa[1]).powi(2)).sqrt();
+                    let tr = cm.trace(&pa, &pb, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+                    let hull = if tr.startsolid || tr.fraction < 0.999 {
+                        "BLOCKED"
+                    } else {
+                        "clear"
+                    };
+                    let stair = if dz.abs() > STEP {
+                        let (lo, hi) = if dz > 0.0 { (pa, pb) } else { (pb, pa) };
+                        if walkable_stair(cm, lo, hi) {
+                            " stair=OK"
+                        } else {
+                            " stair=NO"
+                        }
+                    } else {
+                        ""
+                    };
+                    let mark = if hull == "BLOCKED" { "  <<<" } else { "" };
+                    println!(
+                        "  {a} ({:.0},{:.0},{:.0}) -> {b} ({:.0},{:.0},{:.0}) dz={dz:+.0} hd={hd:.0} {hull}{stair}{mark}",
+                        pa[0], pa[1], pa[2], pb[0], pb[1], pb[2]
+                    );
+                }
+            }
+        }
+        return Ok(());
+    }
+
     let q = [qx, qy, qz];
     let mut near: Vec<(usize, f32)> = (0..g.node_count())
         .filter_map(|i| {

@@ -222,19 +222,25 @@ impl NavGraph {
                 let pb = self.nodes[b];
                 let hd2 = (pb[0] - pa[0]).powi(2) + (pb[1] - pa[1]).powi(2);
                 let dz = (pb[2] - pa[2]).abs();
-                // Short steep edges are presumed real stairs — keep without a trace.
-                if hd2 <= max_hd2 && dz > STEP {
-                    uf.union(a, b);
-                    continue;
-                }
-                // Long OR flat: trace to see if it's actually blocked.
                 let t = cm.trace(&pa, &pb, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
                 let blocked = t.startsolid || t.fraction < 0.999;
-                if blocked {
-                    candidates.push((a, b, hd2));
-                } else {
-                    uf.union(a, b); // trustworthy edge — part of the base graph
+                if !blocked {
+                    uf.union(a, b); // hull-clear: trustworthy, part of the base graph
+                    continue;
                 }
+                // Blocked straight line. A short steep edge MIGHT be a real staircase the
+                // bot climbs via pmove stepping — confirm with walkable_stair. If that also
+                // fails (stair=NO), it is a false cliff edge (e.g. the q2dm1 weapon's
+                // 3972→3978 dz=128 hd=96) that traps bots at a fake shortcut → candidate.
+                if hd2 <= max_hd2 && dz > STEP {
+                    let (lo, hi) = if pa[2] < pb[2] { (pa, pb) } else { (pb, pa) };
+                    if walkable_stair(cm, lo, hi) {
+                        uf.union(a, b); // real stair
+                        continue;
+                    }
+                }
+                // Flat-blocked, long-blocked, or steep-but-not-a-stair → false edge.
+                candidates.push((a, b, hd2));
             }
         }
         // Shortest candidate bridges first so we keep the tightest real connection.
