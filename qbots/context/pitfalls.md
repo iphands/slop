@@ -422,3 +422,125 @@ When orbit-timeout fires with dz > LEDGE_DZ=96u, check edge_dz = |prev_z − wp_
 - qbots: `crates/world/src/navgraph.rs` (`walkable_stair`, `seed_spawns`, `smooth_path`, `bridge_pass`)
 - qbots: `crates/brain/src/nav.rs` (orbit-timeout discriminant, ledge_blacklist)
 - qbots: `crates/world/src/build.rs` (BRIDGE_HDIST)
+
+---
+
+# smooth_with_cm point-trace creates 600u+ platform shortcuts → ledge falls
+
+## Problem
+
+`smooth_path` uses a POINT TRACE (zero-size box) to test LOS between nodes. On the
+z=920 platform in q2dm1, the open-air trace from one end to the other (600u+) succeeds
+because the trace passes through z=920 AIR above the ledge geometry. The bot gets a
+waypoint 600u away, races at 300u/s (2 seconds), overshoots the platform edge, and falls.
+Symptom: bot from spawn[5] commits a smooth 605u first waypoint and falls off ledge at t=28s.
+
+Using a HULL TRACE instead was tried: hull top at z=952 hits ceiling geometry in narrow
+areas (startsolid=true), preventing ALL shortcuts on the z=920 platform → worse navigation.
+
+## Fix / How to avoid
+
+Cap MAX_SMOOTH_HDIST=120u in smooth_path. The cap is checked BEFORE the trace:
+if hdist from apex to candidate > 120u, break. This limits shortcuts to 5 grid cells
+(120u at 24u spacing), preventing 600u+ dangerous shortcuts while still allowing useful
+corner-cutting within 120u. Tests that used 100u spacing needed updating to 50u spacing
+(so 2 nodes fit within the 120u cap from apex; see `smooth_path_straight_run_collapses`).
+
+## Sources
+- qbots: `crates/world/src/navgraph.rs` (`smooth_path`, `MAX_SMOOTH_HDIST`)
+
+---
+
+# Above-waypoint orbit: bot climbs slope-roof, force-advances off platform
+
+## Problem
+
+On q2dm1 near node 8694 (1351,1215,920), a bot approaching from the south hits a slope
+at y≈1140 that pushes it UP to z=1006 (onto the roof geometry). The bot is now ABOVE
+the waypoint (dz=86u < LEDGE_DZ=96u threshold), so the old orbit code treated it as a
+"normal force-advance" → advanced to next node (SE direction) → bot ran off the platform
+edge. Symptom: bot from spawn[6] reaches z=920, climbs to z=1006, falls.
+
+## Fix / How to avoid
+
+In the orbit-timeout handler, ADD A CHECK before the dz > LEDGE_DZ branch:
+if `position.z > wp_z + LEDGE_DZ` (bot is significantly ABOVE the waypoint), force
+an immediate replan instead of force-advancing. The bot at z=1006 trying to reach
+a node at z=920 needs a new A* path from its current elevated position, not a push
+to the next waypoint in a direction that leads off the edge.
+
+## Sources
+- qbots: `crates/brain/src/nav.rs` (`orbit-timeout: bot above waypoint — replanning`)
+
+---
+
+# ORBIT_RADIUS=80u fires for bots navigating corners → wrong force-advance direction
+
+## Problem
+
+With ORBIT_RADIUS=80u, the orbit timeout fires when a bot is within 80u of a waypoint.
+A bot at (1357, 1136) navigating to node 8694 at (1351, 1215) is 85u away — just
+barely outside the radius. But after any position jitter, it enters the 80u zone
+(horiz=79u) and orbit fires after 1.5s. The "normal" force-advance sends it to the
+NEXT node in the path (SE direction) which is wrong for navigating around the corner.
+High wrong_turns (50-72) and poor path efficiency indicate premature force-advances.
+
+## Fix / How to avoid
+
+Reduce ORBIT_RADIUS from 80u to 48u (2 grid cells). At 48u, the orbit only fires when
+the bot is genuinely unable to reach a very close waypoint — not when navigating a
+corner. Let StuckLevel::Hard (5 seconds of stuck) handle corner navigation via
+BackOffThenRepath which does a full replan. Also reduces false orbit timeouts for
+bots correctly navigating around adjacent-grid walls.
+
+## Sources
+- qbots: `crates/brain/src/nav.rs` (`ORBIT_RADIUS = 48.0`)
+
+---
+
+# WP_REACH_HORIZ=16u too tight: 300u/s bots overshoot, accumulate wrong_turns
+
+## Problem
+
+At 300u/s (30u/frame at 10Hz), a bot overshoots a 16u-radius waypoint every tick unless
+it decelerates. Q2's actual pmove doesn't decelerate instantly (friction takes ~3 ticks).
+The bot passes through the waypoint but doesn't register "reached" (horiz=18u > 16u),
+continues forward, and the recorder logs a wrong_turn (moved AWAY from waypoint).
+With dozens of waypoints per path, each overshoot accumulates wrong_turns and wastes time.
+
+## Fix / How to avoid
+
+Increase WP_REACH_HORIZ to 24u (one grid cell = one Q2 unit of nav resolution). At
+24u radius, a bot traveling 30u/frame registers "reached" when it's within one step of
+the waypoint. Setting it to 32u was tried but caused pathological skips (bot skipped
+waypoints near wall edges, ended up in wrong areas). 24u is the sweet spot.
+
+## Sources
+- qbots: `crates/brain/src/nav.rs` (`WP_REACH_HORIZ = 24.0`)
+
+---
+
+# BackOffThenRepath waypoint blacklisting: too aggressive → valid nodes blacklisted
+
+## Problem
+
+Adding `force_replan_with_blacklist()` to BackOffThenRepath (blacklist current waypoint
+unconditionally on every stuck recovery) worked for spawn-to-spawn (5-8/8) but gave
+0/8 on spawn-to-weapon. The weapon goal has ONE efficient route through z=920 platform
+nodes. With HARD_REPATH_SECS=3s and up to 20 replans in 60s, the blacklist of 8 nodes
+filled with critical route waypoints. A* was forced to take absurd detours or fail.
+
+HARD_REPATH_SECS=3s also caused 0/8 on its own (too many replans even without blacklist).
+
+## Fix / How to avoid
+
+Only blacklist a waypoint on BackOffThenRepath if a HULL TRACE from current position
+to the waypoint confirms it's physically blocked (fraction < 0.9). Call
+`blacklist_waypoint_if_blocked(pos, &cm)` before `force_replan()`. Keep
+HARD_REPATH_SECS=5.0 (matching Eraser's reference). The hull trace correctly identifies
+walls between bot and waypoint (not just corner-stuck bots that ARE making progress).
+
+## Sources
+- qbots: `crates/brain/src/nav.rs` (`blacklist_waypoint_if_blocked`)
+- qbots: `crates/qbots/src/scenario.rs` (BackOffThenRepath handler)
+- qbots: `crates/brain/src/recover.rs` (`HARD_REPATH_SECS`)

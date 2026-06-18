@@ -121,3 +121,55 @@ D. Grid sampling gap — no floor nodes in the narrow passage connecting regions
 - q2dm6: PASS (8/8 spawns)
 - q2dm7: 5/6 spawns — spawn[0] in unreachable pit (accepted limitation)
 - q2dm8: PASS
+
+---
+
+## 2026-06-17 Session 3 — Plan 19 T6 live verification (spawn-to-spawn + spawn-to-weapon)
+
+### Target: 8/8 on both scenarios with --count 8 --max-secs 60
+
+### Current best results (after multiple fixes):
+- spawn-to-spawn: 5-7/8 (variable; saw 8/8 with an aggressive blacklist combo that broke weapon)
+- spawn-to-weapon: 0-3/8 (0-1 when no lucky z=920 spawns; 2-3 when 2+ bots spawn at z=920)
+
+### Root cause of remaining failures:
+Bots from low-level spawns (z=352-664) need to navigate a 2000-4000u path including
+floor transitions (stairs/ramps) to reach the weapon at z=920. With 60s budget and
+~65-90 u/s average speed, they CAN reach in theory (2000u / 80u/s = 25s). But
+path_efficiency=0.15-0.45 means bots travel 3000-6000u total while making only 500-2000u
+net progress. They loop/backtrack instead of making direct progress.
+
+### Fixes applied this session (cumulative):
+1. **smooth_path MAX_SMOOTH_HDIST=120u** — prevents 600u+ platform shortcuts (point trace)
+   that caused bots to race off z=920 ledge edges. Tests updated to 50u node spacing.
+2. **WP_REACH_HORIZ 16→24u** — prevents wrong_turns from overshooting 16u reach radius
+   at 300u/s (30u/frame). 32u tried but caused waypoint skips near walls.
+3. **ORBIT_RADIUS 80→48u** — prevents premature orbit timeout for bots genuinely
+   navigating corners (79u from waypoint). 5s StuckLevel::Hard handles corner cases.
+4. **Above-waypoint orbit replan** — bot at z>wp_z+96u (slope-roof) replans instead of
+   force-advancing in wrong direction.
+5. **orbit flat-wall check** — when orbit fires (horiz<48u) AND hull trace blocked,
+   blacklist waypoint + replan (prevents orbit advancing past a wall-blocked node).
+6. **blacklist_waypoint_if_blocked on BackOffThenRepath** — trace-gated blacklist
+   only fires when hull trace confirms waypoint is physically blocked.
+
+### Failures attempted that made things WORSE:
+- hull trace in smooth_path: ceiling at z=952 triggers startsolid → no shortcuts at all → 0/8
+- HARD_REPATH_SECS=3s: too many replans (20 in 60s), blacklists valid weapon-route nodes → 0/8
+- unconditional blacklist on BackOffThenRepath: works for spawn-to-spawn but 0/8 weapon
+
+### Remaining investigation needed:
+The core problem: path_efficiency is too low (15-45%) for multi-level paths.
+Bot travels 4000-6000u in 60s but only progresses 600-2000u toward goal.
+High wrong_turns (20-100) and bumps (40-82) indicate wall navigation failures.
+The existing orbit/BackOff recovery fires but replans routes to the same walls.
+The nav graph appears to have false edges near the z=920 transition zones (staircase tops).
+
+### Node 8694 specific issue (1351,1215,920 on q2dm1):
+Bots from spawn[6] (2016,-224,664) climb to z=920 near y=1136, then try to navigate
+north to node 8694 at (1351,1215,920). A wall or step exists between y≈1136 and y=1215.
+The hull trace in orbit-flat-wall-check detects this when horiz<48u. But bots are
+typically 60-85u from node 8694 when they hit the wall (orbit doesn't fire until <48u).
+The BackOffThenRepath fires after 5s, replans, but new path may route back through same wall.
+Confirmed by: bot ending at (1104, 263, 694) after 60s — navigated past the problem area
+but fell to a lower floor in the process.
