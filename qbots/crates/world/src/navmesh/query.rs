@@ -330,7 +330,7 @@ mod tests {
             min: [0.0, 0.0],
             columns: vec![vec![24.0]; 4],
         };
-        let mesh = NavMesh::build(&hf, 18.0);
+        let mesh = NavMesh::build(&hf, 18.0, None);
         let path = mesh
             .path([8.0, 8.0, 24.0], [56.0, 8.0, 24.0], 0.0)
             .expect("path exists");
@@ -364,7 +364,7 @@ mod tests {
             min: [0.0, 0.0],
             columns,
         };
-        let mesh = NavMesh::build(&hf, 18.0);
+        let mesh = NavMesh::build(&hf, 18.0, None);
         // From bottom-left cell to top-right cell.
         let path = mesh
             .path([8.0, 8.0, 24.0], [40.0, 40.0, 24.0], 0.0)
