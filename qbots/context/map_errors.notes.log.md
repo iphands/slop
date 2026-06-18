@@ -822,3 +822,41 @@ hardest remaining piece. Same root keeps s2s at ~14 (residual wedges + a few led
 merge → cell-step adjacency (climbable_walk validated) → drop links → A* → funnel → driver.
 Remaining for 24/24 + RL: thin-ledge traversal (don't overshoot off narrow ledges) + mop up
 residual wedges.
+
+---
+
+## 2026-06-18 Session 7 (cont.6) — PILE-UP STUDY (user request) + the lead-jam root
+
+User reported bots stopping in open rooms / hanging → pile-ups, asked WHY the lead stops and
+why others can't plan around. Studied count=24 logs (longest mid-run stall per bot + arrival
+time + goal). Findings, conclusive:
+
+### The mechanism
+- **Same goal → identical deterministic funnel path → same hang spot.** e.g. 4 bots (goal
+  2016,-224,664) all hung at (624,678,792), arriving t=8-9, stuck 36-37s. 2 bots (goal
+  -80,800,472) at (707,173,920); 2 more at (674,311,792). Same goal clusters at one point.
+- **The lead arrives FIRST (t=8) and hangs the whole run** — so it's not blocked by other
+  bots; it's GEOMETRY.
+- **At every hang spot the hull is `startsolid` in all 4 directions** (linetrace): the bot's
+  ±16 hull is boxed into tight geometry (a corner / 32u doorway). It can't move out.
+- **Why others can't plan around:** the navmesh path is deterministic and doesn't model other
+  bots (no local avoidance), so every same-goal bot follows the exact same line into the same
+  jam. One lead-jam = 4 failures → the low/variable s2s (~10-14/24) is mostly pile-ups, not
+  per-bot nav (single bots usually reach).
+
+### Why the lead jams where astar doesn't
+astar threads tight doorways (24/24) because its dense waypoints approach centered. The navmesh
+funnel STRAIGHTENS the approach and enters the doorway off-center → the hull clips → jam. The
+thin-ledge pinning fixed this for ledges (RL 0→11/12). Extending it to flat doorways was tried
+(pin narrow flat polys) but regressed BOTH (RL 11→5, s2s no better) — too broad — reverted.
+
+### Why de-jamming is hard (the core dilemma, re-confirmed)
+The jam cells have the hull startsolid — but so do thin-ledge cells (a 17u eroded ledge clips
+the 32u hull too). Can't distinguish jam-corner from thin-ledge via a hull trace (the start
+hull is in solid for both). erode=2 removes jams but erases the RL ledge; erode=1 keeps the
+ledge but leaves jams. wall-only erode=2 regressed RL (the ledge has a wall side).
+
+### State: navmesh RL 11/12 (northstar SOLVED), s2s ~10-14/24 (pile-up-limited). astar 24/24.
+Next levers: (a) centered doorway approach (pin doorways without the funnel-straightening
+side effects that regressed s2s), or (b) local bot-avoidance so followers don't pile into a
+stuck lead (caps damage at 1 fail/jam), or (c) per-bot path diversity.
