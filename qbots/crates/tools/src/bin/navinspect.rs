@@ -69,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let fz = d.endpos[2];
                     if (fz - tz).abs() <= band {
                         // floor at target level — is there a nav node within `step`?
-                        let near = g.nearest(&[x, y, fz]).map_or(false, |ni| {
+                        let near = g.nearest(&[x, y, fz]).is_some_and(|ni| {
                             let np = g.nodes[ni];
                             (np[0] - x).powi(2) + (np[1] - y).powi(2) <= step * step
                                 && (np[2] - fz).abs() <= band
