@@ -633,3 +633,42 @@ if horiz < ORBIT_RADIUS {
 ## Sources
 - qbots: `crates/brain/src/nav.rs` (orbit watchdog, `ORBIT_ENTRY_MIN`)
 - qbots: `context/map_errors.notes.log` (2026-06-18 Session 4 analysis)
+
+---
+
+# func_plat elevator deadlock — bots hold the lift up and starve the queue
+
+## Problem
+
+Observed live: many bots pile onto a q2dm1 elevator pad; the platform stays UP and
+never returns, so everyone queued at the bottom waits forever. The moment bots
+disconnect, it descends.
+
+Ground truth in `vendor/yquake2/src/game/g_func.c`:
+- A `func_plat` with no `targetname` (the q2dm1 lift) rests at the BOTTOM (`STATE_BOTTOM`).
+- `plat_spawn_inside_trigger` builds a trigger that spans the WHOLE shaft.
+- `Touch_Plat_Center`: if the plat is at `STATE_BOTTOM` and a player touches the trigger
+  → `plat_go_up` (rides up). If the plat is at `STATE_TOP` and a player is still in the
+  trigger → `nextthink = level.time + 1`, i.e. it **keeps resetting its go-down timer**.
+- `plat_hit_top` would otherwise auto-descend after 3 s.
+
+So a bot that rides up and **lingers on the pad** (in the shaft trigger) pins the plat at
+the top indefinitely; bottom bots can never summon it. Our nav makes this worse:
+`build.rs::add_lift` places the lift's top nav node at the plat's center-top — bots steer
+straight to a node *on the pad* and dwell there, and bot-on-bot collisions stop them
+stepping off.
+
+## Fix / How to avoid
+
+Proper handling (wait at bottom for the plat, ride, step off promptly, read plat z from
+entity frames) is a real feature and unbuilt. Interim fix: `add_lift` adds the vertical
+ride edge with `+ELEVATOR_PENALTY (5000u)` cost, so A* routes around the lift via any
+stair/ramp whenever one exists; the edge stays finite so genuinely lift-only spawns still
+resolve. This removes the lift from the common path → far fewer bots crowd it → no mass
+deadlock. Also run scenarios at 24 bots (not 32) to cut pad crowding while keeping signal.
+Future: model the plat state machine and add wait/ride/step-off + a "don't pile on a busy
+lift; back off and re-approach" behaviour (Eraser-style).
+
+## Sources
+- qbots: `crates/world/src/build.rs` (`add_lift`, `ELEVATOR_PENALTY`)
+- vendor: `yquake2/src/game/g_func.c` (`Touch_Plat_Center`, `plat_hit_top`, `SP_func_plat`)
