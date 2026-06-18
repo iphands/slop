@@ -21,10 +21,6 @@ use crate::pursuit;
 
 /// Fixed pure-pursuit look-ahead (units) — a steering-smoothness constant, not grid-scaled.
 const LOOKAHEAD: f32 = 96.0;
-/// Ticks of zero forward progress before the path is abandoned for a replan (~1.5s at 10Hz).
-const GIVEUP_TICKS: i32 = 15;
-/// Minimum arc-length gain (units) that counts as progress.
-const PROGRESS_EPS: f32 = 4.0;
 /// Goal moved more than this (units) → replan.
 const GOAL_MOVED: f32 = 16.0;
 /// Ticks to wait before retrying a replan that produced no path (avoids per-tick A*).
@@ -37,12 +33,9 @@ pub struct NavmeshDriver {
     /// Current funnel polyline (`start … goal`); empty when there is no plan.
     path: Vec<Vec3>,
     goal: Option<Vec3>,
-    /// Projection segment from the last `update` (progress + telemetry).
+    /// Projection segment from the last `update` (steering + telemetry).
     seg: usize,
-    last_progress: f32,
-    stall: i32,
     cooldown: i32,
-    abandoned: bool,
 }
 
 impl NavmeshDriver {
@@ -53,10 +46,7 @@ impl NavmeshDriver {
             path: Vec::new(),
             goal: None,
             seg: 0,
-            last_progress: 0.0,
-            stall: 0,
             cooldown: 0,
-            abandoned: false,
         }
     }
 
@@ -68,8 +58,6 @@ impl NavmeshDriver {
             None => Vec::new(),
         };
         self.seg = 0;
-        self.last_progress = 0.0;
-        self.stall = 0;
         self.cooldown = REPLAN_COOLDOWN;
     }
 
@@ -108,27 +96,15 @@ impl Navigator for NavmeshDriver {
     }
 
     fn update(&mut self, pos: Vec3, _cm: Option<&CollisionModel>) -> bool {
-        self.abandoned = false;
-        if self.path.len() < 2 {
-            return false;
+        // Only track the projection segment (for steering + telemetry). We do NOT abandon the
+        // path on slow path-progress here: a bot legitimately slows to turn a corner, which
+        // would false-trigger a clear and make it STOP in the open (pause/hang → pile-ups). Real
+        // stalls are caught by the scenario's position-based StuckDetector, which calls
+        // force_replan/blacklist_waypoint_if_blocked.
+        if self.path.len() >= 2 {
+            let (seg, _t) = pursuit::project_onto_path(&self.path, pos);
+            self.seg = seg;
         }
-        let (seg, t) = pursuit::project_onto_path(&self.path, pos);
-        self.seg = seg;
-        let prog = pursuit::arc_length(&self.path, seg, t);
-        if prog > self.last_progress + PROGRESS_EPS {
-            self.last_progress = prog;
-            self.stall = 0;
-        } else {
-            self.stall += 1;
-        }
-        if self.stall > GIVEUP_TICKS {
-            // No forward progress for too long — drop the plan; set_goal will replan from
-            // wherever the bot has been pushed to (the scenario's recovery moves it first).
-            self.path.clear();
-            self.abandoned = true;
-            self.stall = 0;
-        }
-        // The scenario measures actual goal-reach itself; we don't assert it here.
         false
     }
 
@@ -179,6 +155,6 @@ impl Navigator for NavmeshDriver {
     }
 
     fn goal_abandoned(&self) -> bool {
-        self.abandoned
+        false // navmesh never self-abandons a goal; recovery handles real stalls
     }
 }
