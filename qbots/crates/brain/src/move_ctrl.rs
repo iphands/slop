@@ -100,6 +100,15 @@ impl MovementController {
         self.delta_angles = delta_angles;
     }
 
+    /// Set the `msec` field for the next usercmd from the measured frame delta.
+    /// Call once per tick with the elapsed seconds since the last server frame.
+    /// Q2 server runs `pmove` once per received usercmd using `cmd.msec` as the
+    /// physics timestep — sending 33 ms for a 100 ms server tick gives 33% of
+    /// normal speed. (`sv_user.c` / `pmove.c:pml.frametime = cmd.msec / 1000`)
+    pub fn set_msec(&mut self, dt_secs: f32) {
+        self.msec = (dt_secs * 1000.0).clamp(1.0, 250.0) as u8;
+    }
+
     /// Convert intent to a `Usercmd`.
     pub fn build_cmd(&mut self, intent: MovementIntent) -> Usercmd {
         let mut cmd = Usercmd {

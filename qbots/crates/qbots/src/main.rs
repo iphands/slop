@@ -910,6 +910,7 @@ pub(crate) async fn bot_task(
                             }
                         }
 
+                        move_ctrl.set_msec(dt);
                         move_ctrl.build_cmd(mv)
                     } else {
                         Usercmd::default()

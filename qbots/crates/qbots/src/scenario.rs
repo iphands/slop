@@ -417,6 +417,7 @@ pub async fn run_scenario(
                                 mv.jump();
                             }
                             move_ctrl.set_delta_angles(frame.playerstate.pmove.delta_angles);
+                            move_ctrl.set_msec(dt);
                             let cmd = move_ctrl.build_cmd(mv);
 
                             // Sample the recorder with this frame's telemetry.
