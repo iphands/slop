@@ -866,58 +866,47 @@ impl NavGraph {
         }
 
         // Enumerate every cross-component pair within range and test walkability.
-        // Using `j > i` enumerates each unordered pair exactly once, halving trace
-        // calls vs. the symmetric loop. Collect candidates first (immutable borrow),
-        // then add edges (mutable borrow).
+        // Using `j > i` enumerates each unordered pair exactly once. The expensive part is
+        // `walkable_stair_link_orig` (cm traces); it is read-only, so the per-`i` candidate
+        // search runs in PARALLEL across cores. `flat_map_iter` preserves order, so the
+        // collected candidate list (and the sequential apply below) is identical to a serial
+        // pass. The component ids + spatial buckets are read-only here.
         let max_h2 = max_hdist * max_hdist;
-        let mut candidates: Vec<(usize, usize, f32)> = Vec::new();
-        for i in 0..n {
-            let a = self.nodes[i];
-            let (kx, ky) = key(&a);
-            for dx in -1..=1 {
-                for dy in -1..=1 {
-                    let Some(cellnodes) = buckets.get(&(kx + dx, ky + dy)) else {
-                        continue;
-                    };
-                    for &j in cellnodes {
-                        if j <= i {
-                            continue; // enumerate each pair once
-                        }
-                        if comp_id[j] == comp_id[i] {
-                            continue; // same component — already linked
-                        }
-                        let b = self.nodes[j];
-                        if (b[2] - a[2]).abs() > STAIR_MAX {
+        let nodes = &self.nodes;
+        let comp_id = &comp_id;
+        let buckets = &buckets;
+        let candidates: Vec<(usize, usize, f32)> = (0..n)
+            .into_par_iter()
+            .flat_map_iter(move |i| {
+                let a = nodes[i];
+                let (kx, ky) = key(&a);
+                let mut local: Vec<(usize, usize, f32)> = Vec::new();
+                for dx in -1..=1 {
+                    for dy in -1..=1 {
+                        let Some(cellnodes) = buckets.get(&(kx + dx, ky + dy)) else {
                             continue;
-                        }
-                        let h2 = (b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2);
-                        if h2 > max_h2 {
-                            continue;
-                        }
-                        if walkable_stair_link_orig(cm, a, b) {
-                            let dz = (b[2] - a[2]).abs();
-                            let hdist = h2.sqrt();
-                            let slope = if hdist > 0.1 { dz / hdist } else { 999.0 };
-                            if dz > 100.0 {
-                                tracing::debug!(
-                                    slope = slope as u32,
-                                    dz = dz as u32,
-                                    hdist = hdist as u32,
-                                    ax = a[0] as i32,
-                                    ay = a[1] as i32,
-                                    az = a[2] as i32,
-                                    bx = b[0] as i32,
-                                    by = b[1] as i32,
-                                    bz = b[2] as i32,
-                                    "bridge: large-dz edge added"
-                                );
+                        };
+                        for &j in cellnodes {
+                            if j <= i || comp_id[j] == comp_id[i] {
+                                continue; // each pair once; skip same-component
                             }
-                            candidates.push((i, j, dist(&a, &b)));
+                            let b = nodes[j];
+                            if (b[2] - a[2]).abs() > STAIR_MAX {
+                                continue;
+                            }
+                            let h2 = (b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2);
+                            if h2 > max_h2 {
+                                continue;
+                            }
+                            if walkable_stair_link_orig(cm, a, b) {
+                                local.push((i, j, dist(&a, &b)));
+                            }
                         }
                     }
                 }
-            }
-        }
+                local.into_iter()
+            })
+            .collect();
 
         let mut added = 0;
         for (i, j, cost) in candidates {
