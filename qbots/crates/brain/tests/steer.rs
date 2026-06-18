@@ -293,7 +293,7 @@ fn pursue_target_crosses_segment_boundary() {
 
     // Advance: bot is now at node 1 (100,0,0), current waypoint = 1.
     nav.update(Vec3::new(0.0, 0.0, 0.0), None); // advance to node 1? No: 100u away, not reached yet
-                                          // Force the current_waypoint to node 2 by simulating arrival at node 1.
+                                                // Force the current_waypoint to node 2 by simulating arrival at node 1.
     let from = Vec3::new(90.0, 0.0, 0.0); // close to node 1 but not arrived
 
     // Now: current_waypoint = 1, LOOKAHEAD = 96 from (90, 0, 0).
@@ -360,15 +360,14 @@ fn orbit_timeout_advances_after_n_ticks_near_waypoint() {
     assert_eq!(nav.current_waypoint(), Some(1));
 
     // Hover near node 1 for ORBIT_FRAMES ticks — should force-advance to node 2.
-    const ORBIT_FRAMES: u32 = 15;
+    let orbit_frames = brain::nav::ORBIT_FRAMES;
     let mut advanced = false;
-    for tick in 0..=ORBIT_FRAMES {
+    for tick in 0..=orbit_frames {
         nav.update(hover_pos, None);
         if nav.current_waypoint() == Some(2) {
             advanced = true;
-            // Should have forced advance at tick ORBIT_FRAMES (15th tick, 0-indexed).
             assert!(
-                tick >= ORBIT_FRAMES - 1,
+                tick >= orbit_frames - 1,
                 "advanced too early at tick {tick}"
             );
             break;

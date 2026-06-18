@@ -3,17 +3,20 @@
 use glam::Vec3;
 use std::collections::HashSet;
 use std::sync::Arc;
-use world::{navgraph::{HULL_MAXS, HULL_MINS}, CollisionModel, EdgeKind, NavGraph};
 use world::collision::MASK_SOLID;
+use world::{
+    navgraph::{HULL_MAXS, HULL_MINS},
+    CollisionModel, EdgeKind, NavGraph,
+};
 
 /// Hard cap on pursuing a single goal without reaching a waypoint. At 10 Hz
 /// this is ~3 s — past it we blacklist the stuck waypoint and replan around it.
-/// Tighter than before (was 80 = 8 s) so bots recover faster from nav-graph
-/// gaps caused by in-game obstacles not modeled in the static BSP graph.
-const GOAL_GIVEUP_TICKS: i32 = 30;
-/// Give-up blacklist cap: small so a bursty stuck episode doesn't permanently
-/// poison large swaths of the graph. Evicts oldest when full.
-const GIVEUP_BLACKLIST_MAX: usize = 8;
+/// 1.5 s at 10 Hz. Failing to reach a waypoint in 1.5 s → blacklist + replan.
+/// Faster than 3 s so bots don't waste time on false-edge nodes.
+const GOAL_GIVEUP_TICKS: i32 = 15;
+/// Give-up blacklist cap: 32 lets bots avoid the same wall-blocked false edges
+/// across multiple replans without poisoning large graph areas.
+const GIVEUP_BLACKLIST_MAX: usize = 32;
 /// Ledge blacklist cap: persistent within a goal attempt; can be larger because
 /// ledge nodes are confirmed false-edge targets, not just transient obstacles.
 const LEDGE_BLACKLIST_MAX: usize = 64;
@@ -44,8 +47,9 @@ const WP_REACH_DZ: f32 = 24.0;
 /// navigating around a nearby corner — the 5-second StuckLevel::Hard handles
 /// that case with a full replan rather than a premature force-advance.
 const ORBIT_RADIUS: f32 = 48.0;
-/// Ticks close to the current waypoint before we force-advance (1.5 s at 10 Hz).
-const ORBIT_FRAMES: u32 = 15;
+/// Ticks close to the current waypoint before we force-advance (2.5 s at 10 Hz).
+/// Extra time lets bots navigate around corners before orbit fires.
+pub const ORBIT_FRAMES: u32 = 25;
 
 #[derive(Debug, Clone)]
 pub enum NavGoal {
@@ -341,8 +345,12 @@ impl NavigationDriver {
 
             // Orbit watchdog: if the bot circles within ORBIT_RADIUS without
             // reaching, force-advance after ORBIT_FRAMES ticks.
+            // Also reset goal_age_ticks while within orbit range: the orbit
+            // mechanism handles "close but unreachable" — giveup should only
+            // fire when the bot is FAR from the waypoint and not progressing.
             let orbit_force = if horiz < ORBIT_RADIUS {
                 self.near_wp_ticks += 1;
+                self.goal_age_ticks = 0; // orbit handles proximity; giveup handles distance
                 self.near_wp_ticks >= ORBIT_FRAMES
             } else {
                 self.near_wp_ticks = 0;
@@ -358,8 +366,10 @@ impl NavigationDriver {
                     // If the bot has climbed significantly ABOVE the waypoint (e.g. rode
                     // a slope onto the roof) force an immediate replan: force-advancing
                     // to the next node would send the bot in the wrong direction.
+                    // Use a tighter threshold than LEDGE_DZ (96u): even 48-82u above
+                    // the waypoint z indicates the bot is on a slope/roof, not at the node.
                     let wp_z = self.nav_graph.nodes[wp_idx][2];
-                    if position.z > wp_z + LEDGE_DZ {
+                    if position.z > wp_z + WP_REACH_DZ * 2.0 {
                         tracing::debug!(
                             bot_z = position.z as i32,
                             wp_z = wp_z as i32,
@@ -491,7 +501,8 @@ impl NavigationDriver {
                         let t = cm.trace(&bot_pos, &wp_pos, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
                         if !t.startsolid && t.fraction < 0.9 {
                             tracing::debug!(
-                                horiz, dz,
+                                horiz,
+                                dz,
                                 fraction = t.fraction,
                                 waypoint = wp_idx,
                                 "orbit-timeout: wall blocks waypoint — replanning"

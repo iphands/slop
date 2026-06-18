@@ -1297,11 +1297,7 @@ mod tests {
     fn smooth_path_straight_run_collapses() {
         let g = NavGraph::from_raw(
             vec![[0.0, 0.0, 0.0], [50.0, 0.0, 0.0], [100.0, 0.0, 0.0]],
-            vec![
-                vec![(1, 50.0)],
-                vec![(0, 50.0), (2, 50.0)],
-                vec![(1, 50.0)],
-            ],
+            vec![vec![(1, 50.0)], vec![(0, 50.0), (2, 50.0)], vec![(1, 50.0)]],
         );
         let cm = CollisionModel::half_space([1.0, 0.0, 0.0], -10000.0); // all-clear
         let path = vec![0, 1, 2];

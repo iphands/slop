@@ -20,7 +20,7 @@ const SAMPLE_EVERY_SECS: f32 = 1.0;
 /// After this many stuck seconds → `Mild` (jump once).
 const JUMP_AFTER_SECS: f32 = 1.0;
 /// After this many stuck seconds → `Hard` (force repath). Replaces Eraser's suicide.
-const HARD_REPATH_SECS: f32 = 5.0;
+const HARD_REPATH_SECS: f32 = 3.5;
 
 /// How stuck the bot is based on origin measurements over time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

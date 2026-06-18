@@ -360,7 +360,6 @@ pub async fn run_scenario(
                             } else {
                                 (steering.view_yaw(), Vec3::ZERO)
                             };
-
                             let view_yaw = steering.change_yaw(ideal_yaw, dt);
                             let arrive = pursue_pos
                                 .map(|pt| Steering::arrive_scale((pt - pos).length()))
