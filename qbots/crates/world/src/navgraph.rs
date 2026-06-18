@@ -40,11 +40,14 @@ pub const STAIR_MAX: f32 = 160.0;
 /// In the cache fingerprint so changing it invalidates stale caches.
 pub const CONNECT_RADIUS: f32 = 72.0;
 
-/// Per-axis grid-cell connection radius for a given `spacing`, derived from
-/// [`CONNECT_RADIUS`] so the absolute connect radius is grid-independent. `≥1` always
-/// (at least the classic 8-neighbour ring).
+/// Number of grid cells to scan per axis to fully COVER [`CONNECT_RADIUS`] at a given
+/// `spacing`. Uses `ceil` (not `round`) so the scan always reaches ≥ the radius; the
+/// generate() loop then filters candidates to the exact ±`CONNECT_RADIUS` per-axis window.
+/// This decouples the connection radius from the integer cell count — critical for grid
+/// spacings that don't divide the radius evenly (e.g. round(72/16)=5→80u was wrong; ceil
+/// →5 cells scanned, then trimmed to exactly 72u). `≥1` always.
 pub fn connect_cells(spacing: f32) -> i32 {
-    ((CONNECT_RADIUS / spacing).round() as i32).max(1)
+    ((CONNECT_RADIUS / spacing).ceil() as i32).max(1)
 }
 /// Minimum edge cost in the weighted pathfinder, so a popularity overlay can't
 /// drive an edge to zero/negative (Plan 08 T3).
@@ -153,6 +156,15 @@ impl NavGraph {
                                 continue;
                             }
                             let b = nodes[j];
+                            // Exact per-axis connection window: the cell scan over-covers
+                            // (ceil), so trim to ±CONNECT_RADIUS world units. Keeps the
+                            // absolute radius identical for every grid spacing (grid=24 →
+                            // ±72u = the old ±3 cells; grid=16 → ±72u, not the rounded 80u).
+                            if (b[0] - a[0]).abs() > CONNECT_RADIUS
+                                || (b[1] - a[1]).abs() > CONNECT_RADIUS
+                            {
+                                continue;
+                            }
                             let dz = b[2] - a[2];
                             if dz.abs() > STAIR_MAX {
                                 continue; // too steep for stairs — cliff or void
