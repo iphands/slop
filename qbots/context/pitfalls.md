@@ -672,3 +672,33 @@ lift; back off and re-approach" behaviour (Eraser-style).
 ## Sources
 - qbots: `crates/world/src/build.rs` (`add_lift`, `ELEVATOR_PENALTY`)
 - vendor: `yquake2/src/game/g_func.c` (`Touch_Plat_Center`, `plat_hit_top`, `SP_func_plat`)
+
+# qport collision across processes — concurrent fleets never spawn
+
+## Problem
+
+Two `qbots` processes on the **same host** (e.g. `run --name navmesh --count 8` and
+`run --name astar --count 8`, to battle the two nav backends) leave many bots stuck in
+`state=Connecting`, never spawning — even though 64 bots from a *single* binary work fine
+and the server has free slots. Not a UDP-throughput or capacity issue.
+
+Cause: the Q2 server matches an inbound packet to a client slot by **base IP + the 16-bit
+qport only** — it deliberately ignores the UDP source port so a client survives NAT
+remapping (`sv_main.c:225-238`: `NET_CompareBaseAdr` compares the address *without* port,
+then `cl->netchan.qport != qport` is the sole other discriminator; on a source-port
+mismatch it logs `fixing up a translated port` and *reassigns* the slot's port). Both
+fleets read the same `config.yaml` and assigned qports from a fixed base (`28000..`), so
+`navmesh_1` and `astar_1` both claimed slot `(host-IP, 28000)`. The server flip-flopped
+that one slot's port on every packet → neither connection ever stabilized.
+
+## Fix / How to avoid
+
+Give each process a **disjoint qport range**. `run_fleet` now defaults the fleet's qport
+base to a per-process value (`default_qport()` = `pid & 0xFFFF`, already used by
+`connect-one` and the scenario multi-bot path), so concurrent fleets don't collide with no
+extra flags; `run --qport-base <u16>` pins it for reproducibility. The server's
+`fixing up a translated port` spam is the tell that two clients share an `(ip, qport)`.
+
+## Sources
+- qbots: `crates/qbots/src/supervisor.rs` (`run_fleet`), `crates/qbots/src/main.rs` (`default_qport`)
+- vendor: `yquake2/src/server/sv_main.c:225` (`SV_ReadPackets` qport/base-addr match)
