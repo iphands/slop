@@ -269,15 +269,15 @@ impl Recovery {
         match level {
             StuckLevel::None => RecoveryAction::None,
             StuckLevel::Mild => {
-                // Check if there's a wall directly ahead — if so, strafe; otherwise jump.
-                let has_wall_ahead = cm.map(|cm| wall_ahead(cm, pos, view_yaw)).unwrap_or(false);
-                if has_wall_ahead {
-                    self.tick_strafe(dt);
-                    RecoveryAction::Strafe {
-                        dir: self.strafe_dir,
-                    }
-                } else {
-                    RecoveryAction::Jump
+                // Stalled ~1 s. Strafe sideways to break the stall regardless of whether
+                // a wall is ahead: a side-step slides the bot off a corner, around a
+                // step, or out of a bot-on-bot stack. Jumping in place ("pogo/hover")
+                // does none of that — it just bounces the bot and can drop it off a
+                // ledge — so it is no longer used as a stuck recovery. Real jumps come
+                // only from nav-graph jump edges (current_edge_is_jump).
+                self.tick_strafe(dt);
+                RecoveryAction::Strafe {
+                    dir: self.strafe_dir,
                 }
             }
             StuckLevel::Hard => {
@@ -310,18 +310,4 @@ impl Default for Recovery {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// True if there is solid geometry directly ahead within 32 u (wall contact heuristic).
-fn wall_ahead(cm: &CollisionModel, origin: Vec3, view_yaw: f32) -> bool {
-    const PROBE: f32 = 32.0;
-    let r = view_yaw.to_radians();
-    let o = [origin.x, origin.y, origin.z];
-    let e = [
-        origin.x + r.cos() * PROBE,
-        origin.y + r.sin() * PROBE,
-        origin.z,
-    ];
-    let t = cm.trace(&o, &e, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
-    t.fraction < 0.5 // less than 16u clear → treat as wall
 }
