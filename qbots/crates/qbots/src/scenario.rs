@@ -54,6 +54,7 @@ pub enum ScenarioGoal {
 /// Returns a process exit code: `SUCCESS` if the goal was reached, `2` if the run
 /// ended without reaching it, `FAILURE` on a setup error or if the bot never became
 /// active (so no recorder exists).
+#[allow(clippy::too_many_arguments)]
 pub async fn run_scenario(
     cfg: &Config,
     addr: SocketAddr,
@@ -62,6 +63,10 @@ pub async fn run_scenario(
     goal_kind: ScenarioGoal,
     max_secs: f32,
     qport: u16,
+    // TODO(elevator-hack): temporary `--lift-penalty` knob. Extra A* cost on elevator
+    // ride edges so bots route around lifts (dodges the func_plat deadlock). Remove once
+    // bots wait-clear/step-off lifts like a human. See context/elevator_todo.md.
+    lift_penalty: f32,
 ) -> std::io::Result<ExitCode> {
     let map = map_arg
         .map(str::to_string)
@@ -72,7 +77,7 @@ pub async fn run_scenario(
 
     // 1. Load BSP + build collision model + nav graph (cache-first, then live).
     let cache_dir = std::path::Path::new("data/mapcache");
-    let built = world::cached_map_nav(&cfg.paths.baseq2, &map, Some(cache_dir))
+    let built = world::cached_map_nav(&cfg.paths.baseq2, &map, Some(cache_dir), lift_penalty)
         .map_err(|e| io_err(format!("can't build nav for '{map}': {e}")))?;
 
     // Fail early: all Q2 dm maps guarantee full spawn reachability. If our nav

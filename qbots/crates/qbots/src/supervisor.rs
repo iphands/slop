@@ -71,7 +71,12 @@ const DEFAULT_CACHE_DIR: &str = "data/mapcache";
 fn build_map_nav(cfg: &Config, map: &str) -> Option<MapNav> {
     let t0 = std::time::Instant::now();
     let cache_dir = std::path::Path::new(DEFAULT_CACHE_DIR);
-    let built = match world::cached_map_nav(&cfg.paths.baseq2, map, Some(cache_dir)) {
+    let built = match world::cached_map_nav(
+        &cfg.paths.baseq2,
+        map,
+        Some(cache_dir),
+        world::ELEVATOR_PENALTY,
+    ) {
         Ok(b) => b,
         Err(e) => {
             tracing::warn!(map, "nav load failed: {e}  (no nav)");

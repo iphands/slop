@@ -100,6 +100,11 @@ enum Cmd {
         /// Hard wall-clock cap per bot in seconds (default 30).
         #[arg(long, default_value = "30.0")]
         max_secs: f32,
+        /// TODO(elevator-hack): extra A* cost on elevator ride edges so bots route
+        /// around lifts (dodges the func_plat multi-bot deadlock). 0 = use lifts
+        /// freely. Temporary until real wait/ride/step-off behaviour exists.
+        #[arg(long, default_value = "5000")]
+        lift_penalty: f32,
     },
     /// Drive one bot from spawn to a named weapon's BSP origin; log movement; stop.
     SpawnToWeapon {
@@ -120,6 +125,11 @@ enum Cmd {
         /// Hard wall-clock cap per bot in seconds (default 30).
         #[arg(long, default_value = "30.0")]
         max_secs: f32,
+        /// TODO(elevator-hack): extra A* cost on elevator ride edges so bots route
+        /// around lifts (dodges the func_plat multi-bot deadlock). 0 = use lifts
+        /// freely. Temporary until real wait/ride/step-off behaviour exists.
+        #[arg(long, default_value = "5000")]
+        lift_penalty: f32,
     },
     /// Diagnose disconnected nav-graph components: for each small component show
     /// the closest boundary-node pair to the main component, distances, and
@@ -948,6 +958,7 @@ pub(crate) async fn bot_task(
 /// Shared CLI plumbing for the two movement scenarios (Plan 10): resolve the
 /// server address + bot name, then hand off to [`scenario::run_scenario`] and map
 /// its result to a process exit code.
+#[allow(clippy::too_many_arguments)]
 async fn run_scenario_cmd(
     cfg: &Config,
     addr: Option<String>,
@@ -956,6 +967,7 @@ async fn run_scenario_cmd(
     goal: scenario::ScenarioGoal,
     count: u8,
     max_secs: f32,
+    lift_penalty: f32,
 ) -> ExitCode {
     let base_name = name.unwrap_or_else(|| "qbots".to_string());
     let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
@@ -1002,6 +1014,7 @@ async fn run_scenario_cmd(
                 goal,
                 max_secs,
                 bot_qport,
+                lift_penalty,
             )
             .await
             {
@@ -1097,7 +1110,7 @@ fn glob_matches(pattern: &str, name: &str) -> bool {
 fn nav_debug(cfg: &Config, map: &str, pairs: usize) -> ExitCode {
     use std::collections::HashSet;
 
-    let built = match world::generate_map_nav(&cfg.paths.baseq2, map) {
+    let built = match world::generate_map_nav(&cfg.paths.baseq2, map, world::ELEVATOR_PENALTY) {
         Ok(b) => b,
         Err(e) => {
             tracing::error!("{e}");
@@ -1378,7 +1391,8 @@ fn generate_map_cache(cfg: &Config, map_arg: &str, jobs: Option<usize>, out_dir:
             handles.push(scope.spawn(move || {
                 for map in &chunk {
                     let t0 = std::time::Instant::now();
-                    let built = match world::generate_map_nav(&baseq2, map) {
+                    let built = match world::generate_map_nav(&baseq2, map, world::ELEVATOR_PENALTY)
+                    {
                         Ok(b) => b,
                         Err(e) => {
                             tracing::error!(map, "generate failed: {e}");
@@ -1392,7 +1406,7 @@ fn generate_map_cache(cfg: &Config, map_arg: &str, jobs: Option<usize>, out_dir:
                         failed.fetch_add(1, Ordering::Relaxed);
                         continue;
                     }
-                    let fp = world::Fingerprint::from_bsp(&built.bsp);
+                    let fp = world::Fingerprint::from_bsp(&built.bsp, world::ELEVATOR_PENALTY);
                     let cache_path = out_path.join(format!("{map}.qnav"));
                     match world::save_mapcache(&cache_path, &built.graph, &fp) {
                         Ok(()) => {
@@ -1763,6 +1777,7 @@ async fn main() -> ExitCode {
             name,
             count,
             max_secs,
+            lift_penalty,
         } => {
             run_scenario_cmd(
                 &cfg,
@@ -1772,6 +1787,7 @@ async fn main() -> ExitCode {
                 scenario::ScenarioGoal::FarthestSpawn,
                 count,
                 max_secs,
+                lift_penalty,
             )
             .await
         }
@@ -1782,6 +1798,7 @@ async fn main() -> ExitCode {
             name,
             count,
             max_secs,
+            lift_penalty,
         } => {
             run_scenario_cmd(
                 &cfg,
@@ -1791,6 +1808,7 @@ async fn main() -> ExitCode {
                 scenario::ScenarioGoal::Weapon(weapon_name),
                 count,
                 max_secs,
+                lift_penalty,
             )
             .await
         }

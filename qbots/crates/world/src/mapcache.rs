@@ -4,8 +4,8 @@
 //! ```text
 //! [0..7]   magic    b"QBNAVC2"
 //! [7]      version  u8
-//! [8..52]  fingerprint (11 × u32, see Fingerprint)
-//! [52..56] node_count  u32
+//! [8..56]  fingerprint (12 × u32, see Fingerprint)
+//! [56..60] node_count  u32
 //! for each node:
 //!   x, y, z  f32 × 3
 //! for each node:
@@ -36,9 +36,10 @@ const MAGIC: &[u8; 7] = b"QBNAVC2";
 // field (PRUNE_MAX_HD), so the fingerprint is now 40 bytes. Older caches auto-rejected.
 // Version 5: generate() wider neighbour connection + an 11th fingerprint field
 // (CONNECT_CELLS); fingerprint is now 44 bytes. Older caches auto-rejected.
-// Version 6: elevator ride edges carry ELEVATOR_PENALTY cost (A* avoids lifts). The
-// constant isn't a separate fingerprint field; the VERSION bump invalidates old caches.
-const VERSION: u8 = 6;
+// Version 6: elevator ride edges carry ELEVATOR_PENALTY cost (A* avoids lifts).
+// Version 7: lift penalty is a runtime --lift-penalty knob + a 12th fingerprint field
+// (lift_penalty_bits); fingerprint is now 48 bytes. Older caches auto-rejected.
+const VERSION: u8 = 7;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]
@@ -65,11 +66,16 @@ pub struct Fingerprint {
     /// `CONNECT_CELLS` — `generate()`'s neighbour-connection cell radius. Changing it
     /// changes which edges generate adds, so it must invalidate stale caches.
     connect_cells: u32,
+    /// `lift_penalty` (f32 bits) — extra A* cost baked into elevator ride edges. A
+    /// runtime knob (`--lift-penalty`), so it must be part of the cache key.
+    /// TODO(elevator-hack): remove with the penalty once real lift behaviour exists.
+    lift_penalty_bits: u32,
 }
 
 impl Fingerprint {
     /// Derive the fingerprint from a loaded BSP and the current generation constants.
-    pub fn from_bsp(bsp: &Bsp) -> Self {
+    /// `lift_penalty` is the runtime `--lift-penalty` value (part of the cache key).
+    pub fn from_bsp(bsp: &Bsp, lift_penalty: f32) -> Self {
         // FNV-1a over the first min(256, plane_count) planes' normal+dist bytes
         // (16 bytes each). Any structural BSP change flips this.
         let sample_count = bsp.planes.len().min(256);
@@ -98,6 +104,7 @@ impl Fingerprint {
             bridge_hdist_bits: BRIDGE_HDIST.to_bits(),
             prune_max_hd_bits: PRUNE_MAX_HD.to_bits(),
             connect_cells: CONNECT_CELLS as u32,
+            lift_penalty_bits: lift_penalty.to_bits(),
         }
     }
 
@@ -114,6 +121,7 @@ impl Fingerprint {
             self.bridge_hdist_bits,
             self.prune_max_hd_bits,
             self.connect_cells,
+            self.lift_penalty_bits,
         ] {
             buf.extend_from_slice(&v.to_le_bytes());
         }
@@ -123,7 +131,7 @@ impl Fingerprint {
         if data.len() < FP_BYTES {
             return None;
         }
-        let mut fields = [0u32; 11];
+        let mut fields = [0u32; 12];
         for (i, f) in fields.iter_mut().enumerate() {
             *f = u32::from_le_bytes(data[i * 4..i * 4 + 4].try_into().ok()?);
         }
@@ -139,12 +147,13 @@ impl Fingerprint {
             bridge_hdist_bits: fields[8],
             prune_max_hd_bits: fields[9],
             connect_cells: fields[10],
+            lift_penalty_bits: fields[11],
         })
     }
 }
 
-/// Fingerprint on-disk size in bytes (11 × u32).
-const FP_BYTES: usize = 44;
+/// Fingerprint on-disk size in bytes (12 × u32).
+const FP_BYTES: usize = 48;
 
 /// Write a nav graph to `path`. Overwrites any existing file.
 pub fn save(path: &Path, graph: &NavGraph, fingerprint: &Fingerprint) -> io::Result<()> {
@@ -295,6 +304,7 @@ mod tests {
             bridge_hdist_bits: BRIDGE_HDIST.to_bits(),
             prune_max_hd_bits: PRUNE_MAX_HD.to_bits(),
             connect_cells: CONNECT_CELLS as u32,
+            lift_penalty_bits: 5000.0_f32.to_bits(),
         }
     }
 

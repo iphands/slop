@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let radius: f32 = args.get(6).map(|s| s.parse()).transpose()?.unwrap_or(128.0);
 
     let cache = Path::new("data/mapcache");
-    let built = cached_map_nav(baseq2, map, Some(cache))?;
+    let built = cached_map_nav(baseq2, map, Some(cache), world::ELEVATOR_PENALTY)?;
     let g = &built.graph;
     let cm = &built.cm;
 

@@ -69,6 +69,7 @@ pub fn cached_map_nav(
     baseq2: &Path,
     map: &str,
     cache_dir: Option<&Path>,
+    lift_penalty: f32,
 ) -> Result<MapNavBuild, String> {
     let bsp = Bsp::load(baseq2, map)?;
     let cm = Arc::new(CollisionModel::from_bsp(&bsp));
@@ -80,7 +81,7 @@ pub fn cached_map_nav(
         (model.mins, model.maxs)
     };
     let spawn_origins: Vec<[f32; 3]> = bsp.spawn_points().iter().map(|s| s.origin).collect();
-    let fp = Fingerprint::from_bsp(&bsp);
+    let fp = Fingerprint::from_bsp(&bsp, lift_penalty);
 
     // Try the disk cache if a directory was provided.
     if let Some(dir) = cache_dir {
@@ -118,7 +119,7 @@ pub fn cached_map_nav(
     // Cache miss (or no cache dir): generate live.
     let mut graph = NavGraph::generate(&cm, bounds, GRID_SPACING);
     let seeded = graph.seed_spawns(&cm, &spawn_origins);
-    add_elevator_edges(&mut graph, &cm, &bsp);
+    add_elevator_edges(&mut graph, &cm, &bsp, lift_penalty);
     graph.bridge_components(&cm, BRIDGE_HDIST);
     let pruned = graph.prune_long_blocked_edges(&cm, PRUNE_MAX_HD);
     tracing::info!(map, pruned, "pruned long hull-blocked false edges");
@@ -151,7 +152,11 @@ pub fn cached_map_nav(
 /// collision model, sample the nav graph, seed DM spawns as nodes, and detect
 /// ledge-drop jump edges. Returns `Err` only on load/parse failure or a BSP with
 /// no models — never partial output.
-pub fn generate_map_nav(baseq2: &Path, map: &str) -> Result<MapNavBuild, String> {
+pub fn generate_map_nav(
+    baseq2: &Path,
+    map: &str,
+    lift_penalty: f32,
+) -> Result<MapNavBuild, String> {
     let bsp = Bsp::load(baseq2, map)?;
     let cm = Arc::new(CollisionModel::from_bsp(&bsp));
 
@@ -167,7 +172,7 @@ pub fn generate_map_nav(baseq2: &Path, map: &str) -> Result<MapNavBuild, String>
 
     let mut graph = NavGraph::generate(&cm, bounds, GRID_SPACING);
     let seeded = graph.seed_spawns(&cm, &spawn_origins);
-    add_elevator_edges(&mut graph, &cm, &bsp);
+    add_elevator_edges(&mut graph, &cm, &bsp, lift_penalty);
     graph.bridge_components(&cm, BRIDGE_HDIST);
     let pruned = graph.prune_long_blocked_edges(&cm, PRUNE_MAX_HD);
     tracing::info!(map, pruned, "pruned long hull-blocked false edges");
@@ -199,11 +204,16 @@ pub fn generate_map_nav(baseq2: &Path, map: &str) -> Result<MapNavBuild, String>
 ///
 /// Returns the number of elevator edge-pairs added (each pair = 1 top↔bottom edge
 /// plus however many edges connected those nodes to their local nav graphs).
-pub fn add_elevator_edges(graph: &mut NavGraph, cm: &CollisionModel, bsp: &Bsp) -> usize {
+pub fn add_elevator_edges(
+    graph: &mut NavGraph,
+    cm: &CollisionModel,
+    bsp: &Bsp,
+    lift_penalty: f32,
+) -> usize {
     let mut added = 0;
     // `func_plat`: auto-lowering platform, rests at top, travels down.
     for entity in bsp.find_class("func_plat") {
-        if let Some(n) = try_add_plat(graph, cm, bsp, entity) {
+        if let Some(n) = try_add_plat(graph, cm, bsp, entity, lift_penalty) {
             added += n;
         }
     }
@@ -212,7 +222,7 @@ pub fn add_elevator_edges(graph: &mut NavGraph, cm: &CollisionModel, bsp: &Bsp) 
     // Horizontal doors are skipped — their doorway floor lives in world model 0 and
     // is already sampled, so they never fragment the graph.
     for entity in bsp.find_class("func_door") {
-        if let Some(n) = try_add_vertical_door(graph, cm, bsp, entity) {
+        if let Some(n) = try_add_vertical_door(graph, cm, bsp, entity, lift_penalty) {
             added += n;
         }
     }
@@ -240,6 +250,7 @@ fn add_lift(
     z_hi: f32,
     z_lo: f32,
     label: &str,
+    lift_penalty: f32,
 ) -> usize {
     let cx = (model.mins[0] + model.maxs[0]) / 2.0;
     let cy = (model.mins[1] + model.maxs[1]) / 2.0;
@@ -251,9 +262,12 @@ fn add_lift(
 
     let top_idx = graph.add_node(top_node);
     let bot_idx = graph.add_node(bot_node);
-    // Penalise the vertical ride so A* routes around the lift via stairs when possible
-    // (avoids the multi-bot plat deadlock); kept finite so lift-only spawns still work.
-    graph.add_edge(top_idx, bot_idx, (z_hi - z_lo).abs() + ELEVATOR_PENALTY);
+    // TODO(elevator-hack): `lift_penalty` makes A* route AROUND the lift via stairs to
+    // dodge the multi-bot plat deadlock. This is a temporary stand-in for real elevator
+    // behaviour — bots should instead WAIT clear of a raised plat and STEP OFF promptly
+    // once up, like a human. REMOVE this penalty once that behaviour exists.
+    // See context/pitfalls.md "func_plat elevator deadlock" and context/elevator_todo.md.
+    graph.add_edge(top_idx, bot_idx, (z_hi - z_lo).abs() + lift_penalty);
     let mut n = 1;
     // Generous radius (256 u): the platform may land away from sampled grid cells.
     n += graph.connect_node_to_nearby(cm, top_idx, 256.0);
@@ -266,6 +280,7 @@ fn try_add_plat(
     cm: &CollisionModel,
     bsp: &Bsp,
     entity: &BspEntity,
+    lift_penalty: f32,
 ) -> Option<usize> {
     let model = entity_model(bsp, entity)?;
 
@@ -295,6 +310,7 @@ fn try_add_plat(
         model.maxs[2],
         model.maxs[2] - travel,
         "func_plat elevator bridge",
+        lift_penalty,
     ))
 }
 
@@ -303,6 +319,7 @@ fn try_add_vertical_door(
     cm: &CollisionModel,
     bsp: &Bsp,
     entity: &BspEntity,
+    lift_penalty: f32,
 ) -> Option<usize> {
     // `angle` is the special move direction: -1 = up, -2 = down (`G_SetMovedir`,
     // g_utils.c:381). Anything else is a horizontal door — not a lift; skip it.
@@ -342,6 +359,7 @@ fn try_add_vertical_door(
         z_hi,
         z_lo,
         "func_door lift bridge",
+        lift_penalty,
     ))
 }
 

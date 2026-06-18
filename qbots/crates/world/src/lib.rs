@@ -18,8 +18,8 @@ pub use bsp::{
     SpawnPoint, NUM_LUMPS,
 };
 pub use build::{
-    cached_map_nav, check_spawn_connectivity, generate_map_nav, MapNavBuild, GRID_SPACING,
-    JUMP_SPACING,
+    cached_map_nav, check_spawn_connectivity, generate_map_nav, MapNavBuild, ELEVATOR_PENALTY,
+    GRID_SPACING, JUMP_SPACING,
 };
 pub use collision::{
     CollisionModel, Trace, CONTENTS_LAVA, CONTENTS_SLIME, CONTENTS_SOLID, CONTENTS_WATER,
