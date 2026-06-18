@@ -700,11 +700,14 @@ fn get_or_build_navmesh(
     if let Some(m) = guard.get(map) {
         return Arc::clone(m);
     }
+    // cell 8 (fine enough that agent-radius erosion keeps 32u-doorway centerlines) + erode by
+    // agent_radius/cell = 16/8 = 2 cells, so bots aren't routed into near-wall hull-jam cells.
     let params = world::VoxelParams {
-        cell_size: 16.0,
+        cell_size: 8.0,
         ..Default::default()
     };
-    let hf = world::Heightfield::build(cm, bounds, params);
+    let mut hf = world::Heightfield::build(cm, bounds, params);
+    hf.erode((params.agent_radius / params.cell_size).round() as u32);
     let mesh = world::NavMesh::build(&hf, params.walkable_climb, Some(cm));
     tracing::info!(
         map,

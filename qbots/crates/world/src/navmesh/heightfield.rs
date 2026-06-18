@@ -74,6 +74,78 @@ impl Heightfield {
         self.columns.iter().filter(|c| !c.is_empty()).count()
     }
 
+    /// **Agent-radius erosion** (Recast-style distance field). Computes each walkable cell-span's
+    /// distance (in cells) to the nearest border (a side with no span within `STEP` — a wall or
+    /// drop, or the map edge), via multi-source BFS over the step-connected span graph, then
+    /// removes spans closer than `radius_cells`. This drops the near-wall ring where the player
+    /// hull would jam in solid, while a passage's centerline (max distance) survives — so the bot
+    /// is routed through hull-fitting space, not pinned to a wall. Use a small `radius_cells`
+    /// (≈1) so 32u-wide Q2 doorways (exactly the hull width) keep a centerline.
+    pub fn erode(&mut self, radius_cells: u32) {
+        use std::collections::VecDeque;
+        if radius_cells == 0 {
+            return;
+        }
+        let nx = self.nx;
+        let ny = self.ny;
+        let mut dist: Vec<Vec<u32>> = self
+            .columns
+            .iter()
+            .map(|c| vec![u32::MAX; c.len()])
+            .collect();
+        let mut q: VecDeque<(usize, usize)> = VecDeque::new();
+        let dirs = [(1i64, 0i64), (-1, 0), (0, 1), (0, -1)];
+
+        for ci in 0..nx * ny {
+            let ix = (ci % nx) as i64;
+            let iy = (ci / nx) as i64;
+            for (k, &z) in self.columns[ci].iter().enumerate() {
+                let border = dirs.iter().any(|&(dx, dy)| {
+                    let (nxi, nyi) = (ix + dx, iy + dy);
+                    if nxi < 0 || nyi < 0 || nxi >= nx as i64 || nyi >= ny as i64 {
+                        return true; // map edge counts as a border
+                    }
+                    let nci = nyi as usize * nx + nxi as usize;
+                    !self.columns[nci].iter().any(|&nz| (nz - z).abs() <= STEP)
+                });
+                if border {
+                    dist[ci][k] = 0;
+                    q.push_back((ci, k));
+                }
+            }
+        }
+
+        while let Some((ci, k)) = q.pop_front() {
+            let d = dist[ci][k];
+            let z = self.columns[ci][k];
+            let ix = (ci % nx) as i64;
+            let iy = (ci / nx) as i64;
+            for &(dx, dy) in &dirs {
+                let (nxi, nyi) = (ix + dx, iy + dy);
+                if nxi < 0 || nyi < 0 || nxi >= nx as i64 || nyi >= ny as i64 {
+                    continue;
+                }
+                let nci = nyi as usize * nx + nxi as usize;
+                for k2 in 0..self.columns[nci].len() {
+                    if (self.columns[nci][k2] - z).abs() <= STEP && dist[nci][k2] > d + 1 {
+                        dist[nci][k2] = d + 1;
+                        q.push_back((nci, k2));
+                    }
+                }
+            }
+        }
+
+        for ci in 0..nx * ny {
+            let kept: Vec<f32> = self.columns[ci]
+                .iter()
+                .enumerate()
+                .filter(|(k, _)| dist[ci][*k] >= radius_cells)
+                .map(|(_, &z)| z)
+                .collect();
+            self.columns[ci] = kept;
+        }
+    }
+
     /// Build the heightfield by probing every grid column over `bounds` (model-0 mins/maxs).
     /// Columns are independent → rasterized in parallel.
     pub fn build(cm: &CollisionModel, bounds: ([f32; 3], [f32; 3]), params: VoxelParams) -> Self {

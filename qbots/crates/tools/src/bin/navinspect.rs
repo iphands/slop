@@ -127,8 +127,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             cell_size: cell,
             ..Default::default()
         };
+        let erode: u32 = std::env::var("QBOTS_ERODE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
         let t = std::time::Instant::now();
-        let hf = world::Heightfield::build(cm, bounds, params);
+        let mut hf = world::Heightfield::build(cm, bounds, params);
+        hf.erode(erode);
         let mesh = world::NavMesh::build(&hf, params.walkable_climb, Some(cm));
         let ms = t.elapsed().as_millis();
         let edges: usize = mesh.adj.iter().map(Vec::len).sum();
