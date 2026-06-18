@@ -303,6 +303,29 @@ impl NavMesh {
         mesh
     }
 
+    /// Wire one-way **drop links** (from [`Heightfield::find_drops`], computed on the FULL
+    /// heightfield) into this eroded mesh: each `(edge, landing)` connects the eroded rect
+    /// nearest the ledge edge to the rect nearest the landing, with a directed high→low edge.
+    /// This reaches drop-only spots (q2dm1's z=920 RL ledge, dropped onto from the z=1256
+    /// grenade-launcher) without keeping the fall-prone ledge cells in the walkable mesh. The
+    /// funnel routes through the recorded `[edge, landing]` points (the bot walks off the edge).
+    pub fn add_drops(&mut self, drops: &[([f32; 3], [f32; 3])]) {
+        for &(edge, land) in drops {
+            let (Some(a), Some(b)) = (self.nearest_poly(edge), self.nearest_poly(land)) else {
+                continue;
+            };
+            if a != b
+                && (self.polys[a].oz - self.polys[b].oz) > STEP
+                && !self.adj[a].contains(&(b as u32))
+            {
+                self.adj[a].push(b as u32); // directed: high → low only
+                self.bridge_points
+                    .entry((a as u32, b as u32))
+                    .or_insert([edge, land]);
+            }
+        }
+    }
+
     /// The two walkable cell centers a bridge connects, `[on_a, on_b]`, if `(a, b)` is bridged.
     pub fn bridge_point(&self, a: usize, b: usize) -> Option<[[f32; 3]; 2]> {
         self.bridge_points.get(&(a as u32, b as u32)).copied()

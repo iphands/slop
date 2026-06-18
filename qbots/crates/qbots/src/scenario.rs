@@ -707,12 +707,16 @@ fn get_or_build_navmesh(
         ..Default::default()
     };
     let mut hf = world::Heightfield::build(cm, bounds, params);
+    let drops = hf.find_drops(cm); // on the FULL heightfield, before erosion removes ledge edges
+                                   // erode 1 cell (8u): de-jams near walls while keeping thin (~32u) Q2 ledges like the RL
+                                   // ledge — the full agent radius (2 cells) erases them. Drop links restore vertical access.
     let erode = std::env::var("QBOTS_ERODE")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or((params.agent_radius / params.cell_size).round() as u32);
+        .unwrap_or(1);
     hf.erode(erode);
-    let mesh = world::NavMesh::build(&hf, params.walkable_climb, Some(cm));
+    let mut mesh = world::NavMesh::build(&hf, params.walkable_climb, Some(cm));
+    mesh.add_drops(&drops);
     tracing::info!(
         map,
         polys = mesh.polys.len(),

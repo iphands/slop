@@ -96,6 +96,9 @@ impl Heightfield {
         let mut q: VecDeque<(usize, usize)> = VecDeque::new();
         let dirs = [(1i64, 0i64), (-1, 0), (0, 1), (0, -1)];
 
+        // A span is a border if any side lacks a span within STEP (a wall OR a ledge/drop edge).
+        // We erode BOTH so the eroded mesh sits off ledge edges too (bots don't drift off and
+        // fall); intentional drops are re-added as off-mesh links from the full heightfield.
         for ci in 0..nx * ny {
             let ix = (ci % nx) as i64;
             let iy = (ci / nx) as i64;
@@ -103,7 +106,7 @@ impl Heightfield {
                 let border = dirs.iter().any(|&(dx, dy)| {
                     let (nxi, nyi) = (ix + dx, iy + dy);
                     if nxi < 0 || nyi < 0 || nxi >= nx as i64 || nyi >= ny as i64 {
-                        return true; // map edge counts as a border
+                        return true;
                     }
                     let nci = nyi as usize * nx + nxi as usize;
                     !self.columns[nci].iter().any(|&nz| (nz - z).abs() <= STEP)
@@ -144,6 +147,48 @@ impl Heightfield {
                 .collect();
             self.columns[ci] = kept;
         }
+    }
+
+    /// Find clean one-way **drops**: `(edge_origin, landing_origin)` pairs where a span sits
+    /// more than `STEP` above a 4-neighbour span (a ledge the bot can walk off but not climb)
+    /// and the column between is clear so it lands on the lower floor. Run on the FULL (un-
+    /// eroded) heightfield so ledge edges aren't already removed; the navmesh wires each to its
+    /// nearest eroded rects. `edge`/`landing` are origin positions (floor + 24).
+    pub fn find_drops(&self, cm: &CollisionModel) -> Vec<([f32; 3], [f32; 3])> {
+        const MAX_FALL: f32 = 400.0;
+        let zero = [0.0f32; 3];
+        let nx = self.nx;
+        let ny = self.ny;
+        let mut out = Vec::new();
+        for ci in 0..nx * ny {
+            let ix = (ci % nx) as i64;
+            let iy = (ci / nx) as i64;
+            for &z in &self.columns[ci] {
+                for (dx, dy) in [(1i64, 0i64), (-1, 0), (0, 1), (0, -1)] {
+                    let (nxi, nyi) = (ix + dx, iy + dy);
+                    if nxi < 0 || nyi < 0 || nxi >= nx as i64 || nyi >= ny as i64 {
+                        continue;
+                    }
+                    let nci = nyi as usize * nx + nxi as usize;
+                    for &nz in &self.columns[nci] {
+                        let drop = z - nz;
+                        if drop <= STEP + 1.0 || drop > MAX_FALL {
+                            continue;
+                        }
+                        let top = self.cell_center(nxi as usize, nyi as usize, z);
+                        let bot = [top[0], top[1], nz - 24.0];
+                        let t = cm.trace(&top, &bot, &zero, &zero, MASK_SOLID);
+                        if !t.startsolid && (t.endpos[2] - (nz - 24.0)).abs() < STEP {
+                            out.push((
+                                self.cell_center(ix as usize, iy as usize, z),
+                                self.cell_center(nxi as usize, nyi as usize, nz),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// Build the heightfield by probing every grid column over `bounds` (model-0 mins/maxs).

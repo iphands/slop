@@ -133,8 +133,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or(0);
         let t = std::time::Instant::now();
         let mut hf = world::Heightfield::build(cm, bounds, params);
+        let drops = hf.find_drops(cm);
         hf.erode(erode);
-        let mesh = world::NavMesh::build(&hf, params.walkable_climb, Some(cm));
+        let mut mesh = world::NavMesh::build(&hf, params.walkable_climb, Some(cm));
+        mesh.add_drops(&drops);
         let ms = t.elapsed().as_millis();
         let edges: usize = mesh.adj.iter().map(Vec::len).sum();
         let comps = mesh.components();
