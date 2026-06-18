@@ -29,7 +29,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let map = &args[2];
 
     let cache = Path::new("data/mapcache");
-    let built = cached_map_nav(baseq2, map, Some(cache), world::ELEVATOR_PENALTY)?;
+    let built = cached_map_nav(
+        baseq2,
+        map,
+        Some(cache),
+        world::ELEVATOR_PENALTY,
+        world::GRID_SPACING,
+    )?;
     let g = &built.graph;
     let cm = &built.cm;
 

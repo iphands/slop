@@ -25,7 +25,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use crate::bsp::Bsp;
-use crate::build::{BRIDGE_HDIST, GRID_SPACING, JUMP_SPACING, PRUNE_MAX_HD};
+use crate::build::{BRIDGE_HDIST, JUMP_SPACING, PRUNE_MAX_HD};
 use crate::navgraph::{NavGraph, CONNECT_RADIUS, STAIR_MAX, STEP};
 
 const MAGIC: &[u8; 7] = b"QBNAVC2";
@@ -76,8 +76,9 @@ pub struct Fingerprint {
 
 impl Fingerprint {
     /// Derive the fingerprint from a loaded BSP and the current generation constants.
-    /// `lift_penalty` is the runtime `--lift-penalty` value (part of the cache key).
-    pub fn from_bsp(bsp: &Bsp, lift_penalty: f32) -> Self {
+    /// `lift_penalty` and `spacing` are the runtime `--lift-penalty` / `--spacing` values
+    /// (part of the cache key, so different runtime params never share a cache file).
+    pub fn from_bsp(bsp: &Bsp, lift_penalty: f32, spacing: f32) -> Self {
         // FNV-1a over the first min(256, plane_count) planes' normal+dist bytes
         // (16 bytes each). Any structural BSP change flips this.
         let sample_count = bsp.planes.len().min(256);
@@ -99,7 +100,7 @@ impl Fingerprint {
             leaf_count: bsp.leafs.len() as u32,
             brush_count: bsp.brushes.len() as u32,
             plane_hash: hash,
-            grid_spacing_bits: GRID_SPACING.to_bits(),
+            grid_spacing_bits: spacing.to_bits(),
             step_bits: STEP.to_bits(),
             jump_spacing_bits: JUMP_SPACING.to_bits(),
             stair_max_bits: STAIR_MAX.to_bits(),
@@ -299,7 +300,7 @@ mod tests {
             leaf_count: 10,
             brush_count: 5,
             plane_hash: 0xdeadbeef,
-            grid_spacing_bits: GRID_SPACING.to_bits(),
+            grid_spacing_bits: crate::build::GRID_SPACING.to_bits(),
             step_bits: STEP.to_bits(),
             jump_spacing_bits: JUMP_SPACING.to_bits(),
             stair_max_bits: STAIR_MAX.to_bits(),

@@ -105,6 +105,11 @@ enum Cmd {
         /// freely. Temporary until real wait/ride/step-off behaviour exists.
         #[arg(long, default_value = "5000")]
         lift_penalty: f32,
+        /// Grid spacing (units) of the nav graph to use. Each spacing has its own cache
+        /// dir (`data/mapcache/<spacing>/`); generate it first with `generate-map-cache
+        /// --spacing <n>`. Default 24.
+        #[arg(long, default_value = "24")]
+        spacing: f32,
     },
     /// Drive one bot from spawn to a named weapon's BSP origin; log movement; stop.
     SpawnToWeapon {
@@ -130,6 +135,11 @@ enum Cmd {
         /// freely. Temporary until real wait/ride/step-off behaviour exists.
         #[arg(long, default_value = "5000")]
         lift_penalty: f32,
+        /// Grid spacing (units) of the nav graph to use. Each spacing has its own cache
+        /// dir (`data/mapcache/<spacing>/`); generate it first with `generate-map-cache
+        /// --spacing <n>`. Default 24.
+        #[arg(long, default_value = "24")]
+        spacing: f32,
     },
     /// Diagnose disconnected nav-graph components: for each small component show
     /// the closest boundary-node pair to the main component, distances, and
@@ -158,6 +168,10 @@ enum Cmd {
         /// Output directory for `.qnav` cache files (default: `./data/mapcache`).
         #[arg(long, default_value = "data/mapcache")]
         out_dir: String,
+        /// Grid spacing (units) to generate at. Each spacing caches into its own
+        /// `<out_dir>/<spacing>/` subdir, so you can flip spacings without clobbering.
+        #[arg(long, default_value = "24")]
+        spacing: f32,
     },
 }
 
@@ -968,6 +982,7 @@ async fn run_scenario_cmd(
     count: u8,
     max_secs: f32,
     lift_penalty: f32,
+    spacing: f32,
 ) -> ExitCode {
     let base_name = name.unwrap_or_else(|| "qbots".to_string());
     let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
@@ -1015,6 +1030,7 @@ async fn run_scenario_cmd(
                 max_secs,
                 bot_qport,
                 lift_penalty,
+                spacing,
             )
             .await
             {
@@ -1110,7 +1126,12 @@ fn glob_matches(pattern: &str, name: &str) -> bool {
 fn nav_debug(cfg: &Config, map: &str, pairs: usize) -> ExitCode {
     use std::collections::HashSet;
 
-    let built = match world::generate_map_nav(&cfg.paths.baseq2, map, world::ELEVATOR_PENALTY) {
+    let built = match world::generate_map_nav(
+        &cfg.paths.baseq2,
+        map,
+        world::ELEVATOR_PENALTY,
+        world::GRID_SPACING,
+    ) {
         Ok(b) => b,
         Err(e) => {
             tracing::error!("{e}");
@@ -1328,10 +1349,18 @@ fn nav_debug(cfg: &Config, map: &str, pairs: usize) -> ExitCode {
 
 /// `generate-map-cache` handler (Plan 18 T3). Synchronous — nav graph generation
 /// is CPU-bound so we run it on plain threads, not tokio tasks.
-fn generate_map_cache(cfg: &Config, map_arg: &str, jobs: Option<usize>, out_dir: &str) -> ExitCode {
+fn generate_map_cache(
+    cfg: &Config,
+    map_arg: &str,
+    jobs: Option<usize>,
+    out_dir: &str,
+    spacing: f32,
+) -> ExitCode {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    let out_path = std::path::Path::new(out_dir);
+    // Per-spacing subdir, matching cached_map_nav's load path.
+    let out_path = std::path::Path::new(out_dir).join(world::spacing_subdir(spacing));
+    let out_path = out_path.as_path();
 
     // Resolve the list of maps to generate.
     let maps: Vec<String> = if map_arg.contains('*') {
@@ -1391,8 +1420,12 @@ fn generate_map_cache(cfg: &Config, map_arg: &str, jobs: Option<usize>, out_dir:
             handles.push(scope.spawn(move || {
                 for map in &chunk {
                     let t0 = std::time::Instant::now();
-                    let built = match world::generate_map_nav(&baseq2, map, world::ELEVATOR_PENALTY)
-                    {
+                    let built = match world::generate_map_nav(
+                        &baseq2,
+                        map,
+                        world::ELEVATOR_PENALTY,
+                        spacing,
+                    ) {
                         Ok(b) => b,
                         Err(e) => {
                             tracing::error!(map, "generate failed: {e}");
@@ -1406,7 +1439,8 @@ fn generate_map_cache(cfg: &Config, map_arg: &str, jobs: Option<usize>, out_dir:
                         failed.fetch_add(1, Ordering::Relaxed);
                         continue;
                     }
-                    let fp = world::Fingerprint::from_bsp(&built.bsp, world::ELEVATOR_PENALTY);
+                    let fp =
+                        world::Fingerprint::from_bsp(&built.bsp, world::ELEVATOR_PENALTY, spacing);
                     let cache_path = out_path.join(format!("{map}.qnav"));
                     match world::save_mapcache(&cache_path, &built.graph, &fp) {
                         Ok(()) => {
@@ -1778,6 +1812,7 @@ async fn main() -> ExitCode {
             count,
             max_secs,
             lift_penalty,
+            spacing,
         } => {
             run_scenario_cmd(
                 &cfg,
@@ -1788,6 +1823,7 @@ async fn main() -> ExitCode {
                 count,
                 max_secs,
                 lift_penalty,
+                spacing,
             )
             .await
         }
@@ -1799,6 +1835,7 @@ async fn main() -> ExitCode {
             count,
             max_secs,
             lift_penalty,
+            spacing,
         } => {
             run_scenario_cmd(
                 &cfg,
@@ -1809,13 +1846,17 @@ async fn main() -> ExitCode {
                 count,
                 max_secs,
                 lift_penalty,
+                spacing,
             )
             .await
         }
         Cmd::NavDebug { map, pairs } => nav_debug(&cfg, &map, pairs),
-        Cmd::GenerateMapCache { map, jobs, out_dir } => {
-            generate_map_cache(&cfg, &map, jobs, &out_dir)
-        }
+        Cmd::GenerateMapCache {
+            map,
+            jobs,
+            out_dir,
+            spacing,
+        } => generate_map_cache(&cfg, &map, jobs, &out_dir, spacing),
         Cmd::BspInfo { map } => match world::Bsp::load(&cfg.paths.baseq2, &map) {
             Ok(bsp) => {
                 tracing::info!(

@@ -76,6 +76,7 @@ fn build_map_nav(cfg: &Config, map: &str) -> Option<MapNav> {
         map,
         Some(cache_dir),
         world::ELEVATOR_PENALTY,
+        world::GRID_SPACING,
     ) {
         Ok(b) => b,
         Err(e) => {

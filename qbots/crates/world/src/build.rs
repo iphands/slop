@@ -59,17 +59,27 @@ pub struct MapNavBuild {
     pub largest: Vec<usize>,
 }
 
-/// Like `generate_map_nav` but checks `cache_dir/<map>.qnav` first. On a cache
+/// Subdirectory name for a given grid spacing, so each spacing keeps its own cache
+/// (`data/mapcache/12/q2dm1.qnav`). Lets us flip `--spacing` without clobbering or
+/// re-version-bumping. Formats `12.0` as `"12"`, `22.5` as `"22.5"`.
+pub fn spacing_subdir(spacing: f32) -> String {
+    let s = format!("{spacing}");
+    s.trim_end_matches(".0").to_string()
+}
+
+/// Like `generate_map_nav` but checks `cache_dir/<spacing>/<map>.qnav` first. On a cache
 /// hit, graph generation is skipped entirely — BSP load + CM build still happen
 /// (needed for collision traces at runtime). On a miss or a stale fingerprint,
 /// generates live, saves the cache, and logs a one-liner either way.
 ///
-/// `cache_dir` is typically `./data/mapcache`; pass `None` to skip cache I/O.
+/// `cache_dir` is typically `./data/mapcache`; pass `None` to skip cache I/O. `spacing` is
+/// the grid spacing the graph is generated at (use `GRID_SPACING` for the default 24u).
 pub fn cached_map_nav(
     baseq2: &Path,
     map: &str,
     cache_dir: Option<&Path>,
     lift_penalty: f32,
+    spacing: f32,
 ) -> Result<MapNavBuild, String> {
     let bsp = Bsp::load(baseq2, map)?;
     let cm = Arc::new(CollisionModel::from_bsp(&bsp));
@@ -81,11 +91,13 @@ pub fn cached_map_nav(
         (model.mins, model.maxs)
     };
     let spawn_origins: Vec<[f32; 3]> = bsp.spawn_points().iter().map(|s| s.origin).collect();
-    let fp = Fingerprint::from_bsp(&bsp, lift_penalty);
+    let fp = Fingerprint::from_bsp(&bsp, lift_penalty, spacing);
 
-    // Try the disk cache if a directory was provided.
+    // Try the disk cache if a directory was provided (per-spacing subdir).
     if let Some(dir) = cache_dir {
-        let cache_path = dir.join(format!("{map}.qnav"));
+        let cache_path = dir
+            .join(spacing_subdir(spacing))
+            .join(format!("{map}.qnav"));
         if let Some(cached_graph) = mapcache::load(&cache_path, &fp) {
             let seeded = 0; // graph already has spawn nodes baked in from the prior run
             let added_jumps = 0;
@@ -132,7 +144,7 @@ pub fn cached_map_nav(
             r
         }};
     }
-    let mut graph = timed!("generate", NavGraph::generate(&cm, bounds, GRID_SPACING));
+    let mut graph = timed!("generate", NavGraph::generate(&cm, bounds, spacing));
     let seeded = timed!("seed_spawns", graph.seed_spawns(&cm, &spawn_origins));
     timed!(
         "add_elevator_edges",
@@ -151,9 +163,11 @@ pub fn cached_map_nav(
     let (in_largest, total_spawns) = graph.spawns_in_largest_component(&spawn_origins);
     let largest = graph.largest_spawn_component(&spawn_origins);
 
-    // Save the cache for next time.
+    // Save the cache for next time (per-spacing subdir; save() creates parent dirs).
     if let Some(dir) = cache_dir {
-        let cache_path = dir.join(format!("{map}.qnav"));
+        let cache_path = dir
+            .join(spacing_subdir(spacing))
+            .join(format!("{map}.qnav"));
         if let Err(e) = mapcache::save(&cache_path, &graph, &fp) {
             tracing::warn!(map, "nav graph cache save failed: {e}");
         }
@@ -180,6 +194,7 @@ pub fn generate_map_nav(
     baseq2: &Path,
     map: &str,
     lift_penalty: f32,
+    spacing: f32,
 ) -> Result<MapNavBuild, String> {
     let bsp = Bsp::load(baseq2, map)?;
     let cm = Arc::new(CollisionModel::from_bsp(&bsp));
@@ -194,7 +209,7 @@ pub fn generate_map_nav(
 
     let spawn_origins: Vec<[f32; 3]> = bsp.spawn_points().iter().map(|s| s.origin).collect();
 
-    let mut graph = NavGraph::generate(&cm, bounds, GRID_SPACING);
+    let mut graph = NavGraph::generate(&cm, bounds, spacing);
     let seeded = graph.seed_spawns(&cm, &spawn_origins);
     add_elevator_edges(&mut graph, &cm, &bsp, lift_penalty);
     graph.bridge_components(&cm, BRIDGE_HDIST);
