@@ -10,6 +10,7 @@ pub mod collision;
 pub mod learn;
 pub mod mapcache;
 pub mod navgraph;
+pub mod navmesh;
 pub mod pak;
 pub mod vis;
 
@@ -27,5 +28,6 @@ pub use collision::{
 };
 pub use mapcache::{load as load_mapcache, save as save_mapcache, Fingerprint};
 pub use navgraph::{walkable_stair, EdgeKind, NavGraph, HULL_MAXS, HULL_MINS, STAIR_MAX, STEP};
+pub use navmesh::{Heightfield, VoxelParams};
 pub use pak::Pak;
 pub use vis::Pvs;

@@ -18,9 +18,13 @@ use world::{cached_map_nav, MASK_SOLID, STEP};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 6 {
+    // Need at least `<baseq2> <map> <mode-or-x>`. The keyword modes (heightfield, scan) parse
+    // their own remaining args; the default coordinate-dump mode is length-checked below.
+    if args.len() < 4 {
         eprintln!(
             "usage: navinspect <baseq2> <map> <x> <y> <z> [radius]\n\
+             modes: navinspect <baseq2> <map> heightfield [cell_size]\n\
+             \x20      navinspect <baseq2> <map> scan <x0> <y0> <x1> <y1> <zq> <step> <tz> [band]\n\
              e.g.   navinspect /srv/q2/baseq2 q2dm1 1519 567 472 160"
         );
         std::process::exit(2);
@@ -38,6 +42,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let built = cached_map_nav(baseq2, map, Some(cache), world::ELEVATOR_PENALTY, spacing)?;
     let g = &built.graph;
     let cm = &built.cm;
+
+    // HEIGHTFIELD mode: `navinspect <baseq2> <map> heightfield [cell_size]`
+    // Voxelizes the collision model and prints walkable-span stats + a top-down ASCII
+    // coverage map (downsampled), to eyeball that the navmesh heightfield covers the play
+    // area. '#' = the cell-block has at least one walkable span.
+    if args[3] == "heightfield" {
+        let cell: f32 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(8.0);
+        let model = &built.bsp.models[0];
+        let bounds = (model.mins, model.maxs);
+        let params = world::VoxelParams {
+            cell_size: cell,
+            ..Default::default()
+        };
+        let t = std::time::Instant::now();
+        let hf = world::Heightfield::build(cm, bounds, params);
+        let ms = t.elapsed().as_millis();
+        println!(
+            "heightfield map={map} cell={cell} grid={}x{} build={ms}ms",
+            hf.nx, hf.ny
+        );
+        println!(
+            "  walkable spans={}  walkable columns={}/{}",
+            hf.walkable_span_count(),
+            hf.walkable_column_count(),
+            hf.nx * hf.ny
+        );
+        let maxw = 120usize;
+        let blk = hf.nx.div_ceil(maxw).max(1); // cells per output char (square blocks)
+        let out_nx = hf.nx.div_ceil(blk);
+        let out_ny = hf.ny.div_ceil(blk);
+        println!("  top-down coverage ('#'=walkable; {blk}x{blk} cells/char):\n");
+        for oy in (0..out_ny).rev() {
+            let mut row = String::new();
+            for ox in 0..out_nx {
+                let mut any = false;
+                'blk: for dy in 0..blk {
+                    for dx in 0..blk {
+                        let ix = ox * blk + dx;
+                        let iy = oy * blk + dy;
+                        if ix < hf.nx && iy < hf.ny && !hf.columns[iy * hf.nx + ix].is_empty() {
+                            any = true;
+                            break 'blk;
+                        }
+                    }
+                }
+                row.push(if any { '#' } else { ' ' });
+            }
+            println!("{row}");
+        }
+        return Ok(());
+    }
 
     // SCAN mode: `navinspect <baseq2> <map> scan <x0> <y0> <x1> <y1> <zq> <step> <tz> <band>`
     // Floor-probes a grid and prints a heatmap of where walkable floor near `tz` exists and
@@ -92,6 +147,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    // Default coordinate-dump mode needs <x> <y> <z>.
+    if args.len() < 6 {
+        eprintln!("usage: navinspect <baseq2> <map> <x> <y> <z> [radius]  (or a keyword mode: heightfield | scan)");
+        std::process::exit(2);
+    }
     let qx: f32 = args[3].parse()?;
     let qy: f32 = args[4].parse()?;
     let qz: f32 = args[5].parse()?;
