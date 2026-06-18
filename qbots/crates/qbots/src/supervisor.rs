@@ -282,7 +282,7 @@ pub async fn run_fleet(
     // Per-process default so concurrent `run` fleets get disjoint qport ranges (the
     // server keys client slots on base-IP + qport, ignoring UDP source port). `--qport-base`
     // pins it for reproducibility.
-    let qport_base = qport_base_override.unwrap_or_else(crate::default_qport);
+    let qport_base = qport_base_override.unwrap_or_else(crate::default_fleet_qport_base);
     tracing::info!(count, qport_base, "launching fleet to {addr}");
 
     let mut tasks = Vec::new();

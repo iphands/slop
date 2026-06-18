@@ -693,10 +693,13 @@ that one slot's port on every packet → neither connection ever stabilized.
 
 ## Fix / How to avoid
 
-Give each process a **disjoint qport range**. `run_fleet` now defaults the fleet's qport
-base to a per-process value (`default_qport()` = `pid & 0xFFFF`, already used by
-`connect-one` and the scenario multi-bot path), so concurrent fleets don't collide with no
-extra flags; `run --qport-base <u16>` pins it for reproducibility. The server's
+Give each process a **disjoint qport range** — the ranges, not just the bases, must not
+overlap, since the fleet hands out `base + i`. `run_fleet` defaults the base to
+`default_fleet_qport_base()` = `(pid & 0xFF) << 8`, which spaces processes **256 apart** by
+PID low byte: two fleets launched back-to-back get consecutive PIDs whose low bytes differ
+by 1 → bases 256 apart → disjoint for any sane fleet size. (A naïve `pid & 0xFFFF` base is
+*wrong* here: consecutive PIDs differ by 1, so `count`>1 ranges overlap and one fleet
+starves.) `run --qport-base <u16>` pins it for reproducibility. The server's
 `fixing up a translated port` spam is the tell that two clients share an `(ip, qport)`.
 
 ## Sources

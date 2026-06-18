@@ -221,6 +221,18 @@ pub(crate) fn default_qport() -> u16 {
     (std::process::id() & 0xFFFF) as u16
 }
 
+/// A per-process default qport **base** for a fleet, spaced 256 apart by PID low byte.
+///
+/// The fleet hands out `base + i` for bot `i`, so two fleets must not just differ — their
+/// whole ranges must be disjoint, or they collide on the server's `(ip, qport)` client-slot
+/// key. Two fleets launched back-to-back get *consecutive* PIDs, whose low bytes differ by
+/// 1; shifting that into the high byte spaces their bases by 256 — disjoint for any sane
+/// fleet size (≤256). Bases collide only when two PIDs share a low byte (differ by a
+/// multiple of 256), which is improbable for concurrent launches; `--qport-base` pins it.
+pub(crate) fn default_fleet_qport_base() -> u16 {
+    ((std::process::id() & 0xFF) as u16) << 8
+}
+
 /// Squared 3D distance (for nearest-waypoint comparisons).
 fn dist2(a: &[f32; 3], b: &[f32; 3]) -> f32 {
     let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
