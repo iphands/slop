@@ -264,7 +264,7 @@ pub async fn run_scenario(
             // Reuse one process-wide navmesh across all bots (built from the same collision
             // model the A* graph used). Cell 16 balances poly count vs detail.
             let model = &bsp.models[0];
-            let mesh = get_or_build_navmesh(&map, &cm, (model.mins, model.maxs));
+            let mesh = crate::supervisor::get_or_build_navmesh(&map, &cm, (model.mins, model.maxs));
             Box::new(NavmeshDriver::new(mesh, 16.0))
         }
     };
@@ -684,50 +684,6 @@ fn finalize(
         // Exit code 2 = ran but did not reach the goal (distinct from a setup error).
         ExitCode::from(2)
     }
-}
-
-/// Process-global navmesh cache so the N bots of a `--mode navmesh` run share one built
-/// mesh instead of each rebuilding it (mirrors the supervisor's `NavCache`). Keyed by map
-/// name; the first bot to ask builds it under the lock, the rest clone the `Arc`. (Phase 5
-/// will replace this with a disk cache like `cached_map_nav`.)
-fn get_or_build_navmesh(
-    map: &str,
-    cm: &world::CollisionModel,
-    bounds: ([f32; 3], [f32; 3]),
-) -> Arc<world::NavMesh> {
-    use std::collections::HashMap;
-    use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<Mutex<HashMap<String, Arc<world::NavMesh>>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = cache.lock().unwrap();
-    if let Some(m) = guard.get(map) {
-        return Arc::clone(m);
-    }
-    // cell 8 (fine enough that agent-radius erosion keeps 32u-doorway centerlines) + erode by
-    // agent_radius/cell = 16/8 = 2 cells, so bots aren't routed into near-wall hull-jam cells.
-    let params = world::VoxelParams {
-        cell_size: 8.0,
-        ..Default::default()
-    };
-    let mut hf = world::Heightfield::build(cm, bounds, params);
-    let drops = hf.find_drops(cm); // on the FULL heightfield, before erosion removes ledge edges
-                                   // erode 1 cell (8u): de-jams near walls while keeping thin
-                                   // (~32u) Q2 ledges (the RL route); the full radius erases them.
-    let erode = std::env::var("QBOTS_ERODE")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1);
-    hf.erode(erode);
-    let mut mesh = world::NavMesh::build(&hf, params.walkable_climb, Some(cm));
-    mesh.add_drops(&drops);
-    tracing::info!(
-        map,
-        polys = mesh.polys.len(),
-        "navmesh built (mode=navmesh)"
-    );
-    let arc = Arc::new(mesh);
-    guard.insert(map.to_string(), Arc::clone(&arc));
-    arc
 }
 
 fn dist3(a: [f32; 3], b: [f32; 3]) -> f32 {
