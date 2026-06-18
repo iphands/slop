@@ -35,9 +35,12 @@ const DEGEN_MIN_STRAIGHT: f32 = 256.0;
 // `world::GRID_SPACING` keeps the ratios fixed so the grid can be changed freely.
 // At grid=24 these evaluate to the original 96 / 32 / 24 / 48 (behaviour-preserving).
 
-/// Look-ahead distance for `pursue_target`: steer at a point this far ahead along the
-/// path instead of the raw next node. Cuts corners + reduces grid zig. = 4 × node spacing.
-pub const LOOKAHEAD: f32 = world::GRID_SPACING * 4.0;
+/// Look-ahead distance for pure-pursuit steering: aim at a point this far ahead along the
+/// path polyline from the bot's PROJECTION onto it. This is a FIXED physical distance (a
+/// steering-smoothness quantity, like a car's look-ahead), NOT grid-scaled: pure-pursuit is
+/// density-independent, and scaling the look-ahead down at finer grids would make steering
+/// jaggier. 96u rounds corners smoothly without overshooting q2dm geometry.
+pub const LOOKAHEAD: f32 = 96.0;
 /// Horizontal waypoint-reach threshold = 4/3 × node spacing (32u at grid 24). Big enough
 /// to absorb full-speed overshoot (~30u/frame) without skipping across wall boundaries.
 const WP_REACH_HORIZ: f32 = world::GRID_SPACING * 4.0 / 3.0;
@@ -304,32 +307,80 @@ impl NavigationDriver {
         })
     }
 
-    /// Look-ahead pursuit target: a point `LOOKAHEAD` units ahead along the current path
-    /// from `from`, or the final goal node if the remaining path is shorter. Steer toward
-    /// this instead of the raw next waypoint to smooth corners and reduce grid zig.
-    ///
-    /// Returns `None` if there is no active path.
-    pub fn pursue_target(&self, from: Vec3) -> Option<Vec3> {
-        let wp_idx = self.current_waypoint?;
-        let start_idx = self.current_path.iter().position(|&w| w == wp_idx)?;
+    /// Position of path node at `current_path[i]`.
+    fn path_pos(&self, i: usize) -> Vec3 {
+        Vec3::from(self.nav_graph.nodes[self.current_path[i]])
+    }
 
-        let mut remaining = LOOKAHEAD;
-        let mut prev = from;
+    /// Project `from` onto the path polyline, searching segments from `start_seg` forward,
+    /// and return `(segment_index, t)` of the closest point (`t` in `[0,1]` along the
+    /// segment). Forward-only search prevents snapping back to an already-passed or looped
+    /// segment. This is the bot's true progress along the path, independent of node spacing.
+    fn project_onto_path(&self, from: Vec3, start_seg: usize) -> (usize, f32) {
+        let n = self.current_path.len();
+        if n < 2 {
+            return (0, 0.0);
+        }
+        let mut best = (start_seg.min(n - 2), 0.0f32, f32::MAX);
+        for seg in start_seg.min(n - 2)..n - 1 {
+            let a = self.path_pos(seg);
+            let b = self.path_pos(seg + 1);
+            let ab = b - a;
+            let len2 = ab.length_squared();
+            let t = if len2 > 1e-6 {
+                ((from - a).dot(ab) / len2).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let d2 = (from - (a + ab * t)).length_squared();
+            if d2 < best.2 {
+                best = (seg, t, d2);
+            }
+        }
+        (best.0, best.1)
+    }
 
-        for &node_idx in &self.current_path[start_idx..] {
-            let node_pos = Vec3::from(self.nav_graph.nodes[node_idx]);
-            let seg_len = (node_pos - prev).length();
+    /// The point `dist` units ahead along the polyline starting from `(seg, t)`.
+    fn point_ahead(&self, seg: usize, t: f32, dist: f32) -> Vec3 {
+        let n = self.current_path.len();
+        let mut cur = {
+            let a = self.path_pos(seg);
+            let b = self.path_pos(seg + 1);
+            a + (b - a) * t
+        };
+        let mut remaining = dist;
+        for s in seg..n - 1 {
+            let b = self.path_pos(s + 1);
+            let seg_len = (b - cur).length();
             if seg_len >= remaining {
-                let t = remaining / seg_len;
-                return Some(prev + (node_pos - prev) * t);
+                return cur + (b - cur) * (remaining / seg_len);
             }
             remaining -= seg_len;
-            prev = node_pos;
+            cur = b;
         }
+        self.path_pos(n - 1)
+    }
 
-        // Path shorter than LOOKAHEAD — return the final node.
-        let last = *self.current_path.last()?;
-        Some(Vec3::from(self.nav_graph.nodes[last]))
+    /// Pure-pursuit look-ahead target: project `from` onto the path polyline, then return a
+    /// point `LOOKAHEAD` units ahead along the polyline from that projection. Because both
+    /// the projection and the look-ahead are geometric, the bot follows the SAME line whether
+    /// the path is sampled at 24u or 12u — i.e. steering is density-independent (the fix for
+    /// "more nodes → jaggier motion"). Falls back to the final node when the path is short.
+    pub fn pursue_target(&self, from: Vec3) -> Option<Vec3> {
+        let wp_idx = self.current_waypoint?;
+        let n = self.current_path.len();
+        if n == 0 {
+            return None;
+        }
+        if n == 1 {
+            return Some(self.path_pos(0));
+        }
+        let wi = self.current_path.iter().position(|&w| w == wp_idx)?;
+        // The bot is on/near the segment that ENDS at the current waypoint, so start the
+        // projection search one segment back (clamped) to catch it.
+        let start_seg = wi.saturating_sub(1);
+        let (seg, t) = self.project_onto_path(from, start_seg);
+        Some(self.point_ahead(seg, t, LOOKAHEAD))
     }
 
     /// Corner-cut-safe pursuit target. The raw `pursue_target` interpolates a point
