@@ -4,8 +4,8 @@
 //! ```text
 //! [0..7]   magic    b"QBNAVC2"
 //! [7]      version  u8
-//! [8..48]  fingerprint (10 × u32, see Fingerprint)
-//! [48..52] node_count  u32
+//! [8..52]  fingerprint (11 × u32, see Fingerprint)
+//! [52..56] node_count  u32
 //! for each node:
 //!   x, y, z  f32 × 3
 //! for each node:
@@ -26,7 +26,7 @@ use std::path::Path;
 
 use crate::bsp::Bsp;
 use crate::build::{BRIDGE_HDIST, GRID_SPACING, JUMP_SPACING, PRUNE_MAX_HD};
-use crate::navgraph::{NavGraph, STAIR_MAX, STEP};
+use crate::navgraph::{NavGraph, CONNECT_CELLS, STAIR_MAX, STEP};
 
 const MAGIC: &[u8; 7] = b"QBNAVC2";
 // Version 2: multi-floor column probing (see navgraph::floor_waypoints_multi).
@@ -34,7 +34,9 @@ const MAGIC: &[u8; 7] = b"QBNAVC2";
 // plus a 9th fingerprint field (BRIDGE_HDIST). Older caches are auto-rejected.
 // Version 4: false-edge prune (navgraph::prune_long_blocked_edges) + a 10th fingerprint
 // field (PRUNE_MAX_HD), so the fingerprint is now 40 bytes. Older caches auto-rejected.
-const VERSION: u8 = 4;
+// Version 5: generate() wider neighbour connection + an 11th fingerprint field
+// (CONNECT_CELLS); fingerprint is now 44 bytes. Older caches auto-rejected.
+const VERSION: u8 = 5;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]
@@ -58,6 +60,9 @@ pub struct Fingerprint {
     /// (`navgraph::prune_long_blocked_edges`) alters the generated graph, so changing
     /// it must invalidate stale caches.
     prune_max_hd_bits: u32,
+    /// `CONNECT_CELLS` — `generate()`'s neighbour-connection cell radius. Changing it
+    /// changes which edges generate adds, so it must invalidate stale caches.
+    connect_cells: u32,
 }
 
 impl Fingerprint {
@@ -90,6 +95,7 @@ impl Fingerprint {
             stair_max_bits: STAIR_MAX.to_bits(),
             bridge_hdist_bits: BRIDGE_HDIST.to_bits(),
             prune_max_hd_bits: PRUNE_MAX_HD.to_bits(),
+            connect_cells: CONNECT_CELLS as u32,
         }
     }
 
@@ -105,6 +111,7 @@ impl Fingerprint {
             self.stair_max_bits,
             self.bridge_hdist_bits,
             self.prune_max_hd_bits,
+            self.connect_cells,
         ] {
             buf.extend_from_slice(&v.to_le_bytes());
         }
@@ -114,7 +121,7 @@ impl Fingerprint {
         if data.len() < FP_BYTES {
             return None;
         }
-        let mut fields = [0u32; 10];
+        let mut fields = [0u32; 11];
         for (i, f) in fields.iter_mut().enumerate() {
             *f = u32::from_le_bytes(data[i * 4..i * 4 + 4].try_into().ok()?);
         }
@@ -129,12 +136,13 @@ impl Fingerprint {
             stair_max_bits: fields[7],
             bridge_hdist_bits: fields[8],
             prune_max_hd_bits: fields[9],
+            connect_cells: fields[10],
         })
     }
 }
 
-/// Fingerprint on-disk size in bytes (10 × u32).
-const FP_BYTES: usize = 40;
+/// Fingerprint on-disk size in bytes (11 × u32).
+const FP_BYTES: usize = 44;
 
 /// Write a nav graph to `path`. Overwrites any existing file.
 pub fn save(path: &Path, graph: &NavGraph, fingerprint: &Fingerprint) -> io::Result<()> {
@@ -284,6 +292,7 @@ mod tests {
             stair_max_bits: STAIR_MAX.to_bits(),
             bridge_hdist_bits: BRIDGE_HDIST.to_bits(),
             prune_max_hd_bits: PRUNE_MAX_HD.to_bits(),
+            connect_cells: CONNECT_CELLS as u32,
         }
     }
 

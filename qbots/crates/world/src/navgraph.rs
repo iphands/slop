@@ -29,6 +29,12 @@ pub const STEP: f32 = 18.0;
 /// Must stay in the cache fingerprint (`mapcache::Fingerprint`) so stale caches
 /// auto-invalidate on change.
 pub const STAIR_MAX: f32 = 160.0;
+/// Grid-cell radius `generate()` connects each node within (Manhattan, per-axis).
+/// `1` = the classic 8-neighbour connection (±1 cell); higher values connect a wider
+/// neighbourhood so walkable links spanning 2-4 cells (ramps/steps with no intermediate
+/// sampled node) are not missed. Proven necessary by `tools/compgaps`. In the cache
+/// fingerprint (`mapcache::Fingerprint`) so changing it invalidates stale caches.
+pub const CONNECT_CELLS: i32 = 3;
 /// Minimum edge cost in the weighted pathfinder, so a popularity overlay can't
 /// drive an edge to zero/negative (Plan 08 T3).
 const EPS: f32 = 1.0;
@@ -113,8 +119,15 @@ impl NavGraph {
                 let gx = (a[0] / spacing).round() as i32;
                 let gy = (a[1] / spacing).round() as i32;
                 let mut edges = Vec::new();
-                for ddx in -1..=1i32 {
-                    for ddy in -1..=1i32 {
+                // Connect a neighbourhood of ±CONNECT_CELLS grid cells, not just the 8
+                // immediate neighbours. A ±1 (24u) connection misses real walkable links
+                // that span 2-4 cells — e.g. across a ramp/step where the intermediate
+                // column has no sampled node — which fragments the graph into dozens of
+                // false components (proven by tools/compgaps: 934 missed walkable links on
+                // q2dm1). The per-pair hull/stair check below still rejects wall-separated
+                // pairs, so widening only adds genuinely walkable edges.
+                for ddx in -CONNECT_CELLS..=CONNECT_CELLS {
+                    for ddy in -CONNECT_CELLS..=CONNECT_CELLS {
                         if ddx == 0 && ddy == 0 {
                             continue;
                         }
