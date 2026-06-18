@@ -476,13 +476,20 @@ impl NavGraph {
         let mut apex = from;
         let mut commit_idx = 0usize; // index in `path` we most recently committed
 
+        // Smoothing LOS hull: full bot WIDTH/DEPTH (±16) so a shortcut that would
+        // clip the bot's body on an inside corner is rejected (a zero-width point
+        // trace clears such corners and causes wall-bumping). Ceiling headroom is
+        // reduced from +32 to +24 to avoid spurious `startsolid` at high nodes whose
+        // hull top exactly touches a low ceiling (e.g. q2dm1 z=920 node under z=952
+        // ceiling) — that edge case previously made the team disable hull smoothing.
+        const SMOOTH_MINS: [f32; 3] = [-16.0, -16.0, -24.0];
+        const SMOOTH_MAXS: [f32; 3] = [16.0, 16.0, 24.0];
         while commit_idx < path.len() - 1 {
             // Scan forward from apex for the furthest LOS-clear node.
             let mut furthest = commit_idx;
-            let zero = [0.0f32; 3];
             for (j, &node_idx) in path.iter().enumerate().skip(commit_idx + 1) {
                 let candidate = self.nodes[node_idx];
-                // Don't smooth across significant elevation changes: the point trace
+                // Don't smooth across significant elevation changes: the trace
                 // may clear staircase interiors even though the bot can't walk there
                 // directly (it needs the actual stair geometry underfoot).
                 if (candidate[2] - apex[2]).abs() > MAX_SMOOTH_DZ {
@@ -494,7 +501,7 @@ impl NavGraph {
                 if hdist2 > MAX_SMOOTH_HDIST * MAX_SMOOTH_HDIST {
                     break;
                 }
-                let t = cm.trace(&apex, &candidate, &zero, &zero, MASK_SOLID);
+                let t = cm.trace(&apex, &candidate, &SMOOTH_MINS, &SMOOTH_MAXS, MASK_SOLID);
                 if t.fraction >= 1.0 && !t.startsolid {
                     furthest = j;
                 } else {
@@ -1075,6 +1082,43 @@ fn floor_waypoints_multi(
 /// pmove's step-climb pattern: step up by `STEP` vertically, then advance
 /// horizontally by the proportional XY distance, repeating until reaching `upper`.
 /// Each sub-trace uses the full player hull, so actual walls and cliff faces still
+/// True if there is continuous walkable floor under the straight segment `a → b`.
+///
+/// A horizontal hull/point trace clears across an **open gap** (a pit has nothing
+/// to obstruct it), so a path-smoothing shortcut validated only by a forward trace
+/// can route the bot across thin air → it falls. This samples points every ~16 u
+/// along the segment and requires solid floor within `FLOOR_PROBE` below each one.
+/// Z is interpolated linearly between the endpoints (both already constrained to
+/// `MAX_SMOOTH_DZ`), so the probe tracks gentle ramps/steps but rejects voids.
+pub fn segment_has_floor(cm: &CollisionModel, a: [f32; 3], b: [f32; 3]) -> bool {
+    // How far below the interpolated path a floor may be before the straight line
+    // is "walking off an edge". A real walkable shortcut keeps the floor within
+    // step-down range of the line; a drop-off/pit has floor far below. 96 u tolerates
+    // a tall single step plus slack but rejects a true fall to a lower platform.
+    // A zero-width (point) probe at the path centreline avoids false "gap" hits from
+    // a 32-wide box catching side-edges next to a narrow but valid walkway.
+    const FLOOR_PROBE: f32 = 96.0;
+    let zero = [0.0f32; 3];
+    let dx = b[0] - a[0];
+    let dy = b[1] - a[1];
+    let hdist = (dx * dx + dy * dy).sqrt();
+    let samples = (hdist / 16.0).ceil() as usize;
+    if samples <= 1 {
+        return true; // endpoints are nav nodes — already known to have floor
+    }
+    for i in 1..samples {
+        let f = i as f32 / samples as f32;
+        let p = [a[0] + dx * f, a[1] + dy * f, a[2] + (b[2] - a[2]) * f];
+        let down = [p[0], p[1], p[2] - FLOOR_PROBE];
+        let t = cm.trace(&p, &down, &zero, &zero, MASK_SOLID);
+        // No floor within FLOOR_PROBE (fraction == 1.0) → gap under the shortcut.
+        if t.fraction >= 1.0 && !t.startsolid {
+            return false;
+        }
+    }
+    true
+}
+
 /// block the path. Stair risers don't block the upward vertical traces, and the
 /// horizontal traces at each stepped height clear any risers below that level.
 ///
