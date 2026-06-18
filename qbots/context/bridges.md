@@ -2,11 +2,15 @@
 
 > Written to answer a direct question: *bridges seem strange — are they actually
 > needed, or are they a workaround that is causing new bugs?* Short answer: bridges
-> are a **fragmentation-repair workaround**, not a fundamental nav primitive. They are
-> currently necessary given how `generate()` samples the map, but the way they are
-> tuned (`BRIDGE_HDIST` + `walkable_stair`) has demonstrably written new bugs. A finer
-> grid is the most promising way to shrink or remove them. This doc lays out the facts
-> so we can decide deliberately.
+> are a **fragmentation-repair workaround**, not a fundamental nav primitive. They ARE
+> genuinely necessary (the gridscan experiment below proves the fragmentation is
+> structural, not a coarse-grid artifact) — but the way they are tuned (`BRIDGE_HDIST`
+> + `walkable_stair`) has demonstrably written new bugs. The fix is bridge *accuracy*,
+> not bridge removal or a finer grid. This doc lays out the facts so we can decide
+> deliberately.
+>
+> **UPDATE 2026-06-17: the "finer grid removes bridges" hypothesis was RUN and REFUTED.
+> See the gridscan results table below.**
 
 ## What a bridge actually is (mechanism)
 
@@ -104,6 +108,36 @@ Interpretation:
 - If components stay high even at 8u: fragmentation is structural (true stair/lift gaps),
   bridges are genuinely needed, and the right fix is better stair/elevator edge generation,
   not grid density.
+
+### gridscan RESULTS (q2dm1, 2026-06-17 — RUN, hypothesis REFUTED)
+
+| map | spacing | nodes | components | largest | spawns/total | gen_ms |
+|-----|--------:|------:|-----------:|--------:|:------------:|-------:|
+| q2dm1 | 24 | 12886 | 66 | 6097 | **2/10** | 79 |
+| q2dm1 | 16 | 29059 | 138 | 13837 | **2/10** | 162 |
+| q2dm1 | 12 | 51761 | 140 | 24570 | **2/10** | 288 |
+| q2dm1 |  8 | 116127 | 138 | 55348 | **2/10** | 648 |
+
+Spawns-in-largest stays pinned at **2/10** at every spacing; component count does NOT fall
+toward 1 — it RISES (66→138). The second interpretation branch is the truth: fragmentation
+is **structural**. And finer is worse for stairs: `generate()` links only 8-neighbours
+(±1 cell); a stair tread is ~16–24u deep, so at spacing 8 one step spans 2–3 cells and
+gets no direct edge → stairs fragment more, not less.
+
+## Bottom line / recommendation (updated with data)
+
+1. **Bridges are genuinely needed.** gridscan proves the islands are structural at every
+   grid density. Keep them. The user's instinct that bridges are "strange" correctly
+   points at their *radius + walkable_stair accuracy*, not their existence.
+2. The real lever is bridge **accuracy**, not grid density or bridge removal:
+   - `prune_long_blocked_edges` (DONE, connectivity-preserving): node 10300 19→8 edges,
+     all spawns still connected. Symptom guardrail.
+   - Root fix candidate: connect a **wider neighbourhood (±2–3 cells)** in `generate()`
+     so real stair steps get direct edges — shrinks the fragmentation bridges must repair,
+     letting `BRIDGE_HDIST` drop. NEXT EXPERIMENT.
+   - Or lower `BRIDGE_HDIST` (256→~160) now that the prune exists. gridscan + 32-bot
+     scenarios decide.
+3. Accept irreducible cases (one-way pits, lift-only routes) — not bugs.
 
 > NOTE (status at time of writing): `gridscan` is committed but the experiment was **not
 > run** here — the `world` crate was mid-refactor by concurrent work and did not compile
