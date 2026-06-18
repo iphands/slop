@@ -791,3 +791,34 @@ nearest_poly by cell-floor, two-point bridges, adjacency validation. Remaining t
 2. One-way DROP links for the z=920 platform (comp 9, 1 isolated spawn).
 The navmesh funnel is sound (smooth glide when the path avoids jam cells); the blocker is
 agent-radius clearance in narrow Q2 geometry.
+
+---
+
+## 2026-06-18 Session 7 (cont.5) — distance-field erosion + DROP LINKS: navmesh 10→~14/24, RL route executes
+
+Two big features landed:
+1. **Distance-field erosion** (`Heightfield::erode`, Recast-style BFS distance-to-border, drop
+   the near-wall ring where the ±16 hull jams). cell=8 + erode=1 (8u): de-jams walls while
+   keeping ~32u Q2 doorways/ledges (the full 16u radius erases them). navmesh s2s 10→~14/24.
+2. **One-way drop links** (`find_drops` on the FULL heightfield + `add_drops` onto the eroded
+   mesh): directed high→low edges where the bot walks off a ledge (clean fall). Connects
+   drop-only spots — q2dm1's z=920 RL ledge / spawn5, dropped onto from the z=1256 GL. With
+   erode=1 + drops, ALL 10 spawns are in ONE component (was 9/10).
+
+### RL northstar route — traced, and it EXECUTES (huge): spawn-to-weapon rocketlauncher
+A navmesh bot: starts z=920 platform → **climbs to z=1048 (GL)** → **drops onto the z=920
+ledge** → … This is exactly the "up to GL, drop onto ledge, head to RL" route, and the drop
+links + the existing driver execute the climb AND the drop with no special code (the bot walks
+off the edge and Q2 physics drops it onto the ledge). 
+
+BUT then it **falls off the thin (~33u) ledge** (z=920→568) before reaching the RL at
+(704,104,912), and wanders the lower area. RL = 0/24. The final blocker is **thin-ledge
+traversal**: a 32u-wide bot on a 33u ledge at ~300u/s overshoots and falls. Needs speed
+reduction / tighter path-following on narrow polys (a steering refinement), the genuinely
+hardest remaining piece. Same root keeps s2s at ~14 (residual wedges + a few ledge falls).
+
+### Session tally: navmesh spawn-to-spawn 0 → ~14/24, all spawns connected, RL route executes
+(astar 24/24, default, untouched). Architecture complete: heightfield → erosion → rectangle
+merge → cell-step adjacency (climbable_walk validated) → drop links → A* → funnel → driver.
+Remaining for 24/24 + RL: thin-ledge traversal (don't overshoot off narrow ledges) + mop up
+residual wedges.
