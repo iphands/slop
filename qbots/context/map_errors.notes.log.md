@@ -758,3 +758,36 @@ Big architectural fixes this session took navmesh spawn-to-spawn from 0/24 to **
    margin.
 The navmesh geometry + funnel are sound (when a path is valid the bot glides smoothly); the
 blocker is vertical traversal mechanics. astar stays 24/24, default, untouched.
+
+---
+
+## 2026-06-18 Session 7 (cont.4) — final blocker pinned: HULL-JAM wedges (erosion vs doorways)
+
+Added adjacency validation (climbable_walk per cell hop; cm threaded via Option so tests stay
+cm-free) + a `navinspect linetrace` tool. The validation removed 0 edges → over-connection was
+NOT the wedge cause. The real cause, found via linetrace:
+
+`linetrace (359,776,336)→(359,847,354)` = **startsolid** (the bot's ±16 hull is embedded in a
+wall) while the POINT trace is clear. So the bot is routed onto a cell that is point-walkable
+but where the full hull doesn't fit (within 16u of a wall), and it wedges — recovery can't
+escape a hull-in-solid position.
+
+This is the **no-erosion** consequence, and it's a genuine dilemma:
+- NO erosion (current) → bots get routed into near-wall cells and jam. (Bug.)
+- Full hull-fit erosion (re-tested) → **severs Q2 doorways**: a 32u door's only hull-fit point
+  is its exact center, which no grid cell samples, so passages fragment (q2dm1 → 8 components).
+  Confirmed at cell=16; finer cells don't fix it (the off-center cells still clip).
+The proper fix is Recast's **distance-field erosion** (keep cells whose distance-to-border ≥
+agent_radius, computed continuously so a doorway's centerline survives) AT cell ≤ radius, AND
+the funnel must route through hull-fitting space (its inset helps but momentum can still carry
+the bot off the path into a near-wall jam). This is real multi-factor robustness work — the
+kind Recast/Detour took a long time to get right.
+
+### State at session end
+navmesh spawn-to-spawn **0 → ~10/24** this session (astar 24/24, default, untouched). Fixes
+committed: rectangle merge, cell-step adjacency (real cell floors), climbable_walk validator,
+nearest_poly by cell-floor, two-point bridges, adjacency validation. Remaining to 24/24:
+1. Distance-field erosion (keeps doorways, drops near-wall jam cells) + funnel-through-fitting-space.
+2. One-way DROP links for the z=920 platform (comp 9, 1 isolated spawn).
+The navmesh funnel is sound (smooth glide when the path avoids jam cells); the blocker is
+agent-radius clearance in narrow Q2 geometry.

@@ -132,6 +132,11 @@ fn column_floors(cm: &CollisionModel, x: f32, y: f32, bounds: ([f32; 3], [f32; 3
         let head_top = [x, y, floor_z + PLAYER_HEIGHT];
         let up = cm.trace(&head_bot, &head_top, &zero, &zero, MASK_SOLID);
         let headroom = up.fraction >= 1.0 && !up.startsolid;
+        // NB: no horizontal hull-fit erosion here — at any grid spacing it severs Q2 doorways
+        // (a 32u door's only hull-fit point is its exact center, which no cell samples), so the
+        // mesh fragments. Recast-style distance-field erosion (keep cells whose distance-to-
+        // border ≥ radius, centerline inclusive) is the correct fix and is the next step; until
+        // then bots can be routed into near-wall cells and wedge (hull embedded in solid).
         if headroom && cm.point_contents(&[x, y, oz]) & MASK_WATER == 0 {
             out.push(oz);
         }

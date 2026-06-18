@@ -17,7 +17,7 @@
 use rayon::prelude::*;
 
 use crate::collision::{CollisionModel, MASK_SOLID};
-use crate::navgraph::{HULL_MAXS, HULL_MINS, STAIR_MAX, STEP};
+use crate::navgraph::{STAIR_MAX, STEP};
 use crate::navmesh::heightfield::Heightfield;
 
 /// Strict pmove-accurate climb check: can the bot actually *walk* from `lo` (lower origin) up
@@ -49,14 +49,9 @@ fn climbable_walk(cm: &CollisionModel, lo: [f32; 3], hi: [f32; 3]) -> bool {
         if surf - prev_f > STEP + 1.0 {
             return false; // step too tall to climb
         }
-        // The full hull must fit standing here.
-        let o = [x, y, surf + 24.0];
-        if cm
-            .trace(&o, &o, &HULL_MINS, &HULL_MAXS, MASK_SOLID)
-            .startsolid
-        {
-            return false;
-        }
+        // (No full-hull fit test here: the heightfield admits near-wall cells without erosion,
+        // and the `startsolid` above already rejects a wall in the path — a hull test would
+        // wrongly drop every near-wall walkable cell.)
         prev_f = surf;
     }
     (prev_f - (hi[2] - 24.0)).abs() < STEP + 4.0
@@ -223,7 +218,9 @@ impl NavMesh {
 
     /// Build the navmesh: greedy-merge walkable cell-spans into z-coherent rectangles, then
     /// connect rects that share an edge and are within `walkable_climb`.
-    pub fn build(hf: &Heightfield, walkable_climb: f32) -> Self {
+    /// `cm` (when `Some`) validates each adjacency hop with a collision trace so a thin wall
+    /// between two step-apart cells doesn't become a false portal. Unit tests pass `None`.
+    pub fn build(hf: &Heightfield, walkable_climb: f32, cm: Option<&CollisionModel>) -> Self {
         let nx = hf.nx;
         let ny = hf.ny;
         let cols = &hf.columns;
@@ -302,7 +299,7 @@ impl NavMesh {
             col_floor,
             bridge_points: std::collections::HashMap::new(),
         };
-        mesh.adj = mesh.build_adjacency();
+        mesh.adj = mesh.build_adjacency(cm);
         mesh
     }
 
@@ -316,7 +313,7 @@ impl NavMesh {
     /// can step over. This uses the real per-cell floors (`col_floor`), not the rects' seed
     /// `oz`, so a staircase's per-step rects (whose seeds can differ by >18u) connect tread to
     /// tread, while a >18u ledge between two cells does not (it needs a drop/bridge).
-    fn build_adjacency(&self) -> Vec<Vec<u32>> {
+    fn build_adjacency(&self, cm: Option<&CollisionModel>) -> Vec<Vec<u32>> {
         use std::collections::HashSet;
         let nx = self.nx;
         let ny = self.ny;
@@ -337,10 +334,25 @@ impl NavMesh {
                     }
                     let nci = nyi as usize * nx + nxi as usize;
                     for (qi, &q) in self.col_polys[nci].iter().enumerate() {
-                        if q == r {
+                        if q == r || adj[r as usize].contains(&q) {
+                            continue; // self, or already connected via another cell hop
+                        }
+                        let fq = self.col_floor[nci][qi];
+                        if (fq - fr).abs() > STEP + 1.0 {
                             continue;
                         }
-                        if (self.col_floor[nci][qi] - fr).abs() <= STEP + 1.0 {
+                        // Validate the actual cell hop with collision (when available): two
+                        // walkable cells a step apart can still have a thin WALL between them —
+                        // climbable_walk catches it. Without cm (unit tests) trust the floor diff.
+                        let ok = cm.is_none_or(|c| {
+                            // col_floor stores ORIGIN z (floor + 24), which is what climbable_walk
+                            // expects — pass it directly, do NOT add another 24.
+                            let a = self.cell_center(ix, iy, fr);
+                            let b = self.cell_center(nxi as usize, nyi as usize, fq);
+                            let (lo, hi) = if fr <= fq { (a, b) } else { (b, a) };
+                            climbable_walk(c, lo, hi)
+                        });
+                        if ok {
                             adj[r as usize].insert(q);
                             adj[q as usize].insert(r);
                         }
@@ -465,7 +477,7 @@ mod tests {
             min: [0.0, 0.0],
             columns: vec![vec![24.0]; 4],
         };
-        let m = NavMesh::build(&hf, 18.0);
+        let m = NavMesh::build(&hf, 18.0, None);
         assert_eq!(m.polys.len(), 1);
         assert_eq!(m.polys[0].w, 4);
         assert_eq!(m.components().len(), 1);
@@ -490,7 +502,7 @@ mod tests {
             min: [0.0, 0.0],
             columns,
         };
-        let m = NavMesh::build(&hf, 18.0);
+        let m = NavMesh::build(&hf, 18.0, None);
         assert_eq!(m.polys.len(), 2);
         assert_eq!(m.components().len(), 1);
         // They share the horizontal edge at y=16 over x[0..16].
@@ -509,7 +521,7 @@ mod tests {
             min: [0.0, 0.0],
             columns: vec![vec![24.0, 224.0], vec![24.0, 224.0]],
         };
-        let m = NavMesh::build(&hf, 18.0);
+        let m = NavMesh::build(&hf, 18.0, None);
         // Two rects (lower strip, upper strip), two components.
         assert_eq!(m.polys.len(), 2);
         assert_eq!(m.components().len(), 2);
@@ -524,7 +536,7 @@ mod tests {
             min: [0.0, 0.0],
             columns: vec![vec![24.0, 224.0], vec![24.0, 224.0]],
         };
-        let m = NavMesh::build(&hf, 18.0);
+        let m = NavMesh::build(&hf, 18.0, None);
         let p = m.nearest_poly([8.0, 8.0, 220.0]).unwrap();
         assert!((m.poly_center(p)[2] - 224.0).abs() < 1.0);
     }

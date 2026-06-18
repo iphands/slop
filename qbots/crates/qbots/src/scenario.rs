@@ -705,7 +705,7 @@ fn get_or_build_navmesh(
         ..Default::default()
     };
     let hf = world::Heightfield::build(cm, bounds, params);
-    let mesh = world::NavMesh::build(&hf, params.walkable_climb);
+    let mesh = world::NavMesh::build(&hf, params.walkable_climb, Some(cm));
     tracing::info!(
         map,
         polys = mesh.polys.len(),

@@ -43,6 +43,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let g = &built.graph;
     let cm = &built.cm;
 
+    // LINETRACE mode: `navinspect <baseq2> <map> linetrace <x0> <y0> <z0> <x1> <y1> <z1>`
+    // Hull-traces between two points and reports clear/blocked — to tell a real walkable
+    // transition from a funnel corner-cut into a wall.
+    if args[3] == "linetrace" {
+        let a = [args[4].parse::<f32>()?, args[5].parse()?, args[6].parse()?];
+        let b = [args[7].parse::<f32>()?, args[8].parse()?, args[9].parse()?];
+        let t = cm.trace(&a, &b, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+        println!(
+            "hull trace ({:.0},{:.0},{:.0})→({:.0},{:.0},{:.0}): startsolid={} fraction={:.2} endpos=({:.0},{:.0},{:.0})",
+            a[0], a[1], a[2], b[0], b[1], b[2], t.startsolid, t.fraction, t.endpos[0], t.endpos[1], t.endpos[2]
+        );
+        // Also a point trace (ignores hull width) for comparison.
+        let z = [0.0f32; 3];
+        let p = cm.trace(&a, &b, &z, &z, MASK_SOLID);
+        println!(
+            "point trace: startsolid={} fraction={:.2}",
+            p.startsolid, p.fraction
+        );
+        return Ok(());
+    }
+
     // HEIGHTFIELD mode: `navinspect <baseq2> <map> heightfield [cell_size]`
     // Voxelizes the collision model and prints walkable-span stats + a top-down ASCII
     // coverage map (downsampled), to eyeball that the navmesh heightfield covers the play
@@ -108,7 +129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         let t = std::time::Instant::now();
         let hf = world::Heightfield::build(cm, bounds, params);
-        let mesh = world::NavMesh::build(&hf, params.walkable_climb);
+        let mesh = world::NavMesh::build(&hf, params.walkable_climb, Some(cm));
         let ms = t.elapsed().as_millis();
         let edges: usize = mesh.adj.iter().map(Vec::len).sum();
         let comps = mesh.components();
@@ -177,7 +198,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         };
         let hf = world::Heightfield::build(cm, (model.mins, model.maxs), params);
-        let mesh = world::NavMesh::build(&hf, params.walkable_climb);
+        let mesh = world::NavMesh::build(&hf, params.walkable_climb, Some(cm));
         let comps = mesh.components();
         let mut comp_of = vec![usize::MAX; mesh.polys.len()];
         for (ci, c) in comps.iter().enumerate() {
@@ -228,7 +249,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         };
         let hf = world::Heightfield::build(cm, (model.mins, model.maxs), params);
-        let mesh = world::NavMesh::build(&hf, params.walkable_climb);
+        let mesh = world::NavMesh::build(&hf, params.walkable_climb, Some(cm));
         match mesh.path(s, goal, radius) {
             Some(path) => {
                 let mut total = 0.0;
