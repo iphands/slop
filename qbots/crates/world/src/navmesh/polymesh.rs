@@ -11,6 +11,10 @@
 //! Connectivity within `walkable_climb` (Q2 `STEP` = 18) means a staircase's per-step cells
 //! link up, while stacked floors (z apart by ≫ STEP) stay separate components.
 
+use rayon::prelude::*;
+
+use crate::collision::CollisionModel;
+use crate::navgraph::{walkable_stair, STAIR_MAX};
 use crate::navmesh::heightfield::Heightfield;
 
 /// One walkable quad: a single cell at grid `(ix, iy)` whose player-origin height is `oz`.
@@ -124,6 +128,95 @@ impl NavMesh {
             out.push(members);
         }
         out
+    }
+
+    /// A poly is on a component boundary if it has fewer than 4 walked neighbours — i.e. some
+    /// grid direction is a wall, drop, or step it can't directly cross. Bridges only need to
+    /// start from these, which keeps the (otherwise quadratic) search cheap.
+    fn is_boundary(&self, p: usize) -> bool {
+        self.adj[p].len() < 4
+    }
+
+    /// Stitch walkable fragments that the strict 4-neighbour adjacency missed — Q2 staircases
+    /// and ramps whose treads span several cells, so the floor between two grid-adjacent cells
+    /// jumps by more than `walkable_climb`. Mirrors `NavGraph::bridge_components`: for each
+    /// boundary poly outside the largest component, find the nearest poly in a *different*
+    /// component within `max_hdist` horizontally and `STAIR_MAX` vertically that is connected
+    /// by a real [`walkable_stair`] (the step-climb simulation rejects shortcuts through open
+    /// air), and add a portal. Returns the number of directed portals added.
+    pub fn bridge_components(&mut self, cm: &CollisionModel, max_hdist: f32) -> usize {
+        let ring = (max_hdist / self.cell_size).ceil() as i64;
+        let mut added = 0usize;
+
+        for _pass in 0..6 {
+            let comps = self.components();
+            if comps.len() == 1 {
+                break;
+            }
+            let mut comp_of = vec![usize::MAX; self.polys.len()];
+            for (ci, c) in comps.iter().enumerate() {
+                for &p in c {
+                    comp_of[p] = ci;
+                }
+            }
+            let largest = (0..comps.len()).max_by_key(|&i| comps[i].len()).unwrap();
+
+            // Best bridge per source poly (cheapest stair). The per-poly search is
+            // read-only over the mesh, so run it in parallel and apply the edges after.
+            let bridges: Vec<(u32, u32)> = (0..self.polys.len())
+                .into_par_iter()
+                .filter(|&pid| comp_of[pid] != largest && self.is_boundary(pid))
+                .filter_map(|pid| {
+                    let p = self.polys[pid];
+                    let pc = self.poly_center(pid);
+                    let mut best: Option<(u32, f32)> = None;
+                    for dy in -ring..=ring {
+                        for dx in -ring..=ring {
+                            let nxi = p.ix as i64 + dx;
+                            let nyi = p.iy as i64 + dy;
+                            if nxi < 0 || nyi < 0 || nxi >= self.nx as i64 || nyi >= self.ny as i64
+                            {
+                                continue;
+                            }
+                            for &q in &self.col_polys[nyi as usize * self.nx + nxi as usize] {
+                                if comp_of[q as usize] == comp_of[pid] {
+                                    continue; // same fragment already
+                                }
+                                let qc = self.poly_center(q as usize);
+                                let hd = ((qc[0] - pc[0]).powi(2) + (qc[1] - pc[1]).powi(2)).sqrt();
+                                let dz = (qc[2] - pc[2]).abs();
+                                if hd > max_hdist || dz > STAIR_MAX {
+                                    continue;
+                                }
+                                let (lo, hi) = if pc[2] <= qc[2] { (pc, qc) } else { (qc, pc) };
+                                if walkable_stair(cm, lo, hi) {
+                                    let score = hd + dz;
+                                    if best.map(|(_, s)| score < s).unwrap_or(true) {
+                                        best = Some((q, score));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    best.map(|(q, _)| (pid as u32, q))
+                })
+                .collect();
+
+            if bridges.is_empty() {
+                break; // nothing more we can connect
+            }
+            for (a, b) in bridges {
+                if !self.adj[a as usize].contains(&b) {
+                    self.adj[a as usize].push(b);
+                    added += 1;
+                }
+                if !self.adj[b as usize].contains(&a) {
+                    self.adj[b as usize].push(a);
+                    added += 1;
+                }
+            }
+        }
+        added
     }
 
     /// Build the navmesh from a heightfield: one quad per walkable cell-span, portals between

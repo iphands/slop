@@ -108,10 +108,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         let t = std::time::Instant::now();
         let hf = world::Heightfield::build(cm, bounds, params);
-        let mesh = world::NavMesh::build(&hf, params.walkable_climb);
+        let mut mesh = world::NavMesh::build(&hf, params.walkable_climb);
+        let bridged = mesh.bridge_components(cm, 192.0);
         let ms = t.elapsed().as_millis();
         let edges: usize = mesh.adj.iter().map(Vec::len).sum();
         let comps = mesh.components();
+        println!("  (bridged {bridged} portals across stair/ramp gaps)");
         println!(
             "navmesh map={map} cell={cell} polys={} portals={} components={} build={ms}ms",
             mesh.polys.len(),
