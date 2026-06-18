@@ -133,14 +133,16 @@ impl NavMesh {
         for w in corridor.windows(2) {
             let (a, b) = (w[0], w[1]);
             if !self.grid_adjacent(a, b) {
-                // A bridged stair/ramp link: no shared grid edge. Pinch the funnel through the
-                // midpoint of the two poly centers (a forced waypoint) so the path takes the
-                // bridge rather than cutting across the gap it spans.
-                let ca = self.poly_center(a);
-                let cb = self.poly_center(b);
-                let mid = [(ca[0] + cb[0]) * 0.5, (ca[1] + cb[1]) * 0.5];
-                left.push(mid);
-                right.push(mid);
+                // A bridged stair/ramp link: no shared grid edge. Pinch the funnel at the real
+                // connection point (where walkable_stair succeeded) so the path actually takes
+                // the stair; fall back to the center-midpoint only if it wasn't recorded.
+                let p = self.bridge_point(a, b).unwrap_or_else(|| {
+                    let ca = self.poly_center(a);
+                    let cb = self.poly_center(b);
+                    [(ca[0] + cb[0]) * 0.5, (ca[1] + cb[1]) * 0.5, 0.0]
+                });
+                left.push([p[0], p[1]]);
+                right.push([p[0], p[1]]);
                 continue;
             }
             let [e0, e1] = self.portal(a, b);

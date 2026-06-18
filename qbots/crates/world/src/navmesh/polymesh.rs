@@ -44,6 +44,10 @@ pub struct NavMesh {
     pub adj: Vec<Vec<u32>>,
     /// `col_polys[iy*nx + ix]` = poly indices whose rectangle covers cell `(ix, iy)`.
     col_polys: Vec<Vec<u32>>,
+    /// Connection point for each bridged (non-edge-sharing) rect pair — the world point where
+    /// `walkable_stair` succeeded. The funnel pinches the path here, not at the rects'
+    /// far-apart center-midpoint (which for big rects lands in mid-air off the stair).
+    bridge_points: std::collections::HashMap<(u32, u32), [f32; 3]>,
 }
 
 impl NavMesh {
@@ -59,74 +63,13 @@ impl NavMesh {
         )
     }
 
-    /// The point on rectangle `p` (at its height) closest in XY to `toward` — used to find
-    /// where a stair bridge meets the rect's edge.
-    fn closest_point(&self, p: usize, toward: [f32; 3]) -> [f32; 3] {
-        let (x0, y0, x1, y1) = self.rect_bounds(p);
+    /// World center of cell `(ix, iy)` at height `z`.
+    fn cell_center(&self, ix: usize, iy: usize, z: f32) -> [f32; 3] {
         [
-            toward[0].clamp(x0, x1),
-            toward[1].clamp(y0, y1),
-            self.polys[p].oz,
+            self.min[0] + (ix as f32 + 0.5) * self.cell_size,
+            self.min[1] + (iy as f32 + 0.5) * self.cell_size,
+            z,
         ]
-    }
-
-    /// Is there a real walkable stair between rects `a` and `b`? Samples several point pairs
-    /// across their facing edges (a single closest-point test misses stairs whose climbable
-    /// span isn't at the nearest corner — that was why the merged mesh under-bridged). Returns
-    /// true if any sampled pair is connected by [`walkable_stair`] within `max_hdist`.
-    fn stair_connects(&self, a: usize, b: usize, cm: &CollisionModel, max_hdist: f32) -> bool {
-        let oza = self.polys[a].oz;
-        let ozb = self.polys[b].oz;
-        if (oza - ozb).abs() > STAIR_MAX {
-            return false;
-        }
-        let (ax0, ay0, ax1, ay1) = self.rect_bounds(a);
-        let (bx0, by0, bx1, by1) = self.rect_bounds(b);
-        let (acx, acy) = ((ax0 + ax1) * 0.5, (ay0 + ay1) * 0.5);
-        let (bcx, bcy) = ((bx0 + bx1) * 0.5, (by0 + by1) * 0.5);
-        // Inset sample points a half-cell INTO each rect, so they sit on actual floor (cell
-        // centers) rather than the boundary — walkable_stair from the very edge often fails.
-        let inset = self.cell_size * 0.5;
-        const N: usize = 4;
-        let mut cands: Vec<([f32; 3], [f32; 3])> = Vec::new();
-
-        let xov = (ax1.min(bx1)) - (ax0.max(bx0));
-        if xov > 0.01 {
-            // North/south neighbours: facing Y edges, sampled across the X overlap.
-            let ya = if bcy > acy { ay1 - inset } else { ay0 + inset };
-            let yb = if acy > bcy { by1 - inset } else { by0 + inset };
-            let x0 = ax0.max(bx0);
-            for k in 0..N {
-                let x = x0 + xov * (k as f32 + 0.5) / N as f32;
-                cands.push(([x, ya, oza], [x, yb, ozb]));
-            }
-        }
-        let yov = (ay1.min(by1)) - (ay0.max(by0));
-        if yov > 0.01 {
-            // East/west neighbours: facing X edges, sampled across the Y overlap.
-            let xa = if bcx > acx { ax1 - inset } else { ax0 + inset };
-            let xb = if acx > bcx { bx1 - inset } else { bx0 + inset };
-            let y0 = ay0.max(by0);
-            for k in 0..N {
-                let y = y0 + yov * (k as f32 + 0.5) / N as f32;
-                cands.push(([xa, y, oza], [xb, y, ozb]));
-            }
-        }
-        if cands.is_empty() {
-            // No projection overlap (diagonal) — fall back to the closest points.
-            cands.push((
-                self.closest_point(a, [bcx, bcy, ozb]),
-                self.closest_point(b, [acx, acy, oza]),
-            ));
-        }
-        cands.into_iter().any(|(p, q)| {
-            let hd = ((q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2)).sqrt();
-            if hd > max_hdist {
-                return false;
-            }
-            let (lo, hi) = if p[2] <= q[2] { (p, q) } else { (q, p) };
-            walkable_stair(cm, lo, hi)
-        })
     }
 
     /// World position of rectangle `p`'s center (at its height).
@@ -302,9 +245,15 @@ impl NavMesh {
             polys,
             adj: Vec::new(),
             col_polys,
+            bridge_points: std::collections::HashMap::new(),
         };
         mesh.adj = mesh.build_adjacency(walkable_climb);
         mesh
+    }
+
+    /// World connection point for a bridged rect pair (where the stair was found), if any.
+    pub fn bridge_point(&self, a: usize, b: usize) -> Option<[f32; 3]> {
+        self.bridge_points.get(&(a as u32, b as u32)).copied()
     }
 
     /// Portal adjacency: for each rect, collect distinct rects covering the cells just outside
@@ -371,38 +320,68 @@ impl NavMesh {
                 }
             }
             let largest = (0..comps.len()).max_by_key(|&i| comps[i].len()).unwrap();
+            let ring = (max_hdist / self.cell_size).ceil() as i64;
+            let nx = self.nx;
+            let ny = self.ny;
 
-            // For each rect outside the largest component, find the best stair-connectable rect
-            // in another component. Test `walkable_stair` between the two rects' CLOSEST points
-            // (the stair connects at their facing edges, not their far-apart centers).
-            let bridges: Vec<(u32, u32)> = (0..self.polys.len())
+            // Cell-granular bridge (matches the per-cell version that connected everything):
+            // for every cell of a non-largest-component rect, ring-search nearby cells; if a
+            // real walkable_stair connects the two CELL CENTERS, bridge the two RECTS. Rect-edge
+            // sampling under-bridged because the climbable span isn't always at a rect edge.
+            let bridges: Vec<(u32, u32, [f32; 3])> = (0..nx * ny)
                 .into_par_iter()
-                .filter(|&pid| comp_of[pid] != largest)
-                .filter_map(|pid| {
-                    let pcenter = self.poly_center(pid);
-                    // Prefer the nearest other-component rect that a real stair connects to.
-                    let mut best: Option<(u32, f32)> = None;
-                    for q in 0..self.polys.len() {
-                        if comp_of[q] == comp_of[pid] {
+                .flat_map_iter(|ci| {
+                    let ix = ci % nx;
+                    let iy = ci / nx;
+                    let mut out: Vec<(u32, u32, [f32; 3])> = Vec::new();
+                    for &r in &self.col_polys[ci] {
+                        if comp_of[r as usize] == largest {
                             continue;
                         }
-                        let qc = self.poly_center(q);
-                        let hd2 = (qc[0] - pcenter[0]).powi(2) + (qc[1] - pcenter[1]).powi(2);
-                        if best.map(|(_, s)| hd2 >= s).unwrap_or(false) {
-                            continue; // already have a closer candidate; skip the stair test
-                        }
-                        if self.stair_connects(pid, q, cm, max_hdist) {
-                            best = Some((q as u32, hd2));
+                        let rz = self.polys[r as usize].oz;
+                        let c0 = self.cell_center(ix, iy, rz);
+                        for dy in -ring..=ring {
+                            for dx in -ring..=ring {
+                                let nxi = ix as i64 + dx;
+                                let nyi = iy as i64 + dy;
+                                if nxi < 0 || nyi < 0 || nxi >= nx as i64 || nyi >= ny as i64 {
+                                    continue;
+                                }
+                                for &q in &self.col_polys[nyi as usize * nx + nxi as usize] {
+                                    if comp_of[q as usize] == comp_of[r as usize] {
+                                        continue;
+                                    }
+                                    let qz = self.polys[q as usize].oz;
+                                    if (qz - rz).abs() > STAIR_MAX {
+                                        continue;
+                                    }
+                                    let c1 = self.cell_center(nxi as usize, nyi as usize, qz);
+                                    let hd =
+                                        ((c1[0] - c0[0]).powi(2) + (c1[1] - c0[1]).powi(2)).sqrt();
+                                    if hd > max_hdist {
+                                        continue;
+                                    }
+                                    let (lo, hi) = if rz <= qz { (c0, c1) } else { (c1, c0) };
+                                    if walkable_stair(cm, lo, hi) {
+                                        let mid = [
+                                            (c0[0] + c1[0]) * 0.5,
+                                            (c0[1] + c1[1]) * 0.5,
+                                            (c0[2] + c1[2]) * 0.5,
+                                        ];
+                                        out.push((r, q, mid));
+                                    }
+                                }
+                            }
                         }
                     }
-                    best.map(|(q, _)| (pid as u32, q))
+                    out
                 })
                 .collect();
 
             if bridges.is_empty() {
                 break;
             }
-            for (a, b) in bridges {
+            for (a, b, mid) in bridges {
                 if !self.adj[a as usize].contains(&b) {
                     self.adj[a as usize].push(b);
                     added += 1;
@@ -411,6 +390,8 @@ impl NavMesh {
                     self.adj[b as usize].push(a);
                     added += 1;
                 }
+                self.bridge_points.entry((a, b)).or_insert(mid);
+                self.bridge_points.entry((b, a)).or_insert(mid);
             }
         }
         added

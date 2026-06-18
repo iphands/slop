@@ -650,3 +650,35 @@ are the *overlap of two rects' touching edges* — many cells wide → the agent
 point-in-rect; adapt bridge/adjacency. Keep the blacklist infra (committed) for the new driver.
 
 ### Kept (committed): `NavMesh::path_excluding` (blacklist A*) + `navinspect navpath <cell> <radius>`.
+
+---
+
+## 2026-06-18 Session 7 (cont.) — rectangle merge WORKS; remaining issue is vertical routes
+
+Implemented greedy rectangle merge (34k cells → 550 wide-portal rects). Key wins:
+- **Funnel now straightens flat runs** (e.g. a 992u straight segment at z=792 in one path)
+  because wide rect portals survive the agent-radius inset (per-cell 16u portals collapsed).
+- Reworked `bridge_components` to **cell-center** walkable_stair tests (rect-edge sampling
+  under-bridged): q2dm1 9/10 spawns connected (was 4 components → 2). spawn6 (2016,-224,664),
+  a 2-poly pocket ~600u out, still isolated — likely needs an off-mesh jump/drop link.
+- **Bridge-point pinch fix** (big one): a bridge joins two big rects whose CENTER-midpoint is
+  mid-air off the stair; the funnel was pinning the path there → bot aimed at mid-air and
+  wandered (distance 6733, hindered 218). Now each bridge stores the actual connection point
+  (where walkable_stair succeeded) and the funnel pinches THERE. Result: a single bot glides
+  **bumps=0, wrong_turns=0, hindered_frames=0** — the funnel path is followable.
+
+### Remaining blocker: descending/vertical routes
+spawn-to-spawn navmesh still ~0/24. A bot from the z=920 platform toward a z=472 goal glides
+smoothly down (920→616→496) but **overshoots/falls to z=352** (below the goal) and wanders
+there, unable to climb back. Causes to chase next:
+1. **Off-mesh DROP links** — the z=920 platform descends via ledges (one-way drops), which
+   `walkable_stair` (climb-only) doesn't model. The bot falls off-mesh; the path (on the upper
+   level) is then wrong → lost. Need jump-down/drop off-mesh connections (the astar graph has
+   `detect_jump_edges`; port the idea).
+2. **Ledge-aware following** — `pursue_target_safe` should reject look-aheads that walk off a
+   ledge (segment_has_floor), forcing the bot to the modeled down-link instead of falling.
+3. Build time: the cell-center bridge is ~6.7s (cached once/process, but slow for dev) — only
+   scan boundary cells of non-largest rects to speed up.
+
+Net: the navmesh GEOMETRY + funnel are now good (smooth, wall-clear, straight). The gap is
+vertical traversal (drops) + the last spawn's connectivity. astar still 24/24 (unaffected).

@@ -706,7 +706,7 @@ fn get_or_build_navmesh(
     };
     let hf = world::Heightfield::build(cm, bounds, params);
     let mut mesh = world::NavMesh::build(&hf, params.walkable_climb);
-    let bridged = mesh.bridge_components(cm, 192.0);
+    let bridged = mesh.bridge_components(cm, 256.0);
     tracing::info!(
         map,
         polys = mesh.polys.len(),
