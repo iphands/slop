@@ -27,15 +27,69 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let baseq2 = Path::new(&args[1]);
     let map = &args[2];
-    let qx: f32 = args[3].parse()?;
-    let qy: f32 = args[4].parse()?;
-    let qz: f32 = args[5].parse()?;
-    let radius: f32 = args.get(6).map(|s| s.parse()).transpose()?.unwrap_or(128.0);
 
     let cache = Path::new("data/mapcache");
     let built = cached_map_nav(baseq2, map, Some(cache), world::ELEVATOR_PENALTY)?;
     let g = &built.graph;
     let cm = &built.cm;
+
+    // SCAN mode: `navinspect <baseq2> <map> scan <x0> <y0> <x1> <y1> <zq> <step> <tz> <band>`
+    // Floor-probes a grid and prints a heatmap of where walkable floor near `tz` exists and
+    // whether it is SAMPLED (a nav node within `step`). 'X' = floor in band + node nearby;
+    // 'o' = floor in band but NO node (an under-sampled walkable surface — e.g. the RL ledge);
+    // '·' = floor exists but at a different level; ' ' = void. Used to map narrow ledges.
+    if args[3] == "scan" {
+        let x0: f32 = args[4].parse()?;
+        let y0: f32 = args[5].parse()?;
+        let x1: f32 = args[6].parse()?;
+        let y1: f32 = args[7].parse()?;
+        let zq: f32 = args[8].parse()?;
+        let step: f32 = args[9].parse()?;
+        let tz: f32 = args[10].parse()?;
+        let band: f32 = args.get(11).and_then(|s| s.parse().ok()).unwrap_or(24.0);
+        println!("SCAN x[{x0}..{x1}] y[{y0}..{y1}] zq={zq} step={step} target_z={tz}±{band}");
+        println!("  X=floor-in-band+node  o=floor-in-band NO node(unsampled)  ·=other floor  (space)=void\n");
+        let mut y = y1;
+        while y >= y0 {
+            let mut row = format!("y={y:>5} ");
+            let mut x = x0;
+            while x <= x1 {
+                let top = [x, y, zq + 64.0];
+                let bot = [x, y, zq - 600.0];
+                let d = cm.trace(&top, &bot, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+                let ch = if d.fraction >= 1.0 && !d.startsolid {
+                    ' ' // void
+                } else {
+                    let fz = d.endpos[2];
+                    if (fz - tz).abs() <= band {
+                        // floor at target level — is there a nav node within `step`?
+                        let near = g.nearest(&[x, y, fz]).map_or(false, |ni| {
+                            let np = g.nodes[ni];
+                            (np[0] - x).powi(2) + (np[1] - y).powi(2) <= step * step
+                                && (np[2] - fz).abs() <= band
+                        });
+                        if near {
+                            'X'
+                        } else {
+                            'o'
+                        }
+                    } else {
+                        '·'
+                    }
+                };
+                row.push(ch);
+                x += step;
+            }
+            println!("{row}");
+            y -= step;
+        }
+        return Ok(());
+    }
+
+    let qx: f32 = args[3].parse()?;
+    let qy: f32 = args[4].parse()?;
+    let qz: f32 = args[5].parse()?;
+    let radius: f32 = args.get(6).map(|s| s.parse()).transpose()?.unwrap_or(128.0);
 
     println!(
         "map={map} nodes={} query=({qx},{qy},{qz}) radius={radius}",
