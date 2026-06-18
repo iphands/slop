@@ -27,26 +27,29 @@ const DEGEN_FACTOR: f32 = 5.0;
 /// Only apply the degeneracy guard past this straight-line distance, so a tiny
 /// goal (where the ratio is meaningless) can't trigger it.
 const DEGEN_MIN_STRAIGHT: f32 = 256.0;
-/// Look-ahead distance for `pursue_target`: steer at a point this far ahead along
-/// the path instead of the raw next node. Cuts corners + reduces grid zig.
-pub const LOOKAHEAD: f32 = 96.0;
-/// Z-aware waypoint-reach threshold (horizontal). The nav grid is 24u so a
-/// reach of 24u (exactly one grid cell) handles 300 u/s overshoot (30u/frame)
-/// without skipping across wall boundaries.
-const WP_REACH_HORIZ: f32 = 32.0;
-/// Z-aware waypoint-reach threshold (vertical) — a waypoint **arrival** tolerance,
-/// not a step-climb constant. Larger than Eraser (16 u) to tolerate the coarser
-/// 64-unit grid and step heights on ledges where the bot's XY is already past the
-/// node. Do not conflate with `world::navgraph::STEP = 18` (step-climb height) even
-/// though both values happen to be in the same numeric neighbourhood.
-const WP_REACH_DZ: f32 = 24.0;
-/// Orbit watchdog: if the bot stays within this horizontal radius of the current
-/// waypoint for `ORBIT_FRAMES` ticks without reaching it, force-advance to the next
-/// node. Kills "rotating in one spot" when the node is unreachable by 1-2 u.
-/// Keep small (48u = 2 grid cells) to avoid firing when the bot is genuinely
-/// navigating around a nearby corner — the 5-second StuckLevel::Hard handles
-/// that case with a full replan rather than a premature force-advance.
-const ORBIT_RADIUS: f32 = 48.0;
+// ── Grid-coupled steering constants ─────────────────────────────────────────────
+// These are tuned as RATIOS to the nav-graph node spacing, not absolute distances:
+// the bot advances/orbits/looks-ahead relative to how far apart waypoints are. Tuning
+// them for grid=24 then changing the grid (without re-scaling) corner-cuts and bumps
+// (q2dm1: grid=18 with fixed consts = 14/24; scaled 0.75 = 22/24). Deriving them from
+// `world::GRID_SPACING` keeps the ratios fixed so the grid can be changed freely.
+// At grid=24 these evaluate to the original 96 / 32 / 24 / 48 (behaviour-preserving).
+
+/// Look-ahead distance for `pursue_target`: steer at a point this far ahead along the
+/// path instead of the raw next node. Cuts corners + reduces grid zig. = 4 × node spacing.
+pub const LOOKAHEAD: f32 = world::GRID_SPACING * 4.0;
+/// Horizontal waypoint-reach threshold = 4/3 × node spacing (32u at grid 24). Big enough
+/// to absorb full-speed overshoot (~30u/frame) without skipping across wall boundaries.
+const WP_REACH_HORIZ: f32 = world::GRID_SPACING * 4.0 / 3.0;
+/// Vertical waypoint-reach (arrival) tolerance = 1 × node spacing (24u at grid 24).
+/// Tolerates step heights on ledges where the bot's XY is already past the node. NOT a
+/// step-climb constant (cf. `world::navgraph::STEP = 18`).
+const WP_REACH_DZ: f32 = world::GRID_SPACING;
+/// Orbit watchdog radius = 2 × node spacing (48u at grid 24): if the bot circles within
+/// this of the current waypoint for `ORBIT_FRAMES` ticks without reaching it, force-advance.
+/// Small enough not to fire while genuinely rounding a nearby corner (StuckLevel::Hard
+/// handles those with a full replan).
+const ORBIT_RADIUS: f32 = world::GRID_SPACING * 2.0;
 /// Ticks close to the current waypoint before we force-advance (2.5 s at 10 Hz).
 /// Extra time lets bots navigate around corners before orbit fires.
 pub const ORBIT_FRAMES: u32 = 25;
