@@ -173,3 +173,50 @@ typically 60-85u from node 8694 when they hit the wall (orbit doesn't fire until
 The BackOffThenRepath fires after 5s, replans, but new path may route back through same wall.
 Confirmed by: bot ending at (1104, 263, 694) after 60s — navigated past the problem area
 but fell to a lower floor in the process.
+
+---
+
+## 2026-06-18 Session 4 — Plan 19 T6 continued with 32-bot testing
+
+### Expanded to 32-bot tests per user request for better statistics.
+
+### Additional fixes applied (cumulative from Session 4):
+7. **ORBIT_FRAMES 15→25 (pub const)** — bots get 2.5s to navigate corners before orbit fires.
+8. **GOAL_GIVEUP_TICKS 30→15** — 1.5s before giveup fires; debug shows 7 giveups in 60s = 21s wasted.
+9. **GIVEUP_BLACKLIST_MAX 8→32** — larger blacklist so A* avoids revisited false-edge nodes.
+10. **HARD_REPATH_SECS 3.5s** — faster BackOffThenRepath than 5s.
+11. **Orbit/giveup interaction fix**: reset goal_age_ticks when horiz<ORBIT_RADIUS to prevent
+    giveup from firing before orbit (giveup at tick 16 was racing orbit at tick 24 after GOAL_GIVEUP_TICKS=15).
+
+### Debug trace analysis (RUST_LOG=brain::nav=debug, spawn-to-weapon, spawn[1]):
+From (1543,591,352), A* routes through z=352→472→552→664→792 in a cascade of false-edge detours.
+Key observation: giveup fired 7 times in 60s (at t=5s, 15s, 30s, 38s, 44s, 53s, 58s), consuming 21s.
+After each giveup, A* found paths going EAST (wrong direction) when direct western paths were blacklisted.
+The bot spent 20-38.8s going east to z=472-552 (wrong direction) after exhausting western path nodes.
+At t=38.8s bot finally found path to z=664-792 but timed out before reaching z=920.
+
+### Key findings for spawn-to-weapon failures:
+- Only 2/10 spawn points are at z=920 (spawn[5] and spawn[8])
+- spawn[5] (1879,471,920) ALWAYS reaches the weapon in ~19s (easy path, short distance)
+- spawn[8] (1327,1215,920) near wall issue — sometimes reaches, sometimes loops
+- spawn[0-4,6-7,9] at z=352-792 need to climb 128-560u of stairs to reach z=920
+- With 32 bots: expected ~6 at z=920 (3.2× spawn cycles × 2 easy spawns × partial coverage)
+- Expected weapon reaches from 32 bots: ~5-6 (z=920 spawns) + 0-2 (lucky low-level spawn navigation)
+- Actual 32-bot weapon results: 5/32 (15.6%), consistent with this model
+
+### Approaches tried in Session 4 that FAILED:
+- LOOKAHEAD=192u: more wrong_turns (55-118) and bots stuck for 35s (hindered=355) → worse
+- Proactive wall deflect (hull trace 48u ahead, deflect ±30-60°): more wrong_turns (79-118) → worse
+- startsolid blacklisting in orbit check: blacklists legitimate slope nodes → 10/32 spawn-to-spawn
+- ORBIT_FRAMES=25 + HARD_REPATH=3.5 alone: no improvement over baseline
+
+### Current 32-bot baseline (2026-06-18):
+- spawn-to-spawn: 17/32 (53%) — consistent across 3 runs
+- spawn-to-weapon: 5/32 (15.6%) — mostly z=920 spawns; 1 low-level spawn barely reached at 56.78s
+
+### Hypothesis for remaining failures:
+The staircase path from low-level spawns to z=920 passes through intermediate floor areas
+(z=472-664). Each intermediate area has nav graph edges to the staircase transitions, but
+some transitions have false edges (walkable_stair accepts them but in-game physics can't navigate).
+When false edges are blacklisted, A* routes through detours that are also invalid.
+Only ~15% of bots (z=920 spawns + lucky low-level paths) successfully navigate in 60s.

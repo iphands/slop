@@ -544,3 +544,46 @@ walls between bot and waypoint (not just corner-stuck bots that ARE making progr
 - qbots: `crates/brain/src/nav.rs` (`blacklist_waypoint_if_blocked`)
 - qbots: `crates/qbots/src/scenario.rs` (BackOffThenRepath handler)
 - qbots: `crates/brain/src/recover.rs` (`HARD_REPATH_SECS`)
+
+---
+
+# Orbit/giveup boundary oscillation — bot stuck at orbit threshold
+
+## Problem
+
+When a bot's horizontal distance to a waypoint oscillates around the `ORBIT_RADIUS`
+boundary (e.g., 47u ↔ 52u with `ORBIT_RADIUS=48u`), two timers fight each other:
+
+- The **orbit** mechanism resets `goal_age_ticks = 0` on EVERY tick where `horiz < ORBIT_RADIUS`.
+- The **giveup** mechanism needs `goal_age_ticks > GOAL_GIVEUP_TICKS` (15 continuous ticks
+  of `horiz >= ORBIT_RADIUS`) to fire.
+
+If the bot dips below 48u for even 1 tick per cycle, giveup resets. Neither giveup (need
+15 continuous far-ticks) nor orbit (need 25 continuous near-ticks) fires. The bot sits stuck
+at the boundary until the BackOff StuckDetector fires at 3.5s (much later).
+
+Observed in: q2dm1, z=472 staircase area. Bot at (917,723,472) stuck 3.2s because wpd
+oscillated 47↔53u. The orbit-boundary reset consumed 21s of 60s budget across multiple
+waypoints in debug traces.
+
+## Fix / How to avoid
+
+Only reset `goal_age_ticks` when `near_wp_ticks >= ORBIT_ENTRY_MIN (3)` — i.e., the bot
+has been CONTINUOUSLY inside orbit range for 3+ ticks. A brief 1-2 tick dip below
+`ORBIT_RADIUS` (boundary oscillation) does not reset the giveup timer. This lets giveup fire
+in ~1.5s even when the bot occasionally touches the orbit boundary.
+
+```rust
+const ORBIT_ENTRY_MIN: u32 = 3;
+if horiz < ORBIT_RADIUS {
+    self.near_wp_ticks += 1;
+    if self.near_wp_ticks >= ORBIT_ENTRY_MIN {
+        self.goal_age_ticks = 0; // sustained orbit entry: orbit owns this
+    }
+    ...
+}
+```
+
+## Sources
+- qbots: `crates/brain/src/nav.rs` (orbit watchdog, `ORBIT_ENTRY_MIN`)
+- qbots: `context/map_errors.notes.log` (2026-06-18 Session 4 analysis)

@@ -345,12 +345,16 @@ impl NavigationDriver {
 
             // Orbit watchdog: if the bot circles within ORBIT_RADIUS without
             // reaching, force-advance after ORBIT_FRAMES ticks.
-            // Also reset goal_age_ticks while within orbit range: the orbit
-            // mechanism handles "close but unreachable" — giveup should only
-            // fire when the bot is FAR from the waypoint and not progressing.
+            // Reset goal_age_ticks only after 3+ consecutive ticks inside orbit
+            // range — prevents a brief orbit-boundary dip (horiz oscillating
+            // 47↔52 u) from continuously resetting the giveup timer and making
+            // it impossible to ever give up on the stuck waypoint.
+            const ORBIT_ENTRY_MIN: u32 = 3;
             let orbit_force = if horiz < ORBIT_RADIUS {
                 self.near_wp_ticks += 1;
-                self.goal_age_ticks = 0; // orbit handles proximity; giveup handles distance
+                if self.near_wp_ticks >= ORBIT_ENTRY_MIN {
+                    self.goal_age_ticks = 0; // sustained orbit entry: orbit owns this
+                }
                 self.near_wp_ticks >= ORBIT_FRAMES
             } else {
                 self.near_wp_ticks = 0;
