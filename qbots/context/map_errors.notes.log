@@ -278,3 +278,36 @@ weapon area, so after a give-up the replan routed the bot back DOWN (z=921→536
 thrashed the rest of the run. Confirmed: this is a top-level (z=920) nav-graph connectivity
 gap, not a speed or climb problem. The climb now works; crossing the top floor to the weapon
 does not. NEXT: inspect z=920 nodes/edges between (1378,1104) and (704,104) for the gap.
+
+---
+
+## 2026-06-17 Session 5 — question-everything pass (jump/hover + corner-cutting)
+
+User feedback (do NOT assume these away):
+- Bots "fly"/hover in mid-air — jump and float in a way no real player would.
+- Running into walls IS a bug — user navigates q2dm1 without touching walls.
+- Bots "cut" corners which can make them fall.
+- Stagger is ONLY because the server frags bots standing on a spawn when a new bot
+  spawns there. Bots can collide and "stack". Some optimal paths need an elevator
+  (we may not ride elevators yet; another bot may have taken it up).
+
+### Finding 1 — POGO/HOVER: stuck bots jump in place every ~1 s.
+Traced spawn-to-weapon log: bot jumps at t=5.19, 5.99, 8.09, 15.29, 17.79, 23.79…
+Many jumps have spd=0-2 (stationary). At t=17.8→23.8 the bot sat at z=491 jumping
+straight up and down for 6 s. Physics is CORRECT (vz starts ~270, drops 80/tick =
+800 u/s² = Q2 gravity; upmove does NOT add lift in PM_AirMove — wishvel[2]=0). So the
+"hover" is a BEHAVIOR bug: the StuckLevel::Mild recovery (stuck ≥1 s, no wall ahead)
+fires RecoveryAction::Jump every second, and current_edge_is_jump() adds more. A stuck
+bot pogos uselessly instead of solving why it is stuck. Jumping off a platform can also
+drop it to a lower floor (the climb-then-fall pattern).
+
+### Finding 2 — CORNER-CUTTING: smooth_path uses POINT traces, not hull traces.
+crates/world/src/navgraph.rs smooth_path() validates shortcuts with a ZERO-width point
+trace (mins=maxs=[0,0,0]). The bot hull is 32×32×56 (±16 xy, -24/+32 z). A point ray
+clears a corner gap the hull cannot fit through, so smoothing collapses A→B→C into A→C
+across an inside corner; pursue_target then steers straight at the cut, and the hull
+clips the wall = wall-bump. Nav graph EDGES are hull-valid (built with HULL_MINS/MAXS),
+but smoothing reintroduces hull-INVALID shortcuts.
+Prior note claims a full-hull trace here gave 0/8 ("ceiling z=952 startsolid"). That was
+at 1/3 speed — RE-TEST now; do not assume it still holds. Plan: hull-trace smoothing,
+possibly with a slightly inset hull to tolerate exact-fit ceilings/floors.
