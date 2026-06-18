@@ -34,7 +34,7 @@ add_elevator_edges → bridge_components(BRIDGE_HDIST) → prune_long_blocked_ed
 ## Why fragmentation happens (the cases bridges paper over)
 
 All q2dm* spawns are mutually reachable by design, yet `generate()` at 24u splits the
-floor into islands. Observed causes (from `map_errors.notes.log`):
+floor into islands. Observed causes (from `map_errors.notes.log.md`):
 
 1. **Stairs/winding staircases.** A flight's endpoints can land in grid columns 160–200u
    apart (the flight winds), so no 8-neighbor pair bridges them. `STAIR_MAX` had to grow
@@ -162,5 +162,5 @@ gets no direct edge → stairs fragment more, not less.
    after the fact.
 4. Accept that a few cases (one-way pits) are irreducibly unbridgeable and not bugs.
 
-See also: `map_errors.notes.log` (Finding 3 — false bridge hub node 10300; STAIR_MAX and
+See also: `map_errors.notes.log.md` (Finding 3 — false bridge hub node 10300; STAIR_MAX and
 BRIDGE_HDIST evolution).

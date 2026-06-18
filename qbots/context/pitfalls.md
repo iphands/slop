@@ -333,7 +333,7 @@ false edges. To determine whether any future map has pairs beyond 160u: run
 
 ## Sources
 - qbots: `crates/world/src/navgraph.rs` (`STAIR_MAX`, `bridge_pass`, `walkable_stair`)
-- qbots: `context/map_errors.notes.log` (q2dm3 session 2 analysis)
+- qbots: `context/map_errors.notes.log.md` (q2dm3 session 2 analysis)
 
 ---
 
@@ -632,7 +632,7 @@ if horiz < ORBIT_RADIUS {
 
 ## Sources
 - qbots: `crates/brain/src/nav.rs` (orbit watchdog, `ORBIT_ENTRY_MIN`)
-- qbots: `context/map_errors.notes.log` (2026-06-18 Session 4 analysis)
+- qbots: `context/map_errors.notes.log.md` (2026-06-18 Session 4 analysis)
 
 ---
 
