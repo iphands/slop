@@ -108,12 +108,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         let t = std::time::Instant::now();
         let hf = world::Heightfield::build(cm, bounds, params);
-        let mut mesh = world::NavMesh::build(&hf, params.walkable_climb);
-        let bridged = mesh.bridge_components(cm, 256.0);
+        let mesh = world::NavMesh::build(&hf, params.walkable_climb);
         let ms = t.elapsed().as_millis();
         let edges: usize = mesh.adj.iter().map(Vec::len).sum();
         let comps = mesh.components();
-        println!("  (bridged {bridged} portals across stair/ramp gaps)");
         println!(
             "navmesh map={map} cell={cell} polys={} portals={} components={} build={ms}ms",
             mesh.polys.len(),
@@ -179,8 +177,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         };
         let hf = world::Heightfield::build(cm, (model.mins, model.maxs), params);
-        let mut mesh = world::NavMesh::build(&hf, params.walkable_climb);
-        mesh.bridge_components(cm, 256.0);
+        let mesh = world::NavMesh::build(&hf, params.walkable_climb);
         let comps = mesh.components();
         let mut comp_of = vec![usize::MAX; mesh.polys.len()];
         for (ci, c) in comps.iter().enumerate() {
@@ -231,8 +228,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         };
         let hf = world::Heightfield::build(cm, (model.mins, model.maxs), params);
-        let mut mesh = world::NavMesh::build(&hf, params.walkable_climb);
-        mesh.bridge_components(cm, 256.0);
+        let mesh = world::NavMesh::build(&hf, params.walkable_climb);
         match mesh.path(s, goal, radius) {
             Some(path) => {
                 let mut total = 0.0;

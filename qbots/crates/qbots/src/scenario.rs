@@ -705,12 +705,10 @@ fn get_or_build_navmesh(
         ..Default::default()
     };
     let hf = world::Heightfield::build(cm, bounds, params);
-    let mut mesh = world::NavMesh::build(&hf, params.walkable_climb);
-    let bridged = mesh.bridge_components(cm, 256.0);
+    let mesh = world::NavMesh::build(&hf, params.walkable_climb);
     tracing::info!(
         map,
         polys = mesh.polys.len(),
-        bridged,
         "navmesh built (mode=navmesh)"
     );
     let arc = Arc::new(mesh);

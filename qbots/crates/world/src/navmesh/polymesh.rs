@@ -16,9 +16,51 @@
 
 use rayon::prelude::*;
 
-use crate::collision::CollisionModel;
-use crate::navgraph::{walkable_stair, STAIR_MAX};
+use crate::collision::{CollisionModel, MASK_SOLID};
+use crate::navgraph::{HULL_MAXS, HULL_MINS, STAIR_MAX, STEP};
 use crate::navmesh::heightfield::Heightfield;
+
+/// Strict pmove-accurate climb check: can the bot actually *walk* from `lo` (lower origin) up
+/// to `hi` (higher origin), stepping at most `STEP` (18u) per increment with a real tread to
+/// stand on at each? This rejects `walkable_stair`'s false positives — a tall ledge/wall where
+/// the only "floor below the probe" is the bottom, with no intermediate tread (a one-way drop,
+/// not a climb). Walks the XY line in 8u increments; at each, the floor must rise ≤ STEP from
+/// the previous and the hull must fit standing. Also validates flat gap bridges (rise ≈ 0).
+fn climbable_walk(cm: &CollisionModel, lo: [f32; 3], hi: [f32; 3]) -> bool {
+    let zero = [0.0f32; 3];
+    let dx = hi[0] - lo[0];
+    let dy = hi[1] - lo[1];
+    let hd = (dx * dx + dy * dy).sqrt();
+    let steps = ((hd / 8.0).ceil() as usize).max(1);
+    let mut prev_f = lo[2] - 24.0; // current floor surface (origin = floor + 24)
+    for i in 1..=steps {
+        let f = i as f32 / steps as f32;
+        let x = lo[0] + dx * f;
+        let y = lo[1] + dy * f;
+        // The next floor may rise at most STEP above the current (a step up) or drop (down ok).
+        // Probing from just above the max step height rejects a taller wall as `startsolid`.
+        let top = [x, y, prev_f + STEP + 2.0];
+        let bot = [x, y, prev_f - 96.0];
+        let tr = cm.trace(&top, &bot, &zero, &zero, MASK_SOLID);
+        if tr.startsolid || tr.fraction >= 1.0 {
+            return false; // wall (probe starts inside the tall step) or no floor (gap)
+        }
+        let surf = tr.endpos[2];
+        if surf - prev_f > STEP + 1.0 {
+            return false; // step too tall to climb
+        }
+        // The full hull must fit standing here.
+        let o = [x, y, surf + 24.0];
+        if cm
+            .trace(&o, &o, &HULL_MINS, &HULL_MAXS, MASK_SOLID)
+            .startsolid
+        {
+            return false;
+        }
+        prev_f = surf;
+    }
+    (prev_f - (hi[2] - 24.0)).abs() < STEP + 4.0
+}
 
 /// One walkable rectangle: cells `[ix, ix+w) × [iy, iy+h)` at player-origin height `oz`.
 #[derive(Debug, Clone, Copy)]
@@ -44,6 +86,10 @@ pub struct NavMesh {
     pub adj: Vec<Vec<u32>>,
     /// `col_polys[iy*nx + ix]` = poly indices whose rectangle covers cell `(ix, iy)`.
     col_polys: Vec<Vec<u32>>,
+    /// Parallel to `col_polys`: the actual floor-surface Z each covering rect uses at this cell
+    /// (a rect spans ≤ `walkable_climb`, so its per-cell floor differs from its seed `oz`).
+    /// Adjacency compares these real cell floors across a shared edge, not the rects' seed `oz`.
+    col_floor: Vec<Vec<f32>>,
     /// For each bridged (non-edge-sharing) rect pair `(a, b)`, the two WALKABLE cell centers
     /// the stair connects — `[point_on_a, point_on_b]`. The funnel routes the path through both
     /// (a's side, then b's), so the bot walks the stair surface. Storing a single midpoint
@@ -118,11 +164,14 @@ impl NavMesh {
     }
 
     /// Poly nearest to `pos`: searches the containing cell and its 8 neighbours and returns the
-    /// rect minimising 3D distance to `pos` (so the correct floor of a stacked column is
-    /// picked). `None` if no walkable poly is nearby.
+    /// rect covering that cell whose **actual floor at the cell** is closest to `pos.z` (the
+    /// containing cell is preferred over neighbours). Ranking by the rect's per-cell floor — not
+    /// its far-away center — picks the right floor of a stacked column even for big rects.
+    /// `None` if no walkable poly is nearby.
     pub fn nearest_poly(&self, pos: [f32; 3]) -> Option<usize> {
         let cx = ((pos[0] - self.min[0]) / self.cell_size).floor() as i64;
         let cy = ((pos[1] - self.min[1]) / self.cell_size).floor() as i64;
+        let cell2 = self.cell_size * self.cell_size;
         let mut best: Option<(usize, f32)> = None;
         for dy in -1..=1 {
             for dx in -1..=1 {
@@ -131,11 +180,13 @@ impl NavMesh {
                 if ix < 0 || iy < 0 || ix >= self.nx as i64 || iy >= self.ny as i64 {
                     continue;
                 }
-                for &pid in &self.col_polys[iy as usize * self.nx + ix as usize] {
-                    let c = self.poly_center(pid as usize);
-                    let d = dist2(c, pos);
-                    if best.map(|(_, bd)| d < bd).unwrap_or(true) {
-                        best = Some((pid as usize, d));
+                let nci = iy as usize * self.nx + ix as usize;
+                let cell_pen = (dx * dx + dy * dy) as f32 * cell2; // prefer the containing cell
+                for (k, &pid) in self.col_polys[nci].iter().enumerate() {
+                    let vd = self.col_floor[nci][k] - pos[2];
+                    let score = cell_pen + vd * vd;
+                    if best.map(|(_, bd)| score < bd).unwrap_or(true) {
+                        best = Some((pid as usize, score));
                     }
                 }
             }
@@ -190,6 +241,7 @@ impl NavMesh {
 
         let mut polys: Vec<Poly> = Vec::new();
         let mut col_polys: Vec<Vec<u32>> = vec![Vec::new(); nx * ny];
+        let mut col_floor: Vec<Vec<f32>> = vec![Vec::new(); nx * ny];
 
         for iy0 in 0..ny {
             for ix0 in 0..nx {
@@ -216,7 +268,7 @@ impl NavMesh {
                         h += 1;
                     }
 
-                    // Claim the rectangle's spans.
+                    // Claim the rectangle's spans, recording each cell's actual floor Z.
                     let pid = polys.len() as u32;
                     for dy in 0..h {
                         for dx in 0..w {
@@ -224,6 +276,7 @@ impl NavMesh {
                             if let Some(si) = find(ci, seed_z, &assigned) {
                                 assigned[ci][si] = true;
                                 col_polys[ci].push(pid);
+                                col_floor[ci].push(cols[ci][si]);
                             }
                         }
                     }
@@ -246,9 +299,10 @@ impl NavMesh {
             polys,
             adj: Vec::new(),
             col_polys,
+            col_floor,
             bridge_points: std::collections::HashMap::new(),
         };
-        mesh.adj = mesh.build_adjacency(walkable_climb);
+        mesh.adj = mesh.build_adjacency();
         mesh
     }
 
@@ -257,48 +311,44 @@ impl NavMesh {
         self.bridge_points.get(&(a as u32, b as u32)).copied()
     }
 
-    /// Portal adjacency: for each rect, collect distinct rects covering the cells just outside
-    /// its four edges whose height is within `walkable_climb`.
-    fn build_adjacency(&self, walkable_climb: f32) -> Vec<Vec<u32>> {
+    /// Portal adjacency, **cell-step based**: two rects are adjacent iff some 4-neighbour cell
+    /// pair across their boundary has floor surfaces within one `STEP` (18u) — a height the bot
+    /// can step over. This uses the real per-cell floors (`col_floor`), not the rects' seed
+    /// `oz`, so a staircase's per-step rects (whose seeds can differ by >18u) connect tread to
+    /// tread, while a >18u ledge between two cells does not (it needs a drop/bridge).
+    fn build_adjacency(&self) -> Vec<Vec<u32>> {
         use std::collections::HashSet;
         let nx = self.nx;
-        (0..self.polys.len())
-            .map(|p| {
-                let r = self.polys[p];
-                let (ix, iy, w, h) = (r.ix as usize, r.iy as usize, r.w as usize, r.h as usize);
-                let mut set: HashSet<u32> = HashSet::new();
-                let consider = |ci: usize, set: &mut HashSet<u32>| {
-                    for &q in &self.col_polys[ci] {
-                        if q as usize != p
-                            && (self.polys[q as usize].oz - r.oz).abs() <= walkable_climb
-                        {
-                            set.insert(q);
+        let ny = self.ny;
+        let mut adj: Vec<HashSet<u32>> = vec![HashSet::new(); self.polys.len()];
+        for ci in 0..nx * ny {
+            if self.col_polys[ci].is_empty() {
+                continue;
+            }
+            let ix = ci % nx;
+            let iy = ci / nx;
+            for (ri, &r) in self.col_polys[ci].iter().enumerate() {
+                let fr = self.col_floor[ci][ri];
+                for (dx, dy) in [(1i64, 0i64), (-1, 0), (0, 1), (0, -1)] {
+                    let nxi = ix as i64 + dx;
+                    let nyi = iy as i64 + dy;
+                    if nxi < 0 || nyi < 0 || nxi >= nx as i64 || nyi >= ny as i64 {
+                        continue;
+                    }
+                    let nci = nyi as usize * nx + nxi as usize;
+                    for (qi, &q) in self.col_polys[nci].iter().enumerate() {
+                        if q == r {
+                            continue;
+                        }
+                        if (self.col_floor[nci][qi] - fr).abs() <= STEP + 1.0 {
+                            adj[r as usize].insert(q);
+                            adj[q as usize].insert(r);
                         }
                     }
-                };
-                if ix + w < nx {
-                    for j in iy..iy + h {
-                        consider(j * nx + ix + w, &mut set);
-                    }
                 }
-                if ix > 0 {
-                    for j in iy..iy + h {
-                        consider(j * nx + ix - 1, &mut set);
-                    }
-                }
-                if iy + h < self.ny {
-                    for i in ix..ix + w {
-                        consider((iy + h) * nx + i, &mut set);
-                    }
-                }
-                if iy > 0 {
-                    for i in ix..ix + w {
-                        consider((iy - 1) * nx + i, &mut set);
-                    }
-                }
-                set.into_iter().collect()
-            })
-            .collect()
+            }
+        }
+        adj.into_iter().map(|s| s.into_iter().collect()).collect()
     }
 
     /// Stitch walkable fragments the rectangle adjacency missed — Q2 staircases/ramps whose
@@ -369,7 +419,7 @@ impl NavMesh {
                                         continue;
                                     }
                                     let (lo, hi) = if rz <= qz { (c0, c1) } else { (c1, c0) };
-                                    if walkable_stair(cm, lo, hi) {
+                                    if climbable_walk(cm, lo, hi) {
                                         // Carry BOTH walkable cell centers (r's side, q's side).
                                         out.push((r, q, c0, c1));
                                     }
@@ -399,13 +449,6 @@ impl NavMesh {
         }
         added
     }
-}
-
-fn dist2(a: [f32; 3], b: [f32; 3]) -> f32 {
-    let dx = a[0] - b[0];
-    let dy = a[1] - b[1];
-    let dz = a[2] - b[2];
-    dx * dx + dy * dy + dz * dz
 }
 
 #[cfg(test)]
