@@ -33,6 +33,15 @@ pub const BRIDGE_HDIST: f32 = 256.0;
 /// cannot follow them with straight-line steering. 144u keeps real flights, drops the
 /// node-10300-style false hubs (hd 187-255). In the cache fingerprint.
 pub const PRUNE_MAX_HD: f32 = 144.0;
+/// Extra A* cost (units) added to a `func_plat`/lift's vertical ride edge. Riding a Q2
+/// elevator can't be modelled by straight-line steering — the bot must wait at the
+/// bottom for the plat, ride it, and step off promptly at the top, or it holds the
+/// shaft trigger and deadlocks everyone queued below (`g_func.c` Touch_Plat_Center:
+/// a player lingering at STATE_TOP resets the go-down timer indefinitely). Until that
+/// is modelled, penalise the ride so A* prefers ANY stair/ramp route; the lift is kept
+/// (finite cost) only as a last resort for genuinely lift-only spawns. In the cache
+/// fingerprint via VERSION bump.
+pub const ELEVATOR_PENALTY: f32 = 5000.0;
 
 /// Everything a caller needs after building a map's nav graph: the parsed BSP
 /// (for spawn points / entity lookups), the collision model (for traces/LOS),
@@ -242,7 +251,9 @@ fn add_lift(
 
     let top_idx = graph.add_node(top_node);
     let bot_idx = graph.add_node(bot_node);
-    graph.add_edge(top_idx, bot_idx, (z_hi - z_lo).abs());
+    // Penalise the vertical ride so A* routes around the lift via stairs when possible
+    // (avoids the multi-bot plat deadlock); kept finite so lift-only spawns still work.
+    graph.add_edge(top_idx, bot_idx, (z_hi - z_lo).abs() + ELEVATOR_PENALTY);
     let mut n = 1;
     // Generous radius (256 u): the platform may land away from sampled grid cells.
     n += graph.connect_node_to_nearby(cm, top_idx, 256.0);

@@ -36,7 +36,9 @@ const MAGIC: &[u8; 7] = b"QBNAVC2";
 // field (PRUNE_MAX_HD), so the fingerprint is now 40 bytes. Older caches auto-rejected.
 // Version 5: generate() wider neighbour connection + an 11th fingerprint field
 // (CONNECT_CELLS); fingerprint is now 44 bytes. Older caches auto-rejected.
-const VERSION: u8 = 5;
+// Version 6: elevator ride edges carry ELEVATOR_PENALTY cost (A* avoids lifts). The
+// constant isn't a separate fingerprint field; the VERSION bump invalidates old caches.
+const VERSION: u8 = 6;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]
