@@ -682,3 +682,41 @@ there, unable to climb back. Causes to chase next:
 
 Net: the navmesh GEOMETRY + funnel are now good (smooth, wall-clear, straight). The gap is
 vertical traversal (drops) + the last spawn's connectivity. astar still 24/24 (unaffected).
+
+---
+
+## 2026-06-18 Session 7 (cont.2) — the y=64 "fall" is actually a FALSE STAIR BRIDGE
+
+User asked: are bots falling off ACCIDENTAL ledges? Investigated thoroughly. Answer: **NO,
+not falling.** The bot WEDGES at a wall (y=64, the recurring spot) trying to CLIMB a ledge
+the navmesh wrongly thinks is a staircase.
+
+### Evidence chain (navinspect navquery/navpath, new tools)
+- Planned path z=920→472 descends MONOTONICALLY to the goal — no accidental drop in the plan.
+- Per-frame: no sharp Z drops (>40u/frame). The bot doesn't fall; it pins at (1287,64,664)
+  spd=0 for the whole run (hindered 247/400).
+- navquery (1247,64,664): bot maps correctly to a z=664 poly (Δz=0) — NOT a z-mismatch.
+- The path's 2nd point was (1247,79,704): a 40u climb over ~15u. floor-probe at (1247,80,704)
+  = **startsolid (inside geometry)** — the bridge's single midpoint pinch was INSIDE the
+  step's solid, so the bot aimed into a wall.
+- Root: `walkable_stair` FALSE-POSITIVES on a ~40u ledge. Its per-step floor check ("floor
+  within STEP*2 below the probe") finds the LOWER floor 18-36u down and assumes a tread, even
+  when the face is a sheer wall. So 664→704 here is really a one-way DROP (down only), but the
+  bridge made it a climbable stair. The funnel routes the bot to climb the wall → wedge.
+- Why astar(grid=24) is fine: it doesn't sample a node at this y=64 z=664 spot, so never
+  creates the false edge. astar(grid=12) DID wedge here too (same root) — consistent.
+
+### Fixes applied (improve but don't fully solve)
+- Two-point bridges: store BOTH walkable cell centers [on_a,on_b]; funnel routes through both
+  (never the in-solid midpoint). navquery tool added.
+- Slope guard: reject bridge cell-pairs with hd < dz (>45°).
+Still 0/8: a rect pair still bridges via a gentler cell-pair while the bot gets routed to
+climb a WALL elsewhere on the shared boundary — the stored bridge POINT isn't the real stair
+location, and walkable_stair's leniency still admits false climbs.
+
+### The real remaining work (== the hard part the astar graph already paid for)
+1. Stricter stair validation: verify an actual TREAD exists at each ~18u step height (not just
+   "a floor within 36u below"). This is exactly what made astar edge-validation hard.
+2. One-way DROP links: model 704→664 as down-only (jump/drop), not a bidirectional stair.
+3. Bridge-point = the real stair entrance, and the funnel must route to it (not cut the wall).
+The navmesh GEOMETRY + funnel are good (smooth paths); stair/ledge correctness is the blocker.
