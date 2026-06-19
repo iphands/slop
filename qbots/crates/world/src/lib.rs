@@ -7,7 +7,6 @@
 pub mod bsp;
 pub mod build;
 pub mod collision;
-pub mod learn;
 pub mod mapcache;
 pub mod navgraph;
 pub mod navmesh;

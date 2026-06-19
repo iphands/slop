@@ -190,17 +190,6 @@ enum Cmd {
     Pvs { map: String },
     /// Generate the nav graph for a map and find a corner-to-corner path.
     Nav { map: String },
-    /// Learn a nav graph by running a bot through the map and recording its path.
-    Learn {
-        /// Map to learn from.
-        map: String,
-        /// Server address (defaults to config's server).
-        #[arg(long)]
-        addr: Option<String>,
-        /// Output path for the learned nav graph.
-        #[arg(long)]
-        output: Option<String>,
-    },
     /// Drive one bot from spawn to the farthest DM spawn point; log movement; stop.
     /// The measurement lens for movement quality (Plan 10).
     SpawnToSpawn {
@@ -1832,16 +1821,6 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        Cmd::Learn {
-            map: _,
-            addr: _,
-            output: _,
-        } => {
-            tracing::info!("learning nav graph (stub)");
-            // TODO: Implement learning logic
-            tracing::warn!("Learn command not yet implemented - using grid sampling instead");
-            ExitCode::FAILURE
-        }
         Cmd::SpawnToSpawn {
             map,
             addr,
