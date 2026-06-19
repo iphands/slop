@@ -197,9 +197,11 @@ pub async fn run_scenario(
             );
             // Check A* from each spawn to goal; remember if *any* spawn reaches it.
             let mut any_reach = false;
+            let mut logged_kinds = false;
             for (i, sp) in bsp_spawns.iter().enumerate() {
                 if let Some(sp_idx) = graph.nearest(sp) {
-                    let can_reach = graph.path(sp_idx, goal_idx).is_some();
+                    let path = graph.path(sp_idx, goal_idx);
+                    let can_reach = path.is_some();
                     any_reach |= can_reach;
                     let sp_pos = graph.nodes[sp_idx];
                     tracing::info!(
@@ -209,6 +211,29 @@ pub async fn run_scenario(
                         can_reach,
                         "spawn→goal A* check"
                     );
+                    // Once, log the edge-kind composition of a winning path — tells us which
+                    // special traversals (Ride/Jump/Swim) the brain must execute to arrive.
+                    if let (false, Some(p)) = (logged_kinds, path) {
+                        let (mut walk, mut jump, mut swim, mut ride) = (0, 0, 0, 0);
+                        for w in p.windows(2) {
+                            match graph.edge_kind(w[0], w[1]) {
+                                world::EdgeKind::Walk => walk += 1,
+                                world::EdgeKind::Jump { .. } => jump += 1,
+                                world::EdgeKind::Swim => swim += 1,
+                                world::EdgeKind::Ride => ride += 1,
+                            }
+                        }
+                        tracing::info!(
+                            spawn = i,
+                            nodes = p.len(),
+                            walk,
+                            jump,
+                            swim,
+                            ride,
+                            "goal path edge-kind composition"
+                        );
+                        logged_kinds = true;
+                    }
                 }
             }
             goal_reachable_from_spawn = any_reach;
