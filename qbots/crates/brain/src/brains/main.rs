@@ -467,9 +467,22 @@ impl crate::brains::core::Brain for MainBrain {
                             let (fwd, side) = move_from_world_dir(dir, view_yaw, true);
                             mv.move_forward(fwd);
                             mv.move_side(side);
+                            // JUMP on/off like a human (T7): hop when the train is at the board or
+                            // far corner (step-on / step-off). Hold (no jump) mid-transit so we
+                            // don't launch off the moving platform. Vertical lifts: hop on at the
+                            // bottom, ride still otherwise.
+                            let at_step =
+                                crate::ride::platform_present(view, info.board_ent.into())
+                                    || crate::ride::platform_present(view, info.far_ent.into());
+                            let lift_board = info.vertical
+                                && (pos.truncate() - Vec3::from(info.board).truncate()).length()
+                                    > 32.0;
+                            mv.jump = (!info.vertical && at_step) || lift_board;
                         }
                     }
-                    mv.jump = false; // never jump off a moving platform
+                    if matches!(phase, crate::ride::RidePhase::Wait) {
+                        mv.jump = false; // never jump while waiting clear of a platform
+                    }
                 }
             }
         } else if !combat_dec.should_fire {

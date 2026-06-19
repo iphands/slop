@@ -259,6 +259,12 @@ impl Brain for RunTesterBrain {
                 };
                 if info.vertical {
                     // Vertical lift: walk onto the pad / stand (target up → ~0 horizontal → ride).
+                    // JUMP while approaching the pad (T7 — a human hops on); suppress once on the
+                    // pad (a jump while rising would launch the bot off it).
+                    let board_horiz = (pos.truncate() - board.truncate()).length();
+                    if board_horiz > 32.0 {
+                        mv.jump();
+                    }
                     intent_forward = go(&mut mv, dismount);
                     self.ride_boarded = false;
                 } else {
@@ -270,7 +276,11 @@ impl Brain for RunTesterBrain {
                         if board_horiz > 48.0 {
                             intent_forward = go(&mut mv, board); // approach the board ledge
                         } else if train_here {
-                            intent_forward = go(&mut mv, dismount); // train is here → step on
+                            // Train is here → JUMP onto it (T7): a human hops on, clearing the gap
+                            // and tolerating the train still settling at the corner. Walking off
+                            // the ledge toward a not-quite-there train drops the bot into the pit.
+                            intent_forward = go(&mut mv, dismount);
+                            mv.jump();
                             self.ride_boarded = true;
                         } else {
                             mv.move_forward(0.0); // wait clear until the train arrives
@@ -278,9 +288,17 @@ impl Brain for RunTesterBrain {
                             intent_forward = 0.0;
                         }
                     } else if train_far {
-                        intent_forward = go(&mut mv, dismount); // train at far corner → step off
+                        // Train at the far corner → JUMP off onto the dismount ledge (T7).
+                        intent_forward = go(&mut mv, dismount);
+                        mv.jump();
+                    } else if let Some(stand) = crate::ride::train_stand_now(view, &info) {
+                        // Boarded, mid-transit → track the train's LIVE top-center so we stay
+                        // centered as it moves (no jump — that launches us off). This keeps the
+                        // bot from sliding off the moving platform into the pit.
+                        intent_forward = go(&mut mv, stand);
                     } else {
-                        mv.move_forward(0.0); // boarded, mid-transit → hold, let it carry us
+                        // Lost sight of the train → hold and hope it re-enters PVS.
+                        mv.move_forward(0.0);
                         mv.move_side(0.0);
                         intent_forward = 0.0;
                     }

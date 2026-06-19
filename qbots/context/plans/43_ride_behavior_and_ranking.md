@@ -72,6 +72,19 @@ de-conflict on top. Do **not** remove the global penalty here — keep scenario 
 
 ## Step-by-Step Tasks
 
+### T7: JUMP on/off lifts, platforms, and trains (user feedback 2026-06-19)
+
+**Files**: `crates/brain/src/brains/runtester.rs`, `crates/brain/src/brains/main.rs`
+
+**What to do**: A human player almost always **jumps** when boarding and dismounting a
+mover — walking off a ledge toward a still-arriving train, or off a moving train toward a
+ledge, is exactly what drops the bot into the pit. So press `jump` on the **step-on** (board)
+and **step-off** (dismount) moments, NOT during the carried/rising hold (a mid-ride jump
+launches the bot off the platform). Concretely, in the stateful train machine: jump when
+`train_here` (boarding) and when `train_far` (dismounting); hold (no jump) while carried. For
+vertical lifts, a jump when first stepping onto the pad is fine; suppress while rising. This is
+the most likely fix for the moving-train pit-crossing deaths.
+
 ### T1: `brain::ride` — live platform tracking
 
 **File**: `crates/brain/src/ride.rs` (new), `crates/brain/src/lib.rs`

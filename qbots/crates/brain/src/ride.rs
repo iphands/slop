@@ -49,6 +49,51 @@ pub fn platform_present(view: &Worldview, board_ent: Vec3) -> bool {
     })
 }
 
+/// Max distance (units) from the board↔far path within which a non-actor entity is taken to be
+/// the train (for live-position tracking while carried).
+const TRAIN_TRACK_MAX: f32 = 256.0;
+
+/// The bot-origin position of the train's standable top **right now** (Plan 43 T7), derived from
+/// the live entity origin. The brush's wire origin is `corner - mins` and its standable top-center
+/// is `corner + [size.xy/2, size.z+24]`; their difference is a constant per train, recoverable as
+/// `far - far_ent` (both stored in [`RideInfo`]). So `live_stand = entity.origin + (far - far_ent)`.
+/// Picks the non-actor entity nearest the board↔far segment. The brain steers toward this while
+/// carried so it stays centered on the moving platform instead of sliding off into the pit.
+pub fn train_stand_now(view: &Worldview, info: &RideInfo) -> Option<Vec3> {
+    let board_ent = Vec3::from(info.board_ent);
+    let far_ent = Vec3::from(info.far_ent);
+    let offset = Vec3::from(info.far) - far_ent;
+    let mut best: Option<(f32, Vec3)> = None;
+    for e in view.entities() {
+        if matches!(
+            e.class,
+            EntityClass::SelfPlayer
+                | EntityClass::EnemyPlayer
+                | EntityClass::AllyPlayer
+                | EntityClass::ProjectileRocket
+                | EntityClass::ProjectileGrenade
+        ) {
+            continue;
+        }
+        let d = dist_point_segment(e.origin, board_ent, far_ent);
+        if d <= TRAIN_TRACK_MAX && best.is_none_or(|(bd, _)| d < bd) {
+            best = Some((d, e.origin));
+        }
+    }
+    best.map(|(_, o)| o + offset)
+}
+
+/// Distance from point `p` to segment `a`–`b`.
+fn dist_point_segment(p: Vec3, a: Vec3, b: Vec3) -> f32 {
+    let ab = b - a;
+    let len2 = ab.length_squared();
+    if len2 < 1e-6 {
+        return (p - a).length();
+    }
+    let t = ((p - a).dot(ab) / len2).clamp(0.0, 1.0);
+    (p - (a + ab * t)).length()
+}
+
 /// Decide the ride phase from the bot position, the ride info, and the worldview (Plan 43).
 ///
 /// A **vertical lift** (`func_plat`/`func_door`) never waits: the bot walks onto the pad and
