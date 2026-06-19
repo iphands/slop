@@ -167,3 +167,27 @@ modes can't (the navmesh has no water by design). Swim proof: the astar log show
 `S`-flagged**, z 238 → 434 (dive → surface). Navmesh water is a deferred follow-up; `hybrid-segment`
 would also need a water-aware navmesh corridor (or a fallback-to-A* when the navmesh goal is
 unreachable) to reach.
+
+---
+
+## q2dm3 — moving-platform railgun (Plan 42/43, 2026-06-19)
+
+`spawn-to-weapon railgun --instance 1` (the loop-train + lift railgun at `(768,816,208)`),
+`--count 4 --max-secs 150 --lift-penalty 0`, server on q2dm3. Reaching requires riding the
+loop `func_train`s across the pit (board/ride/dismount with **jumps**, Plan 43 T7) and the
+`func_plat` lift — the brain rides moving platforms now.
+
+| navmode | reached | notes |
+|---|:--:|---|
+| astar | **3/4** | times 32 / 91 / 108 s; the reference |
+| hybrid-race | **3/4** | plans both, the A* plan (with ride edges) wins |
+| hybrid-fallback | 1/4 | degrades to navmesh on stuck; navmesh has no ride edges |
+| navmesh / hybrid-hier / hybrid-segment | (untested / expected 0) | navmesh backend has no ride edges, like water (Plan 40) |
+
+**Before Plan 43**: 0/N — the bot couldn't ride lifts (tried to "walk" the vertical edge) or
+trains (fell in the pit). **Key fixes**: lifts → vertical ride edges; train board anchored to
+solid ground; train detection by wire-origin (`board_ent`); **JUMP on/off** + track the train's
+live top-center while carried (the user's "I always jump" insight — cut deaths from ~7 to ~1).
+
+**Quad** (`spawn-to-item quaddamage`): still nav-unreachable (q2dm3 upper-level fragmentation,
+Plan 35) — pending, not a ride-behavior issue.

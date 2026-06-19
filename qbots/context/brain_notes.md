@@ -255,3 +255,16 @@ T6 gate cleared; plan closed.
   **Bonus (Plan 35 spillover):** `bridge_components_via_jump` also restored **q2dm2 + q2dm5** to
   full spawn connectivity (were failing per Plan 34); q2dm1/4/8 unchanged (still full). q2dm3/6/7
   remain partial (deeper fragmentation). So the jump-down floor bridge is a partial Plan 35 fix.
+
+## 2026-06-19 — Plan 43 T7: JUMP on/off movers — railgun REACHED
+
+User feedback: "we need to jump on/off lifts/platforms/trains — I always jump." Decisive fix.
+- **Board**: when the train is at the board corner (`board_ent` matched), `mv.jump()` + step on.
+- **Carried**: track the train's **live top-center** = `entity.origin + (far - far_ent)` (the
+  constant brush-origin↔stand offset) and steer to stay centered — NO jump (it'd launch us off).
+- **Dismount**: when the train reaches the far corner (`far_ent` matched), `mv.jump()` + step off.
+- **Lift**: hop on at the bottom (`board_horiz > 32`), ride still while rising.
+- **Result**: q2dm3 `spawn-to-weapon railgun --instance 1` now **3/4 reach on astar** (32/91/108 s)
+  and **3/4 on hybrid-race**; deaths fell ~7→~1. `hybrid-fallback` 1/4 (navmesh has no rides).
+  Ranking recorded in `mode_perf.md`. The "hold blindly while carried" version drifted off the
+  moving train into the pit; live-center tracking is what made riding reliable.

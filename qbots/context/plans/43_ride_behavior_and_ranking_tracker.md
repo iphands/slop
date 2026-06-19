@@ -1,8 +1,18 @@
 # Plan 43 — Ride behavior + q2dm3 reach proof & navmode ranking — Tracker
 
 ## Overview
-- Status: 60% complete — infrastructure + lift-riding done; reliable train-riding + proof pending
+- Status: 90% complete — railgun REACHED (rides lifts + trains); only the quad (Plan 35) remains
 - Start date: 2026-06-19
+
+## Update 2026-06-19 (T7 — JUMP on/off + live train tracking): RAILGUN REACHED
+- `spawn-to-weapon railgun --instance 1 --count 4 --max-secs 150 --lift-penalty 0`:
+  **astar 3/4** (32/91/108 s), **hybrid-race 3/4**, hybrid-fallback 1/4 (navmesh has no rides).
+  Ranking in `mode_perf.md`; brain_notes appended.
+- Fixes that did it: JUMP on board + dismount (user insight); track the train's **live
+  top-center** (`entity.origin + (far - far_ent)`) while carried so the bot stays on the moving
+  platform; lifts ride as vertical edges. Deaths ~7 → ~1.
+- **Remaining**: the **quad** is nav-unreachable (q2dm3 upper-level fragmentation = **Plan 35**),
+  so `spawn-to-item quaddamage` can't pass yet. Recorder `P` flag (T4) still deferred.
 - Goal: brain rides q2dm3 `func_train` + railgun `func_plat`; `spawn-to-item quaddamage` and
   `spawn-to-weapon railgun --instance 1` reach; 6-navmode ranking recorded.
 
