@@ -860,3 +860,45 @@ ledge but leaves jams. wall-only erode=2 regressed RL (the ledge has a wall side
 Next levers: (a) centered doorway approach (pin doorways without the funnel-straightening
 side effects that regressed s2s), or (b) local bot-avoidance so followers don't pile into a
 stuck lead (caps damage at 1 fail/jam), or (c) per-bot path diversity.
+
+---
+
+## 2026-06-18 Session — q2dm3 fragmentation REGRESSED (Plan 34 T3 diagnosis)
+
+`generate-map-cache --map q2dm3` now FAILS: 11 components, **in_largest=3/7** spawns. The
+2026-06-16 "PASS 7/7" no longer holds. Diagnosis via `qbots nav-debug q2dm3` (live) +
+`QBOTS_LIVE=1 navinspect`:
+
+### Spawn distribution (post full pipeline, spacing 24)
+- comp[1] (lower, z[-16..83]): spawn[0] (288,352,-16), spawn[2] (400,-336,-16), spawn[6] (128,672,-16)
+- comp[2] (mid, z[168..232]): spawn[1] (1040,-64,216), spawn[3] (192,-456,216), spawn[5] (-224,672,232) — largest spawn comp (3)
+- comp[3] (platform, z=360): spawn[4] (-128,-192,360)
+- Must merge comp1 + comp3 (and stragglers) into comp2.
+
+### Causes (multi-causal — NOT a single fix)
+1. **`BRIDGE_HDIST` cut 512→128→256** (`build.rs:28`, commit `1c0756a85`). But restoring 512
+   today **still gives 3/7** — so it is NOT the whole story (unlike the 6-16 notes).
+2. **`walkable_stair` floor-existence check** (commit `662580e69`, step 3, navgraph.rs:1344)
+   now returns `stair=FAIL` on the comp1↔comp2 candidate pairs. NOTE the worst offenders are
+   **same-XY dz=144 pairs** (e.g. 815,295,24 ↔ 815,295,168) which are genuine open-air
+   vertical shortcuts the check *correctly* rejects — so the check can't simply be removed.
+   The real problem is there are **no sampled nodes in the z=83..168 band** (the staircase
+   treads between the floors are not in the graph), so the only candidate cross-floor pairs
+   are the false vertical ones.
+3. **Walled-off lift pocket (comp4).** The `func_plat` at (768,992) IS anchored on both ends
+   (top node 5671 z=217 → comp2-area, bottom 5672 z=23 → local z=16 nodes), but the plat plus
+   its surrounding z16-217 room form an **isolated comp4** (x[623..911] y[775..1063]) walled
+   off from both main floors. So lift anchoring alone does not join it.
+4. **func_door lift (-608,512)** top node 5673 (z=83) has only the ride edge — orphaned from
+   the z=152 upper corridor (dz=69, hull=BLOCKED). Matches the old "lift shaft blindness" note.
+
+### Implication for Plan 34
+The surgical "anchor the lift top node" fix (C1) is necessary but **not sufficient**: the
+fragmentation also needs (a) the missing z=83..168 stair-tread band sampled or bridged, and
+(b) comp4/comp3 joined to the play area. Restoring BRIDGE_HDIST does not fix it. Needs a
+decision on approach (see Plan 34) before more code.
+
+### Tooling added this session (Plan 34 T1/T2)
+- `QBOTS_LIVE=1 navinspect …` builds live (bypasses cache+gate) — required since a failing map
+  has no cache. `compgaps` flat-gap walkability fixed (was counting wall-blocked flat pairs as
+  walkable via the `walkable_stair(dz≈0)=true` degenerate case).
