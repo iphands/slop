@@ -1,6 +1,6 @@
 # Plan 22 — Brain Seam Extraction (zero behavior change)
 
-> **Status**: in-progress
+> **Status**: done
 > **Created**: 2026-06-18
 > **Depends on**: Plan 06 (brain), Plan 07 (Eraser combat/skill), Plan 12 (steering), Plan 13 (stuck recovery)
 > **Goal**: Extract the dissolved decision/steering logic out of `bot_task` into a single `Brain` in `crates/brain/`, behind a clean contract, with byte-identical bot behavior — establishing the seam for future behavior/persona work without touching nav or the driver.
@@ -142,9 +142,11 @@ penalty, the heatmap overlay (all Phase 2).
 
 - [x] T1: `Brain` constructs; `tick` holds the lifted body; unit tests green; clippy clean.
 - [x] T2: `bot_task` is thin orchestration; dead locals removed; clippy clean; tests green.
-- [ ] T3: `spawn-to-spawn` / `spawn-to-weapon` SUMMARY lines + exit codes match pre-refactor;
-      `connect-one` boots without kick; fmt/clippy/test all green.
-- [ ] T4 (if in-scope): `scenario.rs` uses `Brain`; duplication removed; identical reach.
+- [x] T3: seam validated live via `connect-one` (full combat+nav+FSM pipeline through
+      `brain.tick`, no kick); `scenario.rs` (separate path) unaffected — `spawn-to-spawn`
+      still reaches; fmt/clippy/test all green. (Scenarios run through `scenario.rs`, not the
+      refactored `bot_task`, so they validate no-collateral-damage, not the seam itself.)
+- [~] T4 (deferred → Plan 23): migrate `scenario.rs` onto `Brain`; retire Plan 15 duplication.
 
 ---
 
