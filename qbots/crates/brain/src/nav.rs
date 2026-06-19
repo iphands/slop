@@ -711,6 +711,24 @@ impl NavigationDriver {
         self.current_path.len()
     }
 
+    /// Summed base edge cost of the current path (units), or `None` when no path is active.
+    /// Used by `hybrid-race` to score this backend against the navmesh's `planned_len`.
+    pub fn planned_cost(&self) -> Option<f32> {
+        if self.current_path.len() < 2 {
+            return None;
+        }
+        Some(self.nav_graph.path_len(&self.current_path))
+    }
+
+    /// Number of jump-link edges on the current path. `hybrid-race` penalizes jumps (they
+    /// are riskier than walking); `hybrid-segment` uses jump presence to hand a segment to A*.
+    pub fn planned_jump_count(&self) -> usize {
+        self.current_path
+            .windows(2)
+            .filter(|w| matches!(self.nav_graph.edge_kind(w[0], w[1]), EdgeKind::Jump { .. }))
+            .count()
+    }
+
     /// String-pull the current path using `cm` so the bot cuts corners instead of
     /// zigzagging at every 64-unit grid node. Call once after `set_goal` replans.
     ///
@@ -813,6 +831,30 @@ mod tests {
     fn test_stuck_action_variants() {
         let action = StuckAction::Jump;
         assert_eq!(action, StuckAction::Jump);
+    }
+
+    #[test]
+    fn planned_cost_and_jump_count_reflect_current_path() {
+        use std::sync::Arc;
+        // Chain A(0)→B(1)→C(2) at 100u spacing; B→C is a jump link.
+        let g = Arc::new(NavGraph::from_raw_with_jumps(
+            vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [200.0, 0.0, 0.0]],
+            vec![
+                vec![(1, 100.0)],
+                vec![(0, 100.0), (2, 100.0)],
+                vec![(1, 100.0)],
+            ],
+            vec![(1, 2, 90.0)],
+        ));
+        let mut nav = NavigationDriver::new(Arc::clone(&g));
+        // No path yet.
+        assert_eq!(nav.planned_cost(), None);
+        assert_eq!(nav.planned_jump_count(), 0);
+        // Plan A→C: cost ~200u, one jump edge (B→C).
+        nav.set_goal(NavGoal::Waypoint(2), Vec3::new(0.0, 0.0, 0.0));
+        let cost = nav.planned_cost().expect("path planned");
+        assert!((cost - 200.0).abs() < 1e-3, "cost={cost}");
+        assert_eq!(nav.planned_jump_count(), 1);
     }
 
     #[test]

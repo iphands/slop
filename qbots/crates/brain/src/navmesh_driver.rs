@@ -61,6 +61,21 @@ impl NavmeshDriver {
         self.cooldown = REPLAN_COOLDOWN;
     }
 
+    /// The current funnel polyline (`start … goal`), empty when there is no plan. Read-only
+    /// access for hybrid backends that drive a sub-goal along the navmesh corridor.
+    pub fn path(&self) -> &[Vec3] {
+        &self.path
+    }
+
+    /// Total length of the current funnel path (units), or `None` when there is no usable
+    /// plan (< 2 vertices). Used by `hybrid-race` to score this backend against the graph.
+    pub fn planned_len(&self) -> Option<f32> {
+        if self.path.len() < 2 {
+            return None;
+        }
+        Some(self.path.windows(2).map(|w| (w[1] - w[0]).length()).sum())
+    }
+
     /// Aim point along the path, or `None` if there is no usable plan.
     fn aim(&self, from: Vec3) -> Option<(usize, f32, Vec3)> {
         if self.path.len() < 2 {
