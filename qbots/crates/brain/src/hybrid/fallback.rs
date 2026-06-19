@@ -84,6 +84,13 @@ impl Navigator for HybridFallback {
         }
     }
 
+    fn current_edge_is_swim(&self) -> bool {
+        match self.active {
+            Backend::Astar => self.sub.astar.current_edge_is_swim(),
+            Backend::Navmesh => false,
+        }
+    }
+
     fn force_replan(&mut self) {
         match self.active {
             // A* is wedged — switch to the navmesh for the rest of this goal. Clearing the

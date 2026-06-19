@@ -29,6 +29,25 @@ pub const STEP: f32 = 18.0;
 /// Must stay in the cache fingerprint (`mapcache::Fingerprint`) so stale caches
 /// auto-invalidate on change.
 pub const STAIR_MAX: f32 = 160.0;
+/// Vertical spacing (units) between submerged swim nodes sampled in a water column
+/// (Plan 39). Coarse enough to keep the node count bounded, fine enough that adjacent
+/// submerged nodes are within a single swim-edge vertical reach. In the cache
+/// fingerprint so changing it auto-invalidates stale caches.
+pub const SWIM_SPACING: f32 = 32.0;
+/// Edge-cost multiplier for **swim↔swim** edges (Plan 39). Q2 water movement is ~0.5×
+/// ground speed (`pmove.c:579 wishspeed *= 0.5`), so a swim edge costs ~2× an equal-length
+/// walk edge — this keeps A* preferring a dry route whenever one exists. Entry/exit edges
+/// (one dry endpoint) are NOT scaled (walking/falling in is cheap). In the cache fingerprint.
+pub const SWIM_COST_FACTOR: f32 = 2.0;
+/// Max |dz| (units) for any water edge (swim↔swim vertical link, or dry↔water entry/exit).
+/// `SWIM_SPACING * 1.5` keeps vertically-adjacent submerged nodes linkable while bounding
+/// a single edge's vertical reach (no full-pool jumps). Entry/exit dz is always smaller.
+pub const WATER_VLINK: f32 = SWIM_SPACING * 1.5;
+/// Reduced player hull for swim traces (Plan 39). A submerged bot is not floor-constrained
+/// and can occupy tighter space than the standing hull; the full `HULL_*` is too strict for
+/// narrow tunnels. Modest so real geometry (`MASK_SOLID`) still blocks false edges.
+pub const SWIM_HULL_MINS: [f32; 3] = [-12.0, -12.0, -12.0];
+pub const SWIM_HULL_MAXS: [f32; 3] = [12.0, 12.0, 12.0];
 /// Target WORLD-UNIT radius that `generate()` connects each node within. This is the
 /// load-bearing quantity — NOT the cell count. Experiments (q2dm1, 2026-06-17) showed
 /// the graph quality depends on the absolute connection radius, not the grid: holding
@@ -66,6 +85,10 @@ pub enum EdgeKind {
     /// Ledge-drop jump edge: the bot should press jump + forward when leaving
     /// the source node. `launch_yaw` is the world-space yaw (degrees) to face.
     Jump { launch_yaw: f32 },
+    /// Swim edge (Plan 39): at least one endpoint is a water node. The bot moves
+    /// through the water volume in 3-D (vertical thrust via `intent.up`/pitch) rather
+    /// than walking. Includes dry→water entry and water→dry exit (the railgun climb-out).
+    Swim,
 }
 
 /// A navigation graph: waypoints (bot-origin positions) + LOS-checked edges.
@@ -74,6 +97,12 @@ pub struct NavGraph {
     adj: Vec<Vec<(usize, f32)>>,         // (neighbor index, edge cost)
     jump_edges: HashSet<(usize, usize)>, // (from, to) pairs that are jump edges
     jump_yaws: HashMap<(usize, usize), f32>, // launch_yaw per jump edge
+    /// Directed `(from, to)` pairs that are swim edges (Plan 39). Bidirectional swim
+    /// edges store both directions, so `edge_kind`/`is_swim_edge` need only one lookup.
+    swim_edges: HashSet<(usize, usize)>,
+    /// Indices of nodes that lie inside a water volume (Plan 39). Used by the brain to
+    /// drive vertical swim movement and to protect swim edges from the false-edge prune.
+    water_nodes: HashSet<usize>,
 }
 
 impl NavGraph {
@@ -210,6 +239,8 @@ impl NavGraph {
             adj,
             jump_edges: HashSet::new(),
             jump_yaws: HashMap::new(),
+            swim_edges: HashSet::new(),
+            water_nodes: HashSet::new(),
         }
     }
 
@@ -319,6 +350,8 @@ impl NavGraph {
             self.jump_edges.remove(&(b, a));
             self.jump_yaws.remove(&(a, b));
             self.jump_yaws.remove(&(b, a));
+            self.swim_edges.remove(&(a, b));
+            self.swim_edges.remove(&(b, a));
         }
         removed
     }
@@ -337,6 +370,8 @@ impl NavGraph {
             adj,
             jump_edges: HashSet::new(),
             jump_yaws: HashMap::new(),
+            swim_edges: HashSet::new(),
+            water_nodes: HashSet::new(),
         }
     }
 
@@ -363,7 +398,36 @@ impl NavGraph {
             adj,
             jump_edges,
             jump_yaws,
+            swim_edges: HashSet::new(),
+            water_nodes: HashSet::new(),
         }
+    }
+
+    /// Inject pre-serialized swim edges + water-node tags (mapcache deserialization,
+    /// Plan 39). Both directions of each bidirectional swim edge are stored.
+    pub fn set_swim_and_water(&mut self, swim: Vec<(usize, usize)>, water: Vec<usize>) {
+        self.swim_edges = swim.into_iter().collect();
+        self.water_nodes = water.into_iter().collect();
+    }
+
+    /// Swim edges and water-node indices for serialization (Plan 39), each sorted for
+    /// determinism. Swim edges are returned directed exactly as stored (both directions).
+    pub fn raw_swim_and_water(&self) -> (Vec<(usize, usize)>, Vec<usize>) {
+        let mut swim: Vec<(usize, usize)> = self.swim_edges.iter().copied().collect();
+        swim.sort_unstable();
+        let mut water: Vec<usize> = self.water_nodes.iter().copied().collect();
+        water.sort_unstable();
+        (swim, water)
+    }
+
+    /// True if node `idx` lies inside a water volume (Plan 39).
+    pub fn is_water_node(&self, idx: usize) -> bool {
+        self.water_nodes.contains(&idx)
+    }
+
+    /// True if the directed edge `(a, b)` is a swim edge (Plan 39).
+    pub fn is_swim_edge(&self, a: usize, b: usize) -> bool {
+        self.swim_edges.contains(&(a, b))
     }
 
     /// Borrow the graph's raw components for serialization. Returns clones of the
@@ -1086,6 +1150,8 @@ impl NavGraph {
     pub fn edge_kind(&self, from: usize, to: usize) -> EdgeKind {
         if let Some(&launch_yaw) = self.jump_yaws.get(&(from, to)) {
             EdgeKind::Jump { launch_yaw }
+        } else if self.swim_edges.contains(&(from, to)) {
+            EdgeKind::Swim
         } else {
             EdgeKind::Walk
         }

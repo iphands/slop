@@ -296,6 +296,18 @@ impl NavigationDriver {
         }
     }
 
+    /// True when the current path edge (prev_waypoint → current_waypoint) is a swim
+    /// link (Plan 39/40). Call after `update()` to decide whether to drive vertical
+    /// swim thrust. Safe to call always — returns `false` when no path is active.
+    pub fn current_edge_is_swim(&self) -> bool {
+        match (self.prev_waypoint, self.current_waypoint) {
+            (Some(from), Some(to)) => {
+                matches!(self.nav_graph.edge_kind(from, to), EdgeKind::Swim)
+            }
+            _ => false,
+        }
+    }
+
     pub fn next_waypoint_direction(&self, from_position: Vec3) -> Option<Vec3> {
         self.current_waypoint.and_then(|wp_idx| {
             let wp_pos = Vec3::from(self.nav_graph.nodes[wp_idx]);
@@ -791,6 +803,9 @@ impl crate::nav_mode::Navigator for NavigationDriver {
     }
     fn current_edge_is_jump(&self) -> bool {
         NavigationDriver::current_edge_is_jump(self)
+    }
+    fn current_edge_is_swim(&self) -> bool {
+        NavigationDriver::current_edge_is_swim(self)
     }
     fn force_replan(&mut self) {
         NavigationDriver::force_replan(self)

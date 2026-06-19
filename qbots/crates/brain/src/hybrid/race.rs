@@ -143,6 +143,13 @@ impl Navigator for HybridRace {
         }
     }
 
+    fn current_edge_is_swim(&self) -> bool {
+        match self.active {
+            Backend::Astar => self.sub.astar.current_edge_is_swim(),
+            Backend::Navmesh => false,
+        }
+    }
+
     fn force_replan(&mut self) {
         // The active backend wedged here — bias the next race against it, then replan it.
         self.bump_stuck(self.active);

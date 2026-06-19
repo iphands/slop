@@ -88,6 +88,10 @@ impl Navigator for HybridHier {
         self.sub.astar.current_edge_is_jump()
     }
 
+    fn current_edge_is_swim(&self) -> bool {
+        self.sub.astar.current_edge_is_swim()
+    }
+
     fn force_replan(&mut self) {
         // Replan both layers: a new corridor and a fresh local route off it.
         self.sub.navmesh.force_replan();

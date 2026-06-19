@@ -23,6 +23,12 @@ pub trait Navigator {
     fn pursue_target_safe(&self, from: Vec3, cm: &CollisionModel) -> Option<Vec3>;
     /// True if the current path edge is a jump link (the loop presses jump).
     fn current_edge_is_jump(&self) -> bool;
+    /// True if the current path edge is a swim link (Plan 39/40: the loop drives
+    /// vertical swim thrust + surfacing instead of walking). Defaults to `false` for
+    /// backends without water awareness (navmesh).
+    fn current_edge_is_swim(&self) -> bool {
+        false
+    }
     /// Drop the current path so the next `set_goal` replans from scratch.
     fn force_replan(&mut self);
     /// If the current target is hull-blocked from `pos`, blacklist it before a replan.
@@ -66,6 +72,8 @@ pub(crate) struct StubNav {
     pub pursue: Option<Vec3>,
     /// Returned by `current_edge_is_jump`.
     pub jump_edge: bool,
+    /// Returned by `current_edge_is_swim`.
+    pub swim_edge: bool,
     /// Returned by `update` (true = goal reached).
     pub reached: bool,
     /// Returned by `speed_scale` (1.0 unless set).
@@ -90,6 +98,9 @@ impl Navigator for StubNav {
     }
     fn current_edge_is_jump(&self) -> bool {
         self.jump_edge
+    }
+    fn current_edge_is_swim(&self) -> bool {
+        self.swim_edge
     }
     fn force_replan(&mut self) {
         self.replans += 1;

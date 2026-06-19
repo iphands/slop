@@ -117,6 +117,13 @@ impl Navigator for HybridSegment {
         }
     }
 
+    fn current_edge_is_swim(&self) -> bool {
+        match self.active {
+            Backend::Astar => self.sub.astar.current_edge_is_swim(),
+            Backend::Navmesh => false,
+        }
+    }
+
     fn force_replan(&mut self) {
         match self.active {
             Backend::Astar => self.sub.astar.force_replan(),
