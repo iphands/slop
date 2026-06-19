@@ -9,3 +9,6 @@ client = { path = "../client" }
 world = { path = "../world" }
 glam = "0.29"
 tracing = "0.1"
+# `derive` only — for `ValueEnum` on `BrainKind` so the CLI can select a brain (Plan 25),
+# mirroring how the binary's `NavMode` derives it.
+clap = { version = "4", features = ["derive"] }
