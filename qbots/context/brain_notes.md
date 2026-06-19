@@ -103,3 +103,36 @@ holds). Pattern matches `mode_perf.md` baseline; mean speeds grounded (~180–27
 \* astar s2w varied 3/6→6/6 across two draws (n=6 spawn-draw noise). † segment s2w 0/6 @55s →
 3/6 @180s (time-limited). Verbatim lift confirmed faithful — no nav-behaviour change. Plan 26
 T6 gate cleared; plan closed.
+
+## 2026-06-19 — Plan 36: Quake 3 character + aggression core (`q3char`)
+- New pure module `brain::q3char` — Q3's personality + decision scalars, **no brain/CLI/wire
+  yet** (Plan 37 assembles them). Additive only; `MainBrain`/`Sentry`/`RunTester` untouched.
+- `Q3Character`: the DM-relevant `chars.h` `[0,1]` traits (attack_skill, reaction_time[0,5]s,
+  aim_accuracy, aim_skill, croucher, jumper, walker, aggression, self_preservation,
+  vengefulness, camper, easy_fragger, alertness, firethrottle, optional per_weapon_accuracy).
+  `from_skill(0..10)` is a monotonic remap (à la Eraser `AdjustRatingsToSkill`): higher skill →
+  higher aim/attack/alertness/self-preservation, lower reaction_time + firethrottle. Named
+  presets `grunt/major/sarge/camper`; `Default` = `from_skill(5)`.
+- `bot_aggression(view, enemy_height_delta)` — `ai_dmq3.c:2199` 0–100 loadout scalar. **PVS
+  deviation (distilled §2):** the wire gives no free per-weapon inventory, only the *held*
+  weapon + its `STAT_AMMO`. So aggression ranks the **held** weapon's `Weapon::power_tier()`
+  (Q2 auto-switches to best on pickup → "held" ≈ "best owned"), gated by the held weapon's
+  ammo (`ammo_sufficient`). Tiers `<50` (MG/CG/Blaster, or out of ammo) → 0 (flee). **QUAD
+  branch dropped** (quad timer not reliably wire-visible). Health/armor guards + the
+  enemy-`>200u`-above bad-angle guard ported faithfully.
+- **Held-weapon resolution** (perception change, additive): `SelfState.held_weapon:
+  Option<Weapon>` + `held_ammo()`, resolved in `Worldview::from_frame` from the `gunindex`
+  view-model configstring via new `Weapon::from_view_model` (`v_rail`→Railgun, `v_shotg2`→SSG
+  before `v_shotg`→SG, etc; mapping from `g_items.c` precache). `STAT_AMMO` const un-hidden.
+- **`bot_aggression` is NOT scaled by `Q3Character`** — faithful to stock Q3, where AGGRESSION
+  biases the *threshold*, not the scalar. The character bias lives in
+  `Q3Character::retreat_threshold()` = `50 − (aggression−0.5)·40` clamp `[10,90]`;
+  `wants_to_retreat`/`wants_to_chase` compare aggression to that biased threshold (stock Q3 =
+  fixed 50). So Sarge presses on a tier-50 shotgun where Camper retreats — same loadout.
+- `bot_feeling_bad(view)` — `ai_dmq3.c:2247`: Blaster(=gauntlet)→100, health<40→100,
+  Machinegun→90, health<60→80.
+- **`BotSkill` coexistence:** `Q3Character` is layered *alongside* the Eraser `BotSkill` axis,
+  not replacing it — `MainBrain`/shared combat keep `BotSkill`; the Q3 brain adds Q3 texture.
+- 12 unit tests pin the thresholds (rail+slugs→95/chase, MG+50hp→0/retreat, shotgun→50
+  boundary, rail-no-ammo→0, hurt-but-armored→press, enemy-above→0, threshold bias spread,
+  feeling_bad ladder, from_skill monotonicity, preset spread). All green; clippy/fmt clean.
