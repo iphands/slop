@@ -116,6 +116,9 @@ enum Cmd {
         /// mesh + funnel). The navmesh backend requires `generate-map-cache --map <m>` first.
         #[arg(long, value_enum, default_value_t = NavMode::Astar)]
         mode: NavMode,
+        /// Brain (decision plugin): `main` (default) or `sentry`. Independent of `--mode`.
+        #[arg(long, value_enum, default_value_t = brain::BrainKind::Main)]
+        brain: brain::BrainKind,
     },
     /// Launch the full bot fleet from the config's `[fleet]` roster.
     Run {
@@ -601,13 +604,14 @@ pub(crate) async fn bot_task(
     shutdown: &supervisor::Shutdown,
     stats: &supervisor::FleetStats,
     mode: NavMode,
+    brain_kind: brain::BrainKind,
 ) -> std::io::Result<()> {
     use brain::perception::Worldview;
     // `Brain` is the plugin trait (its methods resolve on the `Box<dyn Brain>` the factory
     // returns); `build_brain`/`BrainKind` select the implementation, mirroring `build_navigator`.
     use brain::{
-        build_brain, BotSkill, Brain, BrainConfig, BrainContext, BrainKind, BrainMap,
-        MovementController, Navigator,
+        build_brain, BotSkill, Brain, BrainConfig, BrainContext, BrainMap, MovementController,
+        Navigator,
     };
     use client::{Conn, ConnState};
     use q2proto::Usercmd;
@@ -646,7 +650,7 @@ pub(crate) async fn bot_task(
     // Built early; learns the nav graph at map load via `set_map`. The `Navigator` is
     // injected into `brain.tick` each frame — the brain uses nav, never owns it.
     let mut brain: Box<dyn Brain + Send> =
-        build_brain(BrainKind::Main, BotSkill::default(), BrainConfig::default());
+        build_brain(brain_kind, BotSkill::default(), BrainConfig::default());
     // Boxed behind the `Navigator` trait so the tick loop is backend-agnostic: `--mode`
     // picks A* (waypoint graph) or navmesh (polygons + funnel) at map load. `+ Send`
     // because this future is spawned on tokio and holds the driver across awaits.
@@ -1514,6 +1518,7 @@ async fn main() -> ExitCode {
             name,
             qport,
             mode,
+            brain,
         } => {
             let name = name.unwrap_or_else(|| "qbots".to_string());
             let qport = qport.unwrap_or_else(default_qport);
@@ -1539,7 +1544,7 @@ async fn main() -> ExitCode {
             }
             tracing::info!("connecting '{name}' to {addr} (qport {qport})…  Ctrl-C to stop.");
 
-            match supervisor::run_single(&cfg, addr, &name, qport, mode).await {
+            match supervisor::run_single(&cfg, addr, &name, qport, mode, brain).await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     tracing::error!("{e}");

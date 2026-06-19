@@ -303,7 +303,20 @@ pub async fn run_fleet(
         let cfg = Arc::clone(&cfg);
         let shared = shared.clone();
         tasks.push(tokio::spawn(async move {
-            bot_supervisor_loop(addr, name, qport, bot_skin, cfg, shared, reconnect, mode).await;
+            // Plan 25 T3 threads the real `--brain`/config selection here; until then the fleet
+            // runs the default `main` brain (no behavior change).
+            bot_supervisor_loop(
+                addr,
+                name,
+                qport,
+                bot_skin,
+                cfg,
+                shared,
+                reconnect,
+                mode,
+                brain::BrainKind::Main,
+            )
+            .await;
         }));
         // Stagger connects so we don't burst the server's connectionless handler.
         time::sleep(Duration::from_millis(stagger)).await;
@@ -425,8 +438,20 @@ pub async fn run_competition(
             let cfg = Arc::clone(&cfg);
             let shared = shared.clone();
             tasks.push(tokio::spawn(async move {
-                bot_supervisor_loop(addr, name, qport, bot_skin, cfg, shared, reconnect, mode)
-                    .await;
+                // Plan 25 T4 threads the competition `--brains` selection here; until then every
+                // competitor runs the default `main` brain.
+                bot_supervisor_loop(
+                    addr,
+                    name,
+                    qport,
+                    bot_skin,
+                    cfg,
+                    shared,
+                    reconnect,
+                    mode,
+                    brain::BrainKind::Main,
+                )
+                .await;
             }));
             time::sleep(Duration::from_millis(stagger)).await;
         }
@@ -531,6 +556,7 @@ async fn bot_supervisor_loop(
     shared: FleetShared,
     reconnect: Reconnect,
     mode: crate::NavMode,
+    brain: brain::BrainKind,
 ) {
     let mut attempts: u32 = 0;
     let mut backoff_ms: u64 = 1000;
@@ -548,6 +574,7 @@ async fn bot_supervisor_loop(
             &shared.shutdown,
             &shared.stats,
             mode,
+            brain,
         )
         .await
         {
@@ -583,12 +610,16 @@ pub async fn run_single(
     name: &str,
     qport: u16,
     mode: crate::NavMode,
+    brain: brain::BrainKind,
 ) -> std::io::Result<()> {
     let nav = NavCache::new();
     let shutdown = Shutdown::new();
     let stats = FleetStats::new();
     let _signals = spawn_signal_listener(shutdown.clone());
-    let res = crate::bot_task(addr, name, qport, None, cfg, &nav, &shutdown, &stats, mode).await;
+    let res = crate::bot_task(
+        addr, name, qport, None, cfg, &nav, &shutdown, &stats, mode, brain,
+    )
+    .await;
     // bot_task has disconnected (or errored) — emit the single-bot tally.
     log_final_stats(&stats);
     res
