@@ -188,3 +188,129 @@ impl Brain for RuntesterBrain {
         "runtester"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::nav::NavGoal;
+    use crate::nav_mode::StubNav;
+    use crate::perception::Worldview;
+    use client::parse::ConfigStrings;
+    use q2proto::Frame;
+
+    /// An open test world: solid is 100 k units down, so every trace near the bot is clear.
+    /// (`pursue_target_safe` is stubbed, so the CM only feeds recovery / `find_best_direction`.)
+    fn open_cm() -> world::CollisionModel {
+        world::CollisionModel::half_space([0.0, 0.0, 1.0], -100_000.0)
+    }
+    fn view0() -> Worldview {
+        Worldview::from_frame(&Frame::default(), &ConfigStrings::default(), 0)
+    }
+    fn ctx<'a>(
+        view: &'a Worldview,
+        nav: &'a mut StubNav,
+        cm: &'a world::CollisionModel,
+        goal: Option<NavGoal>,
+    ) -> BrainContext<'a> {
+        BrainContext {
+            view,
+            nav: Some(nav),
+            cm: Some(cm),
+            dt: 0.1,
+            ticks: 1,
+            goal_override: goal,
+        }
+    }
+
+    #[test]
+    fn steers_forward_toward_lookahead() {
+        let (cm, view) = (open_cm(), view0());
+        let mut nav = StubNav {
+            pursue: Some(Vec3::new(100.0, 0.0, 0.0)),
+            ..Default::default()
+        };
+        let out = RuntesterBrain::new().tick(ctx(&view, &mut nav, &cm, None));
+        assert!(
+            out.intent.forward > 0.0,
+            "should advance toward the +x look-ahead, got {}",
+            out.intent.forward
+        );
+    }
+
+    #[test]
+    fn drives_goal_override_into_nav() {
+        let (cm, view) = (open_cm(), view0());
+        let mut nav = StubNav::default();
+        let goal = NavGoal::Position(Vec3::new(7.0, 8.0, 9.0));
+        let _ = RuntesterBrain::new().tick(ctx(&view, &mut nav, &cm, Some(goal.clone())));
+        assert_eq!(nav.last_goal, Some(goal));
+    }
+
+    #[test]
+    fn presses_jump_on_jump_edge() {
+        let (cm, view) = (open_cm(), view0());
+        let mut nav = StubNav {
+            pursue: Some(Vec3::new(100.0, 0.0, 0.0)),
+            jump_edge: true,
+            ..Default::default()
+        };
+        let out = RuntesterBrain::new().tick(ctx(&view, &mut nav, &cm, None));
+        assert!(out.intent.jump, "a jump-link edge must press jump");
+    }
+
+    #[test]
+    fn speed_scale_throttles_forward() {
+        let (cm, view) = (open_cm(), view0());
+        let mut nav_full = StubNav {
+            pursue: Some(Vec3::new(100.0, 0.0, 0.0)),
+            ..Default::default()
+        };
+        let mut nav_half = StubNav {
+            pursue: Some(Vec3::new(100.0, 0.0, 0.0)),
+            speed: Some(0.5),
+            ..Default::default()
+        };
+        let full = RuntesterBrain::new()
+            .tick(ctx(&view, &mut nav_full, &cm, None))
+            .intent
+            .forward;
+        let half = RuntesterBrain::new()
+            .tick(ctx(&view, &mut nav_half, &cm, None))
+            .intent
+            .forward;
+        assert!(
+            half > 0.0 && half < full,
+            "speed_scale 0.5 must halve forward (half={half} full={full})"
+        );
+    }
+
+    #[test]
+    fn never_requests_a_weapon() {
+        let (cm, view) = (open_cm(), view0());
+        let mut nav = StubNav {
+            pursue: Some(Vec3::new(100.0, 0.0, 0.0)),
+            ..Default::default()
+        };
+        let out = RuntesterBrain::new().tick(ctx(&view, &mut nav, &cm, None));
+        assert!(out.weapon_request.is_none());
+        assert_eq!(out.intent_forward, out.intent.forward); // active branch: telemetry == forward
+    }
+
+    #[test]
+    fn backoff_replans_after_sustained_no_progress() {
+        let (cm, view) = (open_cm(), view0());
+        // Fixed position every tick + a live nav target → Recovery escalates to BackOffThenRepath.
+        let mut nav = StubNav {
+            pursue: Some(Vec3::new(100.0, 0.0, 0.0)),
+            ..Default::default()
+        };
+        let mut brain = RuntesterBrain::new();
+        for _ in 0..80 {
+            let _ = brain.tick(ctx(&view, &mut nav, &cm, None));
+        }
+        assert!(
+            nav.replans > 0,
+            "sustained no-progress must trigger a backoff replan"
+        );
+    }
+}
