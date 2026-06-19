@@ -18,6 +18,16 @@ use crate::brains::core::{Brain, BrainContext, BrainMap, BrainOutput};
 use crate::move_ctrl::MovementIntent;
 use crate::recover::{find_best_direction, Recovery, RecoveryAction};
 use crate::steer::{move_from_world_dir, Steering};
+use crate::water::{is_swimming, water_level};
+
+/// Vertical delta (units) that maps to full `intent.up` thrust while swimming (Plan 40).
+const SWIM_VERT_SCALE: f32 = 32.0;
+/// View pitch (deg, negative = up) forced during a water-exit climb-out. Q2 grants the
+/// water-jump boost only when `viewangles[PITCH] <= -15` + forward + a blocked path
+/// (`pmove.c:414`); -20 clears that gate with margin.
+const EXIT_LOOKUP_PITCH: f32 = -20.0;
+/// Ticks to stay in water-exit mode once started, so the bot doesn't oscillate at the lip.
+const EXIT_HYSTERESIS_TICKS: u32 = 12;
 
 /// The movement-scenario brain — drives the injected navigator to `ctx.goal_override`, never
 /// fights. Owns the same steering/recovery state the scenario loop kept as locals.
@@ -30,6 +40,9 @@ pub struct RunTesterBrain {
     /// World-yaw of the most-open direction found when a hard-stuck recovery fires; the bot
     /// steers toward it during the backoff to physically CLEAR a corner.
     escape_yaw: Option<f32>,
+    /// Ticks remaining in water-exit climb-out mode (Plan 40 T3): look-up + forward + up to
+    /// trigger Q2's water-jump onto a dry ledge. Held a few ticks so the bot clears the lip.
+    exit_ticks: u32,
 }
 
 impl RunTesterBrain {
@@ -40,6 +53,7 @@ impl RunTesterBrain {
             recovery: Recovery::new(),
             backoff_ticks: 0,
             escape_yaw: None,
+            exit_ticks: 0,
         }
     }
 }
@@ -108,45 +122,96 @@ impl Brain for RunTesterBrain {
             .unwrap_or(1.0);
         let (fwd, side) = move_from_world_dir(world_move_dir, view_yaw, true);
 
-        // Stuck recovery.
-        let has_nav_target = nav.pursue_target(pos).is_some();
-        let rec_action = self.recovery.evaluate(
-            pos,
-            dt,
-            Some(cm),
-            view_yaw,
-            has_nav_target,
-            false, // never engaging in scenario mode
-        );
-        match rec_action {
-            RecoveryAction::None => {}
-            RecoveryAction::Jump => {
-                mv.jump();
-            }
-            RecoveryAction::Strafe { dir } => {
-                mv.move_side(dir);
-            }
-            RecoveryAction::BackOffThenRepath => {
-                // Hard stuck (≈3.5 s no progress). Steer toward the most-OPEN direction for 8
-                // ticks (≈0.8 s) to clear the wall/corner the bot is jammed against — straight-
-                // back alone just re-presses the adjacent wall in a corner. Then nav repaths from
-                // the now-open spot. find_best_direction fans 7 rays and returns the openest;
-                // None (fully boxed in) → straight back.
-                self.backoff_ticks = 8;
-                self.escape_yaw = find_best_direction(cm, pos, view_yaw).map(|(y, _)| y);
-                nav.blacklist_waypoint_if_blocked(pos, cm);
-                nav.force_replan();
-            }
-            RecoveryAction::UseHeading(yaw) => {
-                let r = yaw.to_radians();
-                let free_dir = Vec3::new(r.cos(), r.sin(), 0.0);
-                let (hfwd, hside) = move_from_world_dir(free_dir, view_yaw, true);
-                mv.move_forward(hfwd);
-                mv.move_side(hside);
+        // Water state (Plan 40): recompute waterlevel ourselves (it's not on the wire) so the
+        // bot can drive vertical swim thrust, climb out, and so recovery stays out of the water.
+        let water = water_level(cm, pos);
+        let swimming = is_swimming(water) || nav.current_edge_is_swim();
+
+        // Stuck recovery — SUSPENDED while swimming (Plan 40 T4): water move is 0.5× speed and a
+        // bob at the surface is not a wedge, so the StuckDetector would false-fire; and
+        // find_best_direction actively steers AWAY from water. A real swim dead-end relies on
+        // re-path, not blind reverse. So skip recovery entirely while in/at water.
+        if !swimming {
+            let has_nav_target = nav.pursue_target(pos).is_some();
+            let rec_action = self.recovery.evaluate(
+                pos,
+                dt,
+                Some(cm),
+                view_yaw,
+                has_nav_target,
+                false, // never engaging in scenario mode
+            );
+            match rec_action {
+                RecoveryAction::None => {}
+                RecoveryAction::Jump => {
+                    mv.jump();
+                }
+                RecoveryAction::Strafe { dir } => {
+                    mv.move_side(dir);
+                }
+                RecoveryAction::BackOffThenRepath => {
+                    // Hard stuck (≈3.5 s no progress). Steer toward the most-OPEN direction for 8
+                    // ticks (≈0.8 s) to clear the wall/corner the bot is jammed against — straight-
+                    // back alone just re-presses the adjacent wall in a corner. Then nav repaths
+                    // from the now-open spot. find_best_direction fans 7 rays and returns the
+                    // openest; None (fully boxed in) → straight back.
+                    self.backoff_ticks = 8;
+                    self.escape_yaw = find_best_direction(cm, pos, view_yaw).map(|(y, _)| y);
+                    nav.blacklist_waypoint_if_blocked(pos, cm);
+                    nav.force_replan();
+                }
+                RecoveryAction::UseHeading(yaw) => {
+                    let r = yaw.to_radians();
+                    let free_dir = Vec3::new(r.cos(), r.sin(), 0.0);
+                    let (hfwd, hside) = move_from_world_dir(free_dir, view_yaw, true);
+                    mv.move_forward(hfwd);
+                    mv.move_side(hside);
+                }
             }
         }
 
-        if self.backoff_ticks > 0 {
+        if swimming {
+            // Swim toward the 3-D target (Plan 40 T2/T3). Use the RAW look-ahead (no floor
+            // validation — there's no floor underwater for `pursue_target_safe` to confirm).
+            let target = nav
+                .pursue_target(pos)
+                .or_else(|| nav.current_waypoint_pos().map(Vec3::from))
+                .unwrap_or(pos);
+            let to = target - pos;
+            let hd = to.truncate().length();
+            let dz = to.z;
+            // Is the target a dry node above us (a water→ledge exit, the railgun climb-out)?
+            let target_dry = water_level(cm, target) == 0;
+            if nav.current_edge_is_swim() && target_dry && dz > 0.0 {
+                self.exit_ticks = EXIT_HYSTERESIS_TICKS;
+            }
+            if water == 0 {
+                self.exit_ticks = 0; // fully out — stop forcing climb-out
+            }
+
+            // Vertical thrust: sustained (NEVER `mv.jump()` in water — that's a one-shot launch).
+            let pitch;
+            if self.exit_ticks > 0 {
+                // Q2 water-jump climb-out: look up past -15°, hold up, press forward into the lip.
+                self.exit_ticks -= 1;
+                mv.up = 1.0;
+                pitch = EXIT_LOOKUP_PITCH;
+            } else {
+                mv.up = (dz / SWIM_VERT_SCALE).clamp(-1.0, 1.0);
+                // Pitch toward the 3-D target so `pml.forward` carries the vertical component too.
+                pitch = (-dz.atan2(hd.max(1.0)).to_degrees()).clamp(-89.0, 89.0);
+            }
+            // Forward toward the XY target (water is open volume — no narrow-ledge speed_scale).
+            let swim_fwd = if fwd != 0.0 || side != 0.0 {
+                fwd.max(0.0)
+            } else {
+                1.0
+            };
+            mv.look_at(view_yaw, pitch);
+            mv.move_forward(swim_fwd);
+            mv.move_side(side);
+            intent_forward = swim_fwd;
+        } else if self.backoff_ticks > 0 {
             // Sustained escape: move toward the open direction (regardless of facing, so the bot
             // slides out of a corner) rather than straight back into the adjacent wall. Falls
             // back to straight back when no open direction was found.
@@ -171,7 +236,7 @@ impl Brain for RunTesterBrain {
             mv.move_side(side * sp);
             intent_forward = fwd * sp;
         }
-        if nav.current_edge_is_jump() {
+        if nav.current_edge_is_jump() && !swimming {
             mv.jump();
         }
 
@@ -256,6 +321,52 @@ mod tests {
         };
         let out = RunTesterBrain::new().tick(ctx(&view, &mut nav, &cm, None));
         assert!(out.intent.jump, "a jump-link edge must press jump");
+    }
+
+    #[test]
+    fn swim_edge_drives_vertical_thrust_and_lookup() {
+        // A swim edge toward a target ABOVE (a water→ledge exit): the bot must hold up-thrust
+        // and look up past -15° to trigger the Q2 water-jump climb-out, while pressing forward.
+        let (cm, view) = (open_cm(), view0());
+        let mut nav = StubNav {
+            pursue: Some(Vec3::new(40.0, 0.0, 100.0)),
+            swim_edge: true,
+            ..Default::default()
+        };
+        let out = RunTesterBrain::new().tick(ctx(&view, &mut nav, &cm, None));
+        assert!(
+            out.intent.up > 0.0,
+            "ascending swim must thrust up, got {}",
+            out.intent.up
+        );
+        assert!(
+            out.intent.pitch <= -15.0,
+            "water-exit must look up (pitch ≤ -15), got {}",
+            out.intent.pitch
+        );
+        assert!(
+            out.intent.forward > 0.0,
+            "must press forward into the climb-out"
+        );
+        assert!(!out.intent.jump, "never one-shot jump while swimming");
+    }
+
+    #[test]
+    fn swim_edge_descends_toward_lower_target() {
+        // A swim edge toward a target BELOW: sustained downward thrust (negative up), no jump.
+        let (cm, view) = (open_cm(), view0());
+        let mut nav = StubNav {
+            pursue: Some(Vec3::new(40.0, 0.0, -100.0)),
+            swim_edge: true,
+            ..Default::default()
+        };
+        let out = RunTesterBrain::new().tick(ctx(&view, &mut nav, &cm, None));
+        assert!(
+            out.intent.up < 0.0,
+            "descending swim must thrust down, got {}",
+            out.intent.up
+        );
+        assert!(!out.intent.jump, "never one-shot jump while swimming");
     }
 
     #[test]
