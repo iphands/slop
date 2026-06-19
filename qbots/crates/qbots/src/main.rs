@@ -130,6 +130,10 @@ enum Cmd {
         /// cache to be present (`generate-map-cache --map <m>`).
         #[arg(long, value_enum, default_value_t = NavMode::Astar)]
         mode: NavMode,
+        /// Brain (decision plugin) for the whole fleet: `main` (default) or `sentry`.
+        /// Overrides `[fleet].brain`. Independent of `--mode`.
+        #[arg(long, value_enum)]
+        brain: Option<brain::BrainKind>,
         /// Name prefix override; bots are named `<name>_1`, `<name>_2`, … (1-based).
         /// Defaults to the config's `[fleet].name_prefix` (named `<prefix>0`, `<prefix>1`, …).
         #[arg(long)]
@@ -1555,6 +1559,7 @@ async fn main() -> ExitCode {
         Cmd::Run {
             addr,
             mode,
+            brain,
             name,
             count,
             qport_base,
@@ -1584,6 +1589,9 @@ async fn main() -> ExitCode {
                 }
             };
             tracing::info!(?skin_sel, "fleet skin selection");
+            // CLI `--brain` overrides `[fleet].brain` (which defaults to `main`).
+            let brain = brain.unwrap_or_else(|| cfg.fleet.brain_kind());
+            tracing::info!(brain = brain::brain_tag(brain), "fleet brain selection");
             let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
             let addr = match resolve_addr(&addr_str).await {
                 Ok(a) => a,
@@ -1609,6 +1617,7 @@ async fn main() -> ExitCode {
                 Arc::new(cfg),
                 addr,
                 mode,
+                brain,
                 name,
                 count,
                 qport_base,

@@ -245,6 +245,7 @@ pub async fn run_fleet(
     cfg: Arc<Config>,
     addr: SocketAddr,
     mode: crate::NavMode,
+    brain: brain::BrainKind,
     name_override: Option<String>,
     count_override: Option<usize>,
     qport_base_override: Option<u16>,
@@ -303,18 +304,8 @@ pub async fn run_fleet(
         let cfg = Arc::clone(&cfg);
         let shared = shared.clone();
         tasks.push(tokio::spawn(async move {
-            // Plan 25 T3 threads the real `--brain`/config selection here; until then the fleet
-            // runs the default `main` brain (no behavior change).
             bot_supervisor_loop(
-                addr,
-                name,
-                qport,
-                bot_skin,
-                cfg,
-                shared,
-                reconnect,
-                mode,
-                brain::BrainKind::Main,
+                addr, name, qport, bot_skin, cfg, shared, reconnect, mode, brain,
             )
             .await;
         }));

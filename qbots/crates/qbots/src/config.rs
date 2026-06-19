@@ -43,6 +43,9 @@ pub struct Fleet {
     /// Hard cap on bots spawned, regardless of `count`. Guards against exceeding
     /// the server's `maxclients` (leave headroom for humans). 0 = no cap.
     pub max_bots: usize,
+    /// Brain (decision plugin) for the fleet: `main` (default) or `sentry`. `None`/absent →
+    /// `main`. The CLI `--brain` overrides this. Independent of the nav backend (`--mode`).
+    pub brain: Option<String>,
 }
 
 impl Default for Fleet {
@@ -55,6 +58,7 @@ impl Default for Fleet {
             reconnect: true,
             max_reconnects: 0,
             max_bots: 0,
+            brain: None,
         }
     }
 }
@@ -63,6 +67,19 @@ impl Fleet {
     /// The display name for bot `i`.
     pub fn bot_name(&self, i: usize) -> String {
         format!("{}{}", self.name_prefix, i)
+    }
+
+    /// Parse the configured `brain` string into a `BrainKind`. `None` (absent) or an
+    /// unrecognized value falls back to `main` (logged), so an old/garbled config still runs.
+    pub fn brain_kind(&self) -> brain::BrainKind {
+        use clap::ValueEnum;
+        match self.brain.as_deref() {
+            None => brain::BrainKind::Main,
+            Some(s) => brain::BrainKind::from_str(s, true).unwrap_or_else(|_| {
+                tracing::warn!(brain = s, "unknown [fleet].brain; falling back to 'main'");
+                brain::BrainKind::Main
+            }),
+        }
     }
 
     /// Is the fleet enabled (any bots to spawn)?
