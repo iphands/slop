@@ -4,8 +4,8 @@
 //! ```text
 //! [0..7]   magic    b"QBNAVC2"
 //! [7]      version  u8
-//! [8..56]  fingerprint (12 × u32, see Fingerprint)
-//! [56..60] node_count  u32
+//! [8..64]  fingerprint (14 × u32, see Fingerprint)
+//! [64..68] node_count  u32
 //! for each node:
 //!   x, y, z  f32 × 3
 //! for each node:
@@ -13,6 +13,10 @@
 //!   for each edge: neighbor u32, cost f32
 //! [cont.]  jump_count  u32
 //! for each jump edge: from u32, to u32, launch_yaw f32
+//! [cont.]  swim_count  u32        (Plan 39)
+//! for each swim edge: from u32, to u32
+//! [cont.]  water_count u32        (Plan 39)
+//! for each water node: index u32
 //! ```
 //!
 //! A fingerprint mismatch on load returns `None` — never an error — so callers
