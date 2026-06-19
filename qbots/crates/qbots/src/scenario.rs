@@ -38,8 +38,6 @@ const PMF_ON_GROUND: u32 = 4;
 const GOAL_TOL: f32 = brain::recorder::GOAL_TOL;
 /// A reach only counts once held this long (filters fly-through jitter).
 const GOAL_SETTLE: f32 = 0.5;
-/// Default map when `--map` is omitted.
-const DEFAULT_MAP: &str = "q2dm1";
 
 /// What a scenario drives toward.
 #[derive(Clone)]
@@ -72,12 +70,12 @@ pub async fn run_scenario(
     // Navigation backend (`--mode`): the `astar` waypoint graph or the `navmesh` polygon mesh.
     mode: crate::NavMode,
 ) -> std::io::Result<ExitCode> {
+    // The caller (`run_scenario_cmd`) autodetects the server's map and passes it here;
+    // a `None` at this point means autodetection was skipped/failed, which is a bug,
+    // not a reason to silently guess a map (a wrong map produces garbage navigation).
     let map = map_arg
-        .map(str::to_string)
-        .unwrap_or_else(|| DEFAULT_MAP.to_string());
-    if map_arg.is_none() {
-        tracing::info!("no --map given; defaulting to {DEFAULT_MAP}");
-    }
+        .ok_or_else(|| io_err("no map resolved for scenario (autodetect failed)".to_string()))?
+        .to_string();
 
     // 1. Load BSP + build collision model + nav graph (cache-first, then live).
     let cache_dir = std::path::Path::new("data/mapcache");

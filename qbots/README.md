@@ -137,9 +137,9 @@ a structured log + a `# SUMMARY` line.
 
 ```bash
 # Farthest DM spawn from where the bot spawns.
-qbots spawn-to-spawn [--map q2dm1] [--count 24] [--max-secs 60] [--spacing 24] [--mode astar]
+qbots spawn-to-spawn [--count 24] [--max-secs 60] [--spacing 24] [--mode astar]
 # A named weapon's BSP origin (resolved as weapon_<name>).
-qbots spawn-to-weapon rocketlauncher [--map q2dm1] [--count 24] [--max-secs 60]
+qbots spawn-to-weapon rocketlauncher [--count 24] [--max-secs 60]
 ```
 
 - **Output**: `./logs/<scenario>/<unix_ts>.<bot>.log` — one frame per line (16 positional
@@ -148,9 +148,9 @@ qbots spawn-to-weapon rocketlauncher [--map q2dm1] [--count 24] [--max-secs 60]
   `crates/brain/src/recorder.rs`. `./logs/` is gitignored.
 - **Exit code**: `0` = reached the goal; `2` = ran to the cap without reaching it;
   `FAILURE` = setup/IO error. Multi-bot runs print an `N/M bots reached the goal` summary.
-- **`--map` must match the server's loaded map** — the nav graph and goal origins come from
-  the BSP, so a mismatch produces garbage. Discover the server's map with a brief
-  `connect-one` (it logs `loading nav graph map=…`).
+- **The map is autodetected from the server** (via the connectionless `status` query) — the
+  nav graph and goal origins come from the BSP, so the loaded map must match the server's.
+  Pass `--map <name>` only to override; a mismatch produces garbage navigation.
 
 > Note: `--lift-penalty` (A* cost on elevator ride edges) is a **temporary hack** dodging a
 > multi-bot `func_plat` deadlock until real wait/ride/step-off behaviour exists — see

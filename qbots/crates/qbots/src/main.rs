@@ -204,7 +204,8 @@ enum Cmd {
     /// Drive one bot from spawn to the farthest DM spawn point; log movement; stop.
     /// The measurement lens for movement quality (Plan 10).
     SpawnToSpawn {
-        /// Map to load (defaults to q2dm1 / the server's map).
+        /// Map to load. Autodetected from the server's `status` reply if omitted;
+        /// pass `--map` only to override (it must match the server's current map).
         #[arg(long)]
         map: Option<String>,
         /// Server address (defaults to config's server).
@@ -238,7 +239,8 @@ enum Cmd {
     SpawnToWeapon {
         /// Weapon to reach, e.g. `rocketlauncher` (resolved as `weapon_<name>`).
         weapon_name: String,
-        /// Map to load (defaults to q2dm1 / the server's map).
+        /// Map to load. Autodetected from the server's `status` reply if omitted;
+        /// pass `--map` only to override (it must match the server's current map).
         #[arg(long)]
         map: Option<String>,
         /// Server address (defaults to config's server).
@@ -889,6 +891,34 @@ async fn run_scenario_cmd(
             tracing::error!("{e}");
             return ExitCode::FAILURE;
         }
+    };
+
+    // Autodetect the map from the server unless explicitly overridden with `--map`.
+    // The nav graph + spawn/weapon origins are read from the BSP, so the loaded map
+    // MUST match the server's current map — autodetecting via the connectionless
+    // `status` query is the norm; `--map` is only an override (a mismatch produces
+    // garbage navigation, per AGENTS.md).
+    let map = match map {
+        Some(m) => {
+            tracing::info!(map = %m, "using --map override");
+            Some(m)
+        }
+        None => match query_status(addr).await {
+            Ok(report) => match report.map {
+                Some(m) => {
+                    tracing::info!(map = %m, "autodetected server map");
+                    Some(m)
+                }
+                None => {
+                    tracing::error!("server status reply carried no map; pass --map to override");
+                    return ExitCode::FAILURE;
+                }
+            },
+            Err(e) => {
+                tracing::error!("couldn't query server for its map ({e}); pass --map to override");
+                return ExitCode::FAILURE;
+            }
+        },
     };
 
     let unix_ts = time::OffsetDateTime::now_utc().unix_timestamp();
