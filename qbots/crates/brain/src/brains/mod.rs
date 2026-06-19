@@ -6,6 +6,7 @@
 
 pub mod core;
 pub mod main;
+pub mod q3;
 pub mod runtester;
 pub mod sentry;
 
