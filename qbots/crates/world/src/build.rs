@@ -419,16 +419,23 @@ fn try_add_train(
 }
 
 /// Nearest existing walkable node to `pos` within `max_h` horizontal and `max_dz` vertical
-/// (Plan 43). Used to anchor a train's board/dismount to solid ground (the pit-edge ledge at
-/// platform-top height), so the bot waits on ground rather than walking out over the gap.
+/// (Plan 43/35). Used to anchor a train's board/dismount and a ladder's base/top to solid
+/// ground. Minimizes **3-D** distance (within the gates) so the chosen node sits at the right
+/// HEIGHT, not just the nearest XY — a ladder top must snap to the top-floor ledge, never a
+/// mid-height node that would make the bot "top out" early.
 fn nearest_ground(graph: &NavGraph, pos: [f32; 3], max_h: f32, max_dz: f32) -> Option<usize> {
     let mut best = None;
-    let mut best_d2 = max_h * max_h;
+    let mut best_d2 = f32::MAX;
     for (i, n) in graph.nodes.iter().enumerate() {
-        if (n[2] - pos[2]).abs() > max_dz {
+        let dz = n[2] - pos[2];
+        if dz.abs() > max_dz {
             continue;
         }
-        let d2 = (n[0] - pos[0]).powi(2) + (n[1] - pos[1]).powi(2);
+        let dh2 = (n[0] - pos[0]).powi(2) + (n[1] - pos[1]).powi(2);
+        if dh2 > max_h * max_h {
+            continue;
+        }
+        let d2 = dh2 + dz * dz;
         if d2 < best_d2 {
             best_d2 = d2;
             best = Some(i);

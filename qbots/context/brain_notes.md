@@ -268,3 +268,23 @@ User feedback: "we need to jump on/off lifts/platforms/trains — I always jump.
   and **3/4 on hybrid-race**; deaths fell ~7→~1. `hybrid-fallback` 1/4 (navmesh has no rides).
   Ranking recorded in `mode_perf.md`. The "hold blindly while carried" version drifted off the
   moving train into the pit; live-center tracking is what made riding reliable.
+
+## 2026-06-19 — Plan 35: ladder nav support → q2dm3 FULLY connected (7/7)
+
+User insight: q2dm3 reaches the upper level via **ladders** ("elevator OR ladder"). q2dm3 has
+**8 `CONTENTS_LADDER` brushes** our nav ignored, leaving the upper bulk (comp0, z152-600) cut
+off from the spawn floors (only 3/7 spawns connected).
+- **Nav**: `add_ladder_edges` (`build.rs`) parses CONTENTS_LADDER brush AABBs, anchors a floor
+  node at the ladder base + top (`nearest_ground`, now 3-D so the top snaps to the top ledge),
+  and adds a vertical **ladder** ride edge (`RideInfo.ladder`, cache v17). 3 ladders wired →
+  **q2dm3 now 7/7 spawns connected** (`generate-map-cache q2dm3` clean, no `--allow-failures`).
+  Bonus: q2dm7 3/6→4/6; q2dm1/2/4/5/8 stay full; no regression. Railgun still 2/2.
+- **Brain climb**: on a ladder ride edge, face the ladder center (`board_ent`) so the 1u forward
+  trace hits CONTENTS_LADDER (`pml.ladder`), press forward + `up=1.0` (Q2 `PM_AddCurrents`:
+  `upmove>0` → climb), step off near the top. **Partially working** — the bot climbs z-16→~z120
+  but **stalls ~40u below the ladder top** (loses ladder contact / drifts off the narrow face).
+  Needs face-centering on the ladder while climbing (next tuning step), like the train
+  live-center tracking that fixed the train rides.
+- **Quad** still nav-isolated: its ledge is walled except a too-tall (56-72u) jump-up from the
+  mid-floor and a blocked drop from directly above (a solid pillar z240-408). Its real entry is a
+  specific platform-jump from the upper level — a remaining reverse-engineering task.
