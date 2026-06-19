@@ -41,3 +41,26 @@
   `build`/`clippy -D warnings`/`fmt` clean. **Live `connect-one`/`spawn-to-*` NOT run — server
   `noir40.lan` unreachable this session** (same as Plan 23). `scenario.rs` deliberately untouched
   (Plan 26 lifts it into `RuntesterBrain`; Plan 22 T4 stays open until then).
+
+## 2026-06-18 — Plan 25: multibrain selection + --navmode rename
+- `BrainKind` is now a `clap::ValueEnum` (added clap derive-only dep to the `brain` lib) +
+  `brain_tag`. `--brain <main|sentry>` exposed on `connect-one` and `run` (fleet), threaded
+  `bot_task`/`bot_supervisor_loop`/`run_single`/`run_fleet` → `build_brain`. Brain and navmode
+  are independent: `build_navigator(navmode,…)` and `build_brain(brain,…)` are separate calls,
+  no combination special-cased.
+- Per-bot config: `[fleet].brain` (Option<String>, serde-default → main) with `Fleet::brain_kind()`
+  parsing + warn-fallback; CLI `--brain` overrides config (like `--count`).
+- `competition --brains main,sentry` spawns the `{navmodes}×{brains}` cross product; bots named
+  `<group>_<i>` where group = `<mode>` (default single-main → board identical to before) or
+  `<brain>-<mode>` when brains vary. Scoreboard regrouped by group tag (was mode-only). qport
+  blocks are per-group disjoint; max_bots clamp now over `groups = navmodes×brains`.
+- Rename: user-facing flag `--mode`→`--navmode`, `--modes`→`--navmodes` (clap `long=` override;
+  internal field names `mode`/`modes` and the `NavMode` type/`build_navigator`/`mode_tag` kept).
+  Updated CLI help, README, mode_perf.md. Clap gotcha: the value placeholder still renders as
+  `<MODE>` (derived from the field name) — cosmetic; flag name is correct.
+- DEVIATION: spawn-to-spawn/spawn-to-weapon did NOT get `--brain` (they got `--navmode`).
+  `scenario.rs` uses raw nav/steer primitives, not a `Brain`, so a `--brain` there would be a
+  no-op until Plan 26 migrates the scenario to `RuntesterBrain` — Plan 26 adds the functional
+  spawn-to-* `--brain` (and flips its default to `runtester`). Avoided shipping a dead flag.
+- Verification: 18 test binaries green; `--help` shows `--navmode`/`--navmodes`/`--brain`/`--brains`
+  and no `--mode`; invalid brain/navmode rejected. Live matrix run pending a server.
