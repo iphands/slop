@@ -228,7 +228,7 @@ impl Default for Q3Character {
 /// picks one; each maps to a [`Q3Character`] preset and carries a stable [`tag`](Self::tag) for
 /// per-character bot names + scoreboard grouping.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
-pub enum Q3CharPreset {
+pub enum CharPreset {
     /// Low skill, high spray, weak aim ([`Q3Character::grunt`]).
     Grunt,
     /// High aim skill, precise, low firethrottle ([`Q3Character::major`]).
@@ -239,24 +239,24 @@ pub enum Q3CharPreset {
     Camper,
 }
 
-impl Q3CharPreset {
+impl CharPreset {
     /// The `Q3Character` this preset selects.
     pub fn character(self) -> Q3Character {
         match self {
-            Q3CharPreset::Grunt => Q3Character::grunt(),
-            Q3CharPreset::Major => Q3Character::major(),
-            Q3CharPreset::Sarge => Q3Character::sarge(),
-            Q3CharPreset::Camper => Q3Character::camper(),
+            CharPreset::Grunt => Q3Character::grunt(),
+            CharPreset::Major => Q3Character::major(),
+            CharPreset::Sarge => Q3Character::sarge(),
+            CharPreset::Camper => Q3Character::camper(),
         }
     }
 
     /// Stable kebab tag for names / scoreboard grouping.
     pub fn tag(self) -> &'static str {
         match self {
-            Q3CharPreset::Grunt => "grunt",
-            Q3CharPreset::Major => "major",
-            Q3CharPreset::Sarge => "sarge",
-            Q3CharPreset::Camper => "camper",
+            CharPreset::Grunt => "grunt",
+            CharPreset::Major => "major",
+            CharPreset::Sarge => "sarge",
+            CharPreset::Camper => "camper",
         }
     }
 
@@ -264,10 +264,10 @@ impl Q3CharPreset {
     /// recognizable in-game and on the scoreboard.
     pub fn skin(self) -> &'static str {
         match self {
-            Q3CharPreset::Grunt => "male/grunt",
-            Q3CharPreset::Major => "male/major",
-            Q3CharPreset::Sarge => "male/sarge",
-            Q3CharPreset::Camper => "female/athena",
+            CharPreset::Grunt => "male/grunt",
+            CharPreset::Major => "male/major",
+            CharPreset::Sarge => "male/sarge",
+            CharPreset::Camper => "female/athena",
         }
     }
 }
@@ -548,23 +548,17 @@ mod tests {
     #[test]
     fn presets_map_to_characters_and_tags() {
         use clap::ValueEnum;
-        assert_eq!(
-            Q3CharPreset::from_str("grunt", true),
-            Ok(Q3CharPreset::Grunt)
-        );
-        assert_eq!(
-            Q3CharPreset::from_str("major", true),
-            Ok(Q3CharPreset::Major)
-        );
-        assert!(Q3CharPreset::from_str("nope", true).is_err());
-        assert_eq!(Q3CharPreset::Sarge.character(), Q3Character::sarge());
-        assert_eq!(Q3CharPreset::Camper.tag(), "camper");
+        assert_eq!(CharPreset::from_str("grunt", true), Ok(CharPreset::Grunt));
+        assert_eq!(CharPreset::from_str("major", true), Ok(CharPreset::Major));
+        assert!(CharPreset::from_str("nope", true).is_err());
+        assert_eq!(CharPreset::Sarge.character(), Q3Character::sarge());
+        assert_eq!(CharPreset::Camper.tag(), "camper");
         // Each preset has a distinct skin.
         let skins = [
-            Q3CharPreset::Grunt.skin(),
-            Q3CharPreset::Major.skin(),
-            Q3CharPreset::Sarge.skin(),
-            Q3CharPreset::Camper.skin(),
+            CharPreset::Grunt.skin(),
+            CharPreset::Major.skin(),
+            CharPreset::Sarge.skin(),
+            CharPreset::Camper.skin(),
         ];
         let unique: std::collections::HashSet<_> = skins.iter().collect();
         assert_eq!(unique.len(), 4, "distinct skins per character");

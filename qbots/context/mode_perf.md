@@ -131,7 +131,7 @@ done
 
 ## Q3 personality roster — live frag spread (Plan 38 T4, 2026-06-19)
 
-`qbots competition --navmodes astar --brains q3 --q3chars grunt,major,sarge,camper --count 2`
+`qbots competition --navmodes astar --brains q3 --chars grunt,major,sarge,camper --count 2`
 (8 q3 bots, q2dm1, noir.lan, 160 s). The preset value sets (`q3char.rs::Q3Character::{grunt,
 major,sarge,camper}`) produce a clear, intentional hierarchy — **no float retuning needed**:
 

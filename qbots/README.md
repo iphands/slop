@@ -80,7 +80,7 @@ qbots status                         # query server (map + player list) — the 
 `run` and `connect-one` honor `--addr`, `--qport`/`--qport-base`, `--navmode` (nav backend,
 see below), and `--brain` (decision plugin: `main` default, `sentry`, `runtester`, or `q3` —
 the Quake 3-derived node-FSM brain; independent of `--navmode`). With `--brain q3`,
-`--q3char <grunt|major|sarge|camper>` (and `[fleet].q3char`) pick a named Q3 personality (each
+`--char <grunt|major|sarge|camper>` (and `[fleet].char`) pick a named Q3 personality (each
 with its own skin); absent → a skill-derived default character. `run` adds skin selection
 (`--skin model/skin`, `--skin-random-male`,
 `--skin-random-female`) and `--name`/`--count` overrides.
@@ -133,7 +133,7 @@ navigation backend. The steering loop is identical for all; only the path source
 The `navmesh` and `hybrid-*` modes require the navmesh to be available (built lazily from
 the map cache). `competition` spawns bots for every `--navmode` (× `--brains`) at once and
 prints a per-group frag scoreboard (e.g. `qbots competition --navmodes astar,navmesh
---brains main,q3 --count 2`). `--q3chars grunt,major,sarge,camper` fields the whole Q3 roster
+--brains main,q3 --count 2`). `--chars grunt,major,sarge,camper` fields the whole Q3 roster
 (one group/skin per character; only expands the `q3` brain).
 
 ---

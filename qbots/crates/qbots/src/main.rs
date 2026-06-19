@@ -123,7 +123,7 @@ enum Cmd {
         /// Q3 personality (only for `--brain q3`): `grunt`/`major`/`sarge`/`camper`. Absent →
         /// the skill-derived default character.
         #[arg(long, value_enum)]
-        q3char: Option<brain::Q3CharPreset>,
+        char: Option<brain::CharPreset>,
     },
     /// Launch the full bot fleet from the config's `[fleet]` roster.
     Run {
@@ -165,15 +165,15 @@ enum Cmd {
         #[arg(long, group = "skin_sel")]
         skin_random_female: bool,
         /// Q3 personality for the whole fleet (only for `--brain q3`):
-        /// `grunt`/`major`/`sarge`/`camper`. Overrides `[fleet].q3char`. Pins each bot's skin to
+        /// `grunt`/`major`/`sarge`/`camper`. Overrides `[fleet].char`. Pins each bot's skin to
         /// the character's. Absent → the skill-derived default character.
         #[arg(long, value_enum)]
-        q3char: Option<brain::Q3CharPreset>,
+        char: Option<brain::CharPreset>,
     },
     /// Spawn N bots for EACH `--navmode` × `--brains` group at once in one process (shared nav
     /// cache), each group wearing a distinct skin, and print a per-group frag scoreboard. Bots are
-    /// named `<navmode>_<brain>[_<q3char>]_<i>` (e.g. `astar_main_1`, `race_q3_1`,
-    /// `astar_q3_grunt_1`). `runtester` (non-combat) is rejected. Ctrl-C ends the competition and
+    /// named `<brain>_<navmode>[_<char>]_<i>` (e.g. `main_astar_1`, `q3_race_1`,
+    /// `q3_astar_grunt_1`). `runtester` (non-combat) is rejected. Ctrl-C ends the competition and
     /// prints the final board.
     Competition {
         /// Server address (defaults to config's server).
@@ -192,12 +192,12 @@ enum Cmd {
         #[arg(long)]
         brains: Option<String>,
         /// Comma-separated Q3 personalities to field for the `q3` brain (e.g.
-        /// `--q3chars grunt,major,sarge,camper`). Each becomes its own group/skin. Ignored by
+        /// `--chars grunt,major,sarge,camper`). Each becomes its own group/skin. Ignored by
         /// non-`q3` brains. Absent → one default-character `q3` group.
-        #[arg(long = "q3chars")]
-        q3chars: Option<String>,
+        #[arg(long = "chars")]
+        chars: Option<String>,
         /// Base qport; group `g` bot `i` uses `base + g*count + i` (disjoint per-group blocks,
-        /// group = a (mode,brain[,q3char]) tuple). Per-process default if omitted.
+        /// group = a (mode,brain[,char]) tuple). Per-process default if omitted.
         #[arg(long)]
         qport_base: Option<u16>,
     },
@@ -638,7 +638,7 @@ pub(crate) async fn bot_task(
     stats: &supervisor::FleetStats,
     mode: NavMode,
     brain_kind: brain::BrainKind,
-    q3char: Option<brain::Q3CharPreset>,
+    char: Option<brain::CharPreset>,
 ) -> std::io::Result<()> {
     use brain::perception::Worldview;
     // `Brain` is the plugin trait (its methods resolve on the `Box<dyn Brain>` the factory
@@ -687,7 +687,7 @@ pub(crate) async fn bot_task(
         brain_kind,
         BotSkill::default(),
         BrainConfig::default(),
-        q3char,
+        char,
     );
     // Boxed behind the `Navigator` trait so the tick loop is backend-agnostic: `--navmode`
     // picks A* (waypoint graph) or navmesh (polygons + funnel) at map load. `+ Send`
@@ -1561,7 +1561,7 @@ async fn main() -> ExitCode {
             qport,
             mode,
             brain,
-            q3char,
+            char,
         } => {
             let name = name.unwrap_or_else(|| "qbots".to_string());
             let qport = qport.unwrap_or_else(default_qport);
@@ -1587,7 +1587,7 @@ async fn main() -> ExitCode {
             }
             tracing::info!("connecting '{name}' to {addr} (qport {qport})…  Ctrl-C to stop.");
 
-            match supervisor::run_single(&cfg, addr, &name, qport, mode, brain, q3char).await {
+            match supervisor::run_single(&cfg, addr, &name, qport, mode, brain, char).await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     tracing::error!("{e}");
@@ -1605,7 +1605,7 @@ async fn main() -> ExitCode {
             skin,
             skin_random_male,
             skin_random_female,
-            q3char,
+            char,
         } => {
             // `--count` can enable a fleet even when the config roster is empty (and a
             // `--count 0` disables one the config would otherwise enable).
@@ -1632,10 +1632,10 @@ async fn main() -> ExitCode {
             // CLI `--brain` overrides `[fleet].brain` (which defaults to `main`).
             let brain = brain.unwrap_or_else(|| cfg.fleet.brain_kind());
             tracing::info!(brain = brain::brain_tag(brain), "fleet brain selection");
-            // CLI `--q3char` overrides `[fleet].q3char`; only meaningful for `--brain q3`.
-            let q3char = q3char.or_else(|| cfg.fleet.q3char_preset());
-            if let Some(q) = q3char {
-                tracing::info!(q3char = q.tag(), "fleet q3 character");
+            // CLI `--char` overrides `[fleet].char`; only meaningful for `--brain q3`.
+            let char = char.or_else(|| cfg.fleet.char_preset());
+            if let Some(q) = char {
+                tracing::info!(char = q.tag(), "fleet q3 character");
             }
             let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
             let addr = match resolve_addr(&addr_str).await {
@@ -1667,7 +1667,7 @@ async fn main() -> ExitCode {
                 count,
                 qport_base,
                 skin_sel,
-                q3char,
+                char,
             )
             .await
             {
@@ -1683,7 +1683,7 @@ async fn main() -> ExitCode {
             count,
             modes,
             brains,
-            q3chars,
+            chars,
             qport_base,
         } => {
             if count == 0 {
@@ -1746,16 +1746,16 @@ async fn main() -> ExitCode {
             };
             // Optional Q3 personality roster (only fields the `q3` brain). Empty → one
             // default-character group.
-            let q3chars: Vec<brain::Q3CharPreset> = match q3chars {
+            let chars: Vec<brain::CharPreset> = match chars {
                 None => Vec::new(),
                 Some(list) => {
                     let mut out = Vec::new();
                     for tok in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-                        match <brain::Q3CharPreset as ValueEnum>::from_str(tok, true) {
+                        match <brain::CharPreset as ValueEnum>::from_str(tok, true) {
                             Ok(c) => out.push(c),
                             Err(_) => {
                                 tracing::error!(
-                                    "unknown q3char '{tok}' (valid: grunt, major, sarge, camper)"
+                                    "unknown char '{tok}' (valid: grunt, major, sarge, camper)"
                                 );
                                 return ExitCode::FAILURE;
                             }
@@ -1796,7 +1796,7 @@ async fn main() -> ExitCode {
                 addr,
                 modes,
                 brains,
-                q3chars,
+                chars,
                 count,
                 qport_base,
                 skins_per_mode,

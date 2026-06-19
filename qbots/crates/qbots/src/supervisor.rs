@@ -250,7 +250,7 @@ pub async fn run_fleet(
     count_override: Option<usize>,
     qport_base_override: Option<u16>,
     skin: crate::skins::SkinSelection,
-    q3char: Option<brain::Q3CharPreset>,
+    char: Option<brain::CharPreset>,
 ) -> std::io::Result<()> {
     // Apply the maxclients guard: never spawn more than `max_bots` (leave slots
     // for humans). 0 = uncapped. `--count` overrides the config roster size first.
@@ -302,14 +302,14 @@ pub async fn run_fleet(
         let qport = qport_base.wrapping_add(i as u16);
         // A selected Q3 character pins its recognizable skin; else draw once per bot (kept
         // across reconnects); `None` keeps the userinfo default.
-        let bot_skin = q3char
+        let bot_skin = char
             .map(|q| q.skin().to_string())
             .or_else(|| skin.per_bot(&mut skin_rng));
         let cfg = Arc::clone(&cfg);
         let shared = shared.clone();
         tasks.push(tokio::spawn(async move {
             bot_supervisor_loop(
-                addr, name, qport, bot_skin, cfg, shared, reconnect, mode, brain, q3char,
+                addr, name, qport, bot_skin, cfg, shared, reconnect, mode, brain, char,
             )
             .await;
         }));
@@ -364,19 +364,19 @@ pub(crate) fn mode_tag(mode: crate::NavMode) -> &'static str {
     }
 }
 
-/// Run a **competition**: spawn `per_group_count` bots for each `(mode, brain, q3char?)` group in
+/// Run a **competition**: spawn `per_group_count` bots for each `(mode, brain, char?)` group in
 /// a single process, all sharing one `NavCache` (built once, not once per mode), each group wearing
-/// a distinct skin. Bots are named `<mode>_<brain>[_<q3char>]_<i>` (e.g. `astar_main_1`, `race_q3_1`,
-/// `astar_q3_grunt_1`) so the per-group frag scoreboard can group them. Returns when all bots exit
+/// a distinct skin. Bots are named `<brain>_<mode>[_<char>]_<i>` (e.g. `main_astar_1`, `q3_race_1`,
+/// `q3_astar_grunt_1`) so the per-group frag scoreboard can group them. Returns when all bots exit
 /// (after shutdown). Reuses the fleet's per-bot supervisor loop (reconnect/backoff/graceful
-/// disconnect) with a **per-bot** `mode`/`brain`/`q3char`.
+/// disconnect) with a **per-bot** `mode`/`brain`/`char`.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_competition(
     cfg: Arc<Config>,
     addr: SocketAddr,
     modes: Vec<crate::NavMode>,
     brains: Vec<brain::BrainKind>,
-    q3chars: Vec<brain::Q3CharPreset>,
+    chars: Vec<brain::CharPreset>,
     per_group_count: usize,
     qport_base_override: Option<u16>,
     skins_per_mode: Vec<Option<String>>,
@@ -385,13 +385,13 @@ pub async fn run_competition(
         tracing::error!("competition needs at least one mode, one brain, and --count >= 1");
         return Ok(());
     }
-    // A group is one (navmode, brain, q3char?) tuple; the competition spawns `per_group_count`
-    // bots for the full cross product. The `q3char` axis only expands the `q3` brain (others get a
-    // single `None` sub-group). Group tags are `<mode>_<brain>[_<q3char>]` (see `group_tag`).
+    // A group is one (navmode, brain, char?) tuple; the competition spawns `per_group_count`
+    // bots for the full cross product. The `char` axis only expands the `q3` brain (others get a
+    // single `None` sub-group). Group tags are `<mode>_<brain>[_<char>]` (see `group_tag`).
     // The Q3 personalities that expand a brain into sub-groups (`[None]` = the default character).
-    let chars_for = |bk: brain::BrainKind| -> Vec<Option<brain::Q3CharPreset>> {
-        if bk == brain::BrainKind::Quake3 && !q3chars.is_empty() {
-            q3chars.iter().map(|&c| Some(c)).collect()
+    let chars_for = |bk: brain::BrainKind| -> Vec<Option<brain::CharPreset>> {
+        if bk == brain::BrainKind::Quake3 && !chars.is_empty() {
+            chars.iter().map(|&c| Some(c)).collect()
         } else {
             vec![None]
         }
@@ -447,10 +447,10 @@ pub async fn run_competition(
     for (mi, &mode) in modes.iter().enumerate() {
         let mode_skin = skins_per_mode.get(mi).cloned().flatten();
         for &bk in &brains {
-            for q3char in chars_for(bk) {
-                let tag = group_tag(mode, bk, q3char);
+            for char in chars_for(bk) {
+                let tag = group_tag(mode, bk, char);
                 // A named Q3 character wears its own recognizable skin; else the per-mode skin.
-                let skin = q3char
+                let skin = char
                     .map(|q| q.skin().to_string())
                     .or_else(|| mode_skin.clone());
                 group_tags.push(tag.clone());
@@ -463,7 +463,7 @@ pub async fn run_competition(
                     let shared = shared.clone();
                     tasks.push(tokio::spawn(async move {
                         bot_supervisor_loop(
-                            addr, name, qport, bot_skin, cfg, shared, reconnect, mode, bk, q3char,
+                            addr, name, qport, bot_skin, cfg, shared, reconnect, mode, bk, char,
                         )
                         .await;
                     }));
@@ -499,18 +499,18 @@ pub async fn run_competition(
     Ok(())
 }
 
-/// The scoreboard grouping tag for a `(mode, brain, q3char?)` group: nav plan first, brain always
-/// present, underscore-joined → `<mode>_<brain>[_<q3char>]` (e.g. `astar_main`, `race_q3`,
-/// `race_q3_grunt`). Every token is separator-free, so the `<tag>_<i>` bot name still index-splits
-/// on its trailing `_` in [`mode_scoreboard`].
+/// The scoreboard grouping tag for a `(mode, brain, char?)` group: brain first, then nav plan,
+/// then the optional character — underscore-joined → `<brain>_<mode>[_<char>]` (e.g. `main_astar`,
+/// `q3_race`, `q3_race_grunt`). Every token is separator-free, so the `<tag>_<i>` bot name still
+/// index-splits on its trailing `_` in [`mode_scoreboard`].
 fn group_tag(
     mode: crate::NavMode,
     brain: brain::BrainKind,
-    q3char: Option<brain::Q3CharPreset>,
+    char: Option<brain::CharPreset>,
 ) -> String {
-    match q3char {
-        Some(c) => format!("{}_{}_{}", mode_tag(mode), brain::brain_tag(brain), c.tag()),
-        None => format!("{}_{}", mode_tag(mode), brain::brain_tag(brain)),
+    match char {
+        Some(c) => format!("{}_{}_{}", brain::brain_tag(brain), mode_tag(mode), c.tag()),
+        None => format!("{}_{}", brain::brain_tag(brain), mode_tag(mode)),
     }
 }
 
@@ -589,7 +589,7 @@ async fn bot_supervisor_loop(
     reconnect: Reconnect,
     mode: crate::NavMode,
     brain: brain::BrainKind,
-    q3char: Option<brain::Q3CharPreset>,
+    char: Option<brain::CharPreset>,
 ) {
     let mut attempts: u32 = 0;
     let mut backoff_ms: u64 = 1000;
@@ -608,7 +608,7 @@ async fn bot_supervisor_loop(
             &shared.stats,
             mode,
             brain,
-            q3char,
+            char,
         )
         .await
         {
@@ -646,16 +646,16 @@ pub async fn run_single(
     qport: u16,
     mode: crate::NavMode,
     brain: brain::BrainKind,
-    q3char: Option<brain::Q3CharPreset>,
+    char: Option<brain::CharPreset>,
 ) -> std::io::Result<()> {
     let nav = NavCache::new();
     let shutdown = Shutdown::new();
     let stats = FleetStats::new();
     let _signals = spawn_signal_listener(shutdown.clone());
     // A selected Q3 character wears its recognizable skin even as a single bot.
-    let skin = q3char.map(|q| q.skin());
+    let skin = char.map(|q| q.skin());
     let res = crate::bot_task(
-        addr, name, qport, skin, cfg, &nav, &shutdown, &stats, mode, brain, q3char,
+        addr, name, qport, skin, cfg, &nav, &shutdown, &stats, mode, brain, char,
     )
     .await;
     // bot_task has disconnected (or errored) — emit the single-bot tally.
@@ -693,54 +693,54 @@ mod tests {
         stats.record_kill("astar_1");
         stats.record_death("astar_1");
         stats.record_death("astar_2");
-        // Multi-underscore group tag (`<mode>_<brain>_<char>`): the index still splits off the
-        // trailing `_`, so this attributes to `astar_q3_grunt`, not `astar_q3`.
-        stats.record_kill("astar_q3_grunt_1");
+        // Multi-underscore group tag (`<brain>_<mode>_<char>`): the index still splits off the
+        // trailing `_`, so this attributes to `q3_astar_grunt`, not `q3_astar`.
+        stats.record_kill("q3_astar_grunt_1");
 
         let group_tags = vec![
             "astar".to_string(),
             "race".to_string(),
-            "astar_q3_grunt".to_string(),
+            "q3_astar_grunt".to_string(),
             "navmesh".to_string(), // never fragged → must still appear, last
         ];
         let board = mode_scoreboard(&stats, &group_tags);
         assert_eq!(board.len(), 4);
-        // Ranked by kills desc: race (3) > {astar (1), astar_q3_grunt (1) by tag} > navmesh (0).
+        // Ranked by kills desc: race (3) > {astar (1), q3_astar_grunt (1) by tag} > navmesh (0).
         assert_eq!(board[0].tag, "race");
         assert_eq!((board[0].kills, board[0].deaths, board[0].bots), (3, 1, 2));
-        // Two groups tied at 1 kill → ordered by tag asc: `astar` before `astar_q3_grunt`.
+        // Two groups tied at 1 kill → ordered by tag asc: `astar` before `q3_astar_grunt`.
         assert_eq!(board[1].tag, "astar");
         assert_eq!((board[1].kills, board[1].deaths, board[1].bots), (1, 2, 2));
-        assert_eq!(board[2].tag, "astar_q3_grunt");
+        assert_eq!(board[2].tag, "q3_astar_grunt");
         assert_eq!((board[2].kills, board[2].deaths, board[2].bots), (1, 0, 1));
         assert_eq!(board[3].tag, "navmesh");
         assert_eq!((board[3].kills, board[3].deaths, board[3].bots), (0, 0, 0));
     }
 
     #[test]
-    fn group_tag_is_mode_first_underscore_joined() {
+    fn group_tag_is_brain_first_underscore_joined() {
         use crate::NavMode;
-        use brain::{BrainKind, Q3CharPreset};
-        // Brain always present; nav plan first; underscore-joined.
+        use brain::{BrainKind, CharPreset};
+        // Brain first, then nav plan, then optional character; underscore-joined.
         assert_eq!(
             group_tag(NavMode::Astar, BrainKind::Main, None),
-            "astar_main"
+            "main_astar"
         );
         assert_eq!(
             group_tag(NavMode::HybridRace, BrainKind::Quake3, None),
-            "race_q3"
+            "q3_race"
         );
         assert_eq!(
             group_tag(
                 NavMode::HybridRace,
                 BrainKind::Quake3,
-                Some(Q3CharPreset::Grunt)
+                Some(CharPreset::Grunt)
             ),
-            "race_q3_grunt"
+            "q3_race_grunt"
         );
         assert_eq!(
             group_tag(NavMode::Navmesh, BrainKind::Sentry, None),
-            "navmesh_sentry"
+            "sentry_navmesh"
         );
     }
 }

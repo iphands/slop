@@ -39,12 +39,12 @@ internal constants in §4) is a code-level default that requires editing the sou
 
 | Switch | Where | Values | Default |
 |--------|-------|--------|---------|
-| `--q3char <name>` | `connect-one`, `run` | `grunt` \| `major` \| `sarge` \| `camper` | skill-derived (`Q3Character::from_skill(5)`) |
-| `--q3chars a,b,…` | `competition` | comma list; fields one group/skin per character | one default-character `q3` group |
-| `[fleet].q3char` | `config.yaml` | `"grunt"` \| `"major"` \| `"sarge"` \| `"camper"` | skill-derived |
+| `--char <name>` | `connect-one`, `run` | `grunt` \| `major` \| `sarge` \| `camper` | skill-derived (`Q3Character::from_skill(5)`) |
+| `--chars a,b,…` | `competition` | comma list; fields one group/skin per character | one default-character `q3` group |
+| `[fleet].char` | `config.yaml` | `"grunt"` \| `"major"` \| `"sarge"` \| `"camper"` | skill-derived |
 
 A selected character also pins a recognizable **skin** (grunt→`male/grunt`, major→`male/major`,
-sarge→`male/sarge`, camper→`female/athena`). Non-`q3` brains ignore `--q3char`.
+sarge→`male/sarge`, camper→`female/athena`). Non-`q3` brains ignore `--char`.
 
 ### Nav backend (orthogonal — see [README](../README.md))
 
@@ -53,18 +53,18 @@ sarge→`male/sarge`, camper→`female/athena`). Non-`q3` brains ignore `--q3cha
 
 ### Competition naming
 
-`competition` spawns the full `{navmode} × {brain} [× {q3char}]` cross-product in one process and
-names each bot `<navmode>_<brain>[_<q3char>]_<i>` — e.g. `astar_main_1`, `race_q3_1`,
-`astar_q3_grunt_1`. The per-group frag scoreboard groups by that tag.
+`competition` spawns the full `{brain} × {navmode} [× {char}]` cross-product in one process and
+names each bot `<brain>_<navmode>[_<char>]_<i>` — e.g. `main_astar_1`, `q3_race_1`,
+`q3_astar_grunt_1`. The per-group frag scoreboard groups by that tag.
 
 ```bash
 # Brain A/B on one map, all navmodes:
 qbots competition --navmodes astar --brains main,q3 --count 4
 # Full Q3 roster head-to-head:
-qbots competition --navmodes astar --brains q3 --q3chars grunt,major,sarge,camper --count 2
+qbots competition --navmodes astar --brains q3 --chars grunt,major,sarge,camper --count 2
 # Fleet of one character:
-qbots run --brain q3 --q3char sarge --count 8
-qbots connect-one --brain q3 --q3char major
+qbots run --brain q3 --char sarge --count 8
+qbots connect-one --brain q3 --char major
 ```
 
 > **Not a switch:** the master **skill level** (0–10) is fixed at `BotSkill::default()` = **5** in
@@ -147,7 +147,7 @@ to a character-biased threshold (`Q3Character::retreat_threshold = 50 − (aggre
 | `camper` / `vengefulness` / `walker` / `easy_fragger` | camp tendency / revenge / walk-vs-run / target greed |
 | `per_weapon_accuracy: Option<[f32;10]>` | per-weapon accuracy override (else `aim_accuracy`) |
 
-**Presets** (`Q3Character::{grunt,major,sarge,camper}`, selected by `--q3char`):
+**Presets** (`Q3Character::{grunt,major,sarge,camper}`, selected by `--char`):
 
 | Preset | aim_skill | reaction | aggression | jumper | camper | firethrottle | Character |
 |--------|:---------:|:--------:|:----------:|:------:|:------:|:------------:|-----------|
@@ -156,7 +156,7 @@ to a character-biased threshold (`Q3Character::retreat_threshold = 50 − (aggre
 | **sarge** | 0.60 | 0.40 | 0.90 | 0.80 | 0.00 | 0.40 | aggressive + mobile brawler |
 | **camper** | 0.70 | 0.50 | 0.20 | 0.10 | 0.90 | 0.30 | cautious, holds spots |
 
-`Q3Character::from_skill(s)` (the no-`--q3char` default) is a monotonic remap of skill `0–10`:
+`Q3Character::from_skill(s)` (the no-`--char` default) is a monotonic remap of skill `0–10`:
 `aim_accuracy/attack_skill/alertness = 0.30+0.60·(s/10)`, `aim_skill = 0.20+0.70·(s/10)`,
 `reaction_time = 1.20−1.00·(s/10)`, `self_preservation = 0.30+0.50·(s/10)`,
 `firethrottle = 0.70−0.50·(s/10)`, with aggression-flavored traits neutral.

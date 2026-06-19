@@ -16,7 +16,7 @@ use crate::brains::main::MainBrain;
 use crate::brains::q3::Q3Brain;
 use crate::brains::runtester::RunTesterBrain;
 use crate::brains::sentry::SentryBrain;
-use crate::q3char::{Q3CharPreset, Q3Character};
+use crate::q3char::{CharPreset, Q3Character};
 use crate::skill::BotSkill;
 
 /// Which brain implementation a bot runs. Mirrors `NavMode` (the nav-backend selector); a
@@ -52,13 +52,13 @@ pub fn brain_tag(kind: BrainKind) -> &'static str {
 /// Build the brain implementation for `kind`. Single match — the kind→impl mapping lives here,
 /// exactly mirroring `build_navigator` for nav backends. `Send` so a bot task can own the box.
 ///
-/// `q3char` selects a named Q3 personality for the `Quake3` brain (Plan 38 roster); `None` →
+/// `char` selects a named Q3 personality for the `Quake3` brain (Plan 38 roster); `None` →
 /// `Q3Character::from_skill(skill)` (the Plan 37 default). Every other arm ignores it.
 pub fn build_brain(
     kind: BrainKind,
     skill: BotSkill,
     cfg: BrainConfig,
-    q3char: Option<Q3CharPreset>,
+    char: Option<CharPreset>,
 ) -> Box<dyn Brain + Send> {
     match kind {
         BrainKind::Main => Box::new(MainBrain::new(skill, cfg)),
@@ -70,8 +70,8 @@ pub fn build_brain(
         // level. `cfg` is unused: in a movement scenario there are no enemies, so the Q3 combat
         // path never fires anyway.
         BrainKind::Quake3 => {
-            let ch = q3char
-                .map(Q3CharPreset::character)
+            let ch = char
+                .map(CharPreset::character)
                 .unwrap_or_else(|| Q3Character::from_skill(skill.skill));
             Box::new(Q3Brain::new(ch))
         }
