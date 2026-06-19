@@ -290,6 +290,11 @@ enum Cmd {
         /// `<out_dir>/<spacing>/` subdir, so you can flip spacings without clobbering.
         #[arg(long, default_value = "24")]
         spacing: f32,
+        /// Exit 0 even if some maps fail, as long as at least one cached. Caches every
+        /// good map and reports the failures; lets a `q2dm*` batch succeed while one map
+        /// (e.g. q2dm3) is a known-broken exception. Without it, any failure exits non-zero.
+        #[arg(long)]
+        allow_failures: bool,
     },
 }
 
@@ -1318,8 +1323,10 @@ fn generate_map_cache(
     jobs: Option<usize>,
     out_dir: &str,
     spacing: f32,
+    allow_failures: bool,
 ) -> ExitCode {
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
 
     // Per-spacing subdir, matching cached_map_nav's load path.
     let out_path = std::path::Path::new(out_dir).join(world::spacing_subdir(spacing));
@@ -1358,6 +1365,9 @@ fn generate_map_cache(
 
     let succeeded = AtomicUsize::new(0);
     let failed = AtomicUsize::new(0);
+    // (map, reason) for every map that did NOT cache — printed in the end summary so a
+    // batch failure names exactly which maps broke and why.
+    let failures: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
 
     // Parallel over maps using a thread pool sized by --jobs.
     std::thread::scope(|scope| {
@@ -1378,6 +1388,7 @@ fn generate_map_cache(
             let chunk = chunk.clone();
             let succeeded = &succeeded;
             let failed = &failed;
+            let failures = &failures;
             let baseq2 = cfg.paths.baseq2.clone();
             let out_path = out_path.to_path_buf();
             handles.push(scope.spawn(move || {
@@ -1393,6 +1404,10 @@ fn generate_map_cache(
                         Err(e) => {
                             tracing::error!(map, "generate failed: {e}");
                             failed.fetch_add(1, Ordering::Relaxed);
+                            failures
+                                .lock()
+                                .unwrap()
+                                .push((map.clone(), "generate failed".into()));
                             continue;
                         }
                     };
@@ -1400,6 +1415,11 @@ fn generate_map_cache(
                     if let Err(diag) = world::check_spawn_connectivity(&built) {
                         tracing::error!(map, "{diag}");
                         failed.fetch_add(1, Ordering::Relaxed);
+                        let reason = format!(
+                            "spawns not all reachable ({}/{} in largest component)",
+                            built.in_largest, built.total_spawns
+                        );
+                        failures.lock().unwrap().push((map.clone(), reason));
                         continue;
                     }
                     let fp =
@@ -1418,6 +1438,10 @@ fn generate_map_cache(
                         Err(e) => {
                             tracing::error!(map, "save failed: {e}");
                             failed.fetch_add(1, Ordering::Relaxed);
+                            failures
+                                .lock()
+                                .unwrap()
+                                .push((map.clone(), format!("save failed: {e}")));
                         }
                     }
                 }
@@ -1430,11 +1454,29 @@ fn generate_map_cache(
 
     let ok = succeeded.load(Ordering::Relaxed);
     let err = failed.load(Ordering::Relaxed);
-    tracing::info!(ok, err, "generate-map-cache complete");
-    if err > 0 {
-        ExitCode::FAILURE
-    } else {
+    let total = ok + err;
+    let mut failures = failures.into_inner().unwrap();
+    failures.sort();
+    tracing::info!(ok, err, total, "generate-map-cache complete");
+    // Name every failed map + reason so a batch failure is actionable, not a bare count.
+    for (map, reason) in &failures {
+        tracing::warn!(map = %map, "FAILED: {reason}");
+    }
+
+    // Exit semantics: by default any failure is non-zero (CI / single-map strictness). With
+    // --allow-failures, a multi-map batch succeeds as long as at least one map cached — so a
+    // `q2dm*` run isn't sunk by one known-broken map while the others cache fine.
+    if err == 0 {
         ExitCode::SUCCESS
+    } else if allow_failures && ok > 0 {
+        tracing::warn!(
+            ok,
+            err,
+            "completed with --allow-failures: {ok} cached, {err} failed (see FAILED lines above)"
+        );
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
 }
 
@@ -1959,7 +2001,8 @@ async fn main() -> ExitCode {
             jobs,
             out_dir,
             spacing,
-        } => generate_map_cache(&cfg, &map, jobs, &out_dir, spacing),
+            allow_failures,
+        } => generate_map_cache(&cfg, &map, jobs, &out_dir, spacing, allow_failures),
         Cmd::BspInfo { map } => match world::Bsp::load(&cfg.paths.baseq2, &map) {
             Ok(bsp) => {
                 tracing::info!(

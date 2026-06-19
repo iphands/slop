@@ -23,8 +23,10 @@ build:
 # Regenerate every nav-graph map cache at the default grid spacing (24u, GRID_SPACING).
 # Override spacing: `just mapcache 12`. Narrow the map set: `just mapcache 24 'q2dm*'`.
 # Release build — nav-graph generation is CPU-bound and far faster optimized.
-mapcache spacing="24" map="*":
-    cargo run -p qbots --release -- generate-map-cache --map '{{map}}' --spacing {{spacing}}
+# `--allow-failures`: cache every good map and report the rest (e.g. q2dm3 is a known-broken
+# exception, tracked in context/plans/35_*) instead of letting one map sink the whole batch.
+mapcache spacing="24" map="q2dm*":
+    cargo run -p qbots --release -- generate-map-cache --map '{{map}}' --spacing {{spacing}} --allow-failures
 
 # CI / pre-commit gate — fmt-check + clippy + test + build, all must pass.
 all: fmt-check clippy test build
