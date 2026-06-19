@@ -367,12 +367,20 @@ impl crate::brains::core::Brain for MainBrain {
             mv.move_forward(fwd * arrive);
             mv.move_side(side * arrive);
 
+            // Swimming gate (Plan 40 T4): suspend stuck recovery in water — the StuckDetector
+            // false-fires on slow swim/bob and find_best_direction steers AWAY from water.
+            let swim_active =
+                cm.is_some_and(|c| is_swimming(water_level(c, pos))) || nav.current_edge_is_swim();
+
             // ── 6. Stuck recovery (Plan 13) ───────────────────────────────
             let has_nav_target = nav.pursue_target(pos).is_some();
             let engaging = matches!(self.fsm, BehaviorState::Engage { .. });
-            let rec_action =
+            let rec_action = if swim_active {
+                RecoveryAction::None
+            } else {
                 self.recovery
-                    .evaluate(pos, dt, cm, view_yaw, has_nav_target, engaging);
+                    .evaluate(pos, dt, cm, view_yaw, has_nav_target, engaging)
+            };
             match rec_action {
                 RecoveryAction::None => {}
                 RecoveryAction::Jump => {
