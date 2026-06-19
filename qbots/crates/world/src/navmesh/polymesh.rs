@@ -96,6 +96,24 @@ pub struct NavMesh {
 }
 
 impl NavMesh {
+    /// An empty navmesh (no polygons): every `path` query returns `None`. Useful as a
+    /// degenerate stand-in and for unit tests that drive a [`crate::NavMesh`]-backed component
+    /// without parsing a BSP.
+    pub fn empty() -> Self {
+        Self {
+            cell_size: 1.0,
+            nx: 0,
+            ny: 0,
+            min: [0.0, 0.0],
+            polys: Vec::new(),
+            adj: Vec::new(),
+            col_polys: Vec::new(),
+            col_floor: Vec::new(),
+            bridge_points: std::collections::HashMap::new(),
+            ledge: Vec::new(),
+        }
+    }
+
     /// World bounds `(x0, y0, x1, y1)` of rectangle `p`.
     fn rect_bounds(&self, p: usize) -> (f32, f32, f32, f32) {
         let r = &self.polys[p];
@@ -529,8 +547,8 @@ mod tests {
         let nx = 3;
         let ny = 2;
         let mut columns = vec![Vec::new(); nx * ny];
-        for ix in 0..nx {
-            columns[ix] = vec![24.0]; // bottom row
+        for c in columns.iter_mut().take(nx) {
+            *c = vec![24.0]; // bottom row
         }
         columns[nx] = vec![24.0]; // cell (0,1)
         let hf = Heightfield {

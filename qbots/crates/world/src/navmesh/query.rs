@@ -351,8 +351,8 @@ mod tests {
         let nx = 3;
         let ny = 3;
         let mut columns = vec![Vec::new(); nx * ny];
-        for ix in 0..nx {
-            columns[ix] = vec![24.0]; // bottom row
+        for c in columns.iter_mut().take(nx) {
+            *c = vec![24.0]; // bottom row
         }
         for iy in 0..ny {
             columns[iy * nx + 2] = vec![24.0]; // right column
