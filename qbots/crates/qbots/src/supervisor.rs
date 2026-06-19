@@ -370,28 +370,34 @@ pub async fn run_competition(
     cfg: Arc<Config>,
     addr: SocketAddr,
     modes: Vec<crate::NavMode>,
-    per_mode_count: usize,
+    brains: Vec<brain::BrainKind>,
+    per_group_count: usize,
     qport_base_override: Option<u16>,
     skins_per_mode: Vec<Option<String>>,
 ) -> std::io::Result<()> {
-    if modes.is_empty() || per_mode_count == 0 {
-        tracing::error!("competition needs at least one mode and --count >= 1");
+    if modes.is_empty() || brains.is_empty() || per_group_count == 0 {
+        tracing::error!("competition needs at least one mode, one brain, and --count >= 1");
         return Ok(());
     }
-    // maxclients guard: clamp the per-mode count so `modes × count` leaves human headroom.
-    let mut per_mode_count = per_mode_count;
-    if cfg.fleet.max_bots > 0 && modes.len() * per_mode_count > cfg.fleet.max_bots {
-        let clamped = (cfg.fleet.max_bots / modes.len()).max(1);
+    // A group is one (navmode, brain) pair; the competition spawns `per_group_count` bots for the
+    // full cross product. Label bots with the brain only when it varies, so the default
+    // (`--brains main`) reproduces today's mode-only scoreboard exactly.
+    let label_brain = brains.len() > 1 || brains.first() != Some(&brain::BrainKind::Main);
+    let num_groups = modes.len() * brains.len();
+    // maxclients guard: clamp the per-group count so `groups × count` leaves human headroom.
+    let mut per_group_count = per_group_count;
+    if cfg.fleet.max_bots > 0 && num_groups * per_group_count > cfg.fleet.max_bots {
+        let clamped = (cfg.fleet.max_bots / num_groups).max(1);
         tracing::warn!(
-            requested_per_mode = per_mode_count,
-            modes = modes.len(),
+            requested_per_group = per_group_count,
+            groups = num_groups,
             cap = cfg.fleet.max_bots,
-            clamped_per_mode = clamped,
-            "clamping per-mode count to fit max_bots"
+            clamped_per_group = clamped,
+            "clamping per-group count to fit max_bots"
         );
-        per_mode_count = clamped;
+        per_group_count = clamped;
     }
-    let total = modes.len() * per_mode_count;
+    let total = num_groups * per_group_count;
 
     let stagger = cfg.fleet.connect_stagger_ms;
     let reconnect = Reconnect {
@@ -411,53 +417,53 @@ pub async fn run_competition(
     let qport_base = qport_base_override.unwrap_or_else(crate::default_fleet_qport_base);
     tracing::info!(
         modes = modes.len(),
-        per_mode_count,
+        brains = brains.len(),
+        groups = num_groups,
+        per_group_count,
         total,
         qport_base,
         "launching competition to {addr}"
     );
 
+    // Stable group ordering (mode-major, brain-minor) → contiguous, disjoint qport blocks.
+    // `group_tags` is the scoreboard's grouping key list, in the same order.
     let mut tasks = Vec::new();
+    let mut group_tags: Vec<String> = Vec::new();
+    let mut g = 0usize;
     for (mi, &mode) in modes.iter().enumerate() {
-        let tag = mode_tag(mode);
         let skin = skins_per_mode.get(mi).cloned().flatten();
-        tracing::info!(mode = tag, skin = ?skin, count = per_mode_count, "competitor entering");
-        for i in 0..per_mode_count {
-            let name = format!("{tag}_{}", i + 1);
-            let qport = qport_base.wrapping_add((mi * per_mode_count + i) as u16);
-            let bot_skin = skin.clone();
-            let cfg = Arc::clone(&cfg);
-            let shared = shared.clone();
-            tasks.push(tokio::spawn(async move {
-                // Plan 25 T4 threads the competition `--brains` selection here; until then every
-                // competitor runs the default `main` brain.
-                bot_supervisor_loop(
-                    addr,
-                    name,
-                    qport,
-                    bot_skin,
-                    cfg,
-                    shared,
-                    reconnect,
-                    mode,
-                    brain::BrainKind::Main,
-                )
-                .await;
-            }));
-            time::sleep(Duration::from_millis(stagger)).await;
+        for &bk in &brains {
+            let tag = group_tag(mode, bk, label_brain);
+            group_tags.push(tag.clone());
+            tracing::info!(group = %tag, skin = ?skin, count = per_group_count, "competitor entering");
+            for i in 0..per_group_count {
+                let name = format!("{tag}_{}", i + 1);
+                let qport = qport_base.wrapping_add((g * per_group_count + i) as u16);
+                let bot_skin = skin.clone();
+                let cfg = Arc::clone(&cfg);
+                let shared = shared.clone();
+                tasks.push(tokio::spawn(async move {
+                    bot_supervisor_loop(
+                        addr, name, qport, bot_skin, cfg, shared, reconnect, mode, bk,
+                    )
+                    .await;
+                }));
+                time::sleep(Duration::from_millis(stagger)).await;
+            }
+            g += 1;
         }
     }
 
-    // Heartbeat: a live per-mode scoreboard every 30 s.
+    // Heartbeat: a live per-group scoreboard every 30 s.
     let sd = shutdown.clone();
     let hb_stats = stats.clone();
-    let hb_modes = modes.clone();
+    let hb_tags = group_tags.clone();
     let status = tokio::spawn(async move {
         let mut interval = time::interval(Duration::from_secs(30));
         interval.tick().await; // skip immediate first tick
         loop {
             interval.tick().await;
-            log_competition_scoreboard(&hb_stats, &hb_modes, "live");
+            log_competition_scoreboard(&hb_stats, &hb_tags, "live");
             if sd.requested() {
                 break;
             }
@@ -468,9 +474,20 @@ pub async fn run_competition(
         let _ = t.await;
     }
     status.abort();
-    log_competition_scoreboard(&stats, &modes, "FINAL");
+    log_competition_scoreboard(&stats, &group_tags, "FINAL");
     tracing::info!("competition exited");
     Ok(())
+}
+
+/// The scoreboard grouping tag for a `(mode, brain)` group. When `label_brain` is false (the
+/// default single-`main` case) it's just the mode tag, reproducing today's board; otherwise it's
+/// `<brain>-<mode>` (e.g. `sentry-navmesh`).
+fn group_tag(mode: crate::NavMode, brain: brain::BrainKind, label_brain: bool) -> String {
+    if label_brain {
+        format!("{}-{}", brain::brain_tag(brain), mode_tag(mode))
+    } else {
+        mode_tag(mode).to_string()
+    }
 }
 
 /// One mode's aggregate competition standing.
@@ -482,14 +499,14 @@ struct ModeScore {
     bots: usize,
 }
 
-/// Group the fleet's per-bot tallies by the `<mode_tag>_<i>` name prefix and sum kills/deaths,
-/// seeding every competing mode so a frag-less mode still shows. Returned ranked by kills desc
-/// (then tag) — pure, so the scoreboard formatting is unit-testable.
-fn mode_scoreboard(stats: &FleetStats, modes: &[crate::NavMode]) -> Vec<ModeScore> {
+/// Group the fleet's per-bot tallies by the `<group_tag>_<i>` name prefix and sum kills/deaths,
+/// seeding every competing group (from `group_tags`) so a frag-less group still shows. Returned
+/// ranked by kills desc (then tag) — pure, so the scoreboard formatting is unit-testable.
+fn mode_scoreboard(stats: &FleetStats, group_tags: &[String]) -> Vec<ModeScore> {
     use std::collections::HashMap;
     let mut by_tag: HashMap<String, (u64, u64, usize)> = HashMap::new();
-    for &m in modes {
-        by_tag.entry(mode_tag(m).to_string()).or_default();
+    for t in group_tags {
+        by_tag.entry(t.clone()).or_default();
     }
     for (name, tally) in stats.snapshot() {
         let tag = name
@@ -514,10 +531,10 @@ fn mode_scoreboard(stats: &FleetStats, modes: &[crate::NavMode]) -> Vec<ModeScor
     rows
 }
 
-/// Log a per-mode frag scoreboard. `label` distinguishes the periodic "live" board from "FINAL".
-fn log_competition_scoreboard(stats: &FleetStats, modes: &[crate::NavMode], label: &str) {
-    tracing::info!("── competition scoreboard [{label}] (mode: kills/deaths, K/D) ──");
-    for (rank, s) in mode_scoreboard(stats, modes).iter().enumerate() {
+/// Log a per-group frag scoreboard. `label` distinguishes the periodic "live" board from "FINAL".
+fn log_competition_scoreboard(stats: &FleetStats, group_tags: &[String], label: &str) {
+    tracing::info!("── competition scoreboard [{label}] (group: kills/deaths, K/D) ──");
+    for (rank, s) in mode_scoreboard(stats, group_tags).iter().enumerate() {
         let kd = if s.deaths > 0 {
             s.kills as f32 / s.deaths as f32
         } else {
@@ -647,12 +664,12 @@ mod tests {
         stats.record_death("astar_1");
         stats.record_death("astar_2");
 
-        let modes = vec![
-            crate::NavMode::Astar,
-            crate::NavMode::HybridRace,
-            crate::NavMode::Navmesh, // never fragged → must still appear, last
+        let group_tags = vec![
+            "astar".to_string(),
+            "race".to_string(),
+            "navmesh".to_string(), // never fragged → must still appear, last
         ];
-        let board = mode_scoreboard(&stats, &modes);
+        let board = mode_scoreboard(&stats, &group_tags);
         assert_eq!(board.len(), 3);
         // Ranked by kills desc: race (3) > astar (1) > navmesh (0).
         assert_eq!(board[0].tag, "race");

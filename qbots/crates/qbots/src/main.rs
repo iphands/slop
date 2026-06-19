@@ -175,8 +175,12 @@ enum Cmd {
         /// `--modes astar,navmesh,hybrid-race`.
         #[arg(long)]
         modes: Option<String>,
-        /// Base qport; mode `mi` bot `i` uses `base + mi*count + i` (disjoint per-mode blocks).
-        /// Per-process default if omitted.
+        /// Comma-separated brains to include (default: `main`). Spawns the full
+        /// `{modes} × {brains}` cross product. e.g. `--brains main,sentry`.
+        #[arg(long)]
+        brains: Option<String>,
+        /// Base qport; group `g` bot `i` uses `base + g*count + i` (disjoint per-group blocks,
+        /// group = a (mode,brain) pair). Per-process default if omitted.
         #[arg(long)]
         qport_base: Option<u16>,
     },
@@ -1636,6 +1640,7 @@ async fn main() -> ExitCode {
             addr,
             count,
             modes,
+            brains,
             qport_base,
         } => {
             if count == 0 {
@@ -1661,6 +1666,27 @@ async fn main() -> ExitCode {
                     }
                     if out.is_empty() {
                         tracing::error!("--modes was empty");
+                        return ExitCode::FAILURE;
+                    }
+                    out
+                }
+            };
+            // Default to `main`; else parse the comma list of brain kinds.
+            let brains: Vec<brain::BrainKind> = match brains {
+                None => vec![brain::BrainKind::Main],
+                Some(list) => {
+                    let mut out = Vec::new();
+                    for tok in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                        match <brain::BrainKind as ValueEnum>::from_str(tok, true) {
+                            Ok(b) => out.push(b),
+                            Err(_) => {
+                                tracing::error!("unknown brain '{tok}' (valid: main, sentry)");
+                                return ExitCode::FAILURE;
+                            }
+                        }
+                    }
+                    if out.is_empty() {
+                        tracing::error!("--brains was empty");
                         return ExitCode::FAILURE;
                     }
                     out
@@ -1697,6 +1723,7 @@ async fn main() -> ExitCode {
                 Arc::new(cfg),
                 addr,
                 modes,
+                brains,
                 count,
                 qport_base,
                 skins_per_mode,
