@@ -256,9 +256,12 @@ fn entity_model_index(entity: &BspEntity) -> Option<u32> {
 /// Horizontal radius (units) within which a moving-platform path endpoint connects to
 /// existing walkable nodes (the board / dismount ledges). Plan 42. In the cache via VERSION.
 pub const TRAIN_BOARD_RADIUS: f32 = 144.0;
-/// Max vertical offset (units) between a train's platform-top and the boarding ledge node
-/// ([`nearest_ground`], Plan 43) — you board at platform-top height. In the cache via VERSION.
-pub const TRAIN_BOARD_DZ: f32 = 56.0;
+/// Max vertical offset (units) between a candidate ride-surface height and the boarding-ledge
+/// node ([`nearest_ground`], Plan 43/35) — you board at the platform-top height. In cache via VERSION.
+pub const TRAIN_RIDE_DZ: f32 = 44.0;
+/// Max height difference (units) between a train ride's board and dismount ledges — the platform
+/// top is one level as it travels, so a pair straddling two heights isn't one ride. In cache via VERSION.
+pub const TRAIN_SURFACE_DZ: f32 = 48.0;
 /// Max horizontal offset (units) for a vertical jump-down floor bridge
 /// ([`NavGraph::bridge_components_via_jump`], Plan 42). Tight — only near-vertical drops
 /// between stacked floors link, never a horizontal false bridge. In the cache via VERSION.
@@ -341,23 +344,6 @@ fn try_add_train(
         return None;
     }
 
-    // Platform-top standable bot-origin per corner (min-corner rule; see doc above).
-    let stand: Vec<[f32; 3]> = corners
-        .iter()
-        .map(|c| {
-            [
-                c[0] + size[0] / 2.0,
-                c[1] + size[1] / 2.0,
-                c[2] + size[2] + 24.0,
-            ]
-        })
-        .collect();
-
-    // The bot boards/dismounts from SOLID GROUND adjacent to the platform's path endpoint —
-    // NOT from the platform-top coordinate itself, which is open air over a pit/gap whenever
-    // the train isn't at that corner. So for each corner, find the nearest existing walkable
-    // node near the platform top (the boarding ledge); corners with no nearby ledge (mid-pit)
-    // get nothing. The train visits every corner, so any boarding ledge can ride to any other.
     // Per corner, the platform's wire entity origin when it rests there is `corner - mins`
     // (Q2 train_next, `g_func.c:2310`) — the brain matches the live entity against this.
     let ent_origin: Vec<[f32; 3]> = corners
@@ -371,47 +357,66 @@ fn try_add_train(
         })
         .collect();
 
-    // (corner index, ground node, stand pos) for corners with a nearby boarding ledge.
-    let board: Vec<(usize, usize, [f32; 3])> = stand
-        .iter()
-        .enumerate()
-        .filter_map(|(i, s)| {
-            nearest_ground(graph, *s, TRAIN_BOARD_RADIUS, TRAIN_BOARD_DZ).map(|n| (i, n, *s))
-        })
-        .collect();
-
+    // The standable top of a func_train relative to its path_corner differs by map: q2dm3's
+    // loop trains (*3/*4) ride at the brush **top** (`corner.z + size.z` — the platform rises
+    // out of the lava), but the central quad train (*10, origin-brushed) rides at the
+    // **corner level** (`corner.z`, the brush is a stem hanging below). We don't parse origin
+    // brushes, so we try BOTH heights and keep whichever finds reachable ground adjacent to the
+    // path. The bot boards/dismounts from that SOLID GROUND (never the over-lava platform-top
+    // coordinate, which is open air whenever the train isn't there).
     let mut rides = 0;
-    for a in 0..board.len() {
-        for b in (a + 1)..board.len() {
-            let (ci_a, na, _) = board[a];
-            let (ci_b, nb, far_b) = board[b];
-            if na == nb || graph.neighbors(na).iter().any(|&(x, _)| x == nb) {
-                continue; // same ledge, or already walk-connected → no ride needed
+    for top_mode in [false, true] {
+        // (corner index, ground node) for corners with adjacent ground at this ride height.
+        let board: Vec<(usize, usize)> = corners
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| {
+                let ride_z = if top_mode {
+                    c[2] + size[2] + 24.0
+                } else {
+                    c[2] + 24.0
+                };
+                let probe = [c[0] + size[0] / 2.0, c[1] + size[1] / 2.0, ride_z];
+                nearest_ground(graph, probe, TRAIN_BOARD_RADIUS, TRAIN_RIDE_DZ).map(|n| (i, n))
+            })
+            .collect();
+
+        for a in 0..board.len() {
+            for b in (a + 1)..board.len() {
+                let (ci_a, na) = board[a];
+                let (ci_b, nb) = board[b];
+                if na == nb || graph.neighbors(na).iter().any(|&(x, _)| x == nb) {
+                    continue; // same ledge, or already (walk/ride)-connected → skip
+                }
+                // Board & dismount must sit at a consistent height — the platform top is one
+                // level as it travels, so a pair straddling two heights isn't one ride.
+                if (graph.nodes[na][2] - graph.nodes[nb][2]).abs() > TRAIN_SURFACE_DZ {
+                    continue;
+                }
+                let cost = dist3(graph.nodes[na], graph.nodes[nb]);
+                graph.add_ride_edge(
+                    na,
+                    nb,
+                    cost,
+                    RideInfo {
+                        board: graph.nodes[na],
+                        far: graph.nodes[nb],
+                        dismount: graph.nodes[nb],
+                        model_index,
+                        vertical: false,
+                        board_ent: ent_origin[ci_a],
+                        far_ent: ent_origin[ci_b],
+                        ladder: false,
+                    },
+                );
+                rides += 1;
             }
-            let cost = dist3(graph.nodes[na], graph.nodes[nb]);
-            graph.add_ride_edge(
-                na,
-                nb,
-                cost,
-                RideInfo {
-                    board: graph.nodes[na],
-                    far: far_b,
-                    dismount: graph.nodes[nb],
-                    model_index,
-                    vertical: false,
-                    board_ent: ent_origin[ci_a],
-                    far_ent: ent_origin[ci_b],
-                    ladder: false,
-                },
-            );
-            rides += 1;
         }
     }
 
     tracing::info!(
         model = model_index,
         corners = corners.len(),
-        boarding_ledges = board.len(),
         ride_edges = rides,
         "func_train ride edges added"
     );
