@@ -29,6 +29,39 @@ pub enum NavMode {
     Astar,
     /// Navmesh backend: A* over walkable polygons + funnel (Recast-style).
     Navmesh,
+    /// Hybrid: A* primary, navmesh takes over the segment on a hard-stuck (Plan 20).
+    HybridFallback,
+}
+
+impl NavMode {
+    /// True for the backends that need a navmesh built (so the factory can skip building it
+    /// for pure `astar`, whose construction is graph-only).
+    fn needs_mesh(self) -> bool {
+        !matches!(self, NavMode::Astar)
+    }
+}
+
+/// Build the navigation backend for `mode`, sharing the read-only nav graph and (for the
+/// navmesh + hybrid modes) a navmesh built lazily by `build_mesh`. Both dispatch sites
+/// (`bot_task` and the movement scenarios) go through this so the mode→backend mapping lives
+/// in one place. `build_mesh` is only invoked for modes that need it.
+fn build_navigator(
+    mode: NavMode,
+    graph: Arc<world::NavGraph>,
+    build_mesh: impl FnOnce() -> Arc<world::NavMesh>,
+) -> Box<dyn brain::Navigator + Send> {
+    /// Navmesh funnel inset (agent radius) — matches the pure-navmesh dispatch.
+    const AGENT_RADIUS: f32 = 16.0;
+    let mesh = mode.needs_mesh().then(build_mesh);
+    match mode {
+        NavMode::Astar => Box::new(brain::NavigationDriver::new(graph)),
+        NavMode::Navmesh => Box::new(brain::NavmeshDriver::new(mesh.unwrap(), AGENT_RADIUS)),
+        NavMode::HybridFallback => Box::new(brain::hybrid::HybridFallback::new(
+            graph,
+            mesh.unwrap(),
+            AGENT_RADIUS,
+        )),
+    }
 }
 
 #[derive(Parser)]
@@ -468,8 +501,8 @@ pub(crate) async fn bot_task(
     use brain::perception::Worldview;
     use brain::steer::{move_from_world_dir, Steering};
     use brain::{
-        BotSkill, CombatDriver, DangerDriver, MovementController, MovementIntent, NavigationDriver,
-        Navigator, NavmeshDriver, Recovery, RecoveryAction,
+        BotSkill, CombatDriver, DangerDriver, MovementController, MovementIntent, Navigator,
+        Recovery, RecoveryAction,
     };
     use client::{Conn, ConnState};
     use q2proto::Usercmd;
@@ -612,19 +645,17 @@ pub(crate) async fn bot_task(
                             if let Some(map_nav) = nav_cache.get_or_build(cfg, &map) {
                                 roam_nodes = map_nav.roam_nodes.clone();
                                 nav_graph = Some(Arc::clone(&map_nav.graph));
-                                nav_driver = Some(match mode {
-                                    NavMode::Astar => {
-                                        Box::new(NavigationDriver::new(Arc::clone(&map_nav.graph)))
-                                    }
-                                    NavMode::Navmesh => {
-                                        let mesh = supervisor::get_or_build_navmesh(
+                                nav_driver = Some(build_navigator(
+                                    mode,
+                                    Arc::clone(&map_nav.graph),
+                                    || {
+                                        supervisor::get_or_build_navmesh(
                                             &map,
                                             &map_nav.cm,
                                             map_nav.bounds,
-                                        );
-                                        Box::new(NavmeshDriver::new(mesh, 16.0))
-                                    }
-                                });
+                                        )
+                                    },
+                                ));
                                 collision = Some(Arc::clone(&map_nav.cm));
                                 heatmap_obs = Some(brain::HeatmapObserver::new(
                                     Arc::clone(&map_nav.graph),

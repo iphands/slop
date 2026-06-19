@@ -24,7 +24,7 @@ use brain::perception::Worldview;
 use brain::recorder::{CmWallProbe, MovementRecorder, Sample, WallProbe};
 use brain::recover::{find_best_direction, Recovery, RecoveryAction};
 use brain::steer::{move_from_world_dir, Steering};
-use brain::{MovementController, MovementIntent, NavigationDriver, Navigator, NavmeshDriver};
+use brain::{MovementController, MovementIntent, Navigator};
 use client::{Conn, ConnState};
 use q2proto::Usercmd;
 use world::NavGraph;
@@ -258,16 +258,13 @@ pub async fn run_scenario(
 
     // Drive through the `Navigator` trait so the tick loop is backend-agnostic. `+ Send`
     // because this future is spawned on tokio and holds the driver across awaits.
-    let mut nav_driver: Box<dyn Navigator + Send> = match mode {
-        crate::NavMode::Astar => Box::new(NavigationDriver::new(Arc::clone(&graph))),
-        crate::NavMode::Navmesh => {
-            // Reuse one process-wide navmesh across all bots (built from the same collision
-            // model the A* graph used). Cell 16 balances poly count vs detail.
+    // Reuse one process-wide navmesh across all bots (built from the same collision model the
+    // A* graph used). The factory builds it lazily — only for the navmesh + hybrid modes.
+    let mut nav_driver: Box<dyn Navigator + Send> =
+        crate::build_navigator(mode, Arc::clone(&graph), || {
             let model = &bsp.models[0];
-            let mesh = crate::supervisor::get_or_build_navmesh(&map, &cm, (model.mins, model.maxs));
-            Box::new(NavmeshDriver::new(mesh, 16.0))
-        }
-    };
+            crate::supervisor::get_or_build_navmesh(&map, &cm, (model.mins, model.maxs))
+        });
     let mut recovery = Recovery::new();
     let mut last_serverframe: Option<i32> = None;
     let shutdown = Shutdown::new();

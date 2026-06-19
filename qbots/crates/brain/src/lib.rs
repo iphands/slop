@@ -11,6 +11,7 @@ pub mod combat;
 pub mod danger;
 pub mod fsm;
 pub mod heatmap;
+pub mod hybrid;
 pub mod items;
 pub mod los;
 pub mod move_ctrl;
