@@ -16,7 +16,10 @@
 //! Personality comes from [`Q3Character`] (Plan 36). Navigation is **injected** per tick (same
 //! as `MainBrain`); the brain never owns the nav graph.
 
-// `aim` (T4/T5) and `move` (T5) submodules are added with the combat model.
+// The Q3 aim/fire model (T4); wired into the battle nodes by T5. `move` (circle-strafe) lands
+// in T5. `dead_code` until then so the unused-but-tested aim fns don't warn the lib build.
+#[allow(dead_code)]
+mod aim;
 
 use std::sync::Arc;
 
@@ -144,6 +147,9 @@ pub struct Q3Brain {
     // ── weapon (optimistic held-weapon tracking for `use` requests) ────────────────────
     held_weapon: weapons::Weapon,
 
+    /// Enemy velocity memory for the Q3 aim direction-change penalty (T4).
+    aim: aim::AimState,
+
     /// Deterministic per-bot jitter seed mixer (aim error / strafe-flip / dodge rolls).
     rng_state: u32,
 }
@@ -179,6 +185,7 @@ impl Q3Brain {
             next_jump_time: 0.0,
             next_crouch_time: 0.0,
             held_weapon: weapons::Weapon::Blaster,
+            aim: aim::AimState::new(),
             rng_state: 0x9e3779b9,
         }
     }
