@@ -9,7 +9,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use rayon::prelude::*;
 
-use crate::collision::{CollisionModel, MASK_SOLID, MASK_WATER};
+use crate::collision::{CollisionModel, CONTENTS_WATER, MASK_SOLID, MASK_WATER};
 
 /// Q2 standing player hull (`VEC_HULL_MIN/MAX`): the bbox traces use.
 pub const HULL_MINS: [f32; 3] = [-16.0, -16.0, -24.0];
@@ -129,28 +129,41 @@ impl NavGraph {
         // Each column can yield multiple floors (e.g. roof-top + indoor level below).
         // flat_map_iter keeps rayon work-stealing while returning a sequential iterator
         // per column; the move captures (gx,gy) into each emitted pair.
-        let mut hits: Vec<((i32, i32), [f32; 3])> = columns
+        // Each emitted node carries an `is_water` tag (Plan 39): dry floor nodes from
+        // `floor_waypoints_multi` (false) plus submerged/surface nodes from
+        // `water_waypoints_multi` (true). Water nodes are connected in 3-D by the swim
+        // edge pass below; dry nodes use the existing XY-grid stair logic.
+        let mut hits: Vec<((i32, i32), [f32; 3], bool)> = columns
             .par_iter()
             .flat_map_iter(|&(x, y, gx, gy)| {
-                floor_waypoints_multi(cm, x, y, bounds)
+                let dry = floor_waypoints_multi(cm, x, y, bounds)
                     .into_iter()
-                    .map(move |wp| ((gx, gy), wp))
+                    .map(move |wp| ((gx, gy), wp, false));
+                let wet = water_waypoints_multi(cm, x, y, bounds)
+                    .into_iter()
+                    .map(move |wp| ((gx, gy), wp, true));
+                dry.chain(wet)
             })
             .collect();
 
-        // Sort by (grid_key, z) so node indices are deterministic across runs.
-        hits.sort_by(|((ax, ay), aw), ((bx, by), bw)| {
+        // Sort by (grid_key, z, is_water) so node indices are deterministic across runs.
+        hits.sort_by(|((ax, ay), aw, awet), ((bx, by), bw, bwet)| {
             (*ax, *ay)
                 .cmp(&(*bx, *by))
                 .then_with(|| aw[2].total_cmp(&bw[2]))
+                .then_with(|| awet.cmp(bwet))
         });
 
         // Grid maps each column to all node indices it contains (ordered by z asc).
         let mut nodes: Vec<[f32; 3]> = Vec::with_capacity(hits.len());
         let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::with_capacity(hits.len());
-        for ((gx, gy), wp) in hits {
+        let mut water_nodes: HashSet<usize> = HashSet::new();
+        for ((gx, gy), wp, is_water) in hits {
             let idx = nodes.len();
             grid.entry((gx, gy)).or_default().push(idx);
+            if is_water {
+                water_nodes.insert(idx);
+            }
             nodes.push(wp);
         }
 
@@ -240,7 +253,7 @@ impl NavGraph {
             jump_edges: HashSet::new(),
             jump_yaws: HashMap::new(),
             swim_edges: HashSet::new(),
-            water_nodes: HashSet::new(),
+            water_nodes,
         }
     }
 
@@ -1288,6 +1301,89 @@ fn floor_waypoints_multi(
     }
 
     results
+}
+
+/// Sample submerged + surface swim nodes in column `(x, y)` (Plan 39).
+///
+/// Walks the column top-down looking for contiguous `CONTENTS_WATER` spans (lava/slime
+/// are deadly and never swum, so only `CONTENTS_WATER` qualifies). For each span emits a
+/// **surface** node near the water top plus **submerged** lattice nodes every
+/// [`SWIM_SPACING`] down to just above the pool floor. Each candidate is validated with a
+/// reduced-hull point trace ([`SWIM_HULL_MINS`]/[`SWIM_HULL_MAXS`]) so positions embedded in
+/// solid (tunnel walls, the pool floor) are skipped. Returns the bot-origin positions.
+fn water_waypoints_multi(
+    cm: &CollisionModel,
+    x: f32,
+    y: f32,
+    bounds: ([f32; 3], [f32; 3]),
+) -> Vec<[f32; 3]> {
+    // Coarse vertical scan step to locate water spans; fine enough not to miss a thin pool.
+    const SCAN: f32 = 16.0;
+    let z_lo_bound = bounds.0[2] - 8.0;
+    let z_hi_bound = bounds.1[2] + 8.0;
+
+    // Collect contiguous water spans as (z_bottom, z_top) scanning downward.
+    let mut spans: Vec<(f32, f32)> = Vec::new();
+    let mut z = z_hi_bound;
+    let mut span_top: Option<f32> = None;
+    let mut last_water_z = z;
+    while z >= z_lo_bound {
+        let in_water = cm.point_contents(&[x, y, z]) & CONTENTS_WATER != 0;
+        match (in_water, span_top) {
+            (true, None) => {
+                span_top = Some(z);
+                last_water_z = z;
+            }
+            (true, Some(_)) => last_water_z = z,
+            (false, Some(top)) => {
+                spans.push((last_water_z, top));
+                span_top = None;
+            }
+            (false, None) => {}
+        }
+        z -= SCAN;
+    }
+    if let Some(top) = span_top {
+        spans.push((last_water_z, top));
+    }
+
+    let mut results = Vec::new();
+    for (z_bot, z_top) in spans {
+        // Surface node at the highest sampled water Z (a floating bot maps here). Then a
+        // submerged lattice down to the pool floor. `validate` skips solid-embedded points.
+        let mut zc = z_top;
+        let mut pushed_bottom = false;
+        while zc >= z_bot {
+            push_water_node(cm, x, y, zc, &mut results);
+            if (zc - z_bot).abs() < 1.0 {
+                pushed_bottom = true;
+            }
+            zc -= SWIM_SPACING;
+        }
+        // Ensure a node near the pool floor even if the lattice stepped past it.
+        if !pushed_bottom {
+            push_water_node(cm, x, y, z_bot, &mut results);
+        }
+    }
+    results
+}
+
+/// Validate a candidate swim node at `(x, y, z)` and push it to `results` if it is inside
+/// water and not embedded in solid (reduced-hull point trace). Deduplicates near-identical
+/// Z so the surface/lattice/floor passes don't emit overlapping nodes.
+fn push_water_node(cm: &CollisionModel, x: f32, y: f32, z: f32, results: &mut Vec<[f32; 3]>) {
+    let p = [x, y, z];
+    if cm.point_contents(&p) & CONTENTS_WATER == 0 {
+        return;
+    }
+    let stand = cm.trace(&p, &p, &SWIM_HULL_MINS, &SWIM_HULL_MAXS, MASK_SOLID);
+    if stand.startsolid {
+        return;
+    }
+    if results.last().is_some_and(|l| (l[2] - z).abs() < 1.0) {
+        return;
+    }
+    results.push(p);
 }
 
 /// Check whether a bot can walk *upward* from `lower` to `upper` via a staircase,
