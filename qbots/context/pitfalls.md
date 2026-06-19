@@ -705,3 +705,27 @@ starves.) `run --qport-base <u16>` pins it for reproducibility. The server's
 ## Sources
 - qbots: `crates/qbots/src/supervisor.rs` (`run_fleet`), `crates/qbots/src/main.rs` (`default_qport`)
 - vendor: `yquake2/src/server/sv_main.c:225` (`SV_ReadPackets` qport/base-addr match)
+
+# OOB `status` map key is `mapname`, not `map`
+Map autodetection (`status.rs`, used by `spawn-to-*` / `connect` to pick the
+server's current map) silently returned `map = None`, logging
+`server status reply carried no map; pass --map to override`. Root cause: the
+parser read the serverinfo key `map`, but a real Yamagi/q2pro server publishes the
+level under `mapname` — `Cvar_FullSet("mapname", sv.name, CVAR_SERVERINFO|CVAR_NOSET)`
+(`vendor/yquake2/src/server/sv_init.c:366`). The bug hid for a long time because the
+unit-test fixtures were hand-built with `\map\q2dm1\` (the *wrong* key), so they
+matched the bug instead of a real reply.
+
+Avoid: when parsing a protocol field, build test fixtures from a *captured real
+packet*, never from your own assumption of the format — a fixture that encodes the
+same wrong assumption as the parser is a self-confirming bug. For Q2 serverinfo keys,
+grep `vendor/yquake2/src` for `CVAR_SERVERINFO` to see exactly what the server
+advertises. Fix kept `map` as a fallback but reads `mapname` first.
+
+Related: missing/unreachable nav data must be FATAL, not a `warn!`+continue. The
+combat `run` path (`supervisor.rs::build_map_nav`) used to log a warning and run bots
+with no nav on a cache miss — bots flailed silently. Now it `std::process::exit(1)`,
+matching the scenario path and the connectivity check.
+## Sources
+- qbots: `crates/qbots/src/status.rs` (`parse_status_body`), `crates/qbots/src/supervisor.rs` (`build_map_nav`)
+- vendor: `yquake2/src/server/sv_init.c:366` (`mapname` CVAR_SERVERINFO)

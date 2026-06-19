@@ -497,6 +497,71 @@ async fn query_status(addr: SocketAddr) -> std::io::Result<status::StatusReport>
     })
 }
 
+/// Detect the server's current map and validate that usable nav data exists for it —
+/// **before any bot connects**. This is the single up-front gate so we never spawn a
+/// fleet that each discovers a missing/garbage nav cache mid-run (one task at a time,
+/// staggered, surfacing the error seconds in). Every server-connecting subcommand calls
+/// this first.
+///
+/// Returns the resolved map name on success, or `Err(ExitCode::FAILURE)` after logging
+/// the precise reason (no map in status reply, map mismatch, missing cache, or a nav
+/// connectivity bug). `map_override` is the optional `--map` flag (skips autodetection);
+/// `spacing`/`lift_penalty` must match what the bots will load with.
+async fn preflight_map(
+    cfg: &Config,
+    addr: SocketAddr,
+    map_override: Option<&str>,
+    spacing: f32,
+    lift_penalty: f32,
+) -> Result<String, ExitCode> {
+    // 1. Resolve the map: explicit `--map` override, else autodetect via OOB `status`.
+    let map = match map_override {
+        Some(m) => {
+            tracing::info!(map = %m, "using --map override");
+            m.to_string()
+        }
+        None => match query_status(addr).await {
+            Ok(report) => match report.map {
+                Some(m) => {
+                    tracing::info!(map = %m, "autodetected server map");
+                    m
+                }
+                None => {
+                    tracing::error!("server status reply carried no map; pass --map to override");
+                    return Err(ExitCode::FAILURE);
+                }
+            },
+            Err(e) => {
+                tracing::error!("couldn't query server for its map ({e}); pass --map to override");
+                return Err(ExitCode::FAILURE);
+            }
+        },
+    };
+
+    // 2. Validate the nav cache loads NOW (fatal on miss/stale/garbage) so the failure
+    //    is immediate and once, not per-bot at +Ns. This loads the BSP, builds the CM,
+    //    and loads the cached graph exactly as the bots will.
+    let cache_dir = std::path::Path::new("data/mapcache");
+    let built = world::cached_map_nav(
+        &cfg.paths.baseq2,
+        &map,
+        Some(cache_dir),
+        lift_penalty,
+        spacing,
+    )
+    .map_err(|e| {
+        tracing::error!("{e}");
+        ExitCode::FAILURE
+    })?;
+    if let Err(diag) = world::check_spawn_connectivity(&built) {
+        tracing::error!("{diag}");
+        tracing::error!(map = %map, "aborting: nav connectivity bug — all spawns must be reachable");
+        return Err(ExitCode::FAILURE);
+    }
+    tracing::info!(map = %map, "preflight ok: server map detected and nav cache validated");
+    Ok(map)
+}
+
 /// Resolve `host[:port]` to a socket address via DNS lookup. Hostnames (e.g.
 /// `noir.lan`), `IP:port`, and bare IPs (defaulting port to 27910) all work.
 async fn resolve_addr(addr: &str) -> Result<SocketAddr, String> {
@@ -882,32 +947,13 @@ async fn run_scenario_cmd(
         }
     };
 
-    // Autodetect the map from the server unless explicitly overridden with `--map`.
-    // The nav graph + spawn/weapon origins are read from the BSP, so the loaded map
-    // MUST match the server's current map — autodetecting via the connectionless
-    // `status` query is the norm; `--map` is only an override (a mismatch produces
-    // garbage navigation, per AGENTS.md).
-    let map = match map {
-        Some(m) => {
-            tracing::info!(map = %m, "using --map override");
-            Some(m)
-        }
-        None => match query_status(addr).await {
-            Ok(report) => match report.map {
-                Some(m) => {
-                    tracing::info!(map = %m, "autodetected server map");
-                    Some(m)
-                }
-                None => {
-                    tracing::error!("server status reply carried no map; pass --map to override");
-                    return ExitCode::FAILURE;
-                }
-            },
-            Err(e) => {
-                tracing::error!("couldn't query server for its map ({e}); pass --map to override");
-                return ExitCode::FAILURE;
-            }
-        },
+    // Detect the server's map AND validate its nav cache up front — once, before any
+    // bot is spawned. Without this, each of the N staggered bot tasks would discover a
+    // missing cache independently, surfacing the error seconds into the run. `--map` is
+    // only an override (a mismatch produces garbage navigation, per AGENTS.md).
+    let map = match preflight_map(cfg, addr, map.as_deref(), spacing, lift_penalty).await {
+        Ok(m) => Some(m),
+        Err(code) => return code,
     };
 
     let unix_ts = time::OffsetDateTime::now_utc().unix_timestamp();
@@ -1431,6 +1477,18 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+            // Detect + validate the server's map before connecting (fatal on miss).
+            if let Err(code) = preflight_map(
+                &cfg,
+                addr,
+                None,
+                world::GRID_SPACING,
+                world::ELEVATOR_PENALTY,
+            )
+            .await
+            {
+                return code;
+            }
             tracing::info!("connecting '{name}' to {addr} (qport {qport})…  Ctrl-C to stop.");
 
             match supervisor::run_single(&cfg, addr, &name, qport, mode).await {
@@ -1481,6 +1539,19 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+            // Detect + validate the server's map before spawning the fleet (fatal on
+            // miss) — one up-front gate instead of N bots each failing to build nav.
+            if let Err(code) = preflight_map(
+                &cfg,
+                addr,
+                None,
+                world::GRID_SPACING,
+                world::ELEVATOR_PENALTY,
+            )
+            .await
+            {
+                return code;
+            }
             match supervisor::run_fleet(
                 Arc::new(cfg),
                 addr,
@@ -1548,6 +1619,18 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+            // Detect + validate the server's map before launching the competing fleets.
+            if let Err(code) = preflight_map(
+                &cfg,
+                addr,
+                None,
+                world::GRID_SPACING,
+                world::ELEVATOR_PENALTY,
+            )
+            .await
+            {
+                return code;
+            }
             match supervisor::run_competition(
                 Arc::new(cfg),
                 addr,

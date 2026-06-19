@@ -47,8 +47,9 @@ impl NavCache {
         Self::default()
     }
 
-    /// Return the cached nav graph for `map`, building it from `cfg` if absent.
-    /// On a build error, logs and returns `None` (the bot runs without nav).
+    /// Return the cached nav graph for `map`, loading it from `cfg` if absent.
+    /// A load failure is fatal (`build_map_nav` exits the process), so a returned
+    /// `None` only ever means an internal invariant slipped — never "run without nav".
     pub fn get_or_build(&self, cfg: &Config, map: &str) -> Option<Arc<MapNav>> {
         // Fast path: already cached.
         {
@@ -71,7 +72,10 @@ impl NavCache {
 const DEFAULT_CACHE_DIR: &str = "data/mapcache";
 
 /// Build the nav graph + roam nodes for `map` from the BSP on disk.
-/// Checks `./data/mapcache/<map>.qnav` first; falls back to live generation.
+/// Loads `./data/mapcache/<spacing>/<map>.qnav` (load-only — caches are generated
+/// ahead of time with `qbots generate-map-cache`). A missing/stale cache or any load
+/// failure is **fatal**: running bots with no nav data on the server's real map is a
+/// silent-failure trap, so we abort the whole process rather than flail without nav.
 fn build_map_nav(cfg: &Config, map: &str) -> Option<MapNav> {
     let t0 = std::time::Instant::now();
     let cache_dir = std::path::Path::new(DEFAULT_CACHE_DIR);
@@ -84,8 +88,9 @@ fn build_map_nav(cfg: &Config, map: &str) -> Option<MapNav> {
     ) {
         Ok(b) => b,
         Err(e) => {
-            tracing::warn!(map, "nav load failed: {e}  (no nav)");
-            return None;
+            tracing::error!(map, "nav load failed: {e}");
+            tracing::error!(map, "aborting: no usable nav data for the server's map");
+            std::process::exit(1);
         }
     };
     // Hard abort: a broken nav graph means no bot on this map can navigate.
