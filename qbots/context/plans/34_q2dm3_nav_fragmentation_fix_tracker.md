@@ -1,9 +1,17 @@
 # q2dm3 Nav Fragmentation Fix — Tracker
 
 ## Overview
-- Status: 0% complete
+- Status: ~40% complete (T1–T3 done; fix approach needs revisiting — see T3 findings)
 - Start date: 2026-06-18
 - Goal metric: q2dm3 = 7/7 spawns in largest component; `just mapcache 'q2dm*'` → err=0.
+
+## T3 outcome — surgical assumption insufficient
+Diagnosis showed q2dm3 is **multi-causal**: (1) BRIDGE_HDIST cut, but restoring 512 STILL
+gives 3/7; (2) `walkable_stair` floor-existence check (`662580e69`) fails the cross-floor
+candidate pairs — though the worst are genuine same-XY open-air shortcuts it *correctly*
+rejects; (3) NO nodes sampled in the z=83..168 stair-tread band; (4) the func_plat room is a
+walled-off comp4. So C1 (lift anchor) alone won't reach 7/7. **Paused for a fix-approach
+decision** (see map_errors notes 2026-06-18).
 
 ## Resume Instructions
 Phase order: tooling (T1, T2) → diagnose (T3) → fix (T4, then T5 only if needed) →
