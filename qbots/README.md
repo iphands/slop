@@ -14,9 +14,8 @@ collision model + navigation graph parsed locally.
 > navigates, fights, and respawns; an N-bot fleet fills a server. The world model (`.bsp`
 > parse + trace + PVS + nav graph + navmesh), the combat/navigation brain, and the fleet
 > supervisor are all complete and verified live. `spawn-to-spawn` reaches **24/24** on
-> q2dm1 at the default grid spacing. The current frontier is fine-grid navigation
-> reliability (which gates hard goals like the rocket-launcher platform) — see
-> `context/nav_state_2026-06-18.md`. Full roadmap: `context/plans/SERIES.md`.
+> q2dm1 at the default grid spacing. Current work: moving-platform ride behavior + q2dm3
+> reachability (Plan 43). Full roadmap: `context/plans/SERIES.md` (Plans 01–43).
 
 ---
 
@@ -244,11 +243,13 @@ qbots/
 ## Further reading
 
 - `AGENTS.md` — big-picture architecture and the key constraint (external ≠ gamecode).
-- `context/plans/SERIES.md` — plan dependency chain + milestones (Plans 01–23).
-- `context/nav_state_2026-06-18.md` — current navigation state, what works, and the
-  next well-defined step (projection-native nav rewrite).
+- `context/plans/SERIES.md` — plan dependency chain + milestones (Plans 01–43).
+- `context/plans/43_ride_behavior_and_ranking.md` — active plan: moving-platform ride behavior + q2dm3 reach proof.
+- `context/nav_state_2026-06-18.md` — navigation quality state, what works, and next steps.
 - `context/distilled.md` (+ `context/distilled/`) — protocol/format facts and per-bot AI
-  research (handshake, netchan, frames, `clc_move` checksum, BSP/pak layout, collision/PVS).
+  research (handshake, netchan, frames, `clc_move` checksum, BSP/pak layout, collision/PVS,
+  Eraser/Quake 3 port notes).
 - `context/pitfalls.md` — bugs and gotchas, especially multi-attempt fixes.
+- `context/brain_notes.md` — running log of brain plugin decisions (Plans 23–33, 36–38).
 </content>
 </invoke>
