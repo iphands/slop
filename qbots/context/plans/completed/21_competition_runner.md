@@ -1,6 +1,6 @@
 # Plan 21 — Competition Runner
 
-> **Status**: in-progress
+> **Status**: done
 > **Created**: 2026-06-18
 > **Depends on**: Plan 09 (fleet supervisor), Plan 20 (hybrid nav modes)
 > **Goal**: A `qbots competition` subcommand that spawns N bots per nav `--mode` in one process (shared nav cache), one distinct skin per mode, and prints a per-mode frag scoreboard.

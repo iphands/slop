@@ -238,3 +238,15 @@ Gotcha: `NavigationDriver::current_edge_is_jump` keys on `(prev_waypoint → cur
 and `prev_waypoint` is `None` until the first waypoint advance — so a jump on the **first** edge
 of a fresh plan isn't reported until the bot advances off the start node. Hybrids that rely on it
 (segment) must not assume the jump flag fires immediately after `set_goal`.
+
+## Live mode competition — `qbots competition`
+Spawn N bots **per** nav `--mode` in one process to see which backend frags best:
+`qbots competition [--count N] [--modes astar,navmesh,hybrid-race] [--qport-base B]`.
+One shared `NavCache` across all modes (graph + navmesh built **once**, not per-mode — verified:
+1 `nav graph ready` / 1 `navmesh built` for a 6-mode run), one distinct skin per mode (so fleets
+are tellable apart), bots named `<mode_tag>_<i>` (`astar,navmesh,fallback,race,hier,segment`).
+Prints a per-mode K/D scoreboard every 30 s (live) and on Ctrl-C (FINAL), grouping
+`FleetStats::snapshot()` by the name prefix. Reuses the fleet supervisor with a **per-bot**
+`NavMode` (moved out of `FleetShared`). Per-mode qport blocks `base + mi*count + i` are disjoint.
+Total clamped by `[fleet].max_bots` (server maxclients headroom). In-process (no 6× nav rebuild,
+no shell-outs); a panicking bot task is isolated by tokio.
