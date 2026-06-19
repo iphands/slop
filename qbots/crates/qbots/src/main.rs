@@ -35,6 +35,8 @@ pub enum NavMode {
     HybridRace,
     /// Hybrid: navmesh picks the corridor, A* executes a sliding local sub-goal.
     HybridHier,
+    /// Hybrid: navmesh routes open space, A* owns jump-link segments only.
+    HybridSegment,
 }
 
 impl NavMode {
@@ -71,6 +73,11 @@ fn build_navigator(
             AGENT_RADIUS,
         )),
         NavMode::HybridHier => Box::new(brain::hybrid::HybridHier::new(
+            graph,
+            mesh.unwrap(),
+            AGENT_RADIUS,
+        )),
+        NavMode::HybridSegment => Box::new(brain::hybrid::HybridSegment::new(
             graph,
             mesh.unwrap(),
             AGENT_RADIUS,
