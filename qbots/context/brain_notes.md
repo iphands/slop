@@ -288,3 +288,26 @@ off from the spawn floors (only 3/7 spawns connected).
 - **Quad** still nav-isolated: its ledge is walled except a too-tall (56-72u) jump-up from the
   mid-floor and a blocked drop from directly above (a solid pillar z240-408). Its real entry is a
   specific platform-jump from the upper level — a remaining reverse-engineering task.
+
+## 2026-06-19 — Plan 35 cont.: q2dm3 QUAD nav-reachable via *10 over the lava
+
+User correction: the quad is reached by **riding the central moving platform (`*10`) over the
+lava**, not the ladder (ladders are a separate, kept mechanism). Fixes:
+- **func_train two-height ride search** (`try_add_train`): q2dm3's trains use different
+  corner→ride-surface conventions — loop trains `*3/*4` ride at the brush **top**
+  (`corner.z+size.z`, rising from the lava), but the central `*10` (origin-brushed) rides at the
+  **corner level** (`corner.z`, a stem hangs below). We try BOTH heights and keep whichever
+  finds adjacent reachable ground. → `*10` now connects its boarding ledge to the **quad ledge**;
+  **the quad is A\*-reachable from all 7 spawns** (path: 33 walk + 8 jump + 2 ride).
+- **Directional ladder climb**: ladder edges are bidirectional; the brain now drives
+  `up = (dismount.z - pos.z).signum()` (climb up OR down) and steps off within 20u of the exit
+  level — fixed a 463-frame stall where a *descending* path pressed `up` against the ladder.
+- **3-D `nearest_ground`** so a ladder top snaps to the top-floor ledge (was topping out ~40u low).
+
+**Physical reach still 0/4** for the quad: the full route is long (down-ladder DESCENT + the
+`*10` over-lava ride + 8 jump-bridges) and two execution gaps remain — (1) **ladder descent
+initiation**: the descent board node sits ~45u from the shaft on a separate ledge, so the bot
+jams at the top instead of dropping in (node should anchor AT the shaft mouth); (2) the **`*10`
+over-lava ride**: the bot falls to z12 (into the lava) instead of riding to the quad — the board
+ledge / over-lava ride timing for this specific oscillator needs the same care the railgun loop
+trains got. NAV is correct (7/7 + quad reachable); these are execution-tuning follow-ups.
