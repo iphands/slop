@@ -263,16 +263,20 @@ impl Brain for RunTesterBrain {
                     // ladder center so the 1u forward trace hits it (sets `pml.ladder`), press
                     // forward into it, and hold `up` until at the top, then step off.
                     let center = Vec3::from(info.board_ent); // ladder center (facing target)
-                    let top_z = dismount.z;
-                    if pos.z >= top_z - 32.0 {
-                        intent_forward = go(&mut mv, dismount); // at the top → step off
+                                                             // The ladder edge is bidirectional: `dismount` is the EXIT level for THIS
+                                                             // direction (above the bot when ascending, below when descending). Drive
+                                                             // toward it — `up>0` climbs, `up<0` descends (Q2 `PM_AddCurrents`).
+                    let dz = dismount.z - pos.z;
+                    tracing::trace!(pz = pos.z, dz, "ladder climb");
+                    if dz.abs() < 20.0 {
+                        intent_forward = go(&mut mv, dismount); // level with the exit → step off
                     } else {
                         let to_c = center - pos;
                         let lyaw = to_c.y.atan2(to_c.x).to_degrees();
                         mv.look_at(lyaw, 0.0); // face the ladder (so it's detected)
                         mv.move_forward(1.0); // press into the ladder
                         mv.move_side(0.0);
-                        mv.up = 1.0; // climb (upmove>0)
+                        mv.up = dz.signum(); // +1 climb up, -1 climb down
                         mv.jump = false;
                         intent_forward = 1.0;
                     }
