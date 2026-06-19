@@ -17,15 +17,14 @@
 use std::sync::Arc;
 
 use glam::Vec3;
-use world::{CollisionModel, NavGraph};
+use world::NavGraph;
 
+use crate::brains::core::{BrainContext, BrainMap};
 use crate::combat::{CombatDecision, CombatDriver};
 use crate::danger::DangerDriver;
 use crate::fsm::{BehaviorIntent, BehaviorState};
 use crate::move_ctrl::MovementIntent;
 use crate::nav::NavGoal;
-use crate::nav_mode::Navigator;
-use crate::perception::Worldview;
 use crate::recover::{Recovery, RecoveryAction};
 use crate::skill::BotSkill;
 use crate::steer::{move_from_world_dir, Steering};
@@ -77,58 +76,74 @@ impl Brain {
         }
     }
 
+    /// The current behavior state (typed). The public, FSM-agnostic label is the trait's
+    /// [`status`](crate::brains::core::Brain::status); this stays only for the unit test that
+    /// asserts the typed state.
+    #[cfg(test)]
+    pub(crate) fn behavior(&self) -> &BehaviorState {
+        &self.fsm
+    }
+}
+
+impl crate::brains::core::Brain for Brain {
     /// Supply the per-map roam goals + A* graph handle once the map has loaded.
     /// `roam_as_position` is `true` for backends (navmesh) that path to world positions
     /// rather than bare node indices.
-    pub fn set_map(
-        &mut self,
-        roam_nodes: Vec<usize>,
-        nav_graph: Arc<NavGraph>,
-        roam_as_position: bool,
-    ) {
+    fn set_map(&mut self, map: BrainMap) {
+        let BrainMap {
+            roam_nodes,
+            nav_graph,
+            roam_as_position,
+        } = map;
         self.roam_nodes = roam_nodes;
         self.nav_graph = Some(nav_graph);
         self.roam_as_position = roam_as_position;
     }
 
     /// The danger/popularity heatmap cost weights for this bot's personality — the caller
-    /// feeds these into the nav risk overlay (the overlay plumbing stays in the loop for
-    /// now; the heatmap *policy* pull-up is Plan 23).
-    pub fn heatmap_weights(&self) -> (f32, f32) {
+    /// feeds these into the nav risk overlay.
+    fn heatmap_weights(&self) -> (f32, f32) {
         self.skill.heatmap_weights()
     }
 
-    /// The current behavior state (for diagnostics / periodic logging).
-    pub fn behavior(&self) -> &BehaviorState {
-        &self.fsm
+    /// Short FSM-derived status label (replaces the old typed `behavior()` in the periodic
+    /// log; the core trait stays decoupled from `BehaviorState`).
+    fn status(&self) -> &str {
+        match self.fsm {
+            BehaviorState::Roam => "roam",
+            BehaviorState::Hunt { .. } => "hunt",
+            BehaviorState::Engage { .. } => "engage",
+            BehaviorState::Flee => "flee",
+            BehaviorState::Pickup { .. } => "pickup",
+        }
     }
 
     /// React to scoring a frag (Eraser auto-skill bump).
-    pub fn on_kill(&mut self) {
+    fn on_kill(&mut self) {
         self.skill.on_kill();
     }
 
     /// React to dying: reset the held-weapon tracking to the respawn loadout and ease the
     /// auto-skill down (Eraser).
-    pub fn on_death(&mut self) {
+    fn on_death(&mut self) {
         self.combat.on_respawn();
         self.skill.on_death();
     }
 
-    /// Decide one frame. `nav` is the injected navigator (None before the map loads).
+    /// Decide one frame. `ctx.nav` is the injected navigator (None before the map loads).
     ///
     /// This is the lifted `bot_task` decision/steering body (Plan 22): combat eval →
     /// combat→FSM override → goal selection → ideal-yaw → circle-strafe/back-up → arrive
     /// throttle → forward/side decomposition → stuck recovery → jump-edge → projectile
     /// dodge. Behavior-preserving under [`BrainConfig::default`].
-    pub fn tick(
-        &mut self,
-        view: &Worldview,
-        nav: Option<&mut dyn Navigator>,
-        cm: Option<&CollisionModel>,
-        dt: f32,
-        ticks: u32,
-    ) -> BrainOutput {
+    fn tick(&mut self, ctx: BrainContext) -> BrainOutput {
+        let BrainContext {
+            view,
+            nav,
+            cm,
+            dt,
+            ticks,
+        } = ctx;
         let jitter = (ticks as f32) * 0.1;
         let combat_dec = if self.cfg.combat_enabled {
             self.combat.evaluate(view, &self.skill, jitter, cm)

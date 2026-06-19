@@ -603,7 +603,12 @@ pub(crate) async fn bot_task(
     mode: NavMode,
 ) -> std::io::Result<()> {
     use brain::perception::Worldview;
-    use brain::{BotSkill, Brain, BrainConfig, MovementController, Navigator};
+    // `Brain as _` brings the trait's methods (`set_map`/`tick`/`status`/…) into scope for the
+    // concrete brain without shadowing the `Brain` struct name (still used for `Brain::new`).
+    use brain::brains::core::Brain as _;
+    use brain::{
+        BotSkill, Brain, BrainConfig, BrainContext, BrainMap, MovementController, Navigator,
+    };
     use client::{Conn, ConnState};
     use q2proto::Usercmd;
     use std::time::Duration;
@@ -737,11 +742,11 @@ pub(crate) async fn bot_task(
                             if let Some(map_nav) = nav_cache.get_or_build(cfg, &map) {
                                 // The navmesh backend can't path to a bare A* node index,
                                 // so it resolves roam goals to world positions instead.
-                                brain.set_map(
-                                    map_nav.roam_nodes.clone(),
-                                    Arc::clone(&map_nav.graph),
-                                    matches!(mode, NavMode::Navmesh),
-                                );
+                                brain.set_map(BrainMap {
+                                    roam_nodes: map_nav.roam_nodes.clone(),
+                                    nav_graph: Arc::clone(&map_nav.graph),
+                                    roam_as_position: matches!(mode, NavMode::Navmesh),
+                                });
                                 nav_driver = Some(build_navigator(
                                     mode,
                                     Arc::clone(&map_nav.graph),
@@ -877,13 +882,13 @@ pub(crate) async fn bot_task(
                         // goal selection, steering, stuck recovery, jump-edge, dodge. The
                         // nav driver is injected (used, never owned); the brain returns a
                         // MovementIntent + an optional weapon switch.
-                        let out = brain.tick(
-                            &view,
-                            nav_driver.as_deref_mut().map(|n| n as &mut dyn Navigator),
-                            collision.as_deref(),
+                        let out = brain.tick(BrainContext {
+                            view: &view,
+                            nav: nav_driver.as_deref_mut().map(|n| n as &mut dyn Navigator),
+                            cm: collision.as_deref(),
                             dt,
                             ticks,
-                        );
+                        });
 
                         // Request a weapon switch via `use <name>` stringcmd (Q2 ignores
                         // impulse). Queued as a reliable message; flushed on transmit.
@@ -913,9 +918,9 @@ pub(crate) async fn bot_task(
                                 state = ?conn.state(),
                                 frame = f.serverframe,
                                 ents = f.entities.len(),
-                                "origin=({:.1},{:.1},{:.1}) fsm={:?}",
+                                "origin=({:.1},{:.1},{:.1}) fsm={}",
                                 o[0], o[1], o[2],
-                                brain.behavior()
+                                brain.status()
                             );
                         }
                         None => tracing::debug!(state = ?conn.state(), "(no frame yet)"),
