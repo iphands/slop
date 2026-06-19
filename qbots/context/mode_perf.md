@@ -126,3 +126,21 @@ for m in astar navmesh hybrid-fallback hybrid-race hybrid-hier hybrid-segment; d
 done
 # Per-bot logs: ./logs/<scenario>/<ts>.<bot>.log ; each ends in a `# SUMMARY …` line.
 ```
+
+---
+
+## Q3 personality roster — live frag spread (Plan 38 T4, 2026-06-19)
+
+`qbots competition --navmodes astar --brains q3 --q3chars grunt,major,sarge,camper --count 2`
+(8 q3 bots, q2dm1, noir.lan, 160 s). The preset value sets (`q3char.rs::Q3Character::{grunt,
+major,sarge,camper}`) produce a clear, intentional hierarchy — **no float retuning needed**:
+
+| Character | kills | deaths | K/D | character read |
+|-----------|------:|-------:|----:|----------------|
+| **major**  | 5 | 1 | 5.00 | precise + efficient (high aim_skill 0.9, low firethrottle 0.2) |
+| **sarge**  | 5 | 4 | 1.25 | aggressive + mobile brawler (aggression 0.9, jumper 0.8 → trades a lot) |
+| **camper** | 1 | 1 | 1.00 | cautious, holds spots (aggression 0.2 → retreats more) |
+| **grunt**  | 0 | 7 | 0.00 | cannon fodder, sprays + dies (aim 0.4/0.3, firethrottle 0.7) |
+
+0 panics. The spread matches the design intent (Grunt dies most, Major most efficient, Sarge
+aggressive, Camper passive) → roster is distinct **and** balanced. Presets stand as-is.
