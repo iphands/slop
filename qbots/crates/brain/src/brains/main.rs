@@ -429,6 +429,9 @@ impl crate::brains::core::Brain for MainBrain {
         BrainOutput {
             intent: mv,
             weapon_request: combat_dec.weapon_request.map(|r| r.0),
+            // The live fleet ignores this; for the scenario `--brain main` A/B it reports the
+            // final forward intent.
+            intent_forward: mv.forward,
         }
     }
 }

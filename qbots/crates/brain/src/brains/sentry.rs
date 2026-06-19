@@ -42,6 +42,7 @@ impl Brain for SentryBrain {
         BrainOutput {
             intent: mv,
             weapon_request: dec.weapon_request.map(|r| r.0),
+            intent_forward: 0.0, // sentries never advance
         }
     }
 

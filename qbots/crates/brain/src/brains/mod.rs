@@ -6,11 +6,13 @@
 
 pub mod core;
 pub mod main;
+pub mod runtester;
 pub mod sentry;
 
 pub use core::{Brain, BrainConfig, BrainContext, BrainMap, BrainOutput};
 
 use crate::brains::main::MainBrain;
+use crate::brains::runtester::RuntesterBrain;
 use crate::brains::sentry::SentryBrain;
 use crate::skill::BotSkill;
 
@@ -24,6 +26,8 @@ pub enum BrainKind {
     Main,
     /// A stationary combat-only reference brain that proves the seam runs with >1 impl.
     Sentry,
+    /// The combat-free movement-scenario brain (the `spawn-to-*` pathfinder).
+    Runtester,
 }
 
 /// Short kebab-case tag for `kind` — for logging + competition bot naming (mirrors `mode_tag`).
@@ -31,6 +35,7 @@ pub fn brain_tag(kind: BrainKind) -> &'static str {
     match kind {
         BrainKind::Main => "main",
         BrainKind::Sentry => "sentry",
+        BrainKind::Runtester => "runtester",
     }
 }
 
@@ -41,6 +46,8 @@ pub fn build_brain(kind: BrainKind, skill: BotSkill, cfg: BrainConfig) -> Box<dy
         BrainKind::Main => Box::new(MainBrain::new(skill, cfg)),
         // Sentry ignores `cfg` (no nav, no goal override) — it's a proof-of-pluggability.
         BrainKind::Sentry => Box::new(SentryBrain::new(skill)),
+        // Runtester is combat-free and goal-driven per tick; it needs neither skill nor cfg.
+        BrainKind::Runtester => Box::new(RuntesterBrain::new()),
     }
 }
 
@@ -69,8 +76,13 @@ mod tests {
         use clap::ValueEnum;
         assert_eq!(BrainKind::from_str("main", true), Ok(BrainKind::Main));
         assert_eq!(BrainKind::from_str("sentry", true), Ok(BrainKind::Sentry));
+        assert_eq!(
+            BrainKind::from_str("runtester", true),
+            Ok(BrainKind::Runtester)
+        );
         assert!(BrainKind::from_str("nope", true).is_err());
         assert_eq!(brain_tag(BrainKind::Main), "main");
         assert_eq!(brain_tag(BrainKind::Sentry), "sentry");
+        assert_eq!(brain_tag(BrainKind::Runtester), "runtester");
     }
 }

@@ -76,6 +76,11 @@ pub struct BrainOutput {
     pub intent: MovementIntent,
     /// A weapon to switch to via `use <name>` this frame, if any.
     pub weapon_request: Option<Weapon>,
+    /// Forward-progress intent for the movement recorder's hindered (`H`) flag — the throttled
+    /// nav-step forward, which is `0.0` while the bot is deliberately recovering/backing off
+    /// (distinct from `intent.forward`, which encodes the actual recovery motion in those
+    /// frames). Only the scenario recorder reads it; the live fleet ignores it.
+    pub intent_forward: f32,
 }
 
 /// The plugin contract every brain implements. `Send` so a bot task can own a `Box<dyn Brain>`.
