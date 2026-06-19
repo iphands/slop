@@ -655,6 +655,12 @@ async fn preflight_map(
     map_override: Option<&str>,
     spacing: f32,
     lift_penalty: f32,
+    // When true (the movement-test harness), a not-fully-connected nav graph is a WARNING
+    // rather than a fatal abort — a scenario only needs the bot's spawn to reach its pinned
+    // goal (checked per-spawn in `run_scenario`). Lets us exercise q2dm3's quad/railgun while
+    // the broad floor-connectivity work (Plan 35) is still in progress. The fleet path passes
+    // `false` and keeps the strict gate.
+    allow_partial: bool,
 ) -> Result<String, ExitCode> {
     // 1. Resolve the map: explicit `--map` override, else autodetect via OOB `status`.
     let map = match map_override {
@@ -696,8 +702,11 @@ async fn preflight_map(
         ExitCode::FAILURE
     })?;
     if let Err(diag) = world::check_spawn_connectivity(&built) {
-        tracing::error!("{diag}");
-        crate::fatal!(map = %map, "aborting: nav connectivity bug — all spawns must be reachable");
+        if !allow_partial {
+            tracing::error!("{diag}");
+            crate::fatal!(map = %map, "aborting: nav connectivity bug — all spawns must be reachable");
+        }
+        tracing::warn!(map = %map, "nav graph not fully spawn-connected; movement-test harness continues: {diag}");
     }
     tracing::info!(map = %map, "preflight ok: server map detected and nav cache validated");
     Ok(map)
@@ -1107,7 +1116,7 @@ async fn run_scenario_cmd(
     // bot is spawned. Without this, each of the N staggered bot tasks would discover a
     // missing cache independently, surfacing the error seconds into the run. `--map` is
     // only an override (a mismatch produces garbage navigation, per AGENTS.md).
-    let map = match preflight_map(cfg, addr, map.as_deref(), spacing, lift_penalty).await {
+    let map = match preflight_map(cfg, addr, map.as_deref(), spacing, lift_penalty, true).await {
         Ok(m) => Some(m),
         Err(code) => return code,
     };
@@ -1563,16 +1572,27 @@ fn generate_map_cache(
                             continue;
                         }
                     };
-                    // Don't cache a broken graph — fail the map so the caller knows.
+                    // Don't cache a broken graph — fail the map so the caller knows. EXCEPT
+                    // under --allow-failures: still write the cache (with a loud warning) so a
+                    // partially-connected map (e.g. q2dm3 pending full Plan 35 connectivity) is
+                    // usable by the movement-test harness, which only needs spawn→goal reach.
                     if let Err(diag) = world::check_spawn_connectivity(&built) {
-                        tracing::error!(map, "{diag}");
-                        failed.fetch_add(1, Ordering::Relaxed);
-                        let reason = format!(
-                            "spawns not all reachable ({}/{} in largest component)",
-                            built.in_largest, built.total_spawns
+                        if !allow_failures {
+                            tracing::error!(map, "{diag}");
+                            failed.fetch_add(1, Ordering::Relaxed);
+                            let reason = format!(
+                                "spawns not all reachable ({}/{} in largest component)",
+                                built.in_largest, built.total_spawns
+                            );
+                            failures.lock().unwrap().push((map.clone(), reason));
+                            continue;
+                        }
+                        tracing::warn!(
+                            map,
+                            "caching partially-connected graph under --allow-failures ({}/{} spawns in largest component): {diag}",
+                            built.in_largest,
+                            built.total_spawns
                         );
-                        failures.lock().unwrap().push((map.clone(), reason));
-                        continue;
                     }
                     let fp =
                         world::Fingerprint::from_bsp(&built.bsp, world::ELEVATOR_PENALTY, spacing);
@@ -1685,6 +1705,7 @@ async fn main() -> ExitCode {
                 None,
                 world::GRID_SPACING,
                 world::ELEVATOR_PENALTY,
+                false,
             )
             .await
             {
@@ -1758,6 +1779,7 @@ async fn main() -> ExitCode {
                 None,
                 world::GRID_SPACING,
                 world::ELEVATOR_PENALTY,
+                false,
             )
             .await
             {
@@ -1891,6 +1913,7 @@ async fn main() -> ExitCode {
                 None,
                 world::GRID_SPACING,
                 world::ELEVATOR_PENALTY,
+                false,
             )
             .await
             {

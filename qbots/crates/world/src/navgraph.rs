@@ -1157,6 +1157,122 @@ impl NavGraph {
         added
     }
 
+    /// Bridge disconnected components via **vertical jump-down links** (Plan 42). Many
+    /// q2dm3 floors connect only by dropping off a higher ledge onto a lower one (same XY,
+    /// `dz` 56–256) — a move [`detect_jump_edges`] misses because its probe reaches only
+    /// `spacing*1.5` (~36u). For every near-vertical cross-component node pair (horizontal
+    /// `≤ max_hdist`, drop in `(STEP, max_fall]`) with a clear launch arc, add a
+    /// `Jump{launch_yaw}` edge from the higher node to the lower one. Repeats up to
+    /// `passes` times so a chain of floors fuses. Returns total jump edges added.
+    ///
+    /// One-directional (down) by design — Q2 lets you fall off a ledge but not jump back
+    /// up the same height; the return route is a lift/stair the graph already has. Guarded
+    /// by arc-clearance traces and a tight `max_hdist` (only genuine vertical drops), so it
+    /// cannot manufacture a horizontal false bridge.
+    pub fn bridge_components_via_jump(
+        &mut self,
+        cm: &CollisionModel,
+        max_hdist: f32,
+        max_fall: f32,
+        passes: usize,
+    ) -> usize {
+        let zero = [0.0f32; 3];
+        let mut total = 0;
+        for _ in 0..passes {
+            let n = self.nodes.len();
+            let comps = self.components();
+            if comps.len() <= 1 {
+                break;
+            }
+            let mut comp_id = vec![usize::MAX; n];
+            let mut comp_size = vec![0usize; comps.len()];
+            for (ci, c) in comps.iter().enumerate() {
+                comp_size[ci] = c.len();
+                for &node in c {
+                    comp_id[node] = ci;
+                }
+            }
+
+            let cell = max_hdist.max(1.0);
+            let key = |p: &[f32; 3]| ((p[0] / cell).floor() as i32, (p[1] / cell).floor() as i32);
+            let mut buckets: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+            for (i, p) in self.nodes.iter().enumerate() {
+                buckets.entry(key(p)).or_default().push(i);
+            }
+
+            // For each unordered cross-component pair within range, validate a jump-down from
+            // the higher node onto the lower. Parallel read-only search (mirrors bridge_pass).
+            let max_h2 = max_hdist * max_hdist;
+            let nodes = &self.nodes;
+            let comp_id_ref = &comp_id;
+            let buckets_ref = &buckets;
+            let candidates: Vec<(usize, usize, f32, f32)> = (0..n)
+                .into_par_iter()
+                .flat_map_iter(move |i| {
+                    let a = nodes[i];
+                    let (kx, ky) = key(&a);
+                    let mut local: Vec<(usize, usize, f32, f32)> = Vec::new();
+                    for dx in -1..=1 {
+                        for dy in -1..=1 {
+                            let Some(cellnodes) = buckets_ref.get(&(kx + dx, ky + dy)) else {
+                                continue;
+                            };
+                            for &j in cellnodes {
+                                if j <= i || comp_id_ref[j] == comp_id_ref[i] {
+                                    continue;
+                                }
+                                let b = nodes[j];
+                                let h2 = (b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2);
+                                if h2 > max_h2 {
+                                    continue;
+                                }
+                                // Orient: hi = higher node, lo = lower.
+                                let (hi, lo) = if a[2] >= b[2] { (i, j) } else { (j, i) };
+                                if let Some((cost, yaw)) =
+                                    jump_down_link(nodes, cm, &zero, max_fall, hi, lo)
+                                {
+                                    local.push((hi, lo, cost, yaw));
+                                }
+                            }
+                        }
+                    }
+                    local.into_iter()
+                })
+                .collect();
+
+            // Apply: shortest-drop candidates first, only if still cross-component (union-find
+            // by re-checking comp membership as we add — keeps it a real bridge, avoids dupes).
+            let mut cand = candidates;
+            cand.sort_by(|x, y| x.2.partial_cmp(&y.2).unwrap());
+            let mut uf = UnionFind::new(n);
+            for (ci, c) in comps.iter().enumerate() {
+                let _ = ci;
+                let mut it = c.iter();
+                if let Some(&first) = it.next() {
+                    for &node in it {
+                        uf.union(first, node);
+                    }
+                }
+            }
+            let mut added = 0;
+            for (hi, lo, cost, yaw) in cand {
+                if uf.find(hi) == uf.find(lo) {
+                    continue; // already connected (this pass) → skip redundant
+                }
+                uf.union(hi, lo);
+                self.adj[hi].push((lo, cost));
+                self.jump_edges.insert((hi, lo));
+                self.jump_yaws.insert((hi, lo), yaw);
+                added += 1;
+            }
+            total += added;
+            if added == 0 {
+                break;
+            }
+        }
+        total
+    }
+
     /// The **play component**: the connected component containing the most DM spawn
     /// points. This is the area the game actually happens in — and the right set for
     /// bots to roam. It is NOT necessarily the component with the most *nodes*: large
@@ -1731,6 +1847,39 @@ fn walkable_stair_link_orig(cm: &CollisionModel, a: [f32; 3], b: [f32; 3]) -> bo
     }
     let (lower, upper) = if dz > 0.0 { (a, b) } else { (b, a) };
     walkable_stair(cm, lower, upper)
+}
+
+/// Validate a jump-down link from higher node `hi` onto lower node `lo` (Plan 42,
+/// [`NavGraph::bridge_components_via_jump`]). Requires the drop `hi.z - lo.z` to lie in
+/// `(STEP, max_fall]` and the launch arc to be clear: the bot moves horizontally off the
+/// `hi` ledge to above `lo`, then falls onto it. Returns `(cost, launch_yaw)` if valid.
+fn jump_down_link(
+    nodes: &[[f32; 3]],
+    cm: &CollisionModel,
+    zero: &[f32; 3],
+    max_fall: f32,
+    hi: usize,
+    lo: usize,
+) -> Option<(f32, f32)> {
+    let hp = nodes[hi];
+    let lp = nodes[lo];
+    let drop = hp[2] - lp[2];
+    if drop <= STEP || drop > max_fall {
+        return None;
+    }
+    // Horizontal launch over the gap, at the launch height, to directly above the landing.
+    let over = [lp[0], lp[1], hp[2]];
+    let t1 = cm.trace(&hp, &over, zero, zero, MASK_SOLID);
+    if t1.startsolid || t1.fraction < 0.95 {
+        return None; // wall between the ledge and the drop point
+    }
+    // Fall straight down onto the landing node.
+    let t2 = cm.trace(&over, &lp, zero, zero, MASK_SOLID);
+    if t2.startsolid || t2.fraction < 0.95 {
+        return None; // overhang / ceiling blocks the fall
+    }
+    let yaw = (lp[1] - hp[1]).atan2(lp[0] - hp[0]).to_degrees();
+    Some((dist(&hp, &lp), yaw))
 }
 
 fn dist(a: &[f32; 3], b: &[f32; 3]) -> f32 {

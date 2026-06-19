@@ -154,10 +154,21 @@ pub fn generate_map_nav(
     let mut graph = NavGraph::generate(&cm, bounds, spacing);
     let seeded = graph.seed_spawns(&cm, &spawn_origins);
     add_elevator_edges(&mut graph, &cm, &bsp, lift_penalty);
+    add_train_edges(&mut graph, &cm, &bsp);
     graph.bridge_components(&cm, BRIDGE_HDIST);
     let pruned = graph.prune_long_blocked_edges(&cm, PRUNE_MAX_HD);
     tracing::info!(map, pruned, "pruned long hull-blocked false edges");
     let added_jumps = graph.detect_jump_edges(&cm, JUMP_SPACING);
+    // Fuse vertically-stacked floor components that connect only by a drop-off (q2dm3's
+    // floors + the quad ledge) — a near-vertical jump-down detect_jump_edges' short probe
+    // misses (Plan 42). Tight horizontal radius so only genuine vertical drops link.
+    let jump_bridged =
+        graph.bridge_components_via_jump(&cm, JUMP_BRIDGE_HDIST, JUMP_BRIDGE_MAX_FALL, 6);
+    tracing::info!(
+        map,
+        jump_bridged,
+        "bridged stacked floors via jump-down links"
+    );
     let (in_largest, total_spawns) = graph.spawns_in_largest_component(&spawn_origins);
     let largest = graph.largest_spawn_component(&spawn_origins);
 
@@ -218,6 +229,162 @@ fn entity_model<'a>(bsp: &'a Bsp, entity: &BspEntity) -> Option<&'a crate::bsp::
         .and_then(|s| s.strip_prefix('*'))
         .and_then(|s| s.trim().parse().ok())?;
     bsp.models.get(model_idx)
+}
+
+/// Resolve an entity's `"model" "*N"` field to the inline-model index `N` (Plan 42).
+fn entity_model_index(entity: &BspEntity) -> Option<u32> {
+    entity
+        .fields
+        .get("model")
+        .and_then(|s| s.strip_prefix('*'))
+        .and_then(|s| s.trim().parse().ok())
+}
+
+/// Horizontal radius (units) within which a moving-platform path endpoint connects to
+/// existing walkable nodes (the board / dismount ledges). Plan 42. In the cache via VERSION.
+pub const TRAIN_BOARD_RADIUS: f32 = 112.0;
+/// Max horizontal offset (units) for a vertical jump-down floor bridge
+/// ([`NavGraph::bridge_components_via_jump`], Plan 42). Tight — only near-vertical drops
+/// between stacked floors link, never a horizontal false bridge. In the cache via VERSION.
+pub const JUMP_BRIDGE_HDIST: f32 = 80.0;
+/// Max fall height (units) for a vertical jump-down floor bridge (Plan 42). q2dm3's largest
+/// stacked-floor drop (mid floor → lower) is ~144; the quad ledge drop is larger. 256 covers
+/// them while staying within a survivable Q2 fall. In the cache via VERSION.
+pub const JUMP_BRIDGE_MAX_FALL: f32 = 256.0;
+
+/// Follow a `func_train`'s `path_corner` chain from its `target`, returning corner origins
+/// in path order. Stops when the chain loops back on itself or a corner is missing; caps
+/// iterations so a malformed map can't loop forever. (`g_func.c` train_next, `target` →
+/// `targetname` links; the corner origin is the train's MIN-corner destination — see
+/// `try_add_train`.)
+fn train_corners(bsp: &Bsp, entity: &BspEntity) -> Vec<[f32; 3]> {
+    use std::collections::{HashMap, HashSet};
+    let mut by_name: HashMap<&str, &BspEntity> = HashMap::new();
+    for e in &bsp.entities {
+        if e.classname == "path_corner" {
+            if let Some(tn) = e.fields.get("targetname") {
+                by_name.insert(tn.as_str(), e);
+            }
+        }
+    }
+    let mut corners = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut cur = entity.fields.get("target").map(String::as_str);
+    while let Some(name) = cur {
+        if !seen.insert(name.to_string()) {
+            break; // loop closed
+        }
+        let Some(c) = by_name.get(name) else { break };
+        if let Some(o) = c.origin() {
+            corners.push(o);
+        }
+        cur = c.fields.get("target").map(String::as_str);
+        if corners.len() > 64 {
+            break;
+        }
+    }
+    corners
+}
+
+/// Add `EdgeKind::Ride` edges for every `func_train` moving platform (Plan 42).
+///
+/// A `func_train` carries a player along a `path_corner` loop. For nav we place a
+/// platform-top "stand" node at each corner and link consecutive corners with ride edges
+/// (the carry), then wire each stand node to nearby walkable ground (the board / dismount
+/// ledges). The standable top is derived from Q2's positioning rule: `train_next` sets the
+/// train so its **min corner** sits at the path_corner (`g_func.c:2310`, "targets origin
+/// specifies the min point of the train"), so when the train rests at corner `C` the
+/// brush spans `[C, C + size]` and its walkable top is `C.z + size.z`; the bot origin is
+/// that `+ 24` (hull mins.z = −24), and the XY center is `C.xy + size.xy/2`.
+///
+/// Returns the number of edges added (ride + board/dismount walk edges).
+pub fn add_train_edges(graph: &mut NavGraph, cm: &CollisionModel, bsp: &Bsp) -> usize {
+    let mut added = 0;
+    for entity in bsp.find_class("func_train") {
+        added += try_add_train(graph, cm, bsp, entity).unwrap_or(0);
+    }
+    added
+}
+
+fn try_add_train(
+    graph: &mut NavGraph,
+    cm: &CollisionModel,
+    bsp: &Bsp,
+    entity: &BspEntity,
+) -> Option<usize> {
+    use crate::navgraph::RideInfo;
+    let model = entity_model(bsp, entity)?;
+    let model_index = entity_model_index(entity)?;
+    let size = [
+        model.maxs[0] - model.mins[0],
+        model.maxs[1] - model.mins[1],
+        model.maxs[2] - model.mins[2],
+    ];
+    let corners = train_corners(bsp, entity);
+    if corners.len() < 2 {
+        return None;
+    }
+
+    // Platform-top standable bot-origin per corner (min-corner rule; see doc above).
+    let stand: Vec<[f32; 3]> = corners
+        .iter()
+        .map(|c| {
+            [
+                c[0] + size[0] / 2.0,
+                c[1] + size[1] / 2.0,
+                c[2] + size[2] + 24.0,
+            ]
+        })
+        .collect();
+
+    // One nav node per corner, each wired to nearby walkable ground (board/dismount).
+    let mut nodes = Vec::with_capacity(stand.len());
+    let mut local_edges = 0;
+    for s in &stand {
+        let idx = graph.add_node(*s);
+        local_edges += graph.connect_node_to_nearby(cm, idx, TRAIN_BOARD_RADIUS);
+        nodes.push(idx);
+    }
+
+    // Ride edges between consecutive corners (the train carries the bot). A 2-corner train
+    // oscillates A↔B (one undirected edge); a longer chain is a closed loop (wrap last→first).
+    let segs = nodes.len();
+    let mut rides = 0;
+    let limit = if segs == 2 { 1 } else { segs };
+    for i in 0..limit {
+        let j = (i + 1) % segs;
+        let cost = dist3(stand[i], stand[j]);
+        graph.add_ride_edge(
+            nodes[i],
+            nodes[j],
+            cost,
+            RideInfo {
+                board: stand[i],
+                far: stand[j],
+                dismount: stand[j],
+                model_index,
+            },
+        );
+        rides += 1;
+    }
+
+    tracing::info!(
+        model = model_index,
+        corners = corners.len(),
+        ride_edges = rides,
+        local_edges,
+        first_stand = ?[stand[0][0] as i32, stand[0][1] as i32, stand[0][2] as i32],
+        "func_train ride edges added"
+    );
+    Some(rides + local_edges)
+}
+
+/// Euclidean distance between two world points.
+fn dist3(a: [f32; 3], b: [f32; 3]) -> f32 {
+    let dx = a[0] - b[0];
+    let dy = a[1] - b[1];
+    let dz = a[2] - b[2];
+    (dx * dx + dy * dy + dz * dz).sqrt()
 }
 
 /// Add a two-level vertical lift between top-surface world z-values `z_hi` and `z_lo`
