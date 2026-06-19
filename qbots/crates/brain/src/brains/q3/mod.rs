@@ -16,10 +16,8 @@
 //! Personality comes from [`Q3Character`] (Plan 36). Navigation is **injected** per tick (same
 //! as `MainBrain`); the brain never owns the nav graph.
 
-// The Q3 aim/fire model (T4); wired into the battle nodes by T5. `move` (circle-strafe) lands
-// in T5. `dead_code` until then so the unused-but-tested aim fns don't warn the lib build.
-#[allow(dead_code)]
 mod aim;
+mod r#move;
 
 use std::sync::Arc;
 
@@ -68,8 +66,7 @@ impl Q3Node {
 }
 
 /// Max node switches per tick before we clamp + log (`MAX_NODESWITCHES`, distilled §1). A higher
-/// count means the FSM is thrashing — a safety net, not normal operation. (Used by T2's FSM.)
-#[allow(dead_code)]
+/// count means the FSM is thrashing — a safety net, not normal operation.
 const MAX_NODESWITCHES: u32 = 50;
 
 /// Is `to_target` (a non-unit direction *from* the viewer) inside a horizontal FOV cone of total
@@ -88,9 +85,6 @@ fn fov_cone(forward: Vec3, to_target: Vec3, fov_deg: f32) -> bool {
 
 /// The Quake 3-derived decision brain. Owns the node FSM + Q3 character + combat sub-state;
 /// the `Navigator` is injected each [`tick`](Brain::tick).
-// Several combat sub-state fields are populated as the FSM + aim/fire model land across T2–T5;
-// the `dead_code` allow is removed once they are all live (T5).
-#[allow(dead_code)]
 pub struct Q3Brain {
     /// The personality (Plan 36) — drives aggression bias, aim, alertness, dodge, firethrottle.
     ch: Q3Character,
@@ -146,9 +140,13 @@ pub struct Q3Brain {
 
     // ── weapon (optimistic held-weapon tracking for `use` requests) ────────────────────
     held_weapon: weapons::Weapon,
+    /// Time (seconds) of the last weapon switch — gates a 0.1 s mid-change fire lockout.
+    weapon_switch_time: f32,
 
     /// Enemy velocity memory for the Q3 aim direction-change penalty (T4).
     aim: aim::AimState,
+    /// Circle-strafe direction + flip timer (T5).
+    strafe: r#move::StrafeState,
 
     /// Deterministic per-bot jitter seed mixer (aim error / strafe-flip / dodge rolls).
     rng_state: u32,
@@ -185,14 +183,15 @@ impl Q3Brain {
             next_jump_time: 0.0,
             next_crouch_time: 0.0,
             held_weapon: weapons::Weapon::Blaster,
+            weapon_switch_time: f32::NEG_INFINITY,
             aim: aim::AimState::new(),
+            strafe: r#move::StrafeState::new(),
             rng_state: 0x9e3779b9,
         }
     }
 
     /// A cheap deterministic `[0,1)` roll (per-bot LCG) for the random Q3 cadences (strafe flip,
-    /// dodge chance, fire-throttle window) — keeps behavior repeatable in tests. (Used by T5.)
-    #[allow(dead_code)]
+    /// dodge chance, fire-throttle window) — keeps behavior repeatable in tests.
     fn roll(&mut self) -> f32 {
         self.rng_state = self
             .rng_state
@@ -587,6 +586,172 @@ impl Q3Brain {
             }
         }
     }
+
+    /// Combat tick for a battle node with a **visible** enemy. Runs `BotAttackMove`,
+    /// `BotAimAtEnemy`, and `BotCheckAttack` (distilled §5/§6): picks a weapon, aims with the Q3
+    /// error model, decides fire (reaction gate, fire-throttle, self-preservation), and
+    /// circle-strafes. `retreat` biases the movement backward (back away while still shooting if
+    /// `attack_skill` allows). Returns a `use <weapon>` request if the desired weapon changed.
+    fn combat_drive(
+        &mut self,
+        view: &crate::perception::Worldview,
+        cm: Option<&world::CollisionModel>,
+        pos: Vec3,
+        dt: f32,
+        retreat: bool,
+        mv: &mut MovementIntent,
+    ) -> Option<weapons::Weapon> {
+        let n = self.enemy?;
+        let e = view.entities().find(|x| x.entity_number == n)?;
+        let enemy_pos = e.origin;
+        let enemy_vel = e.velocity;
+        let to = enemy_pos - pos;
+        let dist = to.length().max(1.0);
+        let dir = Vec3::new(to.x, to.y, 0.0).normalize_or_zero();
+
+        // Weapon selection (optimistic; the server grants only owned weapons).
+        let desired = weapons::select_best_weapon(self.held_weapon, dist);
+        let weapon_request = if desired != self.held_weapon {
+            self.held_weapon = desired;
+            self.weapon_switch_time = self.time;
+            Some(desired)
+        } else {
+            None
+        };
+        let weapon = self.held_weapon;
+
+        // Aim (Q3 per-weapon accuracy + reaction gate + error model).
+        let eye = Vec3::from(crate::los::eye_origin(pos.into()));
+        let sighted = self
+            .enemy_first_seen
+            .map(|t| self.time - t)
+            .unwrap_or(0.0)
+            .max(0.0);
+        let mut rng =
+            crate::aim::JitterRng::new((self.time * 1000.0) as u32 ^ self.rng_state ^ (n as u32));
+        let aimres = aim::aim_at_enemy(
+            &mut self.aim,
+            &aim::AimInput {
+                ch: &self.ch,
+                weapon,
+                shooter_eye: eye,
+                enemy_origin: enemy_pos,
+                enemy_vel,
+                sighted_secs: sighted,
+                visible: true,
+                time: self.time,
+                cm,
+            },
+            &mut rng,
+        );
+        // Snap the view to the aim (the engine snaps); keep steering's integrator in sync.
+        self.steering.set_view_yaw(aimres.yaw);
+        mv.look_at(aimres.yaw, aimres.pitch);
+
+        // Fire decision.
+        if self.check_attack(weapon, dist, eye, pos, enemy_pos, aimres, cm) {
+            mv.attack();
+        }
+
+        // Movement: circle-strafe (Q3 `BotAttackMove`), biased backward while retreating.
+        let flip = self.roll();
+        let backup = self.roll();
+        let mut world =
+            r#move::attack_move(&self.ch, dist, dir, &mut self.strafe, dt, flip, backup);
+        if retreat {
+            world = (world - dir).normalize_or_zero();
+        }
+        let (fwd, side) = move_from_world_dir(world, aimres.yaw, false);
+        mv.move_forward(fwd);
+        mv.move_side(side);
+
+        // Jump / crouch dodge with 1 s cooldowns (CROUCHER is best-effort — see brain_notes).
+        if self.roll() < self.ch.jumper && self.time >= self.next_jump_time {
+            mv.jump();
+            self.next_jump_time = self.time + 1.0;
+        }
+        if self.roll() < self.ch.croucher && self.time >= self.next_crouch_time {
+            mv.crouch = true;
+            self.next_crouch_time = self.time + 1.0;
+        }
+
+        weapon_request
+    }
+
+    /// `BotCheckAttack` (`ai_dmq3.c:3555`, distilled §6): fire iff the reaction gate, the
+    /// weapon-change lockout, the "facing the aim target" FOV gate, the LOS trace, the range
+    /// sanity, the **self-preservation** splash abort, and the **fire-throttle duty cycle** all
+    /// permit it.
+    #[allow(clippy::too_many_arguments)] // a cohesive fire-decision bundle; splitting hurts clarity
+    fn check_attack(
+        &mut self,
+        weapon: weapons::Weapon,
+        dist: f32,
+        eye: Vec3,
+        self_pos: Vec3,
+        enemy_pos: Vec3,
+        aim: aim::AimResult,
+        cm: Option<&world::CollisionModel>,
+    ) -> bool {
+        // Reaction-time sight gate (all skills) + the high-skill aim-not-ready gate.
+        let sighted = self.enemy_first_seen.map(|t| self.time - t).unwrap_or(0.0);
+        if sighted < self.ch.reaction_time || !aim.ready {
+            return false;
+        }
+        // Don't fire mid weapon-change (0.1 s).
+        if self.time - self.weapon_switch_time < 0.1 {
+            return false;
+        }
+        // Must be roughly looking at the aim target (120° if close, else 50°).
+        let fov = if dist < 100.0 { 120.0 } else { 50.0 };
+        if !fov_cone(
+            crate::steer::view_forward(aim.yaw),
+            enemy_pos - self_pos,
+            fov,
+        ) {
+            return false;
+        }
+        // LOS unblocked.
+        if let Some(cm) = cm {
+            if !crate::los::has_los_player(cm, eye.into(), enemy_pos.into()) {
+                return false;
+            }
+        }
+        // Range sanity.
+        if dist < weapon.min_safe_distance() {
+            return false;
+        }
+        if weapon == weapons::Weapon::Blaster && dist > weapon.effective_range() {
+            return false;
+        }
+        // Self-preservation: don't rocket our own feet near a wall.
+        if let Some(cm) = cm {
+            if self.ch.self_preservation > 0.3
+                && aim::would_self_splash(cm, eye, self_pos, enemy_pos, weapon)
+            {
+                return false;
+            }
+        }
+        // Fire-throttle duty cycle.
+        self.throttle_allows()
+    }
+
+    /// The fire-throttle duty cycle (`FIRETHROTTLE`, distilled §6.3): maintain alternating
+    /// shoot/wait windows whose lengths come from the characteristic — humanizes sustained fire.
+    /// `random() > throttle` → a `throttle`-second *wait*; else a `(1−throttle)`-second *shoot*.
+    fn throttle_allows(&mut self) -> bool {
+        if self.time >= self.throttle_until {
+            let ft = self.ch.firethrottle.clamp(0.0, 1.0);
+            if self.roll() > ft {
+                self.throttle_firing = false;
+                self.throttle_until = self.time + ft.max(0.05);
+            } else {
+                self.throttle_firing = true;
+                self.throttle_until = self.time + (1.0 - ft).max(0.05);
+            }
+        }
+        self.throttle_firing
+    }
 }
 
 impl Brain for Q3Brain {
@@ -645,24 +810,42 @@ impl Brain for Q3Brain {
         // ── 2. Node FSM transitions (aggression-gated) ──
         self.run_fsm(view, wants_retreat, wants_chase, enemy_visible);
 
-        // ── 3. Drive movement per node (combat aim/fire layered in T4–T5) ──
+        // ── 3. Drive movement per node: combat (visible enemy) vs path-following ──
         let mut mv = MovementIntent::new();
+        let mut weapon_request = None;
         if let Some(nav) = nav {
-            let goal = if let Some(g) = goal_override.clone() {
-                g
+            if let Some(g) = goal_override.clone() {
+                // Scenario / pinned-goal override always path-follows.
+                self.locomote(nav, cm, pos, g, dt, &mut mv);
             } else {
                 match self.node {
-                    Q3Node::SeekLtg => self.roam_goal(view, ticks, pos),
-                    Q3Node::SeekNbg | Q3Node::BattleNbg => {
-                        items::best_item_goal(view, &self.item_skill)
-                            .map(|(p, _)| NavGoal::Position(p))
-                            .unwrap_or_else(|| self.roam_goal(view, ticks, pos))
+                    Q3Node::BattleFight if enemy_visible => {
+                        // Keep nav warm (a path to the enemy) for an instant chase if LOS drops.
+                        nav.update(pos, None);
+                        nav.set_goal(self.battle_goal(view), pos);
+                        weapon_request = self.combat_drive(view, cm, pos, dt, false, &mut mv);
                     }
-                    Q3Node::BattleFight | Q3Node::BattleChase => self.battle_goal(view),
-                    Q3Node::BattleRetreat => self.retreat_goal(view),
+                    Q3Node::BattleRetreat if enemy_visible => {
+                        nav.update(pos, None);
+                        nav.set_goal(self.retreat_goal(view), pos);
+                        weapon_request = self.combat_drive(view, cm, pos, dt, true, &mut mv);
+                    }
+                    other => {
+                        let goal = match other {
+                            Q3Node::SeekNbg | Q3Node::BattleNbg => {
+                                items::best_item_goal(view, &self.item_skill)
+                                    .map(|(p, _)| NavGoal::Position(p))
+                                    .unwrap_or_else(|| self.roam_goal(view, ticks, pos))
+                            }
+                            // Chase / lost-sight fight / retreat → path toward the goal.
+                            Q3Node::BattleFight | Q3Node::BattleChase => self.battle_goal(view),
+                            Q3Node::BattleRetreat => self.retreat_goal(view),
+                            _ => self.roam_goal(view, ticks, pos),
+                        };
+                        self.locomote(nav, cm, pos, goal, dt, &mut mv);
+                    }
                 }
-            };
-            self.locomote(nav, cm, pos, goal, dt, &mut mv);
+            }
         } else {
             // No nav graph yet — walk forward so the bot isn't a statue.
             mv.move_forward(1.0);
@@ -672,7 +855,7 @@ impl Brain for Q3Brain {
 
         BrainOutput {
             intent: mv,
-            weapon_request: None,
+            weapon_request,
             intent_forward: mv.forward,
         }
     }
