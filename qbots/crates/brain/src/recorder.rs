@@ -32,7 +32,7 @@
 //! `face_delta` `|yaw − move_yaw|` (0 when still); `wp` current waypoint index
 //! (`-` if none); `wpd` 3D distance to it (`-`); `flags` a char run — `B` wall
 //! bump, `W` wrong turn, `H` hindered, `A` airborne, `P` phantom-target (combat with
-//! no LOS), `R` recovery-active (Plan 13), `.` none.
+//! no LOS), `R` recovery-active (Plan 13), `S` swimming (waterlevel ≥ 2, Plan 40), `.` none.
 //! The `SUMMARY` line is the headline: it is what Plans 11–14 must beat.
 
 use std::path::Path;
@@ -95,6 +95,8 @@ pub struct FrameRecord {
     pub phantom_target: bool,
     /// True when the recovery controller issued a non-None action this tick (Plan 13 T4).
     pub recovery: bool,
+    /// True when the bot is waist-deep or deeper in water (`waterlevel >= 2`, Plan 40).
+    pub swimming: bool,
 }
 
 /// Raw inputs the tick gathers for one frame; the recorder derives everything in
@@ -120,6 +122,8 @@ pub struct Sample {
     pub phantom_target: bool,
     /// True when the recovery controller issued a non-None action this tick (Plan 13 T4).
     pub recovery: bool,
+    /// True when the bot is waist-deep or deeper in water (`waterlevel >= 2`, Plan 40).
+    pub swimming: bool,
 }
 
 /// Geometry probe for the wall-bump detector. Production wraps
@@ -337,6 +341,7 @@ impl MovementRecorder {
             grounded: s.grounded,
             phantom_target: s.phantom_target,
             recovery: s.recovery,
+            swimming: s.swimming,
         });
 
         self.prev_origin = Some(s.origin);
@@ -436,7 +441,7 @@ impl MovementRecorder {
 }
 
 /// Per-frame flag string: `B`=wall_bump, `W`=wrong_turn, `H`=hindered,
-/// `A`=airborne, `P`=phantom_target, `R`=recovery_active, `.`=none.
+/// `A`=airborne, `P`=phantom_target, `R`=recovery_active, `S`=swimming, `.`=none.
 fn flags(f: &FrameRecord) -> String {
     let mut s = String::new();
     if f.wall_bump.is_some() {
@@ -456,6 +461,9 @@ fn flags(f: &FrameRecord) -> String {
     }
     if f.recovery {
         s.push('R');
+    }
+    if f.swimming {
+        s.push('S');
     }
     if s.is_empty() {
         s.push('.');
@@ -565,6 +573,7 @@ mod tests {
                 intent_forward: 1.0,
                 phantom_target: false,
                 recovery: false,
+                swimming: false,
             });
         }
         let s = r.summary();
@@ -604,6 +613,7 @@ mod tests {
                 intent_forward: 1.0,
                 phantom_target: false,
                 recovery: false,
+                swimming: false,
             });
         }
         let s = r.summary();
@@ -641,6 +651,7 @@ mod tests {
                 intent_forward: 1.0,
                 phantom_target: false,
                 recovery: false,
+                swimming: false,
             });
         }
         let s = r.summary();
@@ -670,6 +681,7 @@ mod tests {
             intent_forward: 1.0,
             phantom_target: false,
             recovery: false,
+            swimming: false,
         });
         r.sample(Sample {
             t_secs: 0.1,
@@ -684,6 +696,7 @@ mod tests {
             intent_forward: 1.0,
             phantom_target: false,
             recovery: false,
+            swimming: false,
         });
         let s = r.summary();
         assert_eq!(
@@ -712,6 +725,7 @@ mod tests {
                 intent_forward: 1.0,
                 phantom_target: false,
                 recovery: false,
+                swimming: false,
             });
             let d = r.summary().distance;
             assert!(d >= prev, "distance must not decrease");
@@ -737,6 +751,7 @@ mod tests {
             intent_forward: 1.0,
             phantom_target: false,
             recovery: false,
+            swimming: false,
         });
         let dir = std::env::temp_dir().join(format!("qbots-rec-test-{}", std::process::id()));
         let path = dir.join("run.qb0.log");
@@ -774,6 +789,7 @@ mod tests {
             intent_forward: 1.0,
             phantom_target: false,
             recovery: false,
+            swimming: false,
         });
         let dir = std::env::temp_dir().join(format!("qbots-schema-{}", std::process::id()));
         let path = dir.join("run.qb0.log");

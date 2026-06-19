@@ -433,6 +433,9 @@ pub async fn run_scenario(
                             );
                             let vel = self_st.velocity;
                             let grounded = self_st.flags & PMF_ON_GROUND != 0;
+                            // Recompute waterlevel ourselves (not on the wire) for the `S` flag.
+                            let swimming =
+                                brain::water::is_swimming(brain::water::water_level(&cm, pos));
                             if let Some(rec) = recorder.as_mut() {
                                 rec.sample(Sample {
                                     t_secs: elapsed,
@@ -447,6 +450,7 @@ pub async fn run_scenario(
                                     intent_forward,
                                     phantom_target: false, // scenario disables combat
                                     recovery: false,        // no recovery in scenario mode
+                                    swimming,
                                 });
                             }
 
