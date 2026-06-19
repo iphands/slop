@@ -210,14 +210,9 @@ async fn remove_favorite(
 }
 
 async fn get_status(State(state): State<SharedState>) -> Result<Json<StatusResponse>, StatusCode> {
-    // Get base status (map, players)
+    // Get base status (map, players, and any settings present in the serverinfo line).
     let base_output = state.rcon_client.execute("status").await;
     tracing::trace!("Raw status output (first 800 chars): {}", &base_output.as_ref().unwrap_or(&String::new()).chars().take(800).collect::<String>());
-
-    // Get server settings separately
-    let dmflags_output = state.rcon_client.execute("dmflags").await;
-    let timelimit_output = state.rcon_client.execute("timelimit").await;
-    let fraglimit_output = state.rcon_client.execute("fraglimit").await;
 
     // Parse base status
     let mut status = match base_output {
@@ -236,20 +231,21 @@ async fn get_status(State(state): State<SharedState>) -> Result<Json<StatusRespo
         }
     };
 
-    // Parse server settings
-    if let Ok(output) = dmflags_output {
-        if let Some(value) = parse_rcon_int(&output, "dmflags") {
-            status.dmflags = Some(value);
-        }
-    }
-    if let Ok(output) = timelimit_output {
-        if let Some(value) = parse_rcon_int(&output, "timelimit") {
-            status.timelimit = Some(value);
-        }
-    }
-    if let Ok(output) = fraglimit_output {
-        if let Some(value) = parse_rcon_int(&output, "fraglimit") {
-            status.fraglimit = Some(value);
+    // Only fall back to a per-cvar rcon query for settings that the serverinfo line
+    // did not already provide. This keeps the common case to a single round-trip and
+    // avoids tripping the server's rcon flood protection (which replies "Bad
+    // rcon_password" to every command once it throttles). `maxclients` typically is
+    // not in the serverinfo line, so it is usually the only extra query.
+    for (cvar, slot) in [
+        ("dmflags", &mut status.dmflags),
+        ("timelimit", &mut status.timelimit),
+        ("fraglimit", &mut status.fraglimit),
+        ("maxclients", &mut status.maxclients),
+    ] {
+        if slot.is_none() {
+            if let Ok(output) = state.rcon_client.execute(cvar).await {
+                *slot = parse_rcon_int(&output, cvar);
+            }
         }
     }
 

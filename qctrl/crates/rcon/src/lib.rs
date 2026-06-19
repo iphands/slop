@@ -85,14 +85,17 @@ impl RconClient {
         socket.send(&packet).await?;
 
         let mut buf = [0u8; 4096];
-        timeout(Duration::from_secs(5), async {
+        let n = timeout(Duration::from_secs(5), async {
             socket.recv(&mut buf).await
         })
         .await
         .map_err(|_| RconError::Timeout)?
         .map_err(|e| RconError::InvalidResponse(e.to_string()))?;
 
-        let response = String::from_utf8_lossy(&buf[4..]).to_string();
+        // Q2 connectionless packets are prefixed with 0xFFFFFFFF (4 bytes). Only decode
+        // the bytes actually received, not the whole zero-padded buffer.
+        let payload = buf.get(4..n).unwrap_or(&[]);
+        let response = String::from_utf8_lossy(payload).to_string();
         // Strip leading "print\n" if present (added by SV_OobPrintf macro)
         let response = response.strip_prefix("print\n").unwrap_or(&response);
         Ok(response.trim().to_string())

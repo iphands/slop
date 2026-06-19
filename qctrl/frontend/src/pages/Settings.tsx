@@ -1,8 +1,16 @@
-import { useMutation } from '@tanstack/react-query';
-import { executeRcon } from '../lib/api';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { executeRcon, getStatus } from '../lib/api';
 import { Section } from '../components/Section';
 
 export function Settings() {
+  // Load current server values so the form reflects the live state instead of
+  // showing stale hardcoded defaults.
+  const { data: status } = useQuery({
+    queryKey: ['status'],
+    queryFn: getStatus,
+    refetchInterval: 10000,
+  });
+
   const { mutate: saveConfig, isPending } = useMutation({
     mutationFn: async (settings: Record<string, string>) => {
       const results = [];
@@ -68,9 +76,10 @@ export function Settings() {
           <div>
             <label className="block text-sm font-medium mb-1">Max Clients</label>
             <input
+              key={`maxclients-${status?.maxclients ?? ''}`}
               type="number"
               name="maxclients"
-              defaultValue="25"
+              defaultValue={status?.maxclients ?? 25}
               min={1}
               max={256}
               className="w-full p-2 bg-gray-700 border border-gray-600 rounded"
@@ -80,9 +89,10 @@ export function Settings() {
           <div>
             <label className="block text-sm font-medium mb-1">Time Limit (min)</label>
             <input
+              key={`timelimit-${status?.timelimit ?? ''}`}
               type="number"
               name="timelimit"
-              defaultValue="20"
+              defaultValue={status?.timelimit ?? 20}
               min={0}
               max={999}
               className="w-full p-2 bg-gray-700 border border-gray-600 rounded"
@@ -92,9 +102,10 @@ export function Settings() {
           <div>
             <label className="block text-sm font-medium mb-1">Frag Limit</label>
             <input
+              key={`fraglimit-${status?.fraglimit ?? ''}`}
               type="number"
               name="fraglimit"
-              defaultValue="25"
+              defaultValue={status?.fraglimit ?? 25}
               min={0}
               max={999}
               className="w-full p-2 bg-gray-700 border border-gray-600 rounded"
