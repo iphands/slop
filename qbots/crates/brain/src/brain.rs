@@ -29,40 +29,12 @@ use crate::perception::Worldview;
 use crate::recover::{Recovery, RecoveryAction};
 use crate::skill::BotSkill;
 use crate::steer::{move_from_world_dir, Steering};
-use crate::weapons::Weapon;
 use crate::{items, los};
 
-/// Tunables that select a brain *flavor* without changing the decision code.
-///
-/// The default reproduces the live fleet bot exactly. The movement-scenario runner
-/// overrides both fields (combat off, goal pinned).
-#[derive(Debug, Clone)]
-pub struct BrainConfig {
-    /// When `false`, combat is never evaluated (no target, no fire) — the bot only
-    /// navigates. Used by the movement-test scenarios.
-    pub combat_enabled: bool,
-    /// When `Some`, this goal replaces the FSM/item/roam goal ladder every tick — used
-    /// by the scenarios to pin a fixed destination.
-    pub goal_override: Option<NavGoal>,
-}
-
-impl Default for BrainConfig {
-    fn default() -> Self {
-        Self {
-            combat_enabled: true,
-            goal_override: None,
-        }
-    }
-}
-
-/// What one brain tick decides, handed to the caller's driver layer.
-#[derive(Debug, Clone, Copy)]
-pub struct BrainOutput {
-    /// The movement intent to encode into a `Usercmd`.
-    pub intent: MovementIntent,
-    /// A weapon to switch to via `use <name>` this frame, if any.
-    pub weapon_request: Option<Weapon>,
-}
+// `BrainConfig`/`BrainOutput` were moved to `brains::core` (Plan 23 T2) so they sit next to the
+// `trait Brain` contract; re-exported here so existing `crate::brain::{BrainConfig, BrainOutput}`
+// paths keep resolving.
+pub use crate::brains::core::{BrainConfig, BrainOutput};
 
 /// The bot's decision layer: owns combat/FSM/dodge/steering/recovery/skill/roam state.
 pub struct Brain {

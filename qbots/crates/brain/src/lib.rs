@@ -8,6 +8,7 @@
 
 pub mod aim;
 pub mod brain;
+pub mod brains;
 pub mod combat;
 pub mod danger;
 pub mod fsm;
@@ -29,6 +30,10 @@ pub mod steer;
 pub mod weapons;
 
 pub use brain::{Brain, BrainConfig, BrainOutput};
+// The brain plugin contract + bundled I/O (Plan 23). The `Brain` *trait* lives at
+// `brains::core::Brain`; the root `Brain` export flips from the concrete struct to the trait in
+// Plan 23 T5 once the binary drives a `Box<dyn Brain>`. `BrainContext`/`BrainMap` are new here.
+pub use brains::core::{BrainContext, BrainMap};
 pub use combat::{CombatDecision, CombatDriver};
 pub use danger::{DangerDriver, DodgeAction};
 pub use heatmap::Heatmap;
