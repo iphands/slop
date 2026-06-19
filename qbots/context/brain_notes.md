@@ -27,3 +27,17 @@
   `BrainConfig::default` combat-on/no-override + `build_brain(Main).status()=="roam"` asserted.
   **Live `connect-one`/`spawn-to-*` NOT run this session — server `noir40.lan` unreachable.**
   Behaviour-preserving by construction (adapter only); flag a live A/B once a server is up.
+
+## 2026-06-18 — Plan 24: `main` brain plugin (relocate + prove the seam)
+- `brain.rs` → `brains/main.rs`, struct `Brain` → `MainBrain` (git tracked as a rename; ~25 of
+  ~454 lines touched — all the rename + doc, decision body verbatim). `pub mod brain` dropped;
+  root exports now come from `brains::{core,main,sentry}`.
+- Added `brains/sentry::SentryBrain` (~50 lines): stationary, combat-only, ignores nav — the
+  proof that `trait Brain` is a real seam (a second impl sharing no state with MainBrain).
+  `BrainKind::{Main,Sentry}`; `build_brain` dispatches both. `Sentry` is code/test-only until
+  Plan 25 adds the `--brain` flag.
+- `main` behaviour unchanged by construction (move+rename only). Verification: brain crate 106
+  unit tests + sentry's 2 (constructs/labels; no-enemy tick → zero movement) green; workspace
+  `build`/`clippy -D warnings`/`fmt` clean. **Live `connect-one`/`spawn-to-*` NOT run — server
+  `noir40.lan` unreachable this session** (same as Plan 23). `scenario.rs` deliberately untouched
+  (Plan 26 lifts it into `RuntesterBrain`; Plan 22 T4 stays open until then).
