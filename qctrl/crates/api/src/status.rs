@@ -122,6 +122,7 @@ pub fn parse_status_output(output: &str) -> Result<StatusResponse, StatusParseEr
     // Third pass: parse players (existing logic)
     let mut in_players = false;
     let mut found_header = false;
+    let mut saw_unparsed_line = false;
     for line in &lines {
         let line = line.trim();
         
@@ -159,13 +160,16 @@ pub fn parse_status_output(output: &str) -> Result<StatusResponse, StatusParseEr
                 tracing::debug!("Successfully parsed player: {}", player.name);
                 players.push(player);
             } else {
+                saw_unparsed_line = true;
                 tracing::debug!("Failed to parse player line (likely not a player line): '{}'", line);
             }
         }
     }
     
-    if found_header && players.is_empty() {
-        tracing::warn!("Found player header but no players parsed - check format!");
+    // Only warn if there were actual data rows we couldn't parse — an empty
+    // server prints the header + separator with no rows, which is normal.
+    if found_header && players.is_empty() && saw_unparsed_line {
+        tracing::warn!("Found player header but data rows failed to parse - check format!");
     }
 
     // Sort by score (descending)
