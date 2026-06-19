@@ -46,7 +46,35 @@ pub enum ScenarioGoal {
     /// The DM spawn point farthest (3D) from where the bot spawns.
     FarthestSpawn,
     /// A named weapon's BSP origin (e.g. `rocketlauncher` → `weapon_rocketlauncher`).
-    Weapon(String),
+    /// `instance` selects among multiple matches (q2dm3 has two `weapon_railgun`).
+    Weapon { name: String, instance: usize },
+    /// A named item's BSP origin, resolved through [`item_classname`] aliases
+    /// (e.g. `quaddamage` → `item_quad`). `instance` selects among multiple matches.
+    Item { name: String, instance: usize },
+}
+
+/// Resolve a friendly item name to its Q2 entity classname.
+///
+/// The classnames the engine uses don't always match what an operator types — the quad is
+/// `item_quad`, not `item_quaddamage`. This maps common aliases; anything already prefixed
+/// `item_` passes through, and anything else gets an `item_` prefix.
+pub fn item_classname(name: &str) -> String {
+    let n = name.trim().to_ascii_lowercase();
+    match n.as_str() {
+        "quad" | "quaddamage" | "quad_damage" => "item_quad",
+        "invuln" | "invulnerability" | "invulnerable" => "item_invulnerability",
+        "mega" | "megahealth" | "mega_health" => "item_health_mega",
+        "redarmor" | "bodyarmor" | "red_armor" | "body_armor" => "item_armor_body",
+        "yellowarmor" | "combatarmor" | "combat_armor" => "item_armor_combat",
+        "greenarmor" | "jacketarmor" | "jacket_armor" => "item_armor_jacket",
+        "silencer" => "item_silencer",
+        "adrenaline" => "item_adrenaline",
+        "bandolier" => "item_bandolier",
+        "pack" | "ammopack" | "ammo_pack" => "item_pack",
+        other if other.starts_with("item_") => return other.to_string(),
+        other => return format!("item_{other}"),
+    }
+    .to_string()
 }
 
 /// Run a movement scenario: connect one bot, drive it to `goal`, record + dump.
@@ -519,24 +547,9 @@ fn resolve_goal(
                 spawn_origins,
             ))
         }
-        ScenarioGoal::Weapon(wname) => {
-            let cls = format!("weapon_{}", wname.to_ascii_lowercase());
-            let origin = bsp.find_class(&cls).first().and_then(|e| e.origin());
-            let origin = match origin {
-                Some(o) => o,
-                None => {
-                    let mut avail: Vec<&str> = bsp
-                        .entities
-                        .iter()
-                        .filter_map(|e| e.classname.strip_prefix("weapon_"))
-                        .collect();
-                    avail.sort();
-                    avail.dedup();
-                    return Err(io_err(format!(
-                        "no '{cls}' on map '{map}'. available weapons: {avail:?}"
-                    )));
-                }
-            };
+        ScenarioGoal::Weapon { name, instance } => {
+            let cls = format!("weapon_{}", name.to_ascii_lowercase());
+            let origin = resolve_class_origin(bsp, map, &cls, *instance, "weapon_")?;
             Ok((
                 "spawn-to-weapon".to_string(),
                 Some(origin),
@@ -544,7 +557,63 @@ fn resolve_goal(
                 spawn_origins,
             ))
         }
+        ScenarioGoal::Item { name, instance } => {
+            let cls = item_classname(name);
+            let origin = resolve_class_origin(bsp, map, &cls, *instance, "item_")?;
+            Ok((
+                "spawn-to-item".to_string(),
+                Some(origin),
+                cls,
+                spawn_origins,
+            ))
+        }
     }
+}
+
+/// Resolve the `instance`-th origin of `cls` on the map, logging every candidate so the
+/// operator can pick. On no match, list the available classnames sharing `avail_prefix`.
+fn resolve_class_origin(
+    bsp: &world::Bsp,
+    map: &str,
+    cls: &str,
+    instance: usize,
+    avail_prefix: &str,
+) -> std::io::Result<[f32; 3]> {
+    let origins: Vec<[f32; 3]> = bsp
+        .find_class(cls)
+        .iter()
+        .filter_map(|e| e.origin())
+        .collect();
+
+    if origins.is_empty() {
+        let mut avail: Vec<&str> = bsp
+            .entities
+            .iter()
+            .filter_map(|e| e.classname.strip_prefix(avail_prefix))
+            .collect();
+        avail.sort();
+        avail.dedup();
+        return Err(io_err(format!(
+            "no '{cls}' on map '{map}'. available: {avail:?}"
+        )));
+    }
+
+    tracing::info!(
+        %cls,
+        count = origins.len(),
+        candidates = ?origins
+            .iter()
+            .map(|o| [o[0] as i32, o[1] as i32, o[2] as i32])
+            .collect::<Vec<_>>(),
+        "resolved class candidates (use --instance N to pick)"
+    );
+
+    origins.get(instance).copied().ok_or_else(|| {
+        io_err(format!(
+            "--instance {instance} out of range for '{cls}' on '{map}' (have {})",
+            origins.len()
+        ))
+    })
 }
 
 /// The DM spawn origin farthest (3D) from `from`, or `from` if there are none.
@@ -668,5 +737,20 @@ mod tests {
     #[test]
     fn farthest_spawn_empty_returns_from() {
         assert_eq!(farthest_spawn(&[], [5.0, 6.0, 7.0]), [5.0, 6.0, 7.0]);
+    }
+
+    #[test]
+    fn item_classname_aliases() {
+        // The quad's real classname is `item_quad`, not `item_quaddamage`.
+        assert_eq!(item_classname("quaddamage"), "item_quad");
+        assert_eq!(item_classname("quad"), "item_quad");
+        assert_eq!(item_classname("QuadDamage"), "item_quad");
+        assert_eq!(item_classname("invuln"), "item_invulnerability");
+        assert_eq!(item_classname("mega"), "item_health_mega");
+        // Already-prefixed names pass through (lowercased).
+        assert_eq!(item_classname("item_health"), "item_health");
+        assert_eq!(item_classname("Item_Health"), "item_health");
+        // Unknown names get the `item_` prefix.
+        assert_eq!(item_classname("health"), "item_health");
     }
 }

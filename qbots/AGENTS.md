@@ -335,6 +335,12 @@ grounded `max_speed` > ~320 in a log flags a physics bug, not a feature.
 cargo run -p qbots -- spawn-to-spawn [--map q2dm1] [--addr host:27910] [--name qb0]
 # A named weapon's BSP origin (resolved as weapon_<name>).
 cargo run -p qbots -- spawn-to-weapon rocketlauncher [--map q2dm1] [--name qb1]
+# A named item's BSP origin (alias-resolved: quaddamage→item_quad, mega, invuln, …).
+cargo run -p qbots -- spawn-to-item quaddamage [--map q2dm3] [--name qb2]
+# --instance N picks among multiple matches (q2dm3 has two weapon_railgun:
+#   0 = (-368,-64,352), 1 = (768,816,208) the loop-train+elevator one). All
+#   candidates are logged on resolve so you can pick.
+cargo run -p qbots -- spawn-to-weapon railgun --instance 1 --map q2dm3
 ```
 
 - **Map**: `--map` selects the BSP; if omitted it defaults to `q2dm1`. The map

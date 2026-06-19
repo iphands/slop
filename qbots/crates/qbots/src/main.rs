@@ -280,6 +280,56 @@ enum Cmd {
     SpawnToWeapon {
         /// Weapon to reach, e.g. `rocketlauncher` (resolved as `weapon_<name>`).
         weapon_name: String,
+        /// Which matching entity to target when a map has several (0-based). q2dm3 has
+        /// two `weapon_railgun`: 0 = `(-368,-64,352)`, 1 = `(768,816,208)` (the loop-train
+        /// + elevator one). The resolver logs all candidates.
+        #[arg(long, default_value = "0")]
+        instance: usize,
+        /// Map to load. Autodetected from the server's `status` reply if omitted;
+        /// pass `--map` only to override (it must match the server's current map).
+        #[arg(long)]
+        map: Option<String>,
+        /// Server address (defaults to config's server).
+        #[arg(long)]
+        addr: Option<String>,
+        /// Bot display name.
+        #[arg(long)]
+        name: Option<String>,
+        /// Number of bots to spawn (default 1).
+        #[arg(long, default_value = "1")]
+        count: u8,
+        /// Hard wall-clock cap per bot in seconds (default 30).
+        #[arg(long, default_value = "30.0")]
+        max_secs: f32,
+        /// TODO(elevator-hack): extra A* cost on elevator ride edges so bots route
+        /// around lifts (dodges the func_plat multi-bot deadlock). 0 = use lifts
+        /// freely. Temporary until real wait/ride/step-off behaviour exists.
+        #[arg(long, default_value = "5000")]
+        lift_penalty: f32,
+        /// Grid spacing (units) of the nav graph to use. Each spacing has its own cache
+        /// dir (`data/mapcache/<spacing>/`); generate it first with `generate-map-cache
+        /// --spacing <n>`. Default 24.
+        #[arg(long, default_value = "24")]
+        spacing: f32,
+        /// Navigation backend: `astar` (waypoint graph, default) or `navmesh` (polygon
+        /// mesh + funnel). The navmesh backend requires `generate-navmesh --map <m>` first.
+        #[arg(long = "navmode", value_enum, default_value_t = NavMode::Astar)]
+        mode: NavMode,
+        /// Decision brain: `runtester` (default — the pure pathfinder) or `main` to A/B the
+        /// live combat brain's pathing (combat is forced off either way). Independent of `--navmode`.
+        #[arg(long, value_enum, default_value_t = brain::BrainKind::RunTester)]
+        brain: brain::BrainKind,
+    },
+    /// Drive one bot from spawn to a named item's BSP origin; log movement; stop.
+    /// Item names are resolved through aliases (e.g. `quaddamage` → `item_quad`).
+    SpawnToItem {
+        /// Item to reach, e.g. `quaddamage` (alias of `item_quad`), `mega`, `invuln`.
+        /// Anything already prefixed `item_` is used verbatim.
+        item_name: String,
+        /// Which matching entity to target when a map has several (0-based). The resolver
+        /// logs all candidates so you can pick.
+        #[arg(long, default_value = "0")]
+        instance: usize,
         /// Map to load. Autodetected from the server's `status` reply if omitted;
         /// pass `--map` only to override (it must match the server's current map).
         #[arg(long)]
@@ -2149,6 +2199,7 @@ async fn main() -> ExitCode {
         }
         Cmd::SpawnToWeapon {
             weapon_name,
+            instance,
             map,
             addr,
             name,
@@ -2164,7 +2215,41 @@ async fn main() -> ExitCode {
                 addr,
                 name,
                 map,
-                scenario::ScenarioGoal::Weapon(weapon_name),
+                scenario::ScenarioGoal::Weapon {
+                    name: weapon_name,
+                    instance,
+                },
+                count,
+                max_secs,
+                lift_penalty,
+                spacing,
+                mode,
+                brain,
+            )
+            .await
+        }
+        Cmd::SpawnToItem {
+            item_name,
+            instance,
+            map,
+            addr,
+            name,
+            count,
+            max_secs,
+            lift_penalty,
+            spacing,
+            mode,
+            brain,
+        } => {
+            run_scenario_cmd(
+                &cfg,
+                addr,
+                name,
+                map,
+                scenario::ScenarioGoal::Item {
+                    name: item_name,
+                    instance,
+                },
                 count,
                 max_secs,
                 lift_penalty,
