@@ -85,6 +85,9 @@ with its own skin); absent → a skill-derived default character. `run` adds ski
 (`--skin model/skin`, `--skin-random-male`,
 `--skin-random-female`) and `--name`/`--count` overrides.
 
+See [`docs/BRAINS.md`](docs/BRAINS.md) for the full brain catalog — every brain, its switches, and
+all tunables.
+
 ### World-model inspection (no server needed)
 
 ```bash
