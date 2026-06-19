@@ -97,9 +97,10 @@ pub async fn run_scenario(
     // than watching bots silently fail to navigate.
     if let Err(diag) = world::check_spawn_connectivity(&built) {
         tracing::error!("{diag}");
-        return Err(io_err(format!(
-            "nav graph connectivity bug for map '{map}' — all spawns must be reachable (see error above)"
-        )));
+        crate::fatal!(
+            %map,
+            "nav graph connectivity bug — all spawns must be reachable (see diagnostic above)"
+        );
     }
 
     let cm = Arc::clone(&built.cm);

@@ -89,19 +89,17 @@ fn build_map_nav(cfg: &Config, map: &str) -> Option<MapNav> {
         Ok(b) => b,
         Err(e) => {
             tracing::error!(map, "nav load failed: {e}");
-            tracing::error!(map, "aborting: no usable nav data for the server's map");
-            std::process::exit(1);
+            crate::fatal!(map, "aborting: no usable nav data for the server's map");
         }
     };
     // Hard abort: a broken nav graph means no bot on this map can navigate.
     // All Q2 dm maps guarantee full spawn reachability — failure is our bug.
     if let Err(diag) = world::check_spawn_connectivity(&built) {
         tracing::error!(map, "{diag}");
-        tracing::error!(
+        crate::fatal!(
             map,
             "aborting: nav connectivity bug — bots cannot navigate this map"
         );
-        std::process::exit(1);
     }
     tracing::info!(
         map,

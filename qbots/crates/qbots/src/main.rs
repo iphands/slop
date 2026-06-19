@@ -4,6 +4,26 @@
 //! launches the full fleet (Plan 09). Server address and on-disk Q2 paths come from
 //! `config.yaml`. The fleet supervisor + per-bot task live in [`supervisor`].
 
+/// Log a final diagnostic at the synthetic FATAL level (rendered as a bold-red
+/// `F` by the qbots formatter, see [`AbbreviatedFormat`]) and terminate the
+/// process with exit code 1.
+///
+/// `tracing` has no level above `ERROR`, so we synthesize FATAL: emit an `ERROR`
+/// event tagged `target: "FATAL"` (which the formatter renders as `F`), flush
+/// stdout, then `std::process::exit(1)`. Call this **after** any diagnostic dump
+/// — the dump lines must print first. This macro never returns.
+#[macro_export]
+macro_rules! fatal {
+    ($($arg:tt)*) => {{
+        tracing::error!(target: "FATAL", $($arg)*);
+        {
+            use std::io::Write as _;
+            let _ = std::io::stdout().flush();
+        }
+        std::process::exit(1);
+    }};
+}
+
 mod config;
 mod scenario;
 mod skins;
@@ -509,7 +529,18 @@ where
         event: &tracing::Event<'_>,
     ) -> std::fmt::Result {
         let elapsed = self.start_time.elapsed();
-        let level = abbreviate_level(*event.metadata().level(), self.ansi);
+        // The `fatal!` macro tags its event `target: "FATAL"`; render it as a
+        // bold-bright-red `F` (there is no FATAL level in `tracing`). Everything
+        // else uses the standard level letter.
+        let level = if event.metadata().target() == "FATAL" {
+            if self.ansi {
+                "\x1b[1;31mF\x1b[0m"
+            } else {
+                "F"
+            }
+        } else {
+            abbreviate_level(*event.metadata().level(), self.ansi)
+        };
 
         // Format the event's fields into a buffer (the dedup key + the emit body).
         let mut fields = String::new();
@@ -616,8 +647,7 @@ async fn preflight_map(
     })?;
     if let Err(diag) = world::check_spawn_connectivity(&built) {
         tracing::error!("{diag}");
-        tracing::error!(map = %map, "aborting: nav connectivity bug — all spawns must be reachable");
-        return Err(ExitCode::FAILURE);
+        crate::fatal!(map = %map, "aborting: nav connectivity bug — all spawns must be reachable");
     }
     tracing::info!(map = %map, "preflight ok: server map detected and nav cache validated");
     Ok(map)
