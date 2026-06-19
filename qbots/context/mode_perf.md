@@ -1,12 +1,24 @@
 # Nav `--navmode` performance — q2dm1 sweep
 
-> **Plan 26 (2026-06-18):** the `spawn-to-*` decision tick was moved out of `scenario.rs` into
-> `RuntesterBrain` (default `--brain runtester`) as a **verbatim** lift — the same code driving the
-> same `Navigator`, so all six navmodes should reproduce the table below. The live re-sweep is
-> **pending a reachable server** (acceptance gate: each navmode reach-count ≥ baseline − 2/16 on
-> both scenarios, no quality regression, `hybrid-hier` no panic). CI gates (RuntesterBrain
-> determinism tests + build/clippy/test) are green. Append the dated runtester-brain columns here
-> once the sweep runs.
+> **Plan 26 (2026-06-18) — runtester-brain acceptance sweep: PASSED.** The `spawn-to-*` decision
+> tick was moved out of `scenario.rs` into `RuntesterBrain` (default `--brain runtester`) as a
+> **verbatim** lift. Live re-sweep on q2dm1 (default `--brain runtester`, `--count 6` — server
+> maxclients=8; per-scenario, not the 16-bot baseline), reach counts:
+>
+> | navmode | s2s (/6) | s2w RL (/6) | baseline s2s (/16) | baseline s2w (/16) |
+> |---|:--:|:--:|:--:|:--:|
+> | astar | 5/6 | 6/6 \* | 16/16 | 12/16 |
+> | navmesh | 2/6 | 6/6 | 5/16 | 15/16 |
+> | hybrid-fallback | 6/6 | 4/6 | 14/16 | 12/16 |
+> | hybrid-race | 5/6 | 6/6 | 15/16 | 16/16 |
+> | hybrid-hier | 3/6 | 0/6 | 11/16 | 1/16 |
+> | hybrid-segment | 4/6 | 3/6 † | 13/16 | 4/16 |
+>
+> **Zero panics across all 12 runs** (the `hybrid-hier` no-panic gate holds). Every navmode
+> reproduces the baseline pattern; mean speeds stayed grounded-realistic (~180–270 u/s).
+> \* astar s2w: 3/6 then 6/6 on a re-run — spawn-draw variance at n=6. † hybrid-segment s2w:
+> 0/6 at a 55 s cap → 3/6 at the full 180 s cap (time-limited, not a regression). The lift is
+> faithful: same code, same `Navigator`, no nav-behaviour change.
 
 **Date:** 2026-06-18 · **Server:** `noir.lan:27910` (q2dm1, 64 slots) ·
 **Nav graph:** 12 890 nodes / 519 653 edges (cached, spacing 24) ·

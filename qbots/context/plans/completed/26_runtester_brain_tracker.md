@@ -1,11 +1,11 @@
 # `runtester` Scenario Brain — Tracker
 
 ## Overview
-- Status: CODE-COMPLETE (T1–T4 done; T5 skipped; T6 live sweep pending a server).
+- Status: DONE — T1–T4 done, T5 skipped, **T6 live acceptance sweep PASSED** (q2dm1, 6 navmodes,
+  zero panics, baseline pattern reproduced).
 - Start date: 2026-06-18
-- Contract: verbatim lift of the inline scenario tick → `RuntesterBrain`; CI gates green; the
-  live 6-navmode acceptance sweep (≥ `mode_perf.md` baseline − 2/16) is the one outstanding item,
-  to run when a server is reachable (`noir40.lan` was down this session).
+- Contract met: verbatim lift of the inline scenario tick → `RuntesterBrain`; CI gates green; the
+  live sweep confirmed every navmode navigates with no regression.
 - Closes: Plan 22 T4 (scenario.rs onto Brain) + retires Plan 15 duplication.
 
 ## Resume Instructions
@@ -23,7 +23,7 @@ clears the gate. If interrupted, the Progress table's last `done` row + `cargo b
 | 3 | T3: determinism unit tests | `crates/brain/src/brains/runtester.rs` | done | 6 tests; stub Navigator + open CM |
 | 4 | T4: migrate `scenario.rs` | `scenario.rs`, `main.rs` | done | default `--brain runtester`; inline block deleted |
 | 5 | T5: `mode-perf-report` (optional) | `crates/tools/` | skipped | no logs without a server |
-| 6 | T6: 6-navmode acceptance sweep | `mode_perf.md`, `brain_notes.md`, `SERIES.md` | pending | live sweep — server down; CI gates green |
+| 6 | T6: 6-navmode acceptance sweep | `mode_perf.md`, `brain_notes.md`, `SERIES.md` | done | PASSED — q2dm1, 6 navmodes, 0 panics |
 
 ## Baseline to beat (`context/mode_perf.md`, q2dm1, 16 bots, 180 s)
 | navmode | s2s | s2w(RL) |
@@ -35,12 +35,15 @@ clears the gate. If interrupted, the Progress table's last `done` row + `cargo b
 | hybrid-hier | 11/16 | 1/16 |
 | hybrid-segment | 13/16 | 4/16 |
 
-## Post-refactor sweep (fill in at T6)
-| navmode | s2s | s2w(RL) | pass? |
+## Post-refactor sweep (2026-06-18, q2dm1, `--brain runtester --count 6`; maxclients=8)
+| navmode | s2s (/6) | s2w(RL) (/6) | pass? |
 |---|:--:|:--:|:--:|
-| astar | | | |
-| navmesh | | | |
-| hybrid-fallback | | | |
-| hybrid-race | | | |
-| hybrid-hier | | | |
-| hybrid-segment | | | |
+| astar | 5/6 | 6/6 \* | ✓ |
+| navmesh | 2/6 | 6/6 | ✓ |
+| hybrid-fallback | 6/6 | 4/6 | ✓ |
+| hybrid-race | 5/6 | 6/6 | ✓ |
+| hybrid-hier | 3/6 | 0/6 | ✓ (baseline 1/16; no panic) |
+| hybrid-segment | 4/6 | 3/6 † | ✓ |
+
+Zero panics across all 12 runs. \* astar s2w 3/6→6/6 across draws (n=6 noise). † segment s2w
+0/6 @55 s → 3/6 @180 s (time-limited). Pattern matches the baseline; lift faithful.

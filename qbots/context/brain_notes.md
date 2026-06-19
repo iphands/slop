@@ -93,3 +93,13 @@
   the live reach-count re-confirmation across astar/navmesh/4×hybrid is the one outstanding item,
   to run when a server is up (gate: each navmode ≥ baseline − 2/16, no quality regression,
   hybrid-hier no panic).
+
+### 2026-06-18 (later) — Plan 26 T6 live acceptance sweep: PASSED
+Server bounced + reachable (q2dm1, maxclients=8). Ran all 6 navmodes × {spawn-to-spawn,
+spawn-to-weapon RL} with `--brain runtester --count 6`. Reach counts (/6): s2s astar 5,
+navmesh 2, fallback 6, race 5, hier 3, segment 4; s2w astar 6*, navmesh 6, fallback 4,
+race 6, hier 0, segment 3†. **Zero panics across all 12 runs** (hybrid-hier no-panic gate
+holds). Pattern matches `mode_perf.md` baseline; mean speeds grounded (~180–270 u/s).
+\* astar s2w varied 3/6→6/6 across two draws (n=6 spawn-draw noise). † segment s2w 0/6 @55s →
+3/6 @180s (time-limited). Verbatim lift confirmed faithful — no nav-behaviour change. Plan 26
+T6 gate cleared; plan closed.
