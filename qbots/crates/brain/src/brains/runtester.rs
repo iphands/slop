@@ -18,16 +18,9 @@ use crate::brains::core::{Brain, BrainContext, BrainMap, BrainOutput};
 use crate::move_ctrl::MovementIntent;
 use crate::recover::{find_best_direction, Recovery, RecoveryAction};
 use crate::steer::{move_from_world_dir, Steering};
-use crate::water::{is_swimming, water_level};
-
-/// Vertical delta (units) that maps to full `intent.up` thrust while swimming (Plan 40).
-const SWIM_VERT_SCALE: f32 = 32.0;
-/// View pitch (deg, negative = up) forced during a water-exit climb-out. Q2 grants the
-/// water-jump boost only when `viewangles[PITCH] <= -15` + forward + a blocked path
-/// (`pmove.c:414`); -20 clears that gate with margin.
-const EXIT_LOOKUP_PITCH: f32 = -20.0;
-/// Ticks to stay in water-exit mode once started, so the bot doesn't oscillate at the lip.
-const EXIT_HYSTERESIS_TICKS: u32 = 12;
+use crate::water::{
+    is_swimming, water_level, EXIT_HYSTERESIS_TICKS, EXIT_LOOKUP_PITCH, SWIM_VERT_SCALE,
+};
 
 /// The movement-scenario brain — drives the injected navigator to `ctx.goal_override`, never
 /// fights. Owns the same steering/recovery state the scenario loop kept as locals.

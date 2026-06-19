@@ -28,6 +28,7 @@ use crate::nav::NavGoal;
 use crate::recover::{Recovery, RecoveryAction};
 use crate::skill::BotSkill;
 use crate::steer::{move_from_world_dir, Steering};
+use crate::water::{is_swimming, water_level, EXIT_LOOKUP_PITCH, SWIM_VERT_SCALE};
 use crate::{items, los};
 
 // `BrainConfig`/`BrainOutput` live in `brains::core` next to the `trait Brain` contract;
@@ -400,6 +401,35 @@ impl crate::brains::core::Brain for MainBrain {
             // ── 7. Jump-edge activation (Plan 14 T2) ─────────────────────
             if nav.current_edge_is_jump() {
                 mv.jump();
+            }
+
+            // ── 8. Swim activation (Plan 40) ─────────────────────────────
+            // Live bots also swim water routes. Drive sustained vertical thrust toward the
+            // 3-D look-ahead; never the one-shot jump in water. Combat aim wins the view pitch
+            // when firing (Risk #3) — otherwise pitch toward the 3-D target so `pml.forward`
+            // carries the vertical component for surfacing / climb-out.
+            let water = cm.map_or(0, |c| water_level(c, pos));
+            if let Some(cm) = cm {
+                if is_swimming(water) || nav.current_edge_is_swim() {
+                    let target = nav.pursue_target(pos).unwrap_or(pos);
+                    let to = target - pos;
+                    let dz = to.z;
+                    let exiting =
+                        nav.current_edge_is_swim() && dz > 0.0 && water_level(cm, target) == 0;
+                    if exiting {
+                        mv.up = 1.0;
+                        if !combat_dec.should_fire {
+                            mv.pitch = EXIT_LOOKUP_PITCH;
+                        }
+                    } else {
+                        mv.up = (dz / SWIM_VERT_SCALE).clamp(-1.0, 1.0);
+                        if !combat_dec.should_fire {
+                            let hd = to.truncate().length().max(1.0);
+                            mv.pitch = (-dz.atan2(hd).to_degrees()).clamp(-89.0, 89.0);
+                        }
+                    }
+                    mv.jump = false; // jumping in water is a useless one-shot launch
+                }
             }
         } else if !combat_dec.should_fire {
             // No nav graph loaded yet — just walk forward.

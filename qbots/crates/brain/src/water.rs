@@ -14,6 +14,15 @@ const MINS_Z: f32 = -24.0;
 /// Standard standing `viewheight` (`pmove.c` / `client.c`); the eye sample sits here.
 const VIEWHEIGHT: f32 = 22.0;
 
+/// Vertical delta (units) that maps to full `intent.up` thrust while swimming (Plan 40).
+pub const SWIM_VERT_SCALE: f32 = 32.0;
+/// View pitch (deg, negative = up) forced during a water-exit climb-out. Q2 grants the
+/// water-jump boost only when `viewangles[PITCH] <= -15` + forward + a blocked path
+/// (`pmove.c:414`); -20 clears that gate with margin.
+pub const EXIT_LOOKUP_PITCH: f32 = -20.0;
+/// Ticks to stay in water-exit mode once started, so the bot doesn't oscillate at the lip.
+pub const EXIT_HYSTERESIS_TICKS: u32 = 12;
+
 /// Waterlevel ∈ {0,1,2,3} at `origin` (Plan 40), mirroring `PM_CategorizePosition`:
 /// `0` dry, `1` feet wet, `2` waist-deep (**swimming**), `3` head under (fully submerged).
 pub fn water_level(cm: &CollisionModel, origin: Vec3) -> u8 {
