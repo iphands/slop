@@ -4,7 +4,7 @@
 - Status: DONE — T1–T4 done, T5 skipped, **T6 live acceptance sweep PASSED** (q2dm1, 6 navmodes,
   zero panics, baseline pattern reproduced).
 - Start date: 2026-06-18
-- Contract met: verbatim lift of the inline scenario tick → `RuntesterBrain`; CI gates green; the
+- Contract met: verbatim lift of the inline scenario tick → `RunTesterBrain`; CI gates green; the
   live sweep confirmed every navmode navigates with no regression.
 - Closes: Plan 22 T4 (scenario.rs onto Brain) + retires Plan 15 duplication.
 
@@ -19,7 +19,7 @@ clears the gate. If interrupted, the Progress table's last `done` row + `cargo b
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
 | 1 | T1: `BrainContext.goal_override` | `crates/brain/src/brains/core.rs` | done | dropped `BrainConfig.goal_override` |
-| 2 | T2: `RuntesterBrain` verbatim lift | `crates/brain/src/brains/runtester.rs` | done | + `BrainKind::Runtester` + `intent_forward` |
+| 2 | T2: `RunTesterBrain` verbatim lift | `crates/brain/src/brains/runtester.rs` | done | + `BrainKind::Runtester` + `intent_forward` |
 | 3 | T3: determinism unit tests | `crates/brain/src/brains/runtester.rs` | done | 6 tests; stub Navigator + open CM |
 | 4 | T4: migrate `scenario.rs` | `scenario.rs`, `main.rs` | done | default `--brain runtester`; inline block deleted |
 | 5 | T5: `mode-perf-report` (optional) | `crates/tools/` | skipped | no logs without a server |

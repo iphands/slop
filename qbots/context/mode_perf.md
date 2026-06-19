@@ -1,7 +1,7 @@
 # Nav `--navmode` performance — q2dm1 sweep
 
 > **Plan 26 (2026-06-18) — runtester-brain acceptance sweep: PASSED.** The `spawn-to-*` decision
-> tick was moved out of `scenario.rs` into `RuntesterBrain` (default `--brain runtester`) as a
+> tick was moved out of `scenario.rs` into `RunTesterBrain` (default `--brain runtester`) as a
 > **verbatim** lift. Live re-sweep on q2dm1 (default `--brain runtester`, `--count 6` — server
 > maxclients=8; per-scenario, not the 16-bot baseline), reach counts:
 >

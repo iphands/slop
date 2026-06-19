@@ -1,6 +1,6 @@
 //! # brain::brains::runtester — the movement-scenario brain (Plan 26)
 //!
-//! `RuntesterBrain` is a pure, combat-free waypoint-seeker: the exact per-tick decision the
+//! `RunTesterBrain` is a pure, combat-free waypoint-seeker: the exact per-tick decision the
 //! `spawn-to-spawn`/`spawn-to-weapon` harness used to run inline (`qbots::scenario`). It is a
 //! genuinely *different* brain from [`MainBrain`](super::main::MainBrain) — it steers via the
 //! corner-cut-safe `pursue_target_safe` look-ahead and a richer 7-ray backoff/escape that
@@ -21,7 +21,7 @@ use crate::steer::{move_from_world_dir, Steering};
 
 /// The movement-scenario brain — drives the injected navigator to `ctx.goal_override`, never
 /// fights. Owns the same steering/recovery state the scenario loop kept as locals.
-pub struct RuntesterBrain {
+pub struct RunTesterBrain {
     steering: Steering,
     recovery: Recovery,
     /// Ticks remaining in forced-backoff mode (set when `BackOffThenRepath` fires so the bot
@@ -32,7 +32,7 @@ pub struct RuntesterBrain {
     escape_yaw: Option<f32>,
 }
 
-impl RuntesterBrain {
+impl RunTesterBrain {
     /// Build a scenario brain with the same mid-skill steering the inline loop used.
     pub fn new() -> Self {
         Self {
@@ -44,13 +44,13 @@ impl RuntesterBrain {
     }
 }
 
-impl Default for RuntesterBrain {
+impl Default for RunTesterBrain {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Brain for RuntesterBrain {
+impl Brain for RunTesterBrain {
     /// No-op: the runtester drives the injected navigator, not its own roam set.
     fn set_map(&mut self, _map: BrainMap) {}
 
@@ -229,7 +229,7 @@ mod tests {
             pursue: Some(Vec3::new(100.0, 0.0, 0.0)),
             ..Default::default()
         };
-        let out = RuntesterBrain::new().tick(ctx(&view, &mut nav, &cm, None));
+        let out = RunTesterBrain::new().tick(ctx(&view, &mut nav, &cm, None));
         assert!(
             out.intent.forward > 0.0,
             "should advance toward the +x look-ahead, got {}",
@@ -242,7 +242,7 @@ mod tests {
         let (cm, view) = (open_cm(), view0());
         let mut nav = StubNav::default();
         let goal = NavGoal::Position(Vec3::new(7.0, 8.0, 9.0));
-        let _ = RuntesterBrain::new().tick(ctx(&view, &mut nav, &cm, Some(goal.clone())));
+        let _ = RunTesterBrain::new().tick(ctx(&view, &mut nav, &cm, Some(goal.clone())));
         assert_eq!(nav.last_goal, Some(goal));
     }
 
@@ -254,7 +254,7 @@ mod tests {
             jump_edge: true,
             ..Default::default()
         };
-        let out = RuntesterBrain::new().tick(ctx(&view, &mut nav, &cm, None));
+        let out = RunTesterBrain::new().tick(ctx(&view, &mut nav, &cm, None));
         assert!(out.intent.jump, "a jump-link edge must press jump");
     }
 
@@ -270,11 +270,11 @@ mod tests {
             speed: Some(0.5),
             ..Default::default()
         };
-        let full = RuntesterBrain::new()
+        let full = RunTesterBrain::new()
             .tick(ctx(&view, &mut nav_full, &cm, None))
             .intent
             .forward;
-        let half = RuntesterBrain::new()
+        let half = RunTesterBrain::new()
             .tick(ctx(&view, &mut nav_half, &cm, None))
             .intent
             .forward;
@@ -291,7 +291,7 @@ mod tests {
             pursue: Some(Vec3::new(100.0, 0.0, 0.0)),
             ..Default::default()
         };
-        let out = RuntesterBrain::new().tick(ctx(&view, &mut nav, &cm, None));
+        let out = RunTesterBrain::new().tick(ctx(&view, &mut nav, &cm, None));
         assert!(out.weapon_request.is_none());
         assert_eq!(out.intent_forward, out.intent.forward); // active branch: telemetry == forward
     }
@@ -304,7 +304,7 @@ mod tests {
             pursue: Some(Vec3::new(100.0, 0.0, 0.0)),
             ..Default::default()
         };
-        let mut brain = RuntesterBrain::new();
+        let mut brain = RunTesterBrain::new();
         for _ in 0..80 {
             let _ = brain.tick(ctx(&view, &mut nav, &cm, None));
         }

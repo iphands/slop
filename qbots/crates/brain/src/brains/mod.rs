@@ -12,7 +12,7 @@ pub mod sentry;
 pub use core::{Brain, BrainConfig, BrainContext, BrainMap, BrainOutput};
 
 use crate::brains::main::MainBrain;
-use crate::brains::runtester::RuntesterBrain;
+use crate::brains::runtester::RunTesterBrain;
 use crate::brains::sentry::SentryBrain;
 use crate::skill::BotSkill;
 
@@ -47,7 +47,7 @@ pub fn build_brain(kind: BrainKind, skill: BotSkill, cfg: BrainConfig) -> Box<dy
         // Sentry ignores `cfg` (no nav, no goal override) — it's a proof-of-pluggability.
         BrainKind::Sentry => Box::new(SentryBrain::new(skill)),
         // Runtester is combat-free and goal-driven per tick; it needs neither skill nor cfg.
-        BrainKind::Runtester => Box::new(RuntesterBrain::new()),
+        BrainKind::Runtester => Box::new(RunTesterBrain::new()),
     }
 }
 

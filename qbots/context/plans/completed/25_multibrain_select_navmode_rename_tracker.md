@@ -5,7 +5,7 @@
   competition varies both; `--mode`/`--modes` renamed to `--navmode`/`--navmodes`.
 - Start date: 2026-06-18
 - DEVIATION: spawn-to-* got `--navmode` but NOT `--brain` (scenario.rs has no Brain yet → would
-  be a no-op). Plan 26 adds the functional spawn-to-* `--brain` with its RuntesterBrain migration.
+  be a no-op). Plan 26 adds the functional spawn-to-* `--brain` with its RunTesterBrain migration.
 
 ## Resume Instructions
 Plan 24 must be `done` (`BrainKind::{Main,Sentry}` + `build_brain` exist). T1 makes `BrainKind`

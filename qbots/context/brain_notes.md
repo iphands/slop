@@ -40,7 +40,7 @@
   unit tests + sentry's 2 (constructs/labels; no-enemy tick → zero movement) green; workspace
   `build`/`clippy -D warnings`/`fmt` clean. **Live `connect-one`/`spawn-to-*` NOT run — server
   `noir40.lan` unreachable this session** (same as Plan 23). `scenario.rs` deliberately untouched
-  (Plan 26 lifts it into `RuntesterBrain`; Plan 22 T4 stays open until then).
+  (Plan 26 lifts it into `RunTesterBrain`; Plan 22 T4 stays open until then).
 
 ## 2026-06-18 — Plan 25: multibrain selection + --navmode rename
 - `BrainKind` is now a `clap::ValueEnum` (added clap derive-only dep to the `brain` lib) +
@@ -60,7 +60,7 @@
   `<MODE>` (derived from the field name) — cosmetic; flag name is correct.
 - DEVIATION: spawn-to-spawn/spawn-to-weapon did NOT get `--brain` (they got `--navmode`).
   `scenario.rs` uses raw nav/steer primitives, not a `Brain`, so a `--brain` there would be a
-  no-op until Plan 26 migrates the scenario to `RuntesterBrain` — Plan 26 adds the functional
+  no-op until Plan 26 migrates the scenario to `RunTesterBrain` — Plan 26 adds the functional
   spawn-to-* `--brain` (and flips its default to `runtester`). Avoided shipping a dead flag.
 - Verification: 18 test binaries green; `--help` shows `--navmode`/`--navmodes`/`--brain`/`--brains`
   and no `--mode`; invalid brain/navmode rejected. Live matrix run pending a server.
@@ -69,7 +69,7 @@
 - `BrainContext.goal_override: Option<NavGoal>` added (per-tick goal injection for lazily-resolved
   scenario goals); `BrainConfig.goal_override` dropped (`combat_enabled` stays). MainBrain reads
   `ctx.goal_override` with the same precedence; `bot_task` passes `None`.
-- `brains::runtester::RuntesterBrain` (`BrainKind::Runtester`): the scenario's combat-free tick
+- `brains::runtester::RunTesterBrain` (`BrainKind::Runtester`): the scenario's combat-free tick
   lifted **verbatim** (steering `Steering::new(3.0)` / recovery / 8-tick backoff / 7-ray escape
   as fields; `pursue_target_safe` look-ahead; speed_scale throttle). `set_map` is a no-op; goal
   comes from `ctx.goal_override`; `dt` from the harness; never requests a weapon.

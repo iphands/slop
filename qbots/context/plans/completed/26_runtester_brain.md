@@ -4,7 +4,7 @@
 > **Created**: 2026-06-18
 > **Depends on**: Plan 25 (multibrain selection + `--navmode` rename), Plan 24 (`MainBrain` relocated)
 > **Goal**: Promote `scenario.rs`'s inline non-combat pathfinding loop into a first-class
-> `RuntesterBrain` plugin (`BrainKind::Runtester`), make `spawn-to-*` drive a selectable
+> `RunTesterBrain` plugin (`BrainKind::Runtester`), make `spawn-to-*` drive a selectable
 > `Box<dyn Brain>` (default `runtester`, `main` available for A/B), delete the inline duplication,
 > and prove all **6 navmodes** still match `context/mode_perf.md`.
 > **Agent**: sub-agent
@@ -21,15 +21,15 @@
 **What**: `scenario.rs`'s tick loop is already a careful, single-minded, non-combat
 waypoint-seeker — *not* "MainBrain with combat off" (it uses the corner-safe `pursue_target_safe`
 and a richer 7-ray backoff/escape that MainBrain lacks). Lift that body **verbatim** into a
-`RuntesterBrain` implementing `trait Brain`, register it as `BrainKind::Runtester`, migrate
+`RunTesterBrain` implementing `trait Brain`, register it as `BrainKind::Runtester`, migrate
 `scenario.rs` onto a `Box<dyn Brain>` selected by `--brain` (default `runtester`), and delete the
 duplicated decision block. Guard the refactor with CI determinism tests **and** a live
 6-navmode acceptance sweep that must score ≥ the `mode_perf.md` baseline.
 
 **Deliverables**:
 1. `BrainContext.goal_override: Option<NavGoal>` (per-tick goal injection); `BrainConfig.goal_override` dropped.
-2. `brain::brains::runtester::RuntesterBrain` (verbatim lift) + `BrainKind::Runtester` + factory/tag.
-3. CI determinism unit tests pinning `RuntesterBrain::tick` over a synthetic CM + stub `Navigator`.
+2. `brain::brains::runtester::RunTesterBrain` (verbatim lift) + `BrainKind::Runtester` + factory/tag.
+3. CI determinism unit tests pinning `RunTesterBrain::tick` over a synthetic CM + stub `Navigator`.
 4. `scenario.rs` runs a `Box<dyn Brain>` (default `runtester`); inline block deleted — **closes Plan 22 T4 + retires Plan 15 duplication**.
 5. (optional) `crates/tools` `mode-perf-report` log aggregator.
 6. Live 6-navmode sweep ≥ `mode_perf.md` baseline; dated comparison appended to `mode_perf.md`; Plan 26 section in `context/brain_notes.md`.
@@ -60,7 +60,7 @@ per-`--navmode` A/B harness). **User decision (2026-06-18): keep both** — `Mai
 
 ### Why a verbatim lift (and what stays in the harness)
 
-`RuntesterBrain::tick` is the **same code relocated**, so there is no behavior to "re-derive" —
+`RunTesterBrain::tick` is the **same code relocated**, so there is no behavior to "re-derive" —
 parity is structural. The harness (`run_scenario`) keeps what it owns: connection, lazy goal
 resolution (`resolve_goal` / `farthest_reachable_spawn`), the `MovementRecorder`,
 reach-detection, `finalize`/exit codes. The brain owns only the per-tick decision + the
@@ -76,7 +76,7 @@ only consumer was the scenario path, so the static `BrainConfig.goal_override` i
 
 ### The regression contract — all 6 navmodes ≥ `mode_perf.md`
 
-`RuntesterBrain` is **navmode-agnostic**: it drives `astar`, `navmesh`, and the four `hybrid-*`
+`RunTesterBrain` is **navmode-agnostic**: it drives `astar`, `navmesh`, and the four `hybrid-*`
 backends through the same `Navigator` trait. A faithful lift must therefore preserve all six.
 Baseline to match (q2dm1, 16 bots, 180 s cap, combat off — see `context/mode_perf.md`):
 
@@ -108,11 +108,11 @@ static knob had). Remove `goal_override` from `BrainConfig` (keep `combat_enable
 `Some(goal_override)` navigates to that goal (assert via a stub `Navigator` capturing
 `set_goal`). Commit `task(T1): BrainContext.goal_override per-tick; drop BrainConfig.goal_override`.
 
-### T2: `RuntesterBrain` — verbatim lift of the scenario tick
+### T2: `RunTesterBrain` — verbatim lift of the scenario tick
 
 **File**: `crates/brain/src/brains/runtester.rs` (new), `crates/brain/src/brains/mod.rs`, `lib.rs`.
 
-**What to do**: Create `RuntesterBrain` implementing `trait Brain`. Lift `scenario.rs:358–467`'s
+**What to do**: Create `RunTesterBrain` implementing `trait Brain`. Lift `scenario.rs:358–467`'s
 decision/steer/recovery body **verbatim** into `tick`, converting the loop locals to brain
 fields: `steering: Steering` (`Steering::new(3.0)`), `recovery: Recovery`, `backoff_ticks: u32`,
 `escape_yaw: Option<f32>`, `last_serverframe: Option<i32>`. `set_map` is a no-op (it drives the
@@ -120,7 +120,7 @@ injected nav). `tick` reads `ctx.goal_override` (the harness pins it), calls `na
 `nav.set_goal` / `nav.smooth_with_cm` / `pursue_target_safe` exactly as the harness does today,
 returns `BrainOutput { intent, weapon_request: None }`. `status()=="runtester"`. Add
 `BrainKind::Runtester` + a `build_brain` arm + a `brain_tag` arm. Commit
-`task(T2): RuntesterBrain (verbatim lift of scenario tick) + BrainKind::Runtester`.
+`task(T2): RunTesterBrain (verbatim lift of scenario tick) + BrainKind::Runtester`.
 
 ### T3: CI determinism tests (pin the lift)
 
@@ -128,7 +128,7 @@ returns `BrainOutput { intent, weapon_request: None }`. `status()=="runtester"`.
 
 **What to do**: Deterministic unit tests over a **synthetic** `CollisionModel` (a straight
 corridor / an inside corner — reuse any existing test-CM helper in `world`/`brain`, else build a
-minimal box) + a **stub `Navigator`** with scripted returns. Assert `RuntesterBrain::tick`:
+minimal box) + a **stub `Navigator`** with scripted returns. Assert `RunTesterBrain::tick`:
 - steers `forward > 0` toward a scripted `pursue_target_safe` look-ahead;
 - drives the goal passed via `ctx.goal_override` (stub captures `set_goal`);
 - presses `jump` when the stub reports `current_edge_is_jump()`;
@@ -136,7 +136,7 @@ minimal box) + a **stub `Navigator`** with scripted returns. Assert `RuntesterBr
   sets `backoff_ticks` and steers along `escape_yaw`);
 - applies `arrive` / `speed_scale` throttle (stub `speed_scale` < 1.0 scales `forward` down);
 - **never** sets `weapon_request`.
-These pin the lift in CI without a live server. Commit `task(T3): RuntesterBrain determinism unit tests`.
+These pin the lift in CI without a live server. Commit `task(T3): RunTesterBrain determinism unit tests`.
 
 ### T4: Migrate `scenario.rs` onto `Box<dyn Brain>`
 
@@ -179,7 +179,7 @@ done
 worse; `hybrid-hier` no panic. Aggregate with T5 (or read logs). Append a **dated post-refactor
 comparison** (baseline vs runtester-brain columns) to `context/mode_perf.md` and a **Plan 26
 section** to `context/brain_notes.md` (runtester split, goal_override move, sweep result). If any
-navmode regresses past the gate, diff `RuntesterBrain::tick` against the old `scenario.rs` body —
+navmode regresses past the gate, diff `RunTesterBrain::tick` against the old `scenario.rs` body —
 the lift wasn't faithful — before closing. `git mv` plan + tracker to `completed/`, mark
 `SERIES.md` Plan 26 done + Plan 22 T4 closed (Rule C). Commit `task(T6): 6-navmode acceptance sweep + close Plan 26` (docs only — sweep is verification).
 
@@ -189,7 +189,7 @@ the lift wasn't faithful — before closing. `git mv` plan + tracker to `complet
 
 | File | Change | Priority |
 |------|--------|----------|
-| `crates/brain/src/brains/runtester.rs` (new) | `RuntesterBrain` (verbatim lift) + determinism tests | P0 |
+| `crates/brain/src/brains/runtester.rs` (new) | `RunTesterBrain` (verbatim lift) + determinism tests | P0 |
 | `crates/brain/src/brains/core.rs` | add `BrainContext.goal_override`; drop `BrainConfig.goal_override` | P0 |
 | `crates/brain/src/brains/mod.rs` | `BrainKind::Runtester` + factory + `brain_tag` | P0 |
 | `crates/qbots/src/scenario.rs` | drive `Box<dyn Brain>` (default runtester); delete `358–467` | P0 |
@@ -224,7 +224,7 @@ the lift wasn't faithful — before closing. `git mv` plan + tracker to `complet
 ## Verification Checklist
 
 - [ ] T1: `BrainContext.goal_override` added; `BrainConfig.goal_override` removed; override unit test green.
-- [ ] T2: `RuntesterBrain` verbatim lift; `BrainKind::Runtester` builds via `build_brain`; clippy clean.
+- [ ] T2: `RunTesterBrain` verbatim lift; `BrainKind::Runtester` builds via `build_brain`; clippy clean.
 - [ ] T3: determinism tests pass — steers to look-ahead, honors `goal_override`, jumps on jump-edge, backoff/escape on no-progress, throttles, no `weapon_request`.
 - [ ] T4: `scenario.rs` drives `Box<dyn Brain>` (default `runtester`); inline `358–467` deleted; Plan 22 T4 closed.
 - [ ] Single-bot parity: `spawn-to-spawn`/`spawn-to-weapon` SUMMARY identical to pre-Plan-26 run (±1 tick).

@@ -25,7 +25,7 @@ to **prove the plugin seam compiles and runs with >1 impl**. Wire both into `Bra
 
 > **Note**: the scenario (`spawn-to-spawn`/`spawn-to-weapon`) migration that Plan 22 deferred
 > (T4) is **not** done here. It moves to **Plan 26**, which lifts `scenario.rs`'s tick into a
-> dedicated `RuntesterBrain` (the scenario loop is meaningfully *different* from
+> dedicated `RunTesterBrain` (the scenario loop is meaningfully *different* from
 > MainBrain-combat-off — `pursue_target_safe` + a richer escape — so migrating it onto MainBrain
 > would regress the scenarios and Plan 26 would re-migrate). Plan 24 leaves `scenario.rs` alone.
 
@@ -148,7 +148,7 @@ split, why the scenario migration moved to Plan 26). Commit `task(T3): verify ma
    `skill`; keep it minimal so clippy stays clean (Rule A).
 3. **`BrainKind::Sentry` exposed to users prematurely** — Plan 25 adds the `--brain` flag; until
    then `Sentry` is only reachable in code/tests. That's fine (it's a proof, not a feature yet).
-4. **Plan 22 T4 stays open after this plan** — by design; Plan 26 closes it via `RuntesterBrain`.
+4. **Plan 22 T4 stays open after this plan** — by design; Plan 26 closes it via `RunTesterBrain`.
    *Mitigation*: SERIES note + this plan's TL;DR call it out so it isn't lost.
 
 ---

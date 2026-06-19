@@ -89,7 +89,7 @@ BrainKind` to `ConnectOne`, `SpawnToSpawn`, `SpawnToWeapon` (and `Run` — see T
 Plan 24 T3). Keep nav independent: `build_navigator(navmode, …)` and `build_brain(brain, …)` are
 separate calls. Add a help docstring: "Brain (decision plugin): `main` (default) or `sentry`.
 Independent of `--navmode`." **Default stays `BrainKind::Main` for all commands here** —
-`RuntesterBrain` doesn't exist until Plan 26, which **flips the `spawn-to-spawn`/`spawn-to-weapon`
+`RunTesterBrain` doesn't exist until Plan 26, which **flips the `spawn-to-spawn`/`spawn-to-weapon`
 default to `runtester`** (and migrates `scenario.rs` onto the trait). Commit
 `task(T2): --brain flag on connect-one/spawn-to-* + scenario`.
 

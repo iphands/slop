@@ -6,7 +6,7 @@
 - Start date: 2026-06-18
 - Contract: `main` behavior byte-identical (git rename, decision body verbatim). Static +
   unit-test verified; live `connect-one`/`spawn-to-*` deferred (server `noir40.lan` down).
-- **Scenario migration (Plan 22 T4) is NOT here** — it moves to Plan 26 (`RuntesterBrain`).
+- **Scenario migration (Plan 22 T4) is NOT here** — it moves to Plan 26 (`RunTesterBrain`).
 
 ## Resume Instructions
 Plan 23 must be `done` (trait + factory exist). T1 is a `git mv` of `brain.rs` →
