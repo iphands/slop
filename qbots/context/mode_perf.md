@@ -1,5 +1,13 @@
 # Nav `--navmode` performance — q2dm1 sweep
 
+> **Plan 26 (2026-06-18):** the `spawn-to-*` decision tick was moved out of `scenario.rs` into
+> `RuntesterBrain` (default `--brain runtester`) as a **verbatim** lift — the same code driving the
+> same `Navigator`, so all six navmodes should reproduce the table below. The live re-sweep is
+> **pending a reachable server** (acceptance gate: each navmode reach-count ≥ baseline − 2/16 on
+> both scenarios, no quality regression, `hybrid-hier` no panic). CI gates (RuntesterBrain
+> determinism tests + build/clippy/test) are green. Append the dated runtester-brain columns here
+> once the sweep runs.
+
 **Date:** 2026-06-18 · **Server:** `noir.lan:27910` (q2dm1, 64 slots) ·
 **Nav graph:** 12 890 nodes / 519 653 edges (cached, spacing 24) ·
 **Bots:** 16 per mode · **Cap:** `--max-secs 180` (3 min/bot) · **Combat:** disabled.

@@ -64,3 +64,32 @@
   spawn-to-* `--brain` (and flips its default to `runtester`). Avoided shipping a dead flag.
 - Verification: 18 test binaries green; `--help` shows `--navmode`/`--navmodes`/`--brain`/`--brains`
   and no `--mode`; invalid brain/navmode rejected. Live matrix run pending a server.
+
+## 2026-06-18 — Plan 26: runtester scenario brain (+ goal_override move)
+- `BrainContext.goal_override: Option<NavGoal>` added (per-tick goal injection for lazily-resolved
+  scenario goals); `BrainConfig.goal_override` dropped (`combat_enabled` stays). MainBrain reads
+  `ctx.goal_override` with the same precedence; `bot_task` passes `None`.
+- `brains::runtester::RuntesterBrain` (`BrainKind::Runtester`): the scenario's combat-free tick
+  lifted **verbatim** (steering `Steering::new(3.0)` / recovery / 8-tick backoff / 7-ray escape
+  as fields; `pursue_target_safe` look-ahead; speed_scale throttle). `set_map` is a no-op; goal
+  comes from `ctx.goal_override`; `dt` from the harness; never requests a weapon.
+- `BrainOutput.intent_forward` added — the recorder's hindered-(`H`)-flag input (`recorder.rs:280`),
+  which is the throttled nav-step forward and **0 during recovery/backoff** (distinct from
+  `intent.forward`). The brain sets it precisely so the migration preserves recorder telemetry
+  exactly; MainBrain reports its final forward, Sentry 0.
+- `scenario.rs` now builds a `Box<dyn Brain>` (default `runtester`, combat off) and calls
+  `brain.tick`; the inline ~110-line decision block is deleted. **Closes Plan 22 T4 + retires the
+  Plan 15 duplication.** `spawn-to-spawn`/`spawn-to-weapon` gain `--brain` (default `runtester`;
+  `main` for an A/B of the live brain's pathing). dt/last_serverframe + recorder/goal/exit stay
+  in the harness.
+- CI gate (T3): 6 deterministic unit tests over a stub `Navigator` + an open `CollisionModel`
+  (`half_space`): steers to look-ahead, drives goal_override into nav, jumps on jump-edge,
+  speed_scale throttles, no weapon_request, backoff-replans after sustained no-progress. Shared
+  `StubNav` lives in `nav_mode.rs`.
+- T5 (optional log aggregator) skipped — no logs without a server.
+- **T6 ACCEPTANCE (live 6-navmode sweep vs mode_perf.md) NOT run — server `noir40.lan`
+  unreachable this session.** The merge bar (determinism tests + workspace build/clippy/fmt/test,
+  all green) is met and the lift is verbatim (parity structural), so no regression is *shipped*;
+  the live reach-count re-confirmation across astar/navmesh/4×hybrid is the one outstanding item,
+  to run when a server is up (gate: each navmode ≥ baseline − 2/16, no quality regression,
+  hybrid-hier no panic).
