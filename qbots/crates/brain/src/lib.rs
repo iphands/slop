@@ -29,11 +29,11 @@ pub mod skill;
 pub mod steer;
 pub mod weapons;
 
-pub use brain::{Brain, BrainConfig, BrainOutput};
-// The brain plugin contract + bundled I/O (Plan 23). The `Brain` *trait* lives at
-// `brains::core::Brain`; the root `Brain` export flips from the concrete struct to the trait in
-// Plan 23 T5 once the binary drives a `Box<dyn Brain>`. `BrainContext`/`BrainMap` are new here.
-pub use brains::core::{BrainContext, BrainMap};
+pub use brain::{BrainConfig, BrainOutput};
+// The brain plugin contract + bundled I/O (Plan 23). The root `Brain` is now the **trait**
+// (the binary drives a `Box<dyn Brain>` via `build_brain`); the concrete impl lives at
+// `brain::brain::Brain` and is reached through the factory.
+pub use brains::core::{Brain, BrainContext, BrainMap};
 pub use brains::{build_brain, BrainKind};
 pub use combat::{CombatDecision, CombatDriver};
 pub use danger::{DangerDriver, DodgeAction};

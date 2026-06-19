@@ -603,11 +603,11 @@ pub(crate) async fn bot_task(
     mode: NavMode,
 ) -> std::io::Result<()> {
     use brain::perception::Worldview;
-    // `Brain as _` brings the trait's methods (`set_map`/`tick`/`status`/…) into scope for the
-    // concrete brain without shadowing the `Brain` struct name (still used for `Brain::new`).
-    use brain::brains::core::Brain as _;
+    // `Brain` is the plugin trait (its methods resolve on the `Box<dyn Brain>` the factory
+    // returns); `build_brain`/`BrainKind` select the implementation, mirroring `build_navigator`.
     use brain::{
-        BotSkill, Brain, BrainConfig, BrainContext, BrainMap, MovementController, Navigator,
+        build_brain, BotSkill, Brain, BrainConfig, BrainContext, BrainKind, BrainMap,
+        MovementController, Navigator,
     };
     use client::{Conn, ConnState};
     use q2proto::Usercmd;
@@ -645,7 +645,8 @@ pub(crate) async fn bot_task(
     // The decision layer (Plan 22): owns combat/FSM/dodge/steering/recovery/skill/roam.
     // Built early; learns the nav graph at map load via `set_map`. The `Navigator` is
     // injected into `brain.tick` each frame — the brain uses nav, never owns it.
-    let mut brain = Brain::new(BotSkill::default(), BrainConfig::default());
+    let mut brain: Box<dyn Brain + Send> =
+        build_brain(BrainKind::Main, BotSkill::default(), BrainConfig::default());
     // Boxed behind the `Navigator` trait so the tick loop is backend-agnostic: `--mode`
     // picks A* (waypoint graph) or navmesh (polygons + funnel) at map load. `+ Send`
     // because this future is spawned on tokio and holds the driver across awaits.
