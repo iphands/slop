@@ -34,6 +34,10 @@ pub struct BrainContext<'a> {
     pub dt: f32,
     /// Monotonic tick counter since connect (drives jitter, roam dwell, periodic jumps).
     pub ticks: u32,
+    /// Per-tick goal injection: when `Some`, the brain drives to this goal instead of its own
+    /// FSM/item/roam ladder. Resolved lazily by the caller (e.g. the scenario harness picks the
+    /// farthest reachable spawn on the first active frame), which a static config knob can't carry.
+    pub goal_override: Option<NavGoal>,
 }
 
 /// Per-map facts a brain learns once the map has loaded (was `Brain::set_map`'s args).
@@ -53,18 +57,14 @@ pub struct BrainMap {
 #[derive(Debug, Clone)]
 pub struct BrainConfig {
     /// When `false`, combat is never evaluated (no target, no fire) — the bot only navigates.
-    /// Used by the movement-test scenarios.
+    /// Used by the movement-test scenarios (and `--brain main` A/B pathing runs).
     pub combat_enabled: bool,
-    /// When `Some`, this goal replaces the FSM/item/roam goal ladder every tick — used by the
-    /// scenarios to pin a fixed destination.
-    pub goal_override: Option<NavGoal>,
 }
 
 impl Default for BrainConfig {
     fn default() -> Self {
         Self {
             combat_enabled: true,
-            goal_override: None,
         }
     }
 }
@@ -106,9 +106,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_config_is_combat_on_no_override() {
+    fn default_config_is_combat_on() {
         let cfg = BrainConfig::default();
         assert!(cfg.combat_enabled);
-        assert!(cfg.goal_override.is_none());
     }
 }

@@ -73,6 +73,7 @@ mod tests {
             cm: None,
             dt: 0.1,
             ticks: 1,
+            goal_override: None,
         });
         assert_eq!(out.intent.forward, 0.0);
         assert_eq!(out.intent.side, 0.0);

@@ -902,6 +902,8 @@ pub(crate) async fn bot_task(
                             cm: collision.as_deref(),
                             dt,
                             ticks,
+                            // The live fleet brain drives its own FSM/item/roam goal ladder.
+                            goal_override: None,
                         });
 
                         // Request a weapon switch via `use <name>` stringcmd (Q2 ignores

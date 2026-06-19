@@ -53,3 +53,49 @@ pub trait Navigator {
         1.0
     }
 }
+
+/// A scriptable `Navigator` stub for deterministic brain tests (no nav graph / server needed).
+/// Captures the last `set_goal` and returns canned look-ahead / jump-edge / speed values, so a
+/// brain's `tick` can be exercised in isolation. Shared across brain unit tests.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct StubNav {
+    /// The goal captured from the most recent `set_goal` call.
+    pub last_goal: Option<NavGoal>,
+    /// Returned by both `pursue_target` and `pursue_target_safe`.
+    pub pursue: Option<Vec3>,
+    /// Returned by `current_edge_is_jump`.
+    pub jump_edge: bool,
+    /// Returned by `update` (true = goal reached).
+    pub reached: bool,
+    /// Returned by `speed_scale` (1.0 unless set).
+    pub speed: Option<f32>,
+    /// Count of `force_replan` calls (asserts the backoff path replanned).
+    pub replans: u32,
+}
+
+#[cfg(test)]
+impl Navigator for StubNav {
+    fn set_goal(&mut self, goal: NavGoal, _from: Vec3) {
+        self.last_goal = Some(goal);
+    }
+    fn update(&mut self, _pos: Vec3, _cm: Option<&CollisionModel>) -> bool {
+        self.reached
+    }
+    fn pursue_target(&self, _from: Vec3) -> Option<Vec3> {
+        self.pursue
+    }
+    fn pursue_target_safe(&self, _from: Vec3, _cm: &CollisionModel) -> Option<Vec3> {
+        self.pursue
+    }
+    fn current_edge_is_jump(&self) -> bool {
+        self.jump_edge
+    }
+    fn force_replan(&mut self) {
+        self.replans += 1;
+    }
+    fn blacklist_waypoint_if_blocked(&mut self, _pos: Vec3, _cm: &CollisionModel) {}
+    fn speed_scale(&self, _pos: Vec3) -> f32 {
+        self.speed.unwrap_or(1.0)
+    }
+}

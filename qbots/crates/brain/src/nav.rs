@@ -57,7 +57,7 @@ const ORBIT_RADIUS: f32 = world::GRID_SPACING * 2.0;
 /// Extra time lets bots navigate around corners before orbit fires.
 pub const ORBIT_FRAMES: u32 = 25;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum NavGoal {
     Waypoint(usize),
     Position(Vec3),

@@ -10,9 +10,9 @@
 //! `Usercmd`.
 //!
 //! This is a behavior-preserving extraction: with [`BrainConfig::default`] the logic here
-//! reproduces the pre-extraction `bot_task` body byte-for-byte. The two config knobs
-//! (`combat_enabled`, `goal_override`) exist so the movement-scenario runner — which
-//! disables combat and pins the goal — can drive the same brain (Plan 22 T5).
+//! reproduces the pre-extraction `bot_task` body byte-for-byte. `BrainConfig::combat_enabled`
+//! lets the movement-scenario runner disable combat; the pinned goal arrives per-tick via
+//! [`BrainContext::goal_override`] (Plan 26 — the scenario resolves it lazily).
 
 use std::sync::Arc;
 
@@ -142,6 +142,7 @@ impl crate::brains::core::Brain for MainBrain {
             cm,
             dt,
             ticks,
+            goal_override,
         } = ctx;
         let jitter = (ticks as f32) * 0.1;
         let combat_dec = if self.cfg.combat_enabled {
@@ -214,7 +215,7 @@ impl crate::brains::core::Brain for MainBrain {
                 self.fsm = BehaviorState::Roam;
             }
 
-            let goal = if let Some(g) = self.cfg.goal_override.clone() {
+            let goal = if let Some(g) = goal_override.clone() {
                 g
             } else if let Some(g) = fsm_intent.nav_goal {
                 g
@@ -437,10 +438,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_config_is_combat_on_no_override() {
+    fn default_config_is_combat_on() {
         let cfg = BrainConfig::default();
         assert!(cfg.combat_enabled);
-        assert!(cfg.goal_override.is_none());
+    }
+
+    #[test]
+    fn goal_override_drives_the_navigator() {
+        use crate::brains::core::Brain as _;
+        use crate::nav_mode::StubNav;
+        use crate::perception::Worldview;
+        use client::parse::ConfigStrings;
+        use q2proto::Frame;
+
+        // Combat off so the tick is pure navigation; the per-tick override must win the goal
+        // ladder and be handed to the navigator verbatim.
+        let mut brain = MainBrain::new(
+            BotSkill::default(),
+            BrainConfig {
+                combat_enabled: false,
+            },
+        );
+        let view = Worldview::from_frame(&Frame::default(), &ConfigStrings::default(), 0);
+        let mut nav = StubNav::default();
+        let goal = NavGoal::Position(Vec3::new(123.0, 456.0, 0.0));
+        let _ = brain.tick(BrainContext {
+            view: &view,
+            nav: Some(&mut nav),
+            cm: None,
+            dt: 0.1,
+            ticks: 1,
+            goal_override: Some(goal.clone()),
+        });
+        assert_eq!(nav.last_goal, Some(goal));
     }
 
     #[test]
