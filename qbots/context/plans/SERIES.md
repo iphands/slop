@@ -26,7 +26,16 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 | **19** | Nav graph quality & 8-bot fleet reach validation | 17, 18, 15 | pending | Closes the user-facing goal: `spawn-to-spawn --count 8 --max-secs 60` and `spawn-to-weapon <weapon> --count 8 --max-secs 60` both reach 8/8 live on q2dm1. Seeds scenario goal positions (not just DM spawns) into the nav graph, adds the missing `--max-secs`/`--count` CLI flags, adds a per-bot pass/fail summary. |
 | **21** | Competition runner | 09, 20 | done | `qbots competition` spawns N bots per nav `--mode` in one process (shared `NavCache`), one distinct skin per mode, and prints a per-mode frag scoreboard (`FleetStats` grouped by name prefix). In-process (no 6× nav rebuild); makes `mode` per-bot in the fleet supervisor. |
 | **22** | Brain seam extraction | 06, 07, 12, 13 | done | Extracted the dissolved decision/steering body of `bot_task` into a single `brain::Brain` (owns combat/fsm/danger/steering/recovery/skill/roam; `Navigator` injected per tick). `bot_task` is now thin orchestration (−~280 net lines in `main.rs`). Verbatim lift; validated live via `connect-one` (full combat+nav+FSM pipeline through `brain.tick`). Nav + driver untouched. **T4 deferred → Plan 23**: migrate `scenario.rs` onto `Brain` (retires the Plan 15 duplication). |
-| **23** | Behavior/persona + nav-leak pull-up | 22 | pending | Phase 2 on the Brain seam: migrate `scenario.rs` onto `Brain` (combat-off/pinned-goal config — retires the Plan 15 duplication, Plan 22 T4); per-bot personas (aggression/weapon-pref/follow/reaction), real elevator behavior (decide+wait+ride; **remove `ELEVATOR_PENALTY`**, nav exposes plat facts only), heatmap *preference* moved up to Brain (nav exposes per-node danger), and explicit persona-tuned tactics (e.g. back-up vs the SSG instead of fixed `BACKUP_DIST`). |
+| **23** | Brain plugin **core** (`trait Brain`) | 22 | pending | Turn the single concrete `Brain` into a plugin contract: `trait Brain` + `BrainContext`/`BrainOutput`/`BrainConfig`/`BrainMap` + `BrainKind` enum + `build_brain` factory (mirrors `NavMode`/`build_navigator`) in `brain::brains::core`; existing brain implements it behind `Box<dyn Brain>`. Establishes `context/brain_notes.md` (append-on-every-brain-plan rule). **Behavior-preserving.** Supersedes the old single "Behavior/persona" Plan 23, which is now expanded into 23–32. |
+| **24** | `main` brain plugin | 23 | pending | Relocate the concrete decision body into `brains/main::MainBrain`; add a minimal `SentryBrain` reference plugin (proves the seam runs with >1 brain); `build_brain` dispatches both; migrate `scenario.rs` onto the trait (combat-off/pinned-goal — **closes Plan 22 T4**, retires Plan 15 duplication). `main` behavior byte-identical. |
+| **25** | Multibrain selection + `--navmode` rename | 24 | pending | `--brain <kind>` on connect-one/run/spawn-*/competition + per-bot `[fleet].brain` config; **any brain × any navmode** (orthogonal axes); rename `--mode`→`--navmode`/`--modes`→`--navmodes` (CLI/help/README/`mode_perf.md`, keep `NavMode` type); `competition --brains` matrix. |
+| **26** | Persona parameters (behavior) | 25 | pending | Expand `Personality`/`BotSkill` into a real per-bot persona — aggression, weapon-pref, follow-or-not, reaction, risk tolerance — wired from config/competition; `main` consumes. (Ex-Plan 23 persona.) |
+| **27** | Tactical weapon-matchup reads (behavior) | 26 | pending | Infer enemy weapon (PVS-limited observation); **back-up-vs-SSG**, don't-engage-blaster-vs-railgun, per-weapon ideal distance; replace fixed `BACKUP_DIST`/`IDEAL_DIST` with persona+weapon-tuned tactics. |
+| **28** | Engagement: chase / disengage / third-party (behavior) | 27 | pending | Chase-or-not by health/weapon/dist; **break a 1v1 when third-partied** (taking fire from afar → make them choose); target prioritization. |
+| **29** | Resource decisions: health & ammo (behavior) | 27 | pending | Nearest-health-when-hurt; weapon/ammo need-awareness folded into the item value model. |
+| **30** | Elevator / plat behavior (behavior) | 24 | pending | Brain decides→waits-clear→rides via movement intents; **remove `ELEVATOR_PENALTY`** (nav exposes plat top/bottom facts only). Folds `context/elevator_todo.md`; ex-Plan 23 elevator. |
+| **31** | Underwater & breath (behavior) | 24 | pending | Dive for an item, monitor air/breath (playerstate water level), surface to breathe, exit-water routing (mostly brain, minimal nav). |
+| **32** | Heatmap preference pull-up (behavior) | 24 | pending | Nav exposes per-node danger; **Brain** owns the persona-weighted danger/crowd *preference* instead of A* pricing it. Ex-Plan 23 heatmap. |
 | **20** | Hybrid navigation modes | 14, 10 | done | Four `hybrid-*` `--mode` backends combining the A* waypoint graph + navmesh, selectable alongside the untouched `astar`/`navmesh` controls: `hybrid-fallback` (A* primary, navmesh on stuck), `hybrid-race` (plan both, run winner), `hybrid-hier` (navmesh corridor + A* local), `hybrid-segment` (navmesh open + A* jump links). Thin `Navigator` supervisors over both sub-drivers (`brain::hybrid`); one `build_navigator` factory wires both dispatch sites. Code complete + unit-tested; **live A/B against the Plan 10 baselines still pending** (needs a running server). |
 
 **Milestones**
@@ -49,6 +58,16 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 - After **19**: a full 8-bot fleet reliably reaches a spawn-to-spawn or spawn-to-weapon goal
   live, on q2dm1, within an extended (60s) timeout — the concrete deliverable this plan series
   was reorganized around on 2026-06-16.
+- After **23**: decision-making is a *plugin contract* (`trait Brain`), not a single struct.
+- After **24**: `main` is one brain plugin among several; the seam is proven to run >1 brain;
+  the scenarios share the same brain as the live bot.
+- After **25**: brain and nav backend are independent per-bot axes (`--brain` × `--navmode`).
+- After **26–32**: bots make real persona-driven tactical decisions (weapon matchups,
+  third-party disengage, resource seeking, elevators, underwater, danger preference).
+
+> **Brain-notes discipline (Plans 23–32):** every brain plan appends a dated section to
+> `context/brain_notes.md` (running log, same shape as `map_errors.notes.log.md`). It is a
+> verification-checklist item in each brain plan — not optional.
 
 > Active plans live alongside this file as `NN_name.md` + `NN_name_tracker.md`.
 > Completed plans move to `context/plans/completed/` (see `RULES.md`).
