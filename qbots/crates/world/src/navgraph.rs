@@ -1742,6 +1742,50 @@ mod tests {
         assert!(g.path(0, 1).is_none());
     }
 
+    /// Plan 39: a water channel between two dry ledges. `generate` must sample water nodes,
+    /// connect them with swim edges, bridge the ledges through the water (entry/exit), and
+    /// A* must find a path from the left ledge to the right ledge that crosses water.
+    #[test]
+    fn water_channel_is_swimmable() {
+        let cm = crate::collision::water_channel_world();
+        // Span both side ledges (|x|>64) and the central water channel.
+        let bounds = ([-144.0, -32.0, -16.0], [144.0, 32.0, 200.0]);
+        let g = NavGraph::generate(&cm, bounds, 24.0);
+
+        // Water nodes were sampled in the channel.
+        let water_count = (0..g.node_count()).filter(|&i| g.is_water_node(i)).count();
+        assert!(water_count > 0, "expected swim nodes in the channel");
+
+        // At least one swim edge exists, and some swim edge bypasses STEP vertically
+        // (a 3-D link the walk graph could never make).
+        let (swim, _) = g.raw_swim_and_water();
+        assert!(!swim.is_empty(), "expected swim edges");
+        let steep_swim = swim
+            .iter()
+            .any(|&(a, b)| (g.nodes[a][2] - g.nodes[b][2]).abs() > STEP);
+        assert!(
+            steep_swim,
+            "expected a swim edge steeper than STEP (3-D link)"
+        );
+
+        // Find a dry ledge node on each side (z≈24, |x|>64).
+        let dry_left = (0..g.node_count())
+            .find(|&i| !g.is_water_node(i) && g.nodes[i][0] < -64.0)
+            .expect("left ledge node");
+        let dry_right = (0..g.node_count())
+            .find(|&i| !g.is_water_node(i) && g.nodes[i][0] > 64.0)
+            .expect("right ledge node");
+
+        // A* crosses the water from ledge to ledge.
+        let path = g
+            .path(dry_left, dry_right)
+            .expect("path across the channel");
+        assert!(
+            path.iter().any(|&n| g.is_water_node(n)),
+            "the path must go through water nodes"
+        );
+    }
+
     #[test]
     fn nearest_picks_closest() {
         let g = NavGraph::from_raw(

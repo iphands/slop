@@ -653,6 +653,90 @@ fn box_on_plane_side(b: &Aabb, p: &Plane) -> i8 {
     sides
 }
 
+/// A layered world for water-nav tests (Plan 39): a solid floor for all `z < 0`, a water
+/// volume in the central channel `-64 ≤ x ≤ 64` for `0 ≤ z < 120`, and air everywhere
+/// else. Dry floor nodes form on the side ledges (`|x| > 64`); swim nodes fill the channel;
+/// an entry/exit swim edge bridges them. `pub(crate)` so the `navgraph` tests can build it.
+#[cfg(test)]
+pub(crate) fn water_channel_world() -> CollisionModel {
+    let mk = |normal: [f32; 3], dist: f32, typ: i32| {
+        let sb = (0..3).fold(0u8, |b, j| if normal[j] < 0.0 { b | (1 << j) } else { b });
+        Plane {
+            normal,
+            dist,
+            typ,
+            signbits: sb,
+        }
+    };
+    // P0: z=0 floor top, P1: z=120 water top, P2: x=-64 west wall, P3: x=64 east wall.
+    let planes = vec![
+        mk([0.0, 0.0, 1.0], 0.0, 2),
+        mk([0.0, 0.0, 1.0], 120.0, 2),
+        mk([1.0, 0.0, 0.0], -64.0, 0),
+        mk([1.0, 0.0, 0.0], 64.0, 0),
+    ];
+    // Leaf children encode as -(leaf+1): L0→-1, L1→-2, L2→-3.
+    // N0 P0: front(z≥0)→N1, back(z<0)→L2 solid floor.
+    // N1 P1: front(z≥120)→L0 air, back(z<120)→N2.
+    // N2 P2: front(x≥-64)→N3, back(x<-64)→L0 air.
+    // N3 P3: front(x≥64)→L0 air, back(-64≤x<64)→L1 water.
+    let nodes = vec![
+        Node {
+            plane: 0,
+            children: [1, -3],
+        },
+        Node {
+            plane: 1,
+            children: [-1, 2],
+        },
+        Node {
+            plane: 2,
+            children: [3, -1],
+        },
+        Node {
+            plane: 3,
+            children: [-1, -2],
+        },
+    ];
+    let leafs = vec![
+        Leaf {
+            contents: 0,
+            cluster: 0,
+            firstleafbrush: 0,
+            numleafbrushes: 0,
+        }, // L0 air
+        Leaf {
+            contents: CONTENTS_WATER,
+            cluster: 0,
+            firstleafbrush: 0,
+            numleafbrushes: 0,
+        }, // L1 water
+        Leaf {
+            contents: CONTENTS_SOLID,
+            cluster: -1,
+            firstleafbrush: 0,
+            numleafbrushes: 1,
+        }, // L2 floor
+    ];
+    // One floor brush: the half-space z < 0 (top face = P0, normal +z).
+    let brushsides = vec![BrushSide { plane: 0 }];
+    let brushes = vec![BrushCol {
+        firstside: 0,
+        numsides: 1,
+        contents: CONTENTS_SOLID,
+    }];
+    let leafbrushes = vec![0u16];
+    CollisionModel {
+        planes,
+        nodes,
+        leafs,
+        brushes,
+        brushsides,
+        leafbrushes,
+        headnode: 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -723,6 +807,35 @@ mod tests {
             leafbrushes,
             headnode: -1, // leaf 0 directly (-1 → -1-(-1) = 0)
         }
+    }
+
+    #[test]
+    fn water_channel_world_contents() {
+        let w = water_channel_world();
+        // Channel: water between floor and surface.
+        assert_eq!(
+            w.point_contents(&[0.0, 0.0, 60.0]) & CONTENTS_WATER,
+            CONTENTS_WATER
+        );
+        // Below floor: solid.
+        assert!(w.point_contents(&[0.0, 0.0, -10.0]) & CONTENTS_SOLID != 0);
+        // Above surface: air.
+        assert_eq!(w.point_contents(&[0.0, 0.0, 200.0]), 0);
+        // Side ledge (x>64) above the floor: air, not water.
+        assert_eq!(w.point_contents(&[100.0, 0.0, 60.0]) & CONTENTS_WATER, 0);
+        // A down-trace on a side column finds the floor at z≈0.
+        let down = w.trace(
+            &[100.0, 0.0, 200.0],
+            &[100.0, 0.0, -50.0],
+            &[0.0; 3],
+            &[0.0; 3],
+            MASK_SOLID,
+        );
+        assert!(
+            !down.startsolid && down.fraction < 1.0,
+            "side column has a floor"
+        );
+        assert!((down.endpos[2] - 0.0).abs() < 1.0, "floor at z≈0");
     }
 
     #[test]
