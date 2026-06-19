@@ -119,12 +119,15 @@ impl Brain for RunTesterBrain {
         // bot can drive vertical swim thrust, climb out, and so recovery stays out of the water.
         let water = water_level(cm, pos);
         let swimming = is_swimming(water) || nav.current_edge_is_swim();
+        // Ride a moving platform (Plan 43): suspend recovery (stand-and-wait / being carried
+        // is not a wedge) and override steering below.
+        let ride_active = nav.current_edge_is_ride();
 
         // Stuck recovery — SUSPENDED while swimming (Plan 40 T4): water move is 0.5× speed and a
         // bob at the surface is not a wedge, so the StuckDetector would false-fire; and
         // find_best_direction actively steers AWAY from water. A real swim dead-end relies on
         // re-path, not blind reverse. So skip recovery entirely while in/at water.
-        if !swimming {
+        if !swimming && !ride_active {
             let has_nav_target = nav.pursue_target(pos).is_some();
             let rec_action = self.recovery.evaluate(
                 pos,
@@ -229,7 +232,37 @@ impl Brain for RunTesterBrain {
             mv.move_side(side * sp);
             intent_forward = fwd * sp;
         }
-        if nav.current_edge_is_jump() && !swimming {
+        // Ride override (Plan 43): on a ride edge, replace the steer-to-waypoint movement with
+        // walk-to-board → WAIT (no forward) until the platform arrives → cross to the dismount.
+        // Aiming at the far node directly (the normal pursue target) would walk the bot off the
+        // ledge before the platform is there.
+        if ride_active {
+            if let Some(info) = nav.current_ride_info() {
+                let phase = crate::ride::ride_phase(pos, &info, view);
+                match phase {
+                    crate::ride::RidePhase::Wait => {
+                        mv.move_forward(0.0);
+                        mv.move_side(0.0);
+                        intent_forward = 0.0;
+                    }
+                    crate::ride::RidePhase::Approach | crate::ride::RidePhase::Cross => {
+                        let target = crate::ride::ride_target(phase, &info);
+                        let to = target - pos;
+                        let dir = if to.length_squared() > 1e-6 {
+                            to.normalize_or_zero()
+                        } else {
+                            Vec3::ZERO
+                        };
+                        let (rfwd, rside) = move_from_world_dir(dir, view_yaw, true);
+                        mv.look_at(view_yaw, 0.0);
+                        mv.move_forward(rfwd);
+                        mv.move_side(rside);
+                        intent_forward = rfwd;
+                    }
+                }
+            }
+        }
+        if nav.current_edge_is_jump() && !swimming && !ride_active {
             mv.jump();
         }
 

@@ -25,6 +25,7 @@ pub mod pursuit;
 pub mod q3char;
 pub mod recorder;
 pub mod recover;
+pub mod ride;
 pub mod skill;
 pub mod steer;
 pub mod water;

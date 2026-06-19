@@ -92,6 +92,14 @@ impl Navigator for HybridHier {
         self.sub.astar.current_edge_is_swim()
     }
 
+    fn current_edge_is_ride(&self) -> bool {
+        self.sub.astar.current_edge_is_ride()
+    }
+
+    fn current_ride_info(&self) -> Option<world::RideInfo> {
+        self.sub.astar.current_ride_info()
+    }
+
     fn force_replan(&mut self) {
         // Replan both layers: a new corridor and a fresh local route off it.
         self.sub.navmesh.force_replan();

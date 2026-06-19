@@ -371,11 +371,14 @@ impl crate::brains::core::Brain for MainBrain {
             // false-fires on slow swim/bob and find_best_direction steers AWAY from water.
             let swim_active =
                 cm.is_some_and(|c| is_swimming(water_level(c, pos))) || nav.current_edge_is_swim();
+            // Ride gate (Plan 43): suspend recovery while boarding/waiting/riding a moving
+            // platform — the bot stands still to wait or is carried, neither of which is "stuck".
+            let ride_active = nav.current_edge_is_ride();
 
             // ── 6. Stuck recovery (Plan 13) ───────────────────────────────
             let has_nav_target = nav.pursue_target(pos).is_some();
             let engaging = matches!(self.fsm, BehaviorState::Engage { .. });
-            let rec_action = if swim_active {
+            let rec_action = if swim_active || ride_active {
                 RecoveryAction::None
             } else {
                 self.recovery
@@ -437,6 +440,36 @@ impl crate::brains::core::Brain for MainBrain {
                         }
                     }
                     mv.jump = false; // jumping in water is a useless one-shot launch
+                }
+            }
+
+            // ── 9. Ride activation (Plan 43): board → wait → cross a moving platform ──
+            // On a ride edge the bot must walk to the board point, WAIT (clear, no forward)
+            // until the platform arrives, then cross to the dismount point — overriding the
+            // normal steer-to-waypoint (which aims across the gap at the far node and would
+            // walk the bot off the ledge). Recovery is already suspended (`ride_active`).
+            if ride_active {
+                if let Some(info) = nav.current_ride_info() {
+                    let phase = crate::ride::ride_phase(pos, &info, view);
+                    match phase {
+                        crate::ride::RidePhase::Wait => {
+                            mv.move_forward(0.0);
+                            mv.move_side(0.0);
+                        }
+                        crate::ride::RidePhase::Approach | crate::ride::RidePhase::Cross => {
+                            let target = crate::ride::ride_target(phase, &info);
+                            let to = target - pos;
+                            let dir = if to.length_squared() > 1e-6 {
+                                to.normalize()
+                            } else {
+                                Vec3::ZERO
+                            };
+                            let (fwd, side) = move_from_world_dir(dir, view_yaw, true);
+                            mv.move_forward(fwd);
+                            mv.move_side(side);
+                        }
+                    }
+                    mv.jump = false; // never jump off a moving platform
                 }
             }
         } else if !combat_dec.should_fire {

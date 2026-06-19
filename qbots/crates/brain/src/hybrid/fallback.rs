@@ -91,6 +91,20 @@ impl Navigator for HybridFallback {
         }
     }
 
+    fn current_edge_is_ride(&self) -> bool {
+        match self.active {
+            Backend::Astar => self.sub.astar.current_edge_is_ride(),
+            Backend::Navmesh => false,
+        }
+    }
+
+    fn current_ride_info(&self) -> Option<world::RideInfo> {
+        match self.active {
+            Backend::Astar => self.sub.astar.current_ride_info(),
+            Backend::Navmesh => None,
+        }
+    }
+
     fn force_replan(&mut self) {
         match self.active {
             // A* is wedged — switch to the navmesh for the rest of this goal. Clearing the

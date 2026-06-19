@@ -363,6 +363,7 @@ fn try_add_train(
                 far: stand[j],
                 dismount: stand[j],
                 model_index,
+                vertical: false,
             },
         );
         rides += 1;
@@ -391,10 +392,12 @@ fn dist3(a: [f32; 3], b: [f32; 3]) -> f32 {
 /// at the brush's XY center: a nav node per level, an edge for the ride itself, and
 /// trace-checked edges from each node to nearby walkable floor nodes. Returns the
 /// number of edges added (≥1 for the ride). `label` is for the debug log.
+#[allow(clippy::too_many_arguments)]
 fn add_lift(
     graph: &mut NavGraph,
     cm: &CollisionModel,
     model: &crate::bsp::Model,
+    model_index: u32,
     z_hi: f32,
     z_lo: f32,
     label: &str,
@@ -410,12 +413,22 @@ fn add_lift(
 
     let top_idx = graph.add_node(top_node);
     let bot_idx = graph.add_node(bot_node);
-    // TODO(elevator-hack): `lift_penalty` makes A* route AROUND the lift via stairs to
-    // dodge the multi-bot plat deadlock. This is a temporary stand-in for real elevator
-    // behaviour — bots should instead WAIT clear of a raised plat and STEP OFF promptly
-    // once up, like a human. REMOVE this penalty once that behaviour exists.
-    // See context/pitfalls.md "func_plat elevator deadlock" and context/elevator_todo.md.
-    graph.add_edge(top_idx, bot_idx, (z_hi - z_lo).abs() + lift_penalty);
+    // A vertical RIDE edge (Plan 43): the brain walks onto the pad and is carried, instead of
+    // trying to "walk" the impossible vertical edge. `lift_penalty` still biases A* toward any
+    // stair/ramp alternative (TODO(elevator-hack): remove with the multi-bot de-conflict in
+    // Plan 31 — see context/elevator_todo.md), but a lift-only route (q2dm3 railgun) still uses it.
+    graph.add_ride_edge(
+        bot_idx,
+        top_idx,
+        (z_hi - z_lo).abs() + lift_penalty,
+        crate::navgraph::RideInfo {
+            board: bot_node,
+            far: top_node,
+            dismount: top_node,
+            model_index,
+            vertical: true,
+        },
+    );
     let mut n = 1;
     // Generous radius (256 u): the platform may land away from sampled grid cells.
     n += graph.connect_node_to_nearby(cm, top_idx, 256.0);
@@ -451,10 +464,12 @@ fn try_add_plat(
     if travel <= 0.0 {
         return None;
     }
+    let model_index = entity_model_index(entity).unwrap_or(0);
     Some(add_lift(
         graph,
         cm,
         model,
+        model_index,
         model.maxs[2],
         model.maxs[2] - travel,
         "func_plat elevator bridge",
@@ -500,10 +515,12 @@ fn try_add_vertical_door(
     let other = model.maxs[2] + dir * travel;
     let z_hi = model.maxs[2].max(other);
     let z_lo = model.maxs[2].min(other);
+    let model_index = entity_model_index(entity).unwrap_or(0);
     Some(add_lift(
         graph,
         cm,
         model,
+        model_index,
         z_hi,
         z_lo,
         "func_door lift bridge",

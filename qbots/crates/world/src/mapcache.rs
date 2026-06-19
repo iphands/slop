@@ -52,7 +52,9 @@ const MAGIC: &[u8; 7] = b"QBNAVC2";
 // fingerprint is now 56 bytes. Older caches auto-rejected.
 // Version 14: moving-platform ride edges (Plan 42) — func_train ride edges + RideInfo
 // serialized after the water-node tags. Generation change → older caches auto-rejected.
-const VERSION: u8 = 14;
+// Version 15: ride edges gain a `vertical` flag (Plan 43) — func_plat/door lifts are now
+// vertical ride edges too; RideInfo serializes one extra byte. Older caches auto-rejected.
+const VERSION: u8 = 15;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]
@@ -243,6 +245,7 @@ pub fn save(path: &Path, graph: &NavGraph, fingerprint: &Fingerprint) -> io::Res
             buf.extend_from_slice(&v.to_le_bytes());
         }
         buf.extend_from_slice(&info.model_index.to_le_bytes());
+        buf.push(info.vertical as u8);
     }
 
     if let Some(parent) = path.parent() {
@@ -338,6 +341,8 @@ fn parse(data: &[u8], expected: &Fingerprint) -> Option<NavGraph> {
             *slot = read_f32(data, &mut pos)?;
         }
         let model_index = read_u32(data, &mut pos)?;
+        let vertical = *data.get(pos)? != 0;
+        pos += 1;
         rides.push((
             from,
             to,
@@ -346,6 +351,7 @@ fn parse(data: &[u8], expected: &Fingerprint) -> Option<NavGraph> {
                 far: [p[3], p[4], p[5]],
                 dismount: [p[6], p[7], p[8]],
                 model_index,
+                vertical,
             },
         ));
     }

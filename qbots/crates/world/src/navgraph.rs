@@ -107,8 +107,12 @@ pub struct RideInfo {
     pub far: [f32; 3],
     /// The walkable ground node the bot steps onto when dismounting.
     pub dismount: [f32; 3],
-    /// BSP inline-model index of the `func_train` (`*N`), for matching the live entity.
+    /// BSP inline-model index of the `func_train`/`func_plat` (`*N`), for matching the live entity.
     pub model_index: u32,
+    /// `true` for a **vertical lift** (`func_plat`/`func_door`): the bot walks onto the pad and
+    /// is carried straight up/down (no horizontal wait-for-arrival). `false` for a horizontal
+    /// `func_train` the bot boards at a path endpoint when it arrives.
+    pub vertical: bool,
 }
 
 /// A navigation graph: waypoints (bot-origin positions) + LOS-checked edges.
@@ -557,6 +561,7 @@ impl NavGraph {
                 far: info_ab.board,
                 dismount: self.nodes[a],
                 model_index: info_ab.model_index,
+                vertical: info_ab.vertical,
             },
         );
     }

@@ -29,6 +29,17 @@ pub trait Navigator {
     fn current_edge_is_swim(&self) -> bool {
         false
     }
+    /// True if the current path edge is a moving-platform ride link (Plan 42/43: the loop
+    /// boards a `func_train`, is carried, then dismounts instead of walking). Defaults to
+    /// `false` for backends without ride awareness (navmesh).
+    fn current_edge_is_ride(&self) -> bool {
+        false
+    }
+    /// The [`world::RideInfo`] for the current ride edge (board / far / dismount positions),
+    /// or `None` when the current edge isn't a ride. Drives the brain's board/ride/dismount.
+    fn current_ride_info(&self) -> Option<world::RideInfo> {
+        None
+    }
     /// Drop the current path so the next `set_goal` replans from scratch.
     fn force_replan(&mut self);
     /// If the current target is hull-blocked from `pos`, blacklist it before a replan.
