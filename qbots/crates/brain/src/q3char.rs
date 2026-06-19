@@ -275,11 +275,20 @@ pub fn bot_aggression(view: &Worldview, enemy_height_delta: Option<f32>) -> f32 
     let Some(weapon) = ss.held_weapon else {
         return 0.0;
     };
+    // Q2 blaster deviation: the blaster is Q2's always-available, infinite-ammo *start* weapon —
+    // unlike Q3's melee-only gauntlet (aggression 0 → flee). A *healthy* bot fights with it
+    // rather than fleeing forever (without this, q3 bots back out of blaster range and never
+    // engage on the Q2 loadout — see Plan 37 T8). It's the weakest engage-worthy weapon → a
+    // fixed 50 (== shotgun); real weapons rank above via their ammo-gated tier, so weapon quality
+    // still scales how hard the bot *chases* (rail bot at 95 presses far harder than a blaster).
+    if weapon == Weapon::Blaster {
+        return 50.0;
+    }
     if !ammo_sufficient(weapon, ss.held_ammo()) {
         return 0.0;
     }
     let tier = weapon.power_tier();
-    // Below the "real weapon" line (SG=50) → flee even with ammo.
+    // Below the "real weapon" line (SG=50) → flee even with ammo (bare MG/CG).
     if tier < 50 {
         return 0.0;
     }
@@ -387,6 +396,23 @@ mod tests {
         // Railgun but only 3 slugs (≤5) → ammo gate fails → aggression 0.
         let view = view_with(1, "models/weapons/v_rail/tris.md2", 100, 100, 3);
         assert_eq!(bot_aggression(&view, None), 0.0);
+    }
+
+    #[test]
+    fn healthy_blaster_engages_q2_deviation() {
+        // The Q2 start blaster floors a healthy bot at 50 (engage-worthy) so q3 bots aren't
+        // permanently passive on the spawn loadout (Plan 37 T8).
+        let healthy = view_with(1, "models/weapons/v_blast/tris.md2", 100, 0, 0);
+        assert_eq!(bot_aggression(&healthy, None), 50.0);
+        let ch = Q3Character::from_skill(5);
+        assert!(
+            !wants_to_retreat(&healthy, &ch, None),
+            "healthy blaster fights"
+        );
+        // But a *hurt* blaster bot still flees (health guard wins).
+        let hurt = view_with(1, "models/weapons/v_blast/tris.md2", 50, 0, 0);
+        assert_eq!(bot_aggression(&hurt, None), 0.0);
+        assert!(wants_to_retreat(&hurt, &ch, None));
     }
 
     #[test]
