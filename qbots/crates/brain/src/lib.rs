@@ -7,6 +7,7 @@
 //! See `AGENTS.md` and `context/plans/06_brain.md`.
 
 pub mod aim;
+pub mod brain;
 pub mod combat;
 pub mod danger;
 pub mod fsm;
@@ -27,6 +28,7 @@ pub mod skill;
 pub mod steer;
 pub mod weapons;
 
+pub use brain::{Brain, BrainConfig, BrainOutput};
 pub use combat::{CombatDecision, CombatDriver};
 pub use danger::{DangerDriver, DodgeAction};
 pub use heatmap::Heatmap;
