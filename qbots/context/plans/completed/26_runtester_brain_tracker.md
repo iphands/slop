@@ -19,7 +19,7 @@ clears the gate. If interrupted, the Progress table's last `done` row + `cargo b
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
 | 1 | T1: `BrainContext.goal_override` | `crates/brain/src/brains/core.rs` | done | dropped `BrainConfig.goal_override` |
-| 2 | T2: `RunTesterBrain` verbatim lift | `crates/brain/src/brains/runtester.rs` | done | + `BrainKind::Runtester` + `intent_forward` |
+| 2 | T2: `RunTesterBrain` verbatim lift | `crates/brain/src/brains/runtester.rs` | done | + `BrainKind::RunTester` + `intent_forward` |
 | 3 | T3: determinism unit tests | `crates/brain/src/brains/runtester.rs` | done | 6 tests; stub Navigator + open CM |
 | 4 | T4: migrate `scenario.rs` | `scenario.rs`, `main.rs` | done | default `--brain runtester`; inline block deleted |
 | 5 | T5: `mode-perf-report` (optional) | `crates/tools/` | skipped | no logs without a server |

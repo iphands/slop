@@ -237,7 +237,7 @@ enum Cmd {
         mode: NavMode,
         /// Decision brain: `runtester` (default — the pure pathfinder) or `main` to A/B the
         /// live combat brain's pathing (combat is forced off either way). Independent of `--navmode`.
-        #[arg(long, value_enum, default_value_t = brain::BrainKind::Runtester)]
+        #[arg(long, value_enum, default_value_t = brain::BrainKind::RunTester)]
         brain: brain::BrainKind,
     },
     /// Drive one bot from spawn to a named weapon's BSP origin; log movement; stop.
@@ -276,7 +276,7 @@ enum Cmd {
         mode: NavMode,
         /// Decision brain: `runtester` (default — the pure pathfinder) or `main` to A/B the
         /// live combat brain's pathing (combat is forced off either way). Independent of `--navmode`.
-        #[arg(long, value_enum, default_value_t = brain::BrainKind::Runtester)]
+        #[arg(long, value_enum, default_value_t = brain::BrainKind::RunTester)]
         brain: brain::BrainKind,
     },
     /// Diagnose disconnected nav-graph components: for each small component show

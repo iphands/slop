@@ -68,7 +68,7 @@ shape change worth making now while there is a single implementor.
 The trait/`BrainContext` shape must not foreclose these downstream behaviors (they motivate the
 contract; each is its own plan):
 
-- **Runtester scenario brain** (Plan 26): per-tick `goal_override` in `BrainContext` (lazy goal).
+- **RunTester scenario brain** (Plan 26): per-tick `goal_override` in `BrainContext` (lazy goal).
 - **Persona** (Plan 27): per-bot aggression / weapon-pref / follow / reaction / risk.
 - **Weapon-matchup reads** (Plan 28): back-up-vs-SSG, don't-engage-blaster-vs-railgun,
   per-weapon ideal distance — needs observed/inferred enemy weapon in `BrainContext`.

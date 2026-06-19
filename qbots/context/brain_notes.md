@@ -69,7 +69,7 @@
 - `BrainContext.goal_override: Option<NavGoal>` added (per-tick goal injection for lazily-resolved
   scenario goals); `BrainConfig.goal_override` dropped (`combat_enabled` stays). MainBrain reads
   `ctx.goal_override` with the same precedence; `bot_task` passes `None`.
-- `brains::runtester::RunTesterBrain` (`BrainKind::Runtester`): the scenario's combat-free tick
+- `brains::runtester::RunTesterBrain` (`BrainKind::RunTester`): the scenario's combat-free tick
   lifted **verbatim** (steering `Steering::new(3.0)` / recovery / 8-tick backoff / 7-ray escape
   as fields; `pursue_target_safe` look-ahead; speed_scale throttle). `set_map` is a no-op; goal
   comes from `ctx.goal_override`; `dt` from the harness; never requests a weapon.

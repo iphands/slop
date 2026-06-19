@@ -4,7 +4,7 @@
 > **Created**: 2026-06-18
 > **Depends on**: Plan 25 (multibrain selection + `--navmode` rename), Plan 24 (`MainBrain` relocated)
 > **Goal**: Promote `scenario.rs`'s inline non-combat pathfinding loop into a first-class
-> `RunTesterBrain` plugin (`BrainKind::Runtester`), make `spawn-to-*` drive a selectable
+> `RunTesterBrain` plugin (`BrainKind::RunTester`), make `spawn-to-*` drive a selectable
 > `Box<dyn Brain>` (default `runtester`, `main` available for A/B), delete the inline duplication,
 > and prove all **6 navmodes** still match `context/mode_perf.md`.
 > **Agent**: sub-agent
@@ -21,14 +21,14 @@
 **What**: `scenario.rs`'s tick loop is already a careful, single-minded, non-combat
 waypoint-seeker — *not* "MainBrain with combat off" (it uses the corner-safe `pursue_target_safe`
 and a richer 7-ray backoff/escape that MainBrain lacks). Lift that body **verbatim** into a
-`RunTesterBrain` implementing `trait Brain`, register it as `BrainKind::Runtester`, migrate
+`RunTesterBrain` implementing `trait Brain`, register it as `BrainKind::RunTester`, migrate
 `scenario.rs` onto a `Box<dyn Brain>` selected by `--brain` (default `runtester`), and delete the
 duplicated decision block. Guard the refactor with CI determinism tests **and** a live
 6-navmode acceptance sweep that must score ≥ the `mode_perf.md` baseline.
 
 **Deliverables**:
 1. `BrainContext.goal_override: Option<NavGoal>` (per-tick goal injection); `BrainConfig.goal_override` dropped.
-2. `brain::brains::runtester::RunTesterBrain` (verbatim lift) + `BrainKind::Runtester` + factory/tag.
+2. `brain::brains::runtester::RunTesterBrain` (verbatim lift) + `BrainKind::RunTester` + factory/tag.
 3. CI determinism unit tests pinning `RunTesterBrain::tick` over a synthetic CM + stub `Navigator`.
 4. `scenario.rs` runs a `Box<dyn Brain>` (default `runtester`); inline block deleted — **closes Plan 22 T4 + retires Plan 15 duplication**.
 5. (optional) `crates/tools` `mode-perf-report` log aggregator.
@@ -53,7 +53,7 @@ duplicated decision block. Guard the refactor with CI determinism tests **and** 
 | Posture | always face-then-go, `Steering::new(3.0)` | circle-strafe / back-up on engage |
 
 So the scenario loop is *already* a distinct brain; the plugin system (Plans 23–25) gives it a
-home. Making it `BrainKind::Runtester` earns the abstraction (two genuinely different brains),
+home. Making it `BrainKind::RunTester` earns the abstraction (two genuinely different brains),
 removes the Plan 15 duplication, and yields a reusable pure-pathfinder (fleets of pathfinders; a
 per-`--navmode` A/B harness). **User decision (2026-06-18): keep both** — `MainBrain` retains its
 `combat_enabled` knob so `spawn-to-spawn --brain main` can A/B the live brain's pathing.
@@ -119,8 +119,8 @@ fields: `steering: Steering` (`Steering::new(3.0)`), `recovery: Recovery`, `back
 injected nav). `tick` reads `ctx.goal_override` (the harness pins it), calls `nav.update` /
 `nav.set_goal` / `nav.smooth_with_cm` / `pursue_target_safe` exactly as the harness does today,
 returns `BrainOutput { intent, weapon_request: None }`. `status()=="runtester"`. Add
-`BrainKind::Runtester` + a `build_brain` arm + a `brain_tag` arm. Commit
-`task(T2): RunTesterBrain (verbatim lift of scenario tick) + BrainKind::Runtester`.
+`BrainKind::RunTester` + a `build_brain` arm + a `brain_tag` arm. Commit
+`task(T2): RunTesterBrain (verbatim lift of scenario tick) + BrainKind::RunTester`.
 
 ### T3: CI determinism tests (pin the lift)
 
@@ -149,7 +149,7 @@ Some(nav_driver.as_mut()), cm: Some(&cm), dt, ticks, goal_override: Some(NavGoal
 `let out = brain.tick(ctx)`, feed `out.intent` into the existing `MovementController`. Delete the
 now-dead locals (`steering`/`recovery`/`backoff_ticks`/`escape_yaw`/`last_serverframe` and the
 lifted body). Thread `brain_kind: BrainKind` from the CLI (`--brain`, Plan 25), defaulting to
-`Runtester` in `main.rs` for `spawn-to-spawn`/`spawn-to-weapon`. Recorder/goal/exit plumbing
+`RunTester` in `main.rs` for `spawn-to-spawn`/`spawn-to-weapon`. Recorder/goal/exit plumbing
 unchanged. **Closes Plan 22 T4 + retires Plan 15 duplication.** Commit
 `task(T4): scenario.rs drives Box<dyn Brain> (default runtester); delete inline duplication`.
 
@@ -191,7 +191,7 @@ the lift wasn't faithful — before closing. `git mv` plan + tracker to `complet
 |------|--------|----------|
 | `crates/brain/src/brains/runtester.rs` (new) | `RunTesterBrain` (verbatim lift) + determinism tests | P0 |
 | `crates/brain/src/brains/core.rs` | add `BrainContext.goal_override`; drop `BrainConfig.goal_override` | P0 |
-| `crates/brain/src/brains/mod.rs` | `BrainKind::Runtester` + factory + `brain_tag` | P0 |
+| `crates/brain/src/brains/mod.rs` | `BrainKind::RunTester` + factory + `brain_tag` | P0 |
 | `crates/qbots/src/scenario.rs` | drive `Box<dyn Brain>` (default runtester); delete `358–467` | P0 |
 | `crates/qbots/src/main.rs` | spawn-to-* default `--brain runtester`; `bot_task` ctx `goal_override:None` | P0 |
 | `crates/tools/` | `mode-perf-report` aggregator (optional) | P1 |
@@ -217,14 +217,14 @@ the lift wasn't faithful — before closing. `git mv` plan + tracker to `complet
    keep MainBrain's goal precedence identical. *Mitigation*: T1 unit test; `connect-one` still runs.
 4. **`--brain`/`--navmode` ordering.** Depends on Plan 25's rename + `--brain` wiring landing
    first. *Mitigation*: dependency is declared; if Plan 25 slips, T4 can temporarily hardcode
-   `BrainKind::Runtester` and add the flag when Plan 25 lands.
+   `BrainKind::RunTester` and add the flag when Plan 25 lands.
 
 ---
 
 ## Verification Checklist
 
 - [ ] T1: `BrainContext.goal_override` added; `BrainConfig.goal_override` removed; override unit test green.
-- [ ] T2: `RunTesterBrain` verbatim lift; `BrainKind::Runtester` builds via `build_brain`; clippy clean.
+- [ ] T2: `RunTesterBrain` verbatim lift; `BrainKind::RunTester` builds via `build_brain`; clippy clean.
 - [ ] T3: determinism tests pass — steers to look-ahead, honors `goal_override`, jumps on jump-edge, backoff/escape on no-progress, throttles, no `weapon_request`.
 - [ ] T4: `scenario.rs` drives `Box<dyn Brain>` (default `runtester`); inline `358–467` deleted; Plan 22 T4 closed.
 - [ ] Single-bot parity: `spawn-to-spawn`/`spawn-to-weapon` SUMMARY identical to pre-Plan-26 run (±1 tick).

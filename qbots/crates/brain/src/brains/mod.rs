@@ -27,7 +27,10 @@ pub enum BrainKind {
     /// A stationary combat-only reference brain that proves the seam runs with >1 impl.
     Sentry,
     /// The combat-free movement-scenario brain (the `spawn-to-*` pathfinder).
-    Runtester,
+    // Pin the CLI/`brain_tag` token to lowercase `runtester` (clap would otherwise derive
+    // `run-tester` from the `RunTester` variant name).
+    #[value(name = "runtester")]
+    RunTester,
 }
 
 /// Short kebab-case tag for `kind` — for logging + competition bot naming (mirrors `mode_tag`).
@@ -35,7 +38,7 @@ pub fn brain_tag(kind: BrainKind) -> &'static str {
     match kind {
         BrainKind::Main => "main",
         BrainKind::Sentry => "sentry",
-        BrainKind::Runtester => "runtester",
+        BrainKind::RunTester => "runtester",
     }
 }
 
@@ -46,8 +49,8 @@ pub fn build_brain(kind: BrainKind, skill: BotSkill, cfg: BrainConfig) -> Box<dy
         BrainKind::Main => Box::new(MainBrain::new(skill, cfg)),
         // Sentry ignores `cfg` (no nav, no goal override) — it's a proof-of-pluggability.
         BrainKind::Sentry => Box::new(SentryBrain::new(skill)),
-        // Runtester is combat-free and goal-driven per tick; it needs neither skill nor cfg.
-        BrainKind::Runtester => Box::new(RunTesterBrain::new()),
+        // RunTester is combat-free and goal-driven per tick; it needs neither skill nor cfg.
+        BrainKind::RunTester => Box::new(RunTesterBrain::new()),
     }
 }
 
@@ -78,11 +81,11 @@ mod tests {
         assert_eq!(BrainKind::from_str("sentry", true), Ok(BrainKind::Sentry));
         assert_eq!(
             BrainKind::from_str("runtester", true),
-            Ok(BrainKind::Runtester)
+            Ok(BrainKind::RunTester)
         );
         assert!(BrainKind::from_str("nope", true).is_err());
         assert_eq!(brain_tag(BrainKind::Main), "main");
         assert_eq!(brain_tag(BrainKind::Sentry), "sentry");
-        assert_eq!(brain_tag(BrainKind::Runtester), "runtester");
+        assert_eq!(brain_tag(BrainKind::RunTester), "runtester");
     }
 }
