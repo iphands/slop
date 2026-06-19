@@ -1536,8 +1536,10 @@ fn generate_map_cache(
 async fn main() -> ExitCode {
     // Initialize tracing subscriber with elapsed time formatting and abbreviated levels
     let start_time = Instant::now();
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
+        .with_env_filter(env_filter)
         .with_timer(ElapsedFormatter(start_time))
         .with_target(false)
         .with_thread_ids(false)
