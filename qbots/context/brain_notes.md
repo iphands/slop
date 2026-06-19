@@ -311,3 +311,22 @@ jams at the top instead of dropping in (node should anchor AT the shaft mouth); 
 over-lava ride**: the bot falls to z12 (into the lava) instead of riding to the quad — the board
 ledge / over-lava ride timing for this specific oscillator needs the same care the railgun loop
 trains got. NAV is correct (7/7 + quad reachable); these are execution-tuning follow-ups.
+
+## 2026-06-19 — Plan 35 cont.: q2dm3 quad *10 over-lava ride (in progress)
+
+- **Single-platform constraint (user):** only `*10` reaches the quad and it's too small for 2
+  bots — the quad scenario must run **`--count 1`** (multi-bot wait/de-conflict is Plan 31).
+- Quad route (spawn 0): up-ladder `(-625,679,-15)→(-553,679,232)` → walk → **ride `*10`**
+  `(191,-329,216)→quad (191,199,224)` over the central lava. NAV is correct (7/7 + quad
+  A*-reachable). Physical ride bugs fixed this pass:
+  1. **Board onto the platform-top, not the far dismount** — aiming at the quad (528u north)
+     launched the bot off the ledge past the platform into the lava.
+  2. **`stand_offset`** (wire-origin→platform-top) stored in RideInfo so `train_stand_now`
+     tracks the *actual* moving top (the two-height refactor had broken its offset).
+  3. **Step on when level; jump only to hop UP** — a full 1s jump arc lets the 60u/s platform
+     slide out from under the bot.
+  4. **Stand + let Q2 push carry** while centered (chasing the center at sprint speed runs the
+     bot off the leading edge).
+  - Result: the bot now boards and **rides `*10` at z≈200 for ~14s**, but full completion is
+    still flaky — occasional ladder-climb stall (~z120) before `*10`, and the final dismount at
+    t2 onto the quad ledge. Quad physical reach still 0; needs more single-bot ride tuning.
