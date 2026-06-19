@@ -348,6 +348,98 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    // CONTENTS mode (Plan 39): `navinspect <baseq2> <map> contents <x> <y> <z>`
+    // Decodes `point_contents` at the point (solid/water/lava/slime/window/empty) — the
+    // primitive used to find water columns (e.g. the q2dm1 railgun swim tunnel).
+    if args[3] == "contents" {
+        let p = [args[4].parse::<f32>()?, args[5].parse()?, args[6].parse()?];
+        let c = cm.point_contents(&p);
+        println!(
+            "contents ({:.0},{:.0},{:.0}) = {c:#010x}  [{}]",
+            p[0],
+            p[1],
+            p[2],
+            decode_contents(c)
+        );
+        return Ok(());
+    }
+
+    // WATERMAP mode (Plan 39): `navinspect <baseq2> <map> watermap <x0> <y0> <x1> <y1> <z> <step>`
+    // Renders a top-down grid at a fixed Z: '~'=water, '#'=solid, ' '=air. Maps a pool/tunnel.
+    if args[3] == "watermap" {
+        let x0: f32 = args[4].parse()?;
+        let y0: f32 = args[5].parse()?;
+        let x1: f32 = args[6].parse()?;
+        let y1: f32 = args[7].parse()?;
+        let z: f32 = args[8].parse()?;
+        let step: f32 = args.get(9).and_then(|s| s.parse().ok()).unwrap_or(16.0);
+        println!("WATERMAP x[{x0}..{x1}] y[{y0}..{y1}] z={z} step={step}");
+        println!("  ~=water  #=solid  (space)=air\n");
+        let mut y = y1;
+        while y >= y0 {
+            let mut row = format!("y={y:>6} ");
+            let mut x = x0;
+            while x <= x1 {
+                let c = cm.point_contents(&[x, y, z]);
+                let ch = if c & world::CONTENTS_WATER != 0 {
+                    '~'
+                } else if c & world::MASK_SOLID != 0 {
+                    '#'
+                } else {
+                    ' '
+                };
+                row.push(ch);
+                x += step;
+            }
+            println!("{row}");
+            y -= step;
+        }
+        return Ok(());
+    }
+
+    // GPATH mode (Plan 39): `navinspect <baseq2> <map> gpath <sx> <sy> <sz> <gx> <gy> <gz>`
+    // A* path over the *waypoint NavGraph* (not the navmesh) — the backend Plan 39 teaches to
+    // swim. Reports the node path + counts swim edges. This is the offline reachability proof
+    // for the railgun: `gpath 1488 -48 664 240 -384 464` must return a path once water is wired.
+    if args[3] == "gpath" {
+        let s = [args[4].parse::<f32>()?, args[5].parse()?, args[6].parse()?];
+        let goal = [args[7].parse::<f32>()?, args[8].parse()?, args[9].parse()?];
+        let Some(sn) = g.nearest(&s) else {
+            println!("gpath: no nearest node to start");
+            return Ok(());
+        };
+        let Some(gn) = g.nearest(&goal) else {
+            println!("gpath: no nearest node to goal");
+            return Ok(());
+        };
+        let sp = g.nodes[sn];
+        let gp = g.nodes[gn];
+        println!(
+            "gpath start→node {sn} ({:.0},{:.0},{:.0}); goal→node {gn} ({:.0},{:.0},{:.0})",
+            sp[0], sp[1], sp[2], gp[0], gp[1], gp[2]
+        );
+        match g.path(sn, gn) {
+            Some(path) => {
+                let swims = path
+                    .windows(2)
+                    .filter(|w| g.is_swim_edge(w[0], w[1]))
+                    .count();
+                println!(
+                    "gpath OK: {} nodes, {swims} swim edges, length {:.0}u",
+                    path.len(),
+                    g.path_len(&path)
+                );
+                for &ni in &path {
+                    let p = g.nodes[ni];
+                    let tag = if g.is_water_node(ni) { " [water]" } else { "" };
+                    println!("  node {ni} ({:.0},{:.0},{:.0}){tag}", p[0], p[1], p[2]);
+                }
+            }
+            None => println!("gpath: NO PATH (disconnected components)"),
+        }
+        return Ok(());
+    }
+
     // Default coordinate-dump mode needs <x> <y> <z>.
     if args.len() < 6 {
         eprintln!("usage: navinspect <baseq2> <map> <x> <y> <z> [radius]  (or a keyword mode: heightfield | scan)");
@@ -494,4 +586,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+/// Decode a `point_contents` bitmask into a human-readable label (Plan 39 diagnostics).
+fn decode_contents(c: i32) -> String {
+    if c == 0 {
+        return "empty".to_string();
+    }
+    let mut parts = Vec::new();
+    if c & world::CONTENTS_SOLID != 0 {
+        parts.push("solid");
+    }
+    if c & world::CONTENTS_WINDOW != 0 {
+        parts.push("window");
+    }
+    if c & world::CONTENTS_WATER != 0 {
+        parts.push("water");
+    }
+    if c & world::CONTENTS_LAVA != 0 {
+        parts.push("lava");
+    }
+    if c & world::CONTENTS_SLIME != 0 {
+        parts.push("slime");
+    }
+    if parts.is_empty() {
+        parts.push("other");
+    }
+    parts.join("|")
 }
