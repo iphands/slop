@@ -116,7 +116,8 @@ enum Cmd {
         /// mesh + funnel). The navmesh backend requires `generate-map-cache --map <m>` first.
         #[arg(long = "navmode", value_enum, default_value_t = NavMode::Astar)]
         mode: NavMode,
-        /// Brain (decision plugin): `main` (default) or `sentry`. Independent of `--navmode`.
+        /// Brain (decision plugin): `main` (default), `sentry`, `runtester`, or `q3` (the
+        /// Quake 3-derived brain). Independent of `--navmode`.
         #[arg(long, value_enum, default_value_t = brain::BrainKind::Main)]
         brain: brain::BrainKind,
     },
@@ -130,8 +131,8 @@ enum Cmd {
         /// cache to be present (`generate-map-cache --map <m>`).
         #[arg(long = "navmode", value_enum, default_value_t = NavMode::Astar)]
         mode: NavMode,
-        /// Brain (decision plugin) for the whole fleet: `main` (default) or `sentry`.
-        /// Overrides `[fleet].brain`. Independent of `--navmode`.
+        /// Brain (decision plugin) for the whole fleet: `main` (default), `sentry`, `runtester`,
+        /// or `q3`. Overrides `[fleet].brain`. Independent of `--navmode`.
         #[arg(long, value_enum)]
         brain: Option<brain::BrainKind>,
         /// Name prefix override; bots are named `<name>_1`, `<name>_2`, … (1-based).
@@ -177,7 +178,7 @@ enum Cmd {
         #[arg(long = "navmodes")]
         modes: Option<String>,
         /// Comma-separated brains to include (default: `main`). Spawns the full
-        /// `{modes} × {brains}` cross product. e.g. `--brains main,sentry`.
+        /// `{modes} × {brains}` cross product. e.g. `--brains main,q3`.
         #[arg(long)]
         brains: Option<String>,
         /// Base qport; group `g` bot `i` uses `base + g*count + i` (disjoint per-group blocks,
@@ -1693,7 +1694,9 @@ async fn main() -> ExitCode {
                         match <brain::BrainKind as ValueEnum>::from_str(tok, true) {
                             Ok(b) => out.push(b),
                             Err(_) => {
-                                tracing::error!("unknown brain '{tok}' (valid: main, sentry)");
+                                tracing::error!(
+                                    "unknown brain '{tok}' (valid: main, sentry, runtester, q3)"
+                                );
                                 return ExitCode::FAILURE;
                             }
                         }

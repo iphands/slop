@@ -13,8 +13,10 @@ pub mod sentry;
 pub use core::{Brain, BrainConfig, BrainContext, BrainMap, BrainOutput};
 
 use crate::brains::main::MainBrain;
+use crate::brains::q3::Q3Brain;
 use crate::brains::runtester::RunTesterBrain;
 use crate::brains::sentry::SentryBrain;
+use crate::q3char::Q3Character;
 use crate::skill::BotSkill;
 
 /// Which brain implementation a bot runs. Mirrors `NavMode` (the nav-backend selector); a
@@ -32,6 +34,9 @@ pub enum BrainKind {
     // `run-tester` from the `RunTester` variant name).
     #[value(name = "runtester")]
     RunTester,
+    /// The Quake 3-derived brain (node FSM + aggression-gated retreat/chase + Q3 aim/fire).
+    #[value(name = "q3")]
+    Quake3,
 }
 
 /// Short kebab-case tag for `kind` — for logging + competition bot naming (mirrors `mode_tag`).
@@ -40,6 +45,7 @@ pub fn brain_tag(kind: BrainKind) -> &'static str {
         BrainKind::Main => "main",
         BrainKind::Sentry => "sentry",
         BrainKind::RunTester => "runtester",
+        BrainKind::Quake3 => "q3",
     }
 }
 
@@ -52,6 +58,10 @@ pub fn build_brain(kind: BrainKind, skill: BotSkill, cfg: BrainConfig) -> Box<dy
         BrainKind::Sentry => Box::new(SentryBrain::new(skill)),
         // RunTester is combat-free and goal-driven per tick; it needs neither skill nor cfg.
         BrainKind::RunTester => Box::new(RunTesterBrain::new()),
+        // Quake3 derives its `Q3Character` from the master skill level (Plan 37); a selectable
+        // named-character roster (`--q3char`) lands in Plan 38. `cfg` is unused: in a movement
+        // scenario there are no enemies, so the Q3 combat path never fires anyway.
+        BrainKind::Quake3 => Box::new(Q3Brain::new(Q3Character::from_skill(skill.skill))),
     }
 }
 
@@ -84,9 +94,21 @@ mod tests {
             BrainKind::from_str("runtester", true),
             Ok(BrainKind::RunTester)
         );
+        assert_eq!(BrainKind::from_str("q3", true), Ok(BrainKind::Quake3));
         assert!(BrainKind::from_str("nope", true).is_err());
         assert_eq!(brain_tag(BrainKind::Main), "main");
         assert_eq!(brain_tag(BrainKind::Sentry), "sentry");
         assert_eq!(brain_tag(BrainKind::RunTester), "runtester");
+        assert_eq!(brain_tag(BrainKind::Quake3), "q3");
+    }
+
+    #[test]
+    fn build_q3_brain_starts_in_seek_ltg() {
+        let brain = build_brain(
+            BrainKind::Quake3,
+            BotSkill::default(),
+            BrainConfig::default(),
+        );
+        assert_eq!(brain.status(), "seek-ltg");
     }
 }

@@ -43,8 +43,9 @@ pub struct Fleet {
     /// Hard cap on bots spawned, regardless of `count`. Guards against exceeding
     /// the server's `maxclients` (leave headroom for humans). 0 = no cap.
     pub max_bots: usize,
-    /// Brain (decision plugin) for the fleet: `main` (default) or `sentry`. `None`/absent →
-    /// `main`. The CLI `--brain` overrides this. Independent of the nav backend (`--navmode`).
+    /// Brain (decision plugin) for the fleet: `main` (default), `sentry`, `runtester`, or `q3`.
+    /// `None`/absent → `main`. The CLI `--brain` overrides this. Independent of the nav backend
+    /// (`--navmode`).
     pub brain: Option<String>,
 }
 
