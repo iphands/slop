@@ -6,10 +6,12 @@
 
 pub mod core;
 pub mod main;
+pub mod sentry;
 
 pub use core::{Brain, BrainConfig, BrainContext, BrainMap, BrainOutput};
 
 use crate::brains::main::MainBrain;
+use crate::brains::sentry::SentryBrain;
 use crate::skill::BotSkill;
 
 /// Which brain implementation a bot runs. Mirrors `NavMode` (the nav-backend selector); a
@@ -18,6 +20,8 @@ use crate::skill::BotSkill;
 pub enum BrainKind {
     /// The full decision brain (combat + FSM + nav + recovery) — the live fleet bot.
     Main,
+    /// A stationary combat-only reference brain that proves the seam runs with >1 impl.
+    Sentry,
 }
 
 /// Build the brain implementation for `kind`. Single match — the kind→impl mapping lives here,
@@ -25,6 +29,8 @@ pub enum BrainKind {
 pub fn build_brain(kind: BrainKind, skill: BotSkill, cfg: BrainConfig) -> Box<dyn Brain + Send> {
     match kind {
         BrainKind::Main => Box::new(MainBrain::new(skill, cfg)),
+        // Sentry ignores `cfg` (no nav, no goal override) — it's a proof-of-pluggability.
+        BrainKind::Sentry => Box::new(SentryBrain::new(skill)),
     }
 }
 

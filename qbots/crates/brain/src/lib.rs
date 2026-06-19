@@ -33,6 +33,7 @@ pub mod weapons;
 // (`brains::main`), reached through the factory.
 pub use brains::core::{Brain, BrainConfig, BrainContext, BrainMap, BrainOutput};
 pub use brains::main::MainBrain;
+pub use brains::sentry::SentryBrain;
 pub use brains::{build_brain, BrainKind};
 pub use combat::{CombatDecision, CombatDriver};
 pub use danger::{DangerDriver, DodgeAction};
