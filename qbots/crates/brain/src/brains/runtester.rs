@@ -36,6 +36,10 @@ pub struct RunTesterBrain {
     /// Ticks remaining in water-exit climb-out mode (Plan 40 T3): look-up + forward + up to
     /// trigger Q2's water-jump onto a dry ledge. Held a few ticks so the bot clears the lip.
     exit_ticks: u32,
+    /// True once the bot has stepped onto a moving train (Plan 43): it then HOLDS and lets the
+    /// train carry it, stepping off only when the train nears the far corner. Without this the
+    /// bot would keep steering at the dismount and walk off the moving platform into the pit.
+    ride_boarded: bool,
 }
 
 impl RunTesterBrain {
@@ -47,6 +51,7 @@ impl RunTesterBrain {
             backoff_ticks: 0,
             escape_yaw: None,
             exit_ticks: 0,
+            ride_boarded: false,
         }
     }
 }
@@ -232,35 +237,57 @@ impl Brain for RunTesterBrain {
             mv.move_side(side * sp);
             intent_forward = fwd * sp;
         }
-        // Ride override (Plan 43): on a ride edge, replace the steer-to-waypoint movement with
-        // walk-to-board → WAIT (no forward) until the platform arrives → cross to the dismount.
-        // Aiming at the far node directly (the normal pursue target) would walk the bot off the
-        // ledge before the platform is there.
+        // Ride override (Plan 43): on a ride edge, replace the steer-to-waypoint movement with a
+        // stateful board → ride → dismount. Aiming at the far node the whole time would walk the
+        // bot off the ledge (before the train is here) or off the moving train (after boarding).
         if ride_active {
             if let Some(info) = nav.current_ride_info() {
-                let phase = crate::ride::ride_phase(pos, &info, view);
-                match phase {
-                    crate::ride::RidePhase::Wait => {
-                        mv.move_forward(0.0);
+                let board = Vec3::from(info.board);
+                let dismount = Vec3::from(info.dismount);
+                let go = |mv: &mut MovementIntent, target: Vec3| -> f32 {
+                    let to = target - pos;
+                    let dir = if to.length_squared() > 1e-6 {
+                        to.normalize_or_zero()
+                    } else {
+                        Vec3::ZERO
+                    };
+                    let (f, s) = move_from_world_dir(dir, view_yaw, true);
+                    mv.look_at(view_yaw, 0.0);
+                    mv.move_forward(f);
+                    mv.move_side(s);
+                    f
+                };
+                if info.vertical {
+                    // Vertical lift: walk onto the pad / stand (target up → ~0 horizontal → ride).
+                    intent_forward = go(&mut mv, dismount);
+                    self.ride_boarded = false;
+                } else {
+                    let board_horiz = (pos.truncate() - board.truncate()).length();
+                    let train_here =
+                        crate::ride::platform_present(view, Vec3::from(info.board_ent));
+                    let train_far = crate::ride::platform_present(view, Vec3::from(info.far_ent));
+                    if !self.ride_boarded {
+                        if board_horiz > 48.0 {
+                            intent_forward = go(&mut mv, board); // approach the board ledge
+                        } else if train_here {
+                            intent_forward = go(&mut mv, dismount); // train is here → step on
+                            self.ride_boarded = true;
+                        } else {
+                            mv.move_forward(0.0); // wait clear until the train arrives
+                            mv.move_side(0.0);
+                            intent_forward = 0.0;
+                        }
+                    } else if train_far {
+                        intent_forward = go(&mut mv, dismount); // train at far corner → step off
+                    } else {
+                        mv.move_forward(0.0); // boarded, mid-transit → hold, let it carry us
                         mv.move_side(0.0);
                         intent_forward = 0.0;
                     }
-                    crate::ride::RidePhase::Approach | crate::ride::RidePhase::Cross => {
-                        let target = crate::ride::ride_target(phase, &info);
-                        let to = target - pos;
-                        let dir = if to.length_squared() > 1e-6 {
-                            to.normalize_or_zero()
-                        } else {
-                            Vec3::ZERO
-                        };
-                        let (rfwd, rside) = move_from_world_dir(dir, view_yaw, true);
-                        mv.look_at(view_yaw, 0.0);
-                        mv.move_forward(rfwd);
-                        mv.move_side(rside);
-                        intent_forward = rfwd;
-                    }
                 }
             }
+        } else {
+            self.ride_boarded = false;
         }
         if nav.current_edge_is_jump() && !swimming && !ride_active {
             mv.jump();
