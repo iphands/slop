@@ -89,6 +89,26 @@ pub enum EdgeKind {
     /// through the water volume in 3-D (vertical thrust via `intent.up`/pitch) rather
     /// than walking. Includes dry→water entry and water→dry exit (the railgun climb-out).
     Swim,
+    /// Ride edge (Plan 42): the bot crosses this edge by riding a moving platform
+    /// (`func_train`). It walks to the board point, waits for the platform to arrive
+    /// (read live from frames), is carried to the far end, then steps off. The
+    /// per-edge [`RideInfo`] (board / far / dismount positions) is fetched via
+    /// [`NavGraph::ride_info`].
+    Ride,
+}
+
+/// Per-edge data for an [`EdgeKind::Ride`] moving-platform edge (Plan 42). The brain reads
+/// this to drive the approach → wait → board → ride → dismount sequence.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RideInfo {
+    /// Where the bot waits and boards — the platform's path endpoint nearest the source node.
+    pub board: [f32; 3],
+    /// The platform's far path endpoint — the bot dismounts when the platform nears it.
+    pub far: [f32; 3],
+    /// The walkable ground node the bot steps onto when dismounting.
+    pub dismount: [f32; 3],
+    /// BSP inline-model index of the `func_train` (`*N`), for matching the live entity.
+    pub model_index: u32,
 }
 
 /// A navigation graph: waypoints (bot-origin positions) + LOS-checked edges.
@@ -103,6 +123,12 @@ pub struct NavGraph {
     /// Indices of nodes that lie inside a water volume (Plan 39). Used by the brain to
     /// drive vertical swim movement and to protect swim edges from the false-edge prune.
     water_nodes: HashSet<usize>,
+    /// Directed `(from, to)` pairs that are ride edges (Plan 42). Both directions of a
+    /// bidirectional ride are stored so `edge_kind`/`is_ride_edge` need one lookup.
+    ride_edges: HashSet<(usize, usize)>,
+    /// Per-ride-edge metadata (board/far/dismount positions + model index), keyed by the
+    /// directed `(from, to)` pair (Plan 42).
+    ride_info: HashMap<(usize, usize), RideInfo>,
 }
 
 impl NavGraph {
@@ -298,6 +324,8 @@ impl NavGraph {
             jump_yaws: HashMap::new(),
             swim_edges,
             water_nodes,
+            ride_edges: HashSet::new(),
+            ride_info: HashMap::new(),
         }
     }
 
@@ -321,14 +349,16 @@ impl NavGraph {
         let nodes = &self.nodes;
         let adj = &self.adj;
         let swim = &self.swim_edges;
+        let ride = &self.ride_edges;
         (0..nodes.len())
             .into_par_iter()
             .flat_map_iter(|a| {
                 adj[a].iter().filter_map(move |&(b, _)| {
-                    // Swim edges (Plan 39) are validated by a 3-D reduced-hull trace, not a
-                    // walk/stair trace — the prune's hull check would falsely flag them. Keep
+                    // Swim edges (Plan 39) are validated by a 3-D reduced-hull trace, and ride
+                    // edges (Plan 42) cross open space on a moving platform — neither follows a
+                    // walk/stair line, so the prune's hull check would falsely flag them. Keep
                     // them as trustworthy (visited once per undirected pair, a < b).
-                    if a < b && swim.contains(&(a, b)) {
+                    if a < b && (swim.contains(&(a, b)) || ride.contains(&(a, b))) {
                         return Some(EdgeClass::Trustworthy(a, b));
                     }
                     classify_prune_edge(nodes, cm, max_hd, a, b)
@@ -344,7 +374,8 @@ impl NavGraph {
         let mut v = Vec::new();
         for a in 0..self.nodes.len() {
             for &(b, _) in &self.adj[a] {
-                if a < b && self.swim_edges.contains(&(a, b)) {
+                if a < b && (self.swim_edges.contains(&(a, b)) || self.ride_edges.contains(&(a, b)))
+                {
                     v.push(EdgeClass::Trustworthy(a, b));
                     continue;
                 }
@@ -420,6 +451,10 @@ impl NavGraph {
             self.jump_yaws.remove(&(b, a));
             self.swim_edges.remove(&(a, b));
             self.swim_edges.remove(&(b, a));
+            self.ride_edges.remove(&(a, b));
+            self.ride_edges.remove(&(b, a));
+            self.ride_info.remove(&(a, b));
+            self.ride_info.remove(&(b, a));
         }
         removed
     }
@@ -440,6 +475,8 @@ impl NavGraph {
             jump_yaws: HashMap::new(),
             swim_edges: HashSet::new(),
             water_nodes: HashSet::new(),
+            ride_edges: HashSet::new(),
+            ride_info: HashMap::new(),
         }
     }
 
@@ -468,6 +505,8 @@ impl NavGraph {
             jump_yaws,
             swim_edges: HashSet::new(),
             water_nodes: HashSet::new(),
+            ride_edges: HashSet::new(),
+            ride_info: HashMap::new(),
         }
     }
 
@@ -496,6 +535,61 @@ impl NavGraph {
     /// True if the directed edge `(a, b)` is a swim edge (Plan 39).
     pub fn is_swim_edge(&self, a: usize, b: usize) -> bool {
         self.swim_edges.contains(&(a, b))
+    }
+
+    /// Add a bidirectional ride edge (Plan 42) between nodes `a` (board side) and `b`
+    /// (dismount side), with cost `cost`. `info_ab` describes the ride taken when crossing
+    /// `a → b`; the reverse `b → a` gets the board/dismount swapped (same far endpoints).
+    pub fn add_ride_edge(&mut self, a: usize, b: usize, cost: f32, info_ab: RideInfo) {
+        if a >= self.adj.len() || b >= self.adj.len() {
+            return;
+        }
+        self.adj[a].push((b, cost));
+        self.adj[b].push((a, cost));
+        self.ride_edges.insert((a, b));
+        self.ride_edges.insert((b, a));
+        self.ride_info.insert((a, b), info_ab);
+        // Reverse ride: board where the a→b ride dismounted, ride back to the a side.
+        self.ride_info.insert(
+            (b, a),
+            RideInfo {
+                board: info_ab.far,
+                far: info_ab.board,
+                dismount: self.nodes[a],
+                model_index: info_ab.model_index,
+            },
+        );
+    }
+
+    /// True if the directed edge `(a, b)` is a ride edge (Plan 42).
+    pub fn is_ride_edge(&self, a: usize, b: usize) -> bool {
+        self.ride_edges.contains(&(a, b))
+    }
+
+    /// The [`RideInfo`] for the directed ride edge `(from, to)`, if it is one (Plan 42).
+    pub fn ride_info(&self, from: usize, to: usize) -> Option<RideInfo> {
+        self.ride_info.get(&(from, to)).copied()
+    }
+
+    /// Inject pre-serialized ride edges (mapcache deserialization, Plan 42). Each tuple is a
+    /// directed `(from, to, RideInfo)`; both directions are stored explicitly by the caller.
+    pub fn set_rides(&mut self, rides: Vec<(usize, usize, RideInfo)>) {
+        for (from, to, info) in rides {
+            self.ride_edges.insert((from, to));
+            self.ride_info.insert((from, to), info);
+        }
+    }
+
+    /// Ride edges for serialization (Plan 42), sorted for determinism. Returns directed
+    /// `(from, to, RideInfo)` exactly as stored (both directions).
+    pub fn raw_rides(&self) -> Vec<(usize, usize, RideInfo)> {
+        let mut rides: Vec<(usize, usize, RideInfo)> = self
+            .ride_info
+            .iter()
+            .map(|(&(f, t), &info)| (f, t, info))
+            .collect();
+        rides.sort_by_key(|&(f, t, _)| (f, t));
+        rides
     }
 
     /// Borrow the graph's raw components for serialization. Returns clones of the
@@ -1220,6 +1314,8 @@ impl NavGraph {
             EdgeKind::Jump { launch_yaw }
         } else if self.swim_edges.contains(&(from, to)) {
             EdgeKind::Swim
+        } else if self.ride_edges.contains(&(from, to)) {
+            EdgeKind::Ride
         } else {
             EdgeKind::Walk
         }

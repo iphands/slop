@@ -17,6 +17,8 @@
 //! for each swim edge: from u32, to u32
 //! [cont.]  water_count u32        (Plan 39)
 //! for each water node: index u32
+//! [cont.]  ride_count  u32        (Plan 42)
+//! for each ride edge: from u32, to u32, board[3] f32, far[3] f32, dismount[3] f32, model_index u32
 //! ```
 //!
 //! A fingerprint mismatch on load returns `None` — never an error — so callers
@@ -48,7 +50,9 @@ const MAGIC: &[u8; 7] = b"QBNAVC2";
 // Version 13: water nav (Plan 39) — swim edges + water-node tags serialized after the
 // jump edges, plus two new fingerprint fields (SWIM_SPACING, SWIM_COST_FACTOR); the
 // fingerprint is now 56 bytes. Older caches auto-rejected.
-const VERSION: u8 = 13;
+// Version 14: moving-platform ride edges (Plan 42) — func_train ride edges + RideInfo
+// serialized after the water-node tags. Generation change → older caches auto-rejected.
+const VERSION: u8 = 14;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]
@@ -229,6 +233,18 @@ pub fn save(path: &Path, graph: &NavGraph, fingerprint: &Fingerprint) -> io::Res
         buf.extend_from_slice(&(idx as u32).to_le_bytes());
     }
 
+    // Ride edges (Plan 42): directed (from, to) + RideInfo (board/far/dismount, model_index).
+    let rides = graph.raw_rides();
+    buf.extend_from_slice(&(rides.len() as u32).to_le_bytes());
+    for (from, to, info) in &rides {
+        buf.extend_from_slice(&(*from as u32).to_le_bytes());
+        buf.extend_from_slice(&(*to as u32).to_le_bytes());
+        for v in info.board.iter().chain(&info.far).chain(&info.dismount) {
+            buf.extend_from_slice(&v.to_le_bytes());
+        }
+        buf.extend_from_slice(&info.model_index.to_le_bytes());
+    }
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -311,8 +327,32 @@ fn parse(data: &[u8], expected: &Fingerprint) -> Option<NavGraph> {
         water.push(read_u32(data, &mut pos)? as usize);
     }
 
+    // Ride edges (Plan 42).
+    let rc = read_u32(data, &mut pos)? as usize;
+    let mut rides = Vec::with_capacity(rc);
+    for _ in 0..rc {
+        let from = read_u32(data, &mut pos)? as usize;
+        let to = read_u32(data, &mut pos)? as usize;
+        let mut p = [0.0f32; 9];
+        for slot in p.iter_mut() {
+            *slot = read_f32(data, &mut pos)?;
+        }
+        let model_index = read_u32(data, &mut pos)?;
+        rides.push((
+            from,
+            to,
+            crate::navgraph::RideInfo {
+                board: [p[0], p[1], p[2]],
+                far: [p[3], p[4], p[5]],
+                dismount: [p[6], p[7], p[8]],
+                model_index,
+            },
+        ));
+    }
+
     let mut graph = NavGraph::from_raw_with_jumps(nodes, adj, jump_triples);
     graph.set_swim_and_water(swim, water);
+    graph.set_rides(rides);
     Some(graph)
 }
 
