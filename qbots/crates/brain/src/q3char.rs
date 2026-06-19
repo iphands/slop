@@ -24,6 +24,7 @@
 //! texture) layered alongside — it does not replace `BotSkill`, so `MainBrain` stays byte-
 //! identical and the Q3 brain can reuse the shared combat modules while adding Q3 texture.
 
+use crate::perception::Worldview;
 use crate::skill::SkillLevel;
 use crate::weapons::Weapon;
 
@@ -221,6 +222,103 @@ impl Default for Q3Character {
     fn default() -> Self {
         Self::from_skill(5)
     }
+}
+
+/// Does the **held** weapon have enough ammo to count toward aggression? Thresholds mirror
+/// the Q3 ladder (`ai_dmq3.c:2199`, distilled §2), read against the only ammo we see —
+/// `STAT_AMMO`, the held weapon's count. Weapons that are never a "real" aggression weapon
+/// (Blaster / Machinegun / Chaingun) return `false` so they fall through to flee.
+fn ammo_sufficient(weapon: Weapon, held_ammo: i32) -> bool {
+    match weapon {
+        Weapon::Bfg10k => held_ammo > 7,
+        Weapon::Railgun => held_ammo > 5,
+        Weapon::Hyperblaster => held_ammo > 50, // ~Q3 lightning/plasma (cells)
+        Weapon::RocketLauncher => held_ammo > 5,
+        Weapon::GrenadeLauncher => held_ammo > 10,
+        Weapon::SuperShotgun | Weapon::Shotgun => held_ammo > 10,
+        Weapon::Blaster | Weapon::Machinegun | Weapon::Chaingun => false,
+    }
+}
+
+/// **`BotAggression`** (`ai_dmq3.c:2199`) — a 0–100 scalar computed from the bot's loadout +
+/// health + armor (+ optional enemy geometry). Threshold (default 50, character-biased by
+/// [`Q3Character::retreat_threshold`]) gates retreat (`<`) and chase (`>`).
+///
+/// **qbots adaptation (distilled §2).** Stock Q3 scans a full inventory; we read only the
+/// **held** weapon ([`SelfState::held_weapon`](crate::perception::SelfState)) and its ammo
+/// ([`SelfState::held_ammo`](crate::perception::SelfState)). The held weapon's
+/// [`Weapon::power_tier`] *is* its aggression score once the ammo gate passes; weak weapons
+/// (tier `<50`: Machinegun/Chaingun/Blaster, or out of ammo) score 0 → flee. The QUAD branch
+/// (`return 70`) is **dropped** — the quad timer isn't reliably wire-visible. `BotAggression`
+/// is loadout-based and is intentionally **not** scaled by the character (faithful to stock
+/// Q3, where AGGRESSION biases the *threshold*, not this scalar) — so this fn takes no
+/// `Q3Character`; the bias lives in [`wants_to_retreat`]/[`wants_to_chase`].
+///
+/// `enemy_height_delta` = `enemy.z − self.z` (world units), `None` if no enemy is in view. A
+/// positive delta `> 200` (enemy well above us → bad firing angle) forces aggression to 0,
+/// mirroring the Q3 `> 200` height guard.
+pub fn bot_aggression(view: &Worldview, enemy_height_delta: Option<f32>) -> f32 {
+    let ss = view.self_state();
+
+    // Enemy far above → bad angle, don't press.
+    if matches!(enemy_height_delta, Some(dz) if dz > 200.0) {
+        return 0.0;
+    }
+    // Health/armor guards (Q3 returns 0 below these).
+    if ss.health < 60 {
+        return 0.0;
+    }
+    if ss.health < 80 && ss.armor < 40 {
+        return 0.0;
+    }
+
+    let Some(weapon) = ss.held_weapon else {
+        return 0.0;
+    };
+    if !ammo_sufficient(weapon, ss.held_ammo()) {
+        return 0.0;
+    }
+    let tier = weapon.power_tier();
+    // Below the "real weapon" line (SG=50) → flee even with ammo.
+    if tier < 50 {
+        return 0.0;
+    }
+    tier as f32
+}
+
+/// **`BotFeelingBad`** (`ai_dmq3.c:2247`) — a 0–100 "I'm in trouble" scalar used as a
+/// secondary retreat trigger. Q3: gauntlet→100, health<40→100, machinegun→90, health<60→80.
+/// qbots maps Q2's weakest weapon (Blaster) to the gauntlet branch.
+pub fn bot_feeling_bad(view: &Worldview) -> f32 {
+    let ss = view.self_state();
+    if ss.held_weapon == Some(Weapon::Blaster) {
+        return 100.0;
+    }
+    if ss.health < 40 {
+        return 100.0;
+    }
+    if ss.held_weapon == Some(Weapon::Machinegun) {
+        return 90.0;
+    }
+    if ss.health < 60 {
+        return 80.0;
+    }
+    0.0
+}
+
+/// **`BotWantsToRetreat`** (`ai_dmq3.c:2268`) — `bot_aggression < threshold`. The threshold is
+/// the character-biased [`Q3Character::retreat_threshold`] (stock Q3 uses a fixed 50).
+pub fn wants_to_retreat(
+    view: &Worldview,
+    ch: &Q3Character,
+    enemy_height_delta: Option<f32>,
+) -> bool {
+    bot_aggression(view, enemy_height_delta) < ch.retreat_threshold()
+}
+
+/// **`BotWantsToChase`** (`ai_dmq3.c:2321`) — `bot_aggression > threshold` (character-biased).
+pub fn wants_to_chase(view: &Worldview, ch: &Q3Character, enemy_height_delta: Option<f32>) -> bool {
+    bot_aggression(view, enemy_height_delta) > ch.retreat_threshold()
 }
 
 #[cfg(test)]

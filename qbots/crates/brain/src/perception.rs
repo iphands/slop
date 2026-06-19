@@ -4,6 +4,7 @@
 //! current frame's PVS are marked "stale" (not removed), with last-known-position
 //! decay. Classification is based on configstrings (CS_MODELS, CS_PLAYERSKINS).
 
+use crate::weapons::Weapon;
 use client::parse::ConfigStrings;
 use glam::Vec3;
 use q2proto::{Frame, PlayerState};
@@ -22,8 +23,9 @@ const MAX_CLIENTS: usize = 256;
 
 /// Stats indices (from shared.h:1130-1148)
 const STAT_HEALTH: usize = 1;
-#[allow(dead_code)]
-const STAT_AMMO: usize = 3;
+/// `STAT_AMMO` (`shared.h`) — the **held** weapon's ammo count (Q2's HUD ammo box).
+/// The wire carries no free per-weapon inventory; this is the only ammo we see.
+pub const STAT_AMMO: usize = 3;
 const STAT_ARMOR: usize = 5;
 /// `STAT_FRAGS` — our frag count (`hud.c`). Incremented by the server on kills.
 const STAT_FRAGS: usize = 14;
@@ -76,6 +78,18 @@ pub struct SelfState {
     pub ammo: [i32; 32],
     pub weapon: i32,
     pub flags: u32,
+    /// The weapon we are currently **holding**, resolved from the `gunindex` view-model
+    /// configstring ([`Weapon::from_view_model`]). `None` before the model table loads or for
+    /// an unrecognized view model. This is qbots' wire-visible proxy for Q3's "best owned
+    /// weapon" (see [`crate::q3char`]).
+    pub held_weapon: Option<Weapon>,
+}
+
+impl SelfState {
+    /// Ammo for the **held** weapon (Q2 `STAT_AMMO`). Negative/uninitialized stats clamp to 0.
+    pub fn held_ammo(&self) -> i32 {
+        self.ammo[STAT_AMMO].max(0)
+    }
 }
 
 /// A complete worldview for one frame.
@@ -111,7 +125,14 @@ impl Worldview {
         }
 
         // Parse self state from playerstate
-        let self_state = SelfState::from_playerstate(&frame.playerstate);
+        let mut self_state = SelfState::from_playerstate(&frame.playerstate);
+        // Resolve the held weapon from the `gunindex` view-model configstring (Plan 36):
+        // gunindex is a 1-based CS_MODELS index naming the first-person weapon model.
+        if self_state.weapon > 0 {
+            self_state.held_weapon = configstrings
+                .get(CS_MODELS + self_state.weapon as usize)
+                .and_then(Weapon::from_view_model);
+        }
         let self_entity = (playernum + 1) as i32;
 
         // Parse entities
@@ -379,6 +400,8 @@ impl SelfState {
             ammo: ps.stats.map(|s| s as i32),
             weapon: ps.gunindex,
             flags: ps.pmove.pm_flags as u32,
+            // Resolved by `Worldview::from_frame` (needs the configstring model table).
+            held_weapon: None,
         }
     }
 }
