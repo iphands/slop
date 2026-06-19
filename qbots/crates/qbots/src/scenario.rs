@@ -22,9 +22,10 @@ use tokio::net::UdpSocket;
 use brain::nav::NavGoal;
 use brain::perception::Worldview;
 use brain::recorder::{CmWallProbe, MovementRecorder, Sample, WallProbe};
-use brain::recover::{find_best_direction, Recovery, RecoveryAction};
-use brain::steer::{move_from_world_dir, Steering};
-use brain::{MovementController, MovementIntent, Navigator};
+use brain::{
+    build_brain, BotSkill, Brain, BrainConfig, BrainContext, BrainKind, BrainMap,
+    MovementController, Navigator,
+};
 use client::{Conn, ConnState};
 use q2proto::Usercmd;
 use world::NavGraph;
@@ -69,6 +70,9 @@ pub async fn run_scenario(
     spacing: f32,
     // Navigation backend (`--navmode`): the `astar` waypoint graph or the `navmesh` polygon mesh.
     mode: crate::NavMode,
+    // Decision plugin (`--brain`): `runtester` (default — the lifted scenario pathfinder) or
+    // `main` for an A/B against the live combat brain (combat is forced off here regardless).
+    brain_kind: BrainKind,
 ) -> std::io::Result<ExitCode> {
     // The caller (`run_scenario_cmd`) autodetects the server's map and passes it here;
     // a `None` at this point means autodetection was skipped/failed, which is a bug,
@@ -250,9 +254,17 @@ pub async fn run_scenario(
     }
     tracing::info!(%name, %map, %addr, qport, "scenario bot connected; driving to goal");
 
-    // 4. Brain primitives + recorder scaffolding.
+    // 4. Decision brain (Plan 26) + recorder scaffolding.
     let mut move_ctrl = MovementController::new();
-    let mut steering = Steering::new(3.0); // mid-skill for scenario runs
+    // The scenario runs a `Box<dyn Brain>` (default `runtester` — the lifted pathfinder).
+    // Combat is forced off; the goal is pinned per-tick via `BrainContext::goal_override`.
+    let mut brain: Box<dyn Brain + Send> = build_brain(
+        brain_kind,
+        BotSkill::default(),
+        BrainConfig {
+            combat_enabled: false,
+        },
+    );
 
     // Drive through the `Navigator` trait so the tick loop is backend-agnostic. `+ Send`
     // because this future is spawned on tokio and holds the driver across awaits.
@@ -263,8 +275,17 @@ pub async fn run_scenario(
             let model = &bsp.models[0];
             crate::supervisor::get_or_build_navmesh(&map, &cm, (model.mins, model.maxs))
         });
-    let mut recovery = Recovery::new();
+    // `runtester` ignores the map (it drives the injected nav); `--brain main` uses it for the
+    // navmesh roam-as-position flag (its roam ladder is moot here — `goal_override` always wins).
+    brain.set_map(BrainMap {
+        roam_nodes: Vec::new(),
+        nav_graph: Arc::clone(&graph),
+        roam_as_position: matches!(mode, crate::NavMode::Navmesh),
+    });
     let mut last_serverframe: Option<i32> = None;
+    // Monotonic tick counter for `BrainContext` (drives jitter/roam in the `--brain main` A/B;
+    // the runtester ignores it).
+    let mut tick_count: u32 = 0;
     let shutdown = Shutdown::new();
     let _signals = spawn_signal_listener(shutdown.clone());
 
@@ -291,13 +312,6 @@ pub async fn run_scenario(
     // Farthest-spawn goal, resolved lazily on the first active frame.
     let mut resolved_goal: Option<[f32; 3]> = goal_origin;
     let mut reached = false;
-    // Ticks remaining in forced-backoff mode (set when BackOffThenRepath fires so the
-    // bot actually escapes the wall instead of immediately resuming forward nav).
-    let mut backoff_ticks: u32 = 0;
-    // World-yaw of the most-open direction found when a hard-stuck recovery fires; the bot
-    // steers toward it during the backoff to physically CLEAR a corner (straight-back alone
-    // re-presses the adjacent wall), then nav repaths from the now-open spot.
-    let mut escape_yaw: Option<f32> = None;
 
     loop {
         if shutdown.requested() {
@@ -355,12 +369,8 @@ pub async fn run_scenario(
                                 ));
                             }
 
-                            // Drive nav to the goal — no combat.
-                            nav_driver.update(pos, Some(&cm));
-                            nav_driver.set_goal(NavGoal::Position(Vec3::from(goal)), pos);
-                            nav_driver.smooth_with_cm(&cm, pos);
-
-                            // dt from observed serverframe delta (clamped).
+                            // dt from observed serverframe delta (clamped) — the brain
+                            // consumes it via `BrainContext`.
                             let current_sf = frame.serverframe;
                             let dt = if let Some(prev_sf) = last_serverframe {
                                 ((current_sf - prev_sf).max(0) as f32 * 0.1).clamp(0.02, 0.3)
@@ -368,106 +378,26 @@ pub async fn run_scenario(
                                 0.1
                             };
                             last_serverframe = Some(current_sf);
+                            tick_count = tick_count.wrapping_add(1);
 
-                            let mut mv = MovementIntent::new();
-                            let mut intent_forward = 0.0;
-
-                            // Steer via the corner-cut-safe look-ahead (hull + floor
-                            // validated) so the bot never cuts a corner into a wall or
-                            // across a gap. Falls back to the next graph node when the
-                            // straight line is unsafe.
-                            let pursue_pos = nav_driver.pursue_target_safe(pos, &cm);
-                            let (ideal_yaw, world_move_dir) = if let Some(pt) = pursue_pos {
-                                let delta = pt - pos;
-                                if delta.length_squared() > 1.0 {
-                                    let yaw = delta.y.atan2(delta.x).to_degrees();
-                                    let dir = Vec3::new(delta.x, delta.y, 0.0).normalize_or_zero();
-                                    (yaw, dir)
-                                } else {
-                                    (steering.view_yaw(), Vec3::ZERO)
-                                }
-                            } else {
-                                (steering.view_yaw(), Vec3::ZERO)
-                            };
-                            let view_yaw = steering.change_yaw(ideal_yaw, dt);
-                            let arrive = pursue_pos
-                                .map(|pt| Steering::arrive_scale((pt - pos).length()))
-                                .unwrap_or(1.0);
-                            let (fwd, side) = move_from_world_dir(world_move_dir, view_yaw, true);
-
-                            // Stuck recovery (mirrors main.rs:790-825).
-                            let has_nav_target = nav_driver.pursue_target(pos).is_some();
-                            let rec_action = recovery.evaluate(
-                                pos,
+                            // Run the decision brain (combat forced off): it drives the injected
+                            // navigator to the pinned goal — `nav.update`/`set_goal`/`smooth`/
+                            // `pursue_target_safe`/recovery all live inside `tick` now (Plan 26).
+                            let out = brain.tick(BrainContext {
+                                view: &view,
+                                nav: Some(nav_driver.as_mut() as &mut dyn Navigator),
+                                cm: Some(&cm),
                                 dt,
-                                Some(&cm),
-                                view_yaw,
-                                has_nav_target,
-                                false, // never engaging in scenario mode
-                            );
-                            match rec_action {
-                                RecoveryAction::None => {}
-                                RecoveryAction::Jump => {
-                                    mv.jump();
-                                }
-                                RecoveryAction::Strafe { dir } => {
-                                    mv.move_side(dir);
-                                }
-                                RecoveryAction::BackOffThenRepath => {
-                                    // Hard stuck (≈3.5 s no progress). Steer toward the
-                                    // most-OPEN direction for 8 ticks (≈0.8 s) to clear the
-                                    // wall/corner the bot is jammed against — straight-back
-                                    // alone just re-presses the adjacent wall in a corner
-                                    // (the dominant fine-grid failure). Then nav repaths from
-                                    // the now-open spot. find_best_direction fans 7 rays and
-                                    // returns the openest; None (fully boxed in) → straight back.
-                                    backoff_ticks = 8;
-                                    escape_yaw = find_best_direction(&cm, pos, view_yaw).map(|(y, _)| y);
-                                    nav_driver.blacklist_waypoint_if_blocked(pos, &cm);
-                                    nav_driver.force_replan();
-                                }
-                                RecoveryAction::UseHeading(yaw) => {
-                                    let r = yaw.to_radians();
-                                    let free_dir = Vec3::new(r.cos(), r.sin(), 0.0);
-                                    let (hfwd, hside) = move_from_world_dir(free_dir, view_yaw, true);
-                                    mv.move_forward(hfwd);
-                                    mv.move_side(hside);
-                                }
-                            }
+                                ticks: tick_count,
+                                goal_override: Some(NavGoal::Position(Vec3::from(goal))),
+                            });
+                            // `intent_forward` is the recorder's hindered-flag input (the
+                            // nav-step forward; 0 during recovery/backoff) — preserved by the brain.
+                            let intent_forward = out.intent_forward;
 
-                            if backoff_ticks > 0 {
-                                // Sustained escape: move toward the open direction (regardless
-                                // of facing, so the bot slides out of a corner) rather than
-                                // straight back into the adjacent wall. Falls back to straight
-                                // back when no open direction was found.
-                                backoff_ticks -= 1;
-                                if let Some(ey) = escape_yaw {
-                                    let edir =
-                                        Vec3::new(ey.to_radians().cos(), ey.to_radians().sin(), 0.0);
-                                    let (efwd, eside) = move_from_world_dir(edir, view_yaw, false);
-                                    mv.move_forward(efwd);
-                                    mv.move_side(eside);
-                                } else {
-                                    mv.move_forward(-1.0);
-                                }
-                                if backoff_ticks == 0 {
-                                    escape_yaw = None;
-                                }
-                            } else if fwd > 0.0 || side.abs() > 0.0 {
-                                // Slow on narrow geometry (thin ledges) so momentum doesn't carry
-                                // the bot off the edge (navmesh backend; astar returns 1.0).
-                                let sp = arrive * nav_driver.speed_scale(pos);
-                                mv.look_at(view_yaw, 0.0);
-                                mv.move_forward(fwd * sp);
-                                mv.move_side(side * sp);
-                                intent_forward = fwd * sp;
-                            }
-                            if nav_driver.current_edge_is_jump() {
-                                mv.jump();
-                            }
                             move_ctrl.set_delta_angles(frame.playerstate.pmove.delta_angles);
                             move_ctrl.set_msec(dt);
-                            let cmd = move_ctrl.build_cmd(mv);
+                            let cmd = move_ctrl.build_cmd(out.intent);
 
                             // Sample the recorder with this frame's telemetry. Pull the target
                             // position through the trait (not `graph` directly) so the loop stays

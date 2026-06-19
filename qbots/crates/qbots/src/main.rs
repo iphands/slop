@@ -235,6 +235,10 @@ enum Cmd {
         /// mesh + funnel). The navmesh backend requires `generate-navmesh --map <m>` first.
         #[arg(long = "navmode", value_enum, default_value_t = NavMode::Astar)]
         mode: NavMode,
+        /// Decision brain: `runtester` (default — the pure pathfinder) or `main` to A/B the
+        /// live combat brain's pathing (combat is forced off either way). Independent of `--navmode`.
+        #[arg(long, value_enum, default_value_t = brain::BrainKind::Runtester)]
+        brain: brain::BrainKind,
     },
     /// Drive one bot from spawn to a named weapon's BSP origin; log movement; stop.
     SpawnToWeapon {
@@ -270,6 +274,10 @@ enum Cmd {
         /// mesh + funnel). The navmesh backend requires `generate-navmesh --map <m>` first.
         #[arg(long = "navmode", value_enum, default_value_t = NavMode::Astar)]
         mode: NavMode,
+        /// Decision brain: `runtester` (default — the pure pathfinder) or `main` to A/B the
+        /// live combat brain's pathing (combat is forced off either way). Independent of `--navmode`.
+        #[arg(long, value_enum, default_value_t = brain::BrainKind::Runtester)]
+        brain: brain::BrainKind,
     },
     /// Diagnose disconnected nav-graph components: for each small component show
     /// the closest boundary-node pair to the main component, distances, and
@@ -962,6 +970,7 @@ async fn run_scenario_cmd(
     lift_penalty: f32,
     spacing: f32,
     mode: NavMode,
+    brain: brain::BrainKind,
 ) -> ExitCode {
     let base_name = name.unwrap_or_else(|| "qbots".to_string());
     let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
@@ -1020,6 +1029,7 @@ async fn run_scenario_cmd(
                 lift_penalty,
                 spacing,
                 mode,
+                brain,
             )
             .await
             {
@@ -2005,6 +2015,7 @@ async fn main() -> ExitCode {
             lift_penalty,
             spacing,
             mode,
+            brain,
         } => {
             run_scenario_cmd(
                 &cfg,
@@ -2017,6 +2028,7 @@ async fn main() -> ExitCode {
                 lift_penalty,
                 spacing,
                 mode,
+                brain,
             )
             .await
         }
@@ -2030,6 +2042,7 @@ async fn main() -> ExitCode {
             lift_penalty,
             spacing,
             mode,
+            brain,
         } => {
             run_scenario_cmd(
                 &cfg,
@@ -2042,6 +2055,7 @@ async fn main() -> ExitCode {
                 lift_penalty,
                 spacing,
                 mode,
+                brain,
             )
             .await
         }
