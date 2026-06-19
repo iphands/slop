@@ -369,7 +369,11 @@ impl Deduper {
         if let Some(r) = self.run.as_mut() {
             if r.key == key {
                 r.count += 1;
-                if elapsed - r.first_seen >= flush {
+                // `elapsed` is sampled before the layer's lock is taken, so a thread can arrive
+                // here with a value slightly *earlier* than a `first_seen` that another thread
+                // already advanced under the lock. Saturating-sub yields 0 in that race (just
+                // "not time to flush yet") instead of underflowing the Duration and panicking.
+                if elapsed.saturating_sub(r.first_seen) >= flush {
                     let c = r.count;
                     r.count = 0;
                     r.first_seen = elapsed;
@@ -2105,6 +2109,23 @@ mod tests {
         assert_eq!(
             d.observe("D msg", Duration::ZERO, FLUSH),
             DedupAction::Emit { prev_coda: None }
+        );
+    }
+
+    #[test]
+    fn stale_earlier_elapsed_does_not_underflow() {
+        // Under concurrent logging, `elapsed` is sampled before the lock, so a thread can
+        // observe a value earlier than the `first_seen` another thread already advanced.
+        // The subtraction must saturate to 0, not panic ("overflow when subtracting durations").
+        let mut d = Deduper::default();
+        assert_eq!(
+            d.observe("D msg", Duration::from_secs(10), FLUSH),
+            DedupAction::Emit { prev_coda: None }
+        );
+        // Same key, but an earlier timestamp than first_seen (10s) → must just suppress.
+        assert_eq!(
+            d.observe("D msg", Duration::from_secs(3), FLUSH),
+            DedupAction::Suppress { coda: None }
         );
     }
 
