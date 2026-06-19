@@ -232,6 +232,23 @@ pub async fn run_scenario(
                             ride,
                             "goal path edge-kind composition"
                         );
+                        // Dump each ride edge's endpoints (board→dismount) so we can see the
+                        // exact lift/train/ladder hops the route takes (Plan 35 quad debugging).
+                        for w in p.windows(2) {
+                            if matches!(graph.edge_kind(w[0], w[1]), world::EdgeKind::Ride) {
+                                if let Some(ri) = graph.ride_info(w[0], w[1]) {
+                                    let f = graph.nodes[w[0]];
+                                    let t = graph.nodes[w[1]];
+                                    tracing::info!(
+                                        from = ?[f[0] as i32, f[1] as i32, f[2] as i32],
+                                        to = ?[t[0] as i32, t[1] as i32, t[2] as i32],
+                                        ladder = ri.ladder,
+                                        vertical = ri.vertical,
+                                        "  ride hop"
+                                    );
+                                }
+                            }
+                        }
                         logged_kinds = true;
                     }
                 }

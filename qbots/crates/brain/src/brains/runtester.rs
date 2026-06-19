@@ -296,15 +296,31 @@ impl Brain for RunTesterBrain {
                     let train_here =
                         crate::ride::platform_present(view, Vec3::from(info.board_ent));
                     let train_far = crate::ride::platform_present(view, Vec3::from(info.far_ent));
+                    tracing::trace!(
+                        py = pos.y,
+                        pz = pos.z,
+                        board_horiz,
+                        train_here,
+                        train_far,
+                        boarded = self.ride_boarded,
+                        "train ride state"
+                    );
                     if !self.ride_boarded {
                         if board_horiz > 48.0 {
                             intent_forward = go(&mut mv, board); // approach the board ledge
                         } else if train_here {
-                            // Train is here → JUMP onto it (T7): a human hops on, clearing the gap
-                            // and tolerating the train still settling at the corner. Walking off
-                            // the ledge toward a not-quite-there train drops the bot into the pit.
-                            intent_forward = go(&mut mv, dismount);
-                            mv.jump();
+                            // Train is here → step onto the PLATFORM TOP (T7). Aim at the platform's
+                            // live top-center (NOT the far dismount, which can be hundreds of units
+                            // away across the lava). Only JUMP if the top is meaningfully ABOVE us
+                            // (need to hop up); a moving platform at our level (e.g. *10) must be
+                            // *stepped* onto — a full 1s jump arc lets a 60u/s platform slide out
+                            // from under us and we land in the lava behind it.
+                            let onto =
+                                crate::ride::train_stand_now(view, &info).unwrap_or(dismount);
+                            intent_forward = go(&mut mv, onto);
+                            if onto.z > pos.z + 8.0 {
+                                mv.jump();
+                            }
                             self.ride_boarded = true;
                         } else {
                             mv.move_forward(0.0); // wait clear until the train arrives
@@ -316,10 +332,22 @@ impl Brain for RunTesterBrain {
                         intent_forward = go(&mut mv, dismount);
                         mv.jump();
                     } else if let Some(stand) = crate::ride::train_stand_now(view, &info) {
-                        // Boarded, mid-transit → track the train's LIVE top-center so we stay
-                        // centered as it moves (no jump — that launches us off). This keeps the
-                        // bot from sliding off the moving platform into the pit.
-                        intent_forward = go(&mut mv, stand);
+                        // Boarded, mid-transit. A Q2 func_train PUSHES entities on its top, so once
+                        // we're centered on it we STAND STILL and let it carry us — chasing the
+                        // moving center at sprint speed just runs us off an edge into the lava. Only
+                        // nudge (gently) back toward center if we've drifted near an edge.
+                        let hdist = (pos.truncate() - stand.truncate()).length();
+                        if hdist > 40.0 {
+                            let f = go(&mut mv, stand);
+                            let scale = 0.35; // gentle correction, never a sprint
+                            mv.move_forward(mv.forward * scale);
+                            mv.move_side(mv.side * scale);
+                            intent_forward = f * scale;
+                        } else {
+                            mv.move_forward(0.0); // centered → let the platform carry us
+                            mv.move_side(0.0);
+                            intent_forward = 0.0;
+                        }
                     } else {
                         // Lost sight of the train → hold and hope it re-enters PVS.
                         mv.move_forward(0.0);
