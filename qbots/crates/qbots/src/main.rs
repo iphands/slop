@@ -33,6 +33,8 @@ pub enum NavMode {
     HybridFallback,
     /// Hybrid: plan both backends per goal, run the cheaper-scoring one to completion.
     HybridRace,
+    /// Hybrid: navmesh picks the corridor, A* executes a sliding local sub-goal.
+    HybridHier,
 }
 
 impl NavMode {
@@ -64,6 +66,11 @@ fn build_navigator(
             AGENT_RADIUS,
         )),
         NavMode::HybridRace => Box::new(brain::hybrid::HybridRace::new(
+            graph,
+            mesh.unwrap(),
+            AGENT_RADIUS,
+        )),
+        NavMode::HybridHier => Box::new(brain::hybrid::HybridHier::new(
             graph,
             mesh.unwrap(),
             AGENT_RADIUS,

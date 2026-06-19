@@ -23,9 +23,11 @@ use crate::nav::{NavGoal, NavigationDriver};
 use crate::navmesh_driver::NavmeshDriver;
 
 pub mod fallback;
+pub mod hier;
 pub mod race;
 
 pub use fallback::HybridFallback;
+pub use hier::HybridHier;
 pub use race::HybridRace;
 
 /// A goal that moves less than this (units) between ticks is treated as unchanged — matches
