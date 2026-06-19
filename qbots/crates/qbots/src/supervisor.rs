@@ -29,7 +29,7 @@ pub struct MapNav {
     pub cm: Arc<world::CollisionModel>,
     pub roam_nodes: Vec<usize>,
     /// World-model bounds (`models[0].mins/maxs`) — the navmesh backend builds its
-    /// heightfield over this extent. Retained so a `--mode navmesh` bot can build the
+    /// heightfield over this extent. Retained so a `--navmode navmesh` bot can build the
     /// mesh via [`get_or_build_navmesh`] without reparsing the BSP.
     pub bounds: ([f32; 3], [f32; 3]),
 }
@@ -123,7 +123,7 @@ fn build_map_nav(cfg: &Config, map: &str) -> Option<MapNav> {
     })
 }
 
-/// Process-global navmesh cache so the N bots of a `--mode navmesh` run share one built
+/// Process-global navmesh cache so the N bots of a `--navmode navmesh` run share one built
 /// mesh instead of each rebuilding it (mirrors [`NavCache`]). Keyed by map name; the first
 /// bot to ask builds it under the lock, the rest clone the `Arc`. Honors `QBOTS_ERODE`.
 /// (A later phase will replace this with a disk cache like `cached_map_nav`.)
@@ -233,7 +233,7 @@ struct FleetShared {
 /// Run the full fleet from config: shared nav cache + shutdown, one task per bot,
 /// staggered connects, reconnect-on-disconnect with backoff. Returns when all
 /// bot tasks have exited (typically after shutdown is requested). `mode` selects the
-/// navigation backend (`--mode`) for the whole fleet.
+/// navigation backend (`--navmode`) for the whole fleet.
 ///
 /// `count_override` (CLI `--count`) replaces `[fleet].count`; `name_override` (CLI
 /// `--name`) replaces the roster's naming, yielding `<name>_1`, `<name>_2`, … (1-based).

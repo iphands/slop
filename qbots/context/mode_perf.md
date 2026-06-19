@@ -1,4 +1,4 @@
-# Nav `--mode` performance — q2dm1 sweep
+# Nav `--navmode` performance — q2dm1 sweep
 
 **Date:** 2026-06-18 · **Server:** `noir.lan:27910` (q2dm1, 64 slots) ·
 **Nav graph:** 12 890 nodes / 519 653 edges (cached, spacing 24) ·
@@ -101,8 +101,8 @@ traversals; `navmesh` if mostly tight item pickups. `hybrid-fallback` is an acce
 ```bash
 cargo build -p qbots
 for m in astar navmesh hybrid-fallback hybrid-race hybrid-hier hybrid-segment; do
-  ./target/debug/qbots spawn-to-spawn               --count 16 --max-secs 180 --mode "$m" --name "s2s_$m"
-  ./target/debug/qbots spawn-to-weapon rocketlauncher --count 16 --max-secs 180 --mode "$m" --name "s2w_$m"
+  ./target/debug/qbots spawn-to-spawn               --count 16 --max-secs 180 --navmode "$m" --name "s2s_$m"
+  ./target/debug/qbots spawn-to-weapon rocketlauncher --count 16 --max-secs 180 --navmode "$m" --name "s2w_$m"
 done
 # Per-bot logs: ./logs/<scenario>/<ts>.<bot>.log ; each ends in a `# SUMMARY …` line.
 ```

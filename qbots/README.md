@@ -73,12 +73,13 @@ prefix each with `cargo run -p qbots -- ` (e.g. `cargo run -p qbots -- bsp-info 
 qbots connect-one --name <botname>   # connect a single bot and keep it alive
 qbots run                            # launch the full fleet from config's [fleet] roster
 qbots run --count 4 --skin male/grunt
-qbots competition --count 8          # N bots per nav --mode at once + frag scoreboard
+qbots competition --count 8          # N bots per --navmode (× --brains) at once + scoreboard
 qbots status                         # query server (map + player list) — the fleet lens
 ```
 
-`run` and `connect-one` honor `--addr`, `--qport`/`--qport-base`, and `--mode` (nav
-backend, see below). `run` adds skin selection (`--skin model/skin`, `--skin-random-male`,
+`run` and `connect-one` honor `--addr`, `--qport`/`--qport-base`, `--navmode` (nav backend,
+see below), and `--brain` (decision plugin: `main` default, or `sentry`; independent of
+`--navmode`). `run` adds skin selection (`--skin model/skin`, `--skin-random-male`,
 `--skin-random-female`) and `--name`/`--count` overrides.
 
 ### World-model inspection (no server needed)
@@ -109,9 +110,9 @@ graph-affecting change, or when changing `--spacing`.
 
 ---
 
-## Navigation backends (`--mode`)
+## Navigation backends (`--navmode`)
 
-`connect-one`, `run`, `spawn-to-spawn`, and `spawn-to-weapon` take `--mode` to pick the
+`connect-one`, `run`, `spawn-to-spawn`, and `spawn-to-weapon` take `--navmode` to pick the
 navigation backend. The steering loop is identical for all; only the path source differs:
 
 | Mode | What it does |
@@ -124,8 +125,9 @@ navigation backend. The steering loop is identical for all; only the path source
 | `hybrid-segment` | navmesh routes open space, A* owns jump-link segments only |
 
 The `navmesh` and `hybrid-*` modes require the navmesh to be available (built lazily from
-the map cache). `competition` spawns bots for every mode at once and prints a per-mode frag
-scoreboard.
+the map cache). `competition` spawns bots for every `--navmode` (× `--brains`) at once and
+prints a per-group frag scoreboard (e.g. `qbots competition --navmodes astar,navmesh
+--brains main,sentry --count 2`).
 
 ---
 
@@ -137,7 +139,7 @@ a structured log + a `# SUMMARY` line.
 
 ```bash
 # Farthest DM spawn from where the bot spawns.
-qbots spawn-to-spawn [--count 24] [--max-secs 60] [--spacing 24] [--mode astar]
+qbots spawn-to-spawn [--count 24] [--max-secs 60] [--spacing 24] [--navmode astar]
 # A named weapon's BSP origin (resolved as weapon_<name>).
 qbots spawn-to-weapon rocketlauncher [--count 24] [--max-secs 60]
 ```

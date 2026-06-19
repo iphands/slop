@@ -22,7 +22,7 @@ use config::Config;
 use glam::Vec3;
 
 /// Which navigation backend a movement scenario drives the bot with. Two co-maintained
-/// representations behind one flag (`--mode`); the steering loop is identical for both.
+/// representations behind one flag (`--navmode`); the steering loop is identical for both.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum NavMode {
     /// Waypoint-graph backend: A* over grid-sampled nodes (the default, proven backend).
@@ -114,9 +114,9 @@ enum Cmd {
         qport: Option<u16>,
         /// Navigation backend: `astar` (waypoint graph, default) or `navmesh` (polygon
         /// mesh + funnel). The navmesh backend requires `generate-map-cache --map <m>` first.
-        #[arg(long, value_enum, default_value_t = NavMode::Astar)]
+        #[arg(long = "navmode", value_enum, default_value_t = NavMode::Astar)]
         mode: NavMode,
-        /// Brain (decision plugin): `main` (default) or `sentry`. Independent of `--mode`.
+        /// Brain (decision plugin): `main` (default) or `sentry`. Independent of `--navmode`.
         #[arg(long, value_enum, default_value_t = brain::BrainKind::Main)]
         brain: brain::BrainKind,
     },
@@ -128,10 +128,10 @@ enum Cmd {
         /// Navigation backend for the whole fleet: `astar` (waypoint graph, default) or
         /// `navmesh` (polygon mesh + funnel). The navmesh backend requires the map's nav
         /// cache to be present (`generate-map-cache --map <m>`).
-        #[arg(long, value_enum, default_value_t = NavMode::Astar)]
+        #[arg(long = "navmode", value_enum, default_value_t = NavMode::Astar)]
         mode: NavMode,
         /// Brain (decision plugin) for the whole fleet: `main` (default) or `sentry`.
-        /// Overrides `[fleet].brain`. Independent of `--mode`.
+        /// Overrides `[fleet].brain`. Independent of `--navmode`.
         #[arg(long, value_enum)]
         brain: Option<brain::BrainKind>,
         /// Name prefix override; bots are named `<name>_1`, `<name>_2`, … (1-based).
@@ -160,20 +160,21 @@ enum Cmd {
         #[arg(long, group = "skin_sel")]
         skin_random_female: bool,
     },
-    /// Spawn N bots for EACH nav `--mode` at once in one process (shared nav cache), each mode
-    /// wearing a distinct skin, and print a per-mode frag scoreboard. Bots are named
-    /// `<mode>_<i>` (e.g. `race_1`). Ctrl-C ends the competition and prints the final board.
+    /// Spawn N bots for EACH `--navmode` × `--brains` group at once in one process (shared nav
+    /// cache), each nav mode wearing a distinct skin, and print a per-group frag scoreboard. Bots
+    /// are named `<group>_<i>` (e.g. `race_1`, or `sentry-race_1` when brains vary). Ctrl-C ends
+    /// the competition and prints the final board.
     Competition {
         /// Server address (defaults to config's server).
         #[arg(long)]
         addr: Option<String>,
-        /// Bots to spawn **per mode** (default 8). Total = modes × count, clamped by
-        /// `[fleet].max_bots` (server maxclients headroom).
+        /// Bots to spawn **per group** (default 8), a group = one (navmode, brain) pair. Total =
+        /// navmodes × brains × count, clamped by `[fleet].max_bots` (server maxclients headroom).
         #[arg(long, default_value = "8")]
         count: usize,
-        /// Comma-separated modes to include (default: all). e.g.
-        /// `--modes astar,navmesh,hybrid-race`.
-        #[arg(long)]
+        /// Comma-separated nav backends to include (default: all). e.g.
+        /// `--navmodes astar,navmesh,hybrid-race`.
+        #[arg(long = "navmodes")]
         modes: Option<String>,
         /// Comma-separated brains to include (default: `main`). Spawns the full
         /// `{modes} × {brains}` cross product. e.g. `--brains main,sentry`.
@@ -232,7 +233,7 @@ enum Cmd {
         spacing: f32,
         /// Navigation backend: `astar` (waypoint graph, default) or `navmesh` (polygon
         /// mesh + funnel). The navmesh backend requires `generate-navmesh --map <m>` first.
-        #[arg(long, value_enum, default_value_t = NavMode::Astar)]
+        #[arg(long = "navmode", value_enum, default_value_t = NavMode::Astar)]
         mode: NavMode,
     },
     /// Drive one bot from spawn to a named weapon's BSP origin; log movement; stop.
@@ -267,7 +268,7 @@ enum Cmd {
         spacing: f32,
         /// Navigation backend: `astar` (waypoint graph, default) or `navmesh` (polygon
         /// mesh + funnel). The navmesh backend requires `generate-navmesh --map <m>` first.
-        #[arg(long, value_enum, default_value_t = NavMode::Astar)]
+        #[arg(long = "navmode", value_enum, default_value_t = NavMode::Astar)]
         mode: NavMode,
     },
     /// Diagnose disconnected nav-graph components: for each small component show
@@ -659,7 +660,7 @@ pub(crate) async fn bot_task(
     // injected into `brain.tick` each frame — the brain uses nav, never owns it.
     let mut brain: Box<dyn Brain + Send> =
         build_brain(brain_kind, BotSkill::default(), BrainConfig::default());
-    // Boxed behind the `Navigator` trait so the tick loop is backend-agnostic: `--mode`
+    // Boxed behind the `Navigator` trait so the tick loop is backend-agnostic: `--navmode`
     // picks A* (waypoint graph) or navmesh (polygons + funnel) at map load. `+ Send`
     // because this future is spawned on tokio and holds the driver across awaits.
     let mut nav_driver: Option<Box<dyn Navigator + Send>> = None;
@@ -1647,7 +1648,7 @@ async fn main() -> ExitCode {
                 tracing::error!("--count must be >= 1");
                 return ExitCode::FAILURE;
             }
-            // Default to all modes; else parse the comma list via the same names `--mode` accepts.
+            // Default to all modes; else parse the comma list via the same names `--navmode` accepts.
             let modes: Vec<NavMode> = match modes {
                 None => NavMode::value_variants().to_vec(),
                 Some(list) => {
@@ -1665,7 +1666,7 @@ async fn main() -> ExitCode {
                         }
                     }
                     if out.is_empty() {
-                        tracing::error!("--modes was empty");
+                        tracing::error!("--navmodes was empty");
                         return ExitCode::FAILURE;
                     }
                     out

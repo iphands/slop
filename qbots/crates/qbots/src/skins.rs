@@ -79,7 +79,7 @@ impl SkinSelection {
 }
 
 /// `n` **distinct** `model/skin` strings, drawn at random from the combined male+female pool —
-/// one per competitor so each (e.g. each nav `--mode` fleet) is tellable apart on sight. When the
+/// one per competitor so each (e.g. each nav `--navmode` fleet) is tellable apart on sight. When the
 /// pool is smaller than `n`, the shuffled pool is cycled (with a warning) so callers always get
 /// `n` entries. Never empty for `n > 0` (the pool falls back to the built-in id sets).
 pub fn distinct_skins(baseq2: &Path, n: usize, rng: &mut Rng) -> Vec<String> {

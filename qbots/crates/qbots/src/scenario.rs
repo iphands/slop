@@ -67,7 +67,7 @@ pub async fn run_scenario(
     lift_penalty: f32,
     // Grid spacing of the nav graph to load/build (`--spacing`); cached per-spacing.
     spacing: f32,
-    // Navigation backend (`--mode`): the `astar` waypoint graph or the `navmesh` polygon mesh.
+    // Navigation backend (`--navmode`): the `astar` waypoint graph or the `navmesh` polygon mesh.
     mode: crate::NavMode,
 ) -> std::io::Result<ExitCode> {
     // The caller (`run_scenario_cmd`) autodetects the server's map and passes it here;
