@@ -66,17 +66,40 @@ impl HybridSegment {
             jdir.length_squared() > 1.0 && jdir.normalize().dot(to_goal) > GOALWARD_COS
         })
     }
+
+    /// True if the bot is near a graph node that owns a swim edge (or is itself a water node) —
+    /// the cue to hand the segment to A* so it can execute the dive/swim/climb-out (Plan 40).
+    /// Unlike jump links this is NOT goal-ward gated: a swim route is non-monotonic (you must
+    /// dive DOWN, away from a goal that's above, before surfacing), so any nearby swim link
+    /// hands control to A*, which owns the only water-aware plan.
+    fn swim_link_ahead(&self, from: Vec3) -> bool {
+        let g = &self.sub.graph;
+        let Some(n) = g.nearest(&[from.x, from.y, from.z]) else {
+            return false;
+        };
+        if (Vec3::from(g.node_pos(n)) - from).length() > TRIGGER_DIST {
+            return false;
+        }
+        g.is_water_node(n) || g.neighbors(n).iter().any(|&(to, _)| g.is_swim_edge(n, to))
+    }
 }
 
 impl Navigator for HybridSegment {
     fn set_goal(&mut self, goal: NavGoal, from: Vec3) {
         self.final_goal = Some(goal_key(&self.sub.graph, &goal));
-        let near_jump = self.jump_link_ahead(from);
+        // Hand a segment to A* for either a goal-ward jump link or any nearby swim link (Plan 40).
+        let near_link = self.jump_link_ahead(from) || self.swim_link_ahead(from);
         self.active = match self.active {
-            // Open space — switch to A* only when a goal-ward jump link is right here.
-            Backend::Navmesh if near_jump => Backend::Astar,
-            // Executing a jump — stay on A* until the launch is done and no new jump is pending.
-            Backend::Astar if self.sub.astar.current_edge_is_jump() || near_jump => Backend::Astar,
+            // Open space — switch to A* when a jump/swim link is right here.
+            Backend::Navmesh if near_link => Backend::Astar,
+            // Executing a jump/swim — stay on A* until it's done and no new link is pending.
+            Backend::Astar
+                if self.sub.astar.current_edge_is_jump()
+                    || self.sub.astar.current_edge_is_swim()
+                    || near_link =>
+            {
+                Backend::Astar
+            }
             Backend::Astar => Backend::Navmesh,
             other => other,
         };
