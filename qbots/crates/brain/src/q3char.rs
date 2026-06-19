@@ -324,6 +324,118 @@ pub fn wants_to_chase(view: &Worldview, ch: &Q3Character, enemy_height_delta: Op
 #[cfg(test)]
 mod tests {
     use super::*;
+    use client::parse::ConfigStrings;
+    use q2proto::Frame;
+
+    /// CS_MODELS — the configstring model table base (mirrors `perception::CS_MODELS`).
+    const CS_MODELS: usize = 32;
+
+    /// Build a synthetic single-frame `Worldview` with a chosen held weapon + stats, so the
+    /// aggression ladder can be exercised with no server. `gunindex` names the view-model
+    /// configstring that [`Weapon::from_view_model`] resolves.
+    fn view_with(
+        gunindex: i32,
+        view_model: &str,
+        health: i16,
+        armor: i16,
+        held_ammo: i16,
+    ) -> Worldview {
+        let mut frame = Frame::default();
+        frame.playerstate.gunindex = gunindex;
+        frame.playerstate.stats[1] = health; // STAT_HEALTH
+        frame.playerstate.stats[3] = held_ammo; // STAT_AMMO
+        frame.playerstate.stats[5] = armor; // STAT_ARMOR
+        let mut cs = ConfigStrings::default();
+        cs.set(CS_MODELS + gunindex as usize, view_model);
+        Worldview::from_frame(&frame, &cs, 0)
+    }
+
+    #[test]
+    fn railgun_full_health_presses() {
+        // Railgun + 8 slugs + full health → tier 95, wants to chase.
+        let view = view_with(1, "models/weapons/v_rail/tris.md2", 100, 100, 8);
+        assert_eq!(view.self_state().held_weapon, Some(Weapon::Railgun));
+        assert_eq!(bot_aggression(&view, None), 95.0);
+        let ch = Q3Character::from_skill(5);
+        assert!(wants_to_chase(&view, &ch, None));
+        assert!(!wants_to_retreat(&view, &ch, None));
+    }
+
+    #[test]
+    fn machinegun_hurt_flees() {
+        // Machinegun + health 50 → health<60 guard → aggression 0 → retreat.
+        let view = view_with(1, "models/weapons/v_machn/tris.md2", 50, 0, 200);
+        assert_eq!(bot_aggression(&view, None), 0.0);
+        let ch = Q3Character::from_skill(5);
+        assert!(wants_to_retreat(&view, &ch, None));
+        assert!(!wants_to_chase(&view, &ch, None));
+    }
+
+    #[test]
+    fn shotgun_healthy_is_boundary_50() {
+        // Health 90 (≥80, armor unchecked) + shotgun + 20 shells → tier 50 (the boundary).
+        let view = view_with(1, "models/weapons/v_shotg/tris.md2", 90, 0, 20);
+        assert_eq!(bot_aggression(&view, None), 50.0);
+        // Neutral character threshold is exactly 50 → neither retreat (<50) nor chase (>50).
+        let ch = Q3Character::from_skill(5);
+        assert!(!wants_to_retreat(&view, &ch, None));
+        assert!(!wants_to_chase(&view, &ch, None));
+    }
+
+    #[test]
+    fn railgun_out_of_ammo_flees() {
+        // Railgun but only 3 slugs (≤5) → ammo gate fails → aggression 0.
+        let view = view_with(1, "models/weapons/v_rail/tris.md2", 100, 100, 3);
+        assert_eq!(bot_aggression(&view, None), 0.0);
+    }
+
+    #[test]
+    fn moderately_hurt_but_armored_still_presses() {
+        // Health 70 (<80) but armor 60 (≥40) → guards pass → railgun tier 95.
+        let view = view_with(1, "models/weapons/v_rail/tris.md2", 70, 60, 8);
+        assert_eq!(bot_aggression(&view, None), 95.0);
+        // Same health but no armor → second guard trips → 0.
+        let view2 = view_with(1, "models/weapons/v_rail/tris.md2", 70, 0, 8);
+        assert_eq!(bot_aggression(&view2, None), 0.0);
+    }
+
+    #[test]
+    fn enemy_high_above_is_bad_angle() {
+        // Railgun, full health, but enemy 300u above → bad angle → 0.
+        let view = view_with(1, "models/weapons/v_rail/tris.md2", 100, 100, 8);
+        assert_eq!(bot_aggression(&view, Some(300.0)), 0.0);
+        // Enemy level/below → fine.
+        assert_eq!(bot_aggression(&view, Some(-50.0)), 95.0);
+    }
+
+    #[test]
+    fn aggression_threshold_bias_shifts_engage() {
+        // Shotgun (tier 50) + healthy. A high-aggression Sarge (threshold <50) chases;
+        // a low-aggression Camper (threshold >50) retreats — same loadout, different bias.
+        let view = view_with(1, "models/weapons/v_shotg/tris.md2", 100, 100, 20);
+        assert_eq!(bot_aggression(&view, None), 50.0);
+        assert!(wants_to_chase(&view, &Q3Character::sarge(), None));
+        assert!(wants_to_retreat(&view, &Q3Character::camper(), None));
+    }
+
+    #[test]
+    fn feeling_bad_ladder() {
+        // Blaster (gauntlet analog) → 100 regardless of health.
+        let blaster = view_with(1, "models/weapons/v_blast/tris.md2", 100, 0, 0);
+        assert_eq!(bot_feeling_bad(&blaster), 100.0);
+        // Low health → 100.
+        let low = view_with(1, "models/weapons/v_rail/tris.md2", 30, 0, 8);
+        assert_eq!(bot_feeling_bad(&low), 100.0);
+        // Machinegun (healthy enough) → 90.
+        let mg = view_with(1, "models/weapons/v_machn/tris.md2", 100, 0, 200);
+        assert_eq!(bot_feeling_bad(&mg), 90.0);
+        // Railgun, health 55 → health<60 branch → 80.
+        let mid = view_with(1, "models/weapons/v_rail/tris.md2", 55, 0, 8);
+        assert_eq!(bot_feeling_bad(&mid), 80.0);
+        // Railgun, full health → 0.
+        let ok = view_with(1, "models/weapons/v_rail/tris.md2", 100, 0, 8);
+        assert_eq!(bot_feeling_bad(&ok), 0.0);
+    }
 
     #[test]
     fn from_skill_is_monotonic() {
