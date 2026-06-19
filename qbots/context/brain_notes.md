@@ -251,3 +251,7 @@ T6 gate cleared; plan closed.
   reach is gated on train-riding above. The **quad** (`item_quad (192,320,216)`) is **not yet
   nav-reachable** — it's in the upper level (comp0) which has no spawn-side up-route in our graph;
   that's the broad q2dm3 floor fragmentation = **Plan 35**.
+
+  **Bonus (Plan 35 spillover):** `bridge_components_via_jump` also restored **q2dm2 + q2dm5** to
+  full spawn connectivity (were failing per Plan 34); q2dm1/4/8 unchanged (still full). q2dm3/6/7
+  remain partial (deeper fragmentation). So the jump-down floor bridge is a partial Plan 35 fix.
