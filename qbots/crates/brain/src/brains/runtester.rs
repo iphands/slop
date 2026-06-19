@@ -257,7 +257,27 @@ impl Brain for RunTesterBrain {
                     mv.move_side(s);
                     f
                 };
-                if info.vertical {
+                if info.ladder {
+                    // Ladder climb (Plan 35): hug the ladder and press `up` (Q2 `PM_AddCurrents`
+                    // ladder rule: `upmove>0` while touching CONTENTS_LADDER → climb). Face the
+                    // ladder center so the 1u forward trace hits it (sets `pml.ladder`), press
+                    // forward into it, and hold `up` until at the top, then step off.
+                    let center = Vec3::from(info.board_ent); // ladder center (facing target)
+                    let top_z = dismount.z;
+                    if pos.z >= top_z - 32.0 {
+                        intent_forward = go(&mut mv, dismount); // at the top → step off
+                    } else {
+                        let to_c = center - pos;
+                        let lyaw = to_c.y.atan2(to_c.x).to_degrees();
+                        mv.look_at(lyaw, 0.0); // face the ladder (so it's detected)
+                        mv.move_forward(1.0); // press into the ladder
+                        mv.move_side(0.0);
+                        mv.up = 1.0; // climb (upmove>0)
+                        mv.jump = false;
+                        intent_forward = 1.0;
+                    }
+                    self.ride_boarded = false;
+                } else if info.vertical {
                     // Vertical lift: walk onto the pad / stand (target up → ~0 horizontal → ride).
                     // JUMP while approaching the pad (T7 — a human hops on); suppress once on the
                     // pad (a jump while rising would launch the bot off it).

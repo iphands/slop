@@ -138,6 +138,7 @@ mod tests {
             vertical: false,
             board_ent: [100.0, 0.0, 50.0],
             far_ent: [400.0, 0.0, 50.0],
+            ladder: false,
         }
     }
 

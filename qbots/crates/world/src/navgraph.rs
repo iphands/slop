@@ -120,6 +120,10 @@ pub struct RideInfo {
     pub board_ent: [f32; 3],
     /// Expected wire entity origin at the far corner (the reverse ride's board). See `board_ent`.
     pub far_ent: [f32; 3],
+    /// `true` for a **ladder** climb (`CONTENTS_LADDER`, Plan 35): the bot hugs the ladder and
+    /// presses `up` to climb (Q2 `PM_AddCurrents` ladder rule). `board_ent`/`far_ent` hold the
+    /// ladder center (the facing target). `false` for func_train/func_plat movers.
+    pub ladder: bool,
 }
 
 /// A navigation graph: waypoints (bot-origin positions) + LOS-checked edges.
@@ -571,6 +575,7 @@ impl NavGraph {
                 vertical: info_ab.vertical,
                 board_ent: info_ab.far_ent,
                 far_ent: info_ab.board_ent,
+                ladder: info_ab.ladder,
             },
         );
     }

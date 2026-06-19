@@ -155,8 +155,21 @@ pub fn generate_map_nav(
     let seeded = graph.seed_spawns(&cm, &spawn_origins);
     add_elevator_edges(&mut graph, &cm, &bsp, lift_penalty);
     add_train_edges(&mut graph, &cm, &bsp);
+    let ladders = add_ladder_edges(&mut graph, &bsp);
+    tracing::info!(map, ladders, "added ladder climb edges");
     graph.bridge_components(&cm, BRIDGE_HDIST);
-    let pruned = graph.prune_long_blocked_edges(&cm, PRUNE_MAX_HD);
+    // `QBOTS_NO_PRUNE=1` skips the false-edge prune — a diagnostic for connectivity work
+    // (Plan 35): if a map's spawn fragmentation persists with the prune off, the cause is in
+    // generation/bridging, not the prune. (q2dm3: still 3-way split with it off.)
+    let pruned = if std::env::var("QBOTS_NO_PRUNE").is_ok() {
+        tracing::warn!(
+            map,
+            "QBOTS_NO_PRUNE set — skipping false-edge prune (diagnostic)"
+        );
+        0
+    } else {
+        graph.prune_long_blocked_edges(&cm, PRUNE_MAX_HD)
+    };
     tracing::info!(map, pruned, "pruned long hull-blocked false edges");
     let added_jumps = graph.detect_jump_edges(&cm, JUMP_SPACING);
     // Fuse vertically-stacked floor components that connect only by a drop-off (q2dm3's
@@ -388,6 +401,7 @@ fn try_add_train(
                     vertical: false,
                     board_ent: ent_origin[ci_a],
                     far_ent: ent_origin[ci_b],
+                    ladder: false,
                 },
             );
             rides += 1;
@@ -421,6 +435,91 @@ fn nearest_ground(graph: &NavGraph, pos: [f32; 3], max_h: f32, max_dz: f32) -> O
         }
     }
     best
+}
+
+/// `CONTENTS_LADDER` (`files.h:368`) — a climbable brush volume.
+const CONTENTS_LADDER: i32 = 0x2000_0000;
+/// Horizontal radius (units) to find the floor node adjacent to a ladder's base/top. In cache via VERSION.
+pub const LADDER_RADIUS: f32 = 96.0;
+/// Vertical tolerance (units) when matching a ladder's base/top to a floor node. In cache via VERSION.
+pub const LADDER_DZ: f32 = 56.0;
+
+/// Axis-aligned bounding boxes of every `CONTENTS_LADDER` brush (Plan 35). A brush is an
+/// intersection of half-spaces; the six axial planes give the AABB (`normal` ±1 on an axis →
+/// `dist` is that face). Non-axial (bevel) planes are ignored.
+fn ladder_aabbs(bsp: &Bsp) -> Vec<([f32; 3], [f32; 3])> {
+    let mut out = Vec::new();
+    for b in &bsp.brushes {
+        if b.contents & CONTENTS_LADDER == 0 {
+            continue;
+        }
+        let mut mn = [f32::MAX; 3];
+        let mut mx = [f32::MIN; 3];
+        for s in b.firstside..(b.firstside + b.numsides) {
+            let Some(side) = bsp.brushsides.get(s as usize) else {
+                continue;
+            };
+            let Some(pl) = bsp.planes.get(side.planenum as usize) else {
+                continue;
+            };
+            for ax in 0..3 {
+                if pl.normal[ax] > 0.99 {
+                    mx[ax] = pl.dist;
+                } else if pl.normal[ax] < -0.99 {
+                    mn[ax] = -pl.dist;
+                }
+            }
+        }
+        if mn.iter().all(|v| v.is_finite()) && mx.iter().all(|v| v.is_finite()) {
+            out.push((mn, mx));
+        }
+    }
+    out
+}
+
+/// Add ladder climb edges (Plan 35). Each `CONTENTS_LADDER` brush connects a lower floor to an
+/// upper one; our nav otherwise ignores ladders, leaving the upper level (q2dm3's comp0, the
+/// quad/railgun overlook) cut off from the spawn floors. For each ladder, find the walkable
+/// floor node adjacent to its base and to its top, and add a vertical **ladder** ride edge
+/// (the brain hugs the ladder + presses `up` to climb). Returns the number of edges added.
+pub fn add_ladder_edges(graph: &mut NavGraph, bsp: &Bsp) -> usize {
+    let mut added = 0;
+    for (mn, mx) in ladder_aabbs(bsp) {
+        let cx = (mn[0] + mx[0]) / 2.0;
+        let cy = (mn[1] + mx[1]) / 2.0;
+        let bottom = nearest_ground(graph, [cx, cy, mn[2] + 24.0], LADDER_RADIUS, LADDER_DZ);
+        let top = nearest_ground(graph, [cx, cy, mx[2] + 24.0], LADDER_RADIUS, LADDER_DZ);
+        let (Some(bottom), Some(top)) = (bottom, top) else {
+            continue;
+        };
+        if bottom == top || graph.neighbors(bottom).iter().any(|&(x, _)| x == top) {
+            continue;
+        }
+        let center = [cx, cy, (mn[2] + mx[2]) / 2.0];
+        let cost = (mx[2] - mn[2]).abs();
+        graph.add_ride_edge(
+            bottom,
+            top,
+            cost,
+            crate::navgraph::RideInfo {
+                board: graph.nodes[bottom],
+                far: graph.nodes[top],
+                dismount: graph.nodes[top],
+                model_index: 0,
+                vertical: true,
+                board_ent: center,
+                far_ent: center,
+                ladder: true,
+            },
+        );
+        added += 1;
+        tracing::info!(
+            center = ?[cx as i32, cy as i32, ((mn[2] + mx[2]) / 2.0) as i32],
+            z = ?[mn[2] as i32, mx[2] as i32],
+            "ladder climb edge added"
+        );
+    }
+    added
 }
 
 /// Euclidean distance between two world points.
@@ -474,6 +573,7 @@ fn add_lift(
             // so these are unused; the pad's own position is its wire origin if ever needed.
             board_ent: bot_node,
             far_ent: top_node,
+            ladder: false,
         },
     );
     let mut n = 1;

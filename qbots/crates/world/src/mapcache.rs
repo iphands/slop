@@ -56,7 +56,9 @@ const MAGIC: &[u8; 7] = b"QBNAVC2";
 // vertical ride edges too; RideInfo serializes one extra byte. Older caches auto-rejected.
 // Version 16: RideInfo gains board_ent/far_ent (expected wire entity origins, Plan 43) so the
 // brain can detect a train's arrival; six more floats per ride edge. Older caches auto-rejected.
-const VERSION: u8 = 16;
+// Version 17: RideInfo gains a `ladder` flag (Plan 35) — CONTENTS_LADDER climbs are ride edges
+// too; one more byte per ride edge. Older caches auto-rejected.
+const VERSION: u8 = 17;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]
@@ -255,6 +257,7 @@ pub fn save(path: &Path, graph: &NavGraph, fingerprint: &Fingerprint) -> io::Res
         }
         buf.extend_from_slice(&info.model_index.to_le_bytes());
         buf.push(info.vertical as u8);
+        buf.push(info.ladder as u8);
     }
 
     if let Some(parent) = path.parent() {
@@ -352,6 +355,8 @@ fn parse(data: &[u8], expected: &Fingerprint) -> Option<NavGraph> {
         let model_index = read_u32(data, &mut pos)?;
         let vertical = *data.get(pos)? != 0;
         pos += 1;
+        let ladder = *data.get(pos)? != 0;
+        pos += 1;
         rides.push((
             from,
             to,
@@ -363,6 +368,7 @@ fn parse(data: &[u8], expected: &Fingerprint) -> Option<NavGraph> {
                 vertical,
                 board_ent: [p[9], p[10], p[11]],
                 far_ent: [p[12], p[13], p[14]],
+                ladder,
             },
         ));
     }
