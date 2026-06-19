@@ -7,7 +7,6 @@
 //! See `AGENTS.md` and `context/plans/06_brain.md`.
 
 pub mod aim;
-pub mod brain;
 pub mod brains;
 pub mod combat;
 pub mod danger;
@@ -29,11 +28,11 @@ pub mod skill;
 pub mod steer;
 pub mod weapons;
 
-pub use brain::{BrainConfig, BrainOutput};
-// The brain plugin contract + bundled I/O (Plan 23). The root `Brain` is now the **trait**
-// (the binary drives a `Box<dyn Brain>` via `build_brain`); the concrete impl lives at
-// `brain::brain::Brain` and is reached through the factory.
-pub use brains::core::{Brain, BrainContext, BrainMap};
+// The brain plugin contract + bundled I/O (Plan 23). The root `Brain` is the **trait** (the
+// binary drives a `Box<dyn Brain>` via `build_brain`); the concrete `main` impl is `MainBrain`
+// (`brains::main`), reached through the factory.
+pub use brains::core::{Brain, BrainConfig, BrainContext, BrainMap, BrainOutput};
+pub use brains::main::MainBrain;
 pub use brains::{build_brain, BrainKind};
 pub use combat::{CombatDecision, CombatDriver};
 pub use danger::{DangerDriver, DodgeAction};

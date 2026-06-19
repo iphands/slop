@@ -1,10 +1,10 @@
-//! # brain::brain — the decision seam (Plan 22)
+//! # brain::brains::main — the `main` brain plugin (the "normal" bot; Plan 22/24)
 //!
-//! `Brain` owns every per-tick *decision* sub-driver that used to live as locals in the
+//! `MainBrain` owns every per-tick *decision* sub-driver that used to live as locals in the
 //! fleet binary's `bot_task` loop (`crates/qbots/src/main.rs`): the combat driver, the
 //! behavior FSM, the projectile-dodge driver, the steering controller, stuck recovery,
 //! the per-bot skill/personality, and the roam goal cursor. The `Navigator` (nav) is
-//! **injected** into [`Brain::tick`] each frame — the brain *uses* nav to reach a goal but
+//! **injected** into [`MainBrain::tick`] each frame — the brain *uses* nav to reach a goal but
 //! never owns or mutates the nav graph. The driver (`MovementIntent → Usercmd`) stays on
 //! the far side of the seam: `tick` returns a [`BrainOutput`] and the caller assembles the
 //! `Usercmd`.
@@ -30,13 +30,12 @@ use crate::skill::BotSkill;
 use crate::steer::{move_from_world_dir, Steering};
 use crate::{items, los};
 
-// `BrainConfig`/`BrainOutput` were moved to `brains::core` (Plan 23 T2) so they sit next to the
-// `trait Brain` contract; re-exported here so existing `crate::brain::{BrainConfig, BrainOutput}`
-// paths keep resolving.
+// `BrainConfig`/`BrainOutput` live in `brains::core` next to the `trait Brain` contract;
+// re-exported here for the convenience of code that reaches them via the `main` module.
 pub use crate::brains::core::{BrainConfig, BrainOutput};
 
-/// The bot's decision layer: owns combat/FSM/dodge/steering/recovery/skill/roam state.
-pub struct Brain {
+/// The `main` decision brain: owns combat/FSM/dodge/steering/recovery/skill/roam state.
+pub struct MainBrain {
     skill: BotSkill,
     fsm: BehaviorState,
     combat: CombatDriver,
@@ -55,10 +54,10 @@ pub struct Brain {
     cfg: BrainConfig,
 }
 
-impl Brain {
+impl MainBrain {
     /// Construct a brain before the map is known. Roam goals + the graph handle are
-    /// supplied later via [`Brain::set_map`] (mirrors how `bot_task` built its sub-drivers
-    /// early and learned the nav graph at map load).
+    /// supplied later via [`set_map`](crate::brains::core::Brain::set_map) (mirrors how
+    /// `bot_task` built its sub-drivers early and learned the nav graph at map load).
     pub fn new(skill: BotSkill, cfg: BrainConfig) -> Self {
         let steering = Steering::new(skill.combat());
         Self {
@@ -85,7 +84,7 @@ impl Brain {
     }
 }
 
-impl crate::brains::core::Brain for Brain {
+impl crate::brains::core::Brain for MainBrain {
     /// Supply the per-map roam goals + A* graph handle once the map has loaded.
     /// `roam_as_position` is `true` for backends (navmesh) that path to world positions
     /// rather than bare node indices.
@@ -446,7 +445,7 @@ mod tests {
 
     #[test]
     fn new_brain_starts_roaming_without_map() {
-        let brain = Brain::new(BotSkill::default(), BrainConfig::default());
+        let brain = MainBrain::new(BotSkill::default(), BrainConfig::default());
         assert!(matches!(brain.behavior(), BehaviorState::Roam));
         assert!(brain.roam_nodes.is_empty());
         assert!(!brain.roam_as_position);

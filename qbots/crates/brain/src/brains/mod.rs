@@ -5,10 +5,11 @@
 //! the nav layer's `NavMode` / `build_navigator`.
 
 pub mod core;
+pub mod main;
 
 pub use core::{Brain, BrainConfig, BrainContext, BrainMap, BrainOutput};
 
-use crate::brain::Brain as MainBrain;
+use crate::brains::main::MainBrain;
 use crate::skill::BotSkill;
 
 /// Which brain implementation a bot runs. Mirrors `NavMode` (the nav-backend selector); a
@@ -23,8 +24,6 @@ pub enum BrainKind {
 /// exactly mirroring `build_navigator` for nav backends. `Send` so a bot task can own the box.
 pub fn build_brain(kind: BrainKind, skill: BotSkill, cfg: BrainConfig) -> Box<dyn Brain + Send> {
     match kind {
-        // The concrete brain relocates into `brains/main.rs` (renamed `MainBrain`) in Plan 24;
-        // for now the factory references it where it lives.
         BrainKind::Main => Box::new(MainBrain::new(skill, cfg)),
     }
 }
