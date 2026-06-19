@@ -34,6 +34,7 @@ pub use brain::{Brain, BrainConfig, BrainOutput};
 // `brains::core::Brain`; the root `Brain` export flips from the concrete struct to the trait in
 // Plan 23 T5 once the binary drives a `Box<dyn Brain>`. `BrainContext`/`BrainMap` are new here.
 pub use brains::core::{BrainContext, BrainMap};
+pub use brains::{build_brain, BrainKind};
 pub use combat::{CombatDecision, CombatDriver};
 pub use danger::{DangerDriver, DodgeAction};
 pub use heatmap::Heatmap;
