@@ -57,7 +57,7 @@ chosen at startup* — not hot-loading. Keep it an enum.
 ### Why a `BrainContext` struct (not loose args)
 
 `Brain::tick` currently takes `(view, nav, cm, dt, ticks)`. The downstream behavior plans
-(26–32) will need to feed the brain more per-tick facts the server already sends us —
+(26–33) will need to feed the brain more per-tick facts the server already sends us —
 obituary/observed-damage events, water level + air/breath from the playerstate, observed enemy
 weapon. Bundling the per-tick inputs into one `BrainContext<'a>` lets us add fields **without
 re-churning every brain's signature** each behavior plan. This is the one forward-looking
@@ -68,19 +68,20 @@ shape change worth making now while there is a single implementor.
 The trait/`BrainContext` shape must not foreclose these downstream behaviors (they motivate the
 contract; each is its own plan):
 
-- **Persona** (Plan 26): per-bot aggression / weapon-pref / follow / reaction / risk.
-- **Weapon-matchup reads** (Plan 27): back-up-vs-SSG, don't-engage-blaster-vs-railgun,
+- **Runtester scenario brain** (Plan 26): per-tick `goal_override` in `BrainContext` (lazy goal).
+- **Persona** (Plan 27): per-bot aggression / weapon-pref / follow / reaction / risk.
+- **Weapon-matchup reads** (Plan 28): back-up-vs-SSG, don't-engage-blaster-vs-railgun,
   per-weapon ideal distance — needs observed/inferred enemy weapon in `BrainContext`.
-- **Engagement** (Plan 28): chase-or-not, break a 1v1 when third-partied — needs damage/sound events.
-- **Resource** (Plan 29): nearest-health-when-hurt, ammo need.
-- **Elevator/plat** (Plan 30): decide→wait→ride; remove `ELEVATOR_PENALTY`; nav exposes plat facts.
-- **Underwater/breath** (Plan 31): dive, monitor air, surface — needs water level + air from playerstate.
-- **Heatmap preference pull-up** (Plan 32): nav exposes per-node danger; brain owns the preference.
+- **Engagement** (Plan 29): chase-or-not, break a 1v1 when third-partied — needs damage/sound events.
+- **Resource** (Plan 30): nearest-health-when-hurt, ammo need.
+- **Elevator/plat** (Plan 31): decide→wait→ride; remove `ELEVATOR_PENALTY`; nav exposes plat facts.
+- **Underwater/breath** (Plan 32): dive, monitor air, surface — needs water level + air from playerstate.
+- **Heatmap preference pull-up** (Plan 33): nav exposes per-node danger; brain owns the preference.
 
 These are explicitly **out of scope** for Plan 23 — it is a behavior-preserving refactor that
 only *creates room* for them. Do not add new decision logic in this plan.
 
-### `brain_notes.md` discipline (applies to ALL brain plans 23–32)
+### `brain_notes.md` discipline (applies to ALL brain plans 23–33)
 
 Per the user's standing instruction, **every brain plan appends to `context/brain_notes.md`** —
 a running log in the same shape as `context/map_errors.notes.log.md` (dated sections, observed
@@ -101,7 +102,7 @@ verification checklist as a non-optional step. Plan 23 T1 creates the file.
 # Brain development notes (running log)
 # Started: 2026-06-18
 #
-# Append a dated section on EVERY brain plan (23–32) and any ad-hoc brain change.
+# Append a dated section on EVERY brain plan (23–33) and any ad-hoc brain change.
 # Format mirrors context/map_errors.notes.log.md: observed behavior, hypotheses,
 # what was tried, outcome. Newest at the bottom. Keep entries dense, no fluff.
 
@@ -131,7 +132,7 @@ use crate::perception::Worldview;
 use crate::move_ctrl::MovementIntent;
 use crate::weapons::Weapon;
 
-/// Per-tick inputs handed to a brain. Bundled so downstream behavior plans (26–32) can add
+/// Per-tick inputs handed to a brain. Bundled so downstream behavior plans (26–33) can add
 /// fields (observed enemy weapon, damage/sound events, water/air) without changing every
 /// brain's `tick` signature.
 pub struct BrainContext<'a> {
