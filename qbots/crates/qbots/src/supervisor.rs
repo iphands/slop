@@ -223,8 +223,6 @@ struct FleetShared {
     nav: NavCache,
     shutdown: Shutdown,
     stats: FleetStats,
-    /// Navigation backend every bot in this fleet drives (`--mode`).
-    mode: crate::NavMode,
 }
 
 /// Run the full fleet from config: shared nav cache + shutdown, one task per bot,
@@ -277,7 +275,6 @@ pub async fn run_fleet(
         nav: nav_cache,
         shutdown: shutdown.clone(),
         stats: stats.clone(),
-        mode,
     };
 
     // Per-process default so concurrent `run` fleets get disjoint qport ranges (the
@@ -301,7 +298,7 @@ pub async fn run_fleet(
         let cfg = Arc::clone(&cfg);
         let shared = shared.clone();
         tasks.push(tokio::spawn(async move {
-            bot_supervisor_loop(addr, name, qport, bot_skin, cfg, shared, reconnect).await;
+            bot_supervisor_loop(addr, name, qport, bot_skin, cfg, shared, reconnect, mode).await;
         }));
         // Stagger connects so we don't burst the server's connectionless handler.
         time::sleep(Duration::from_millis(stagger)).await;
@@ -352,6 +349,7 @@ async fn bot_supervisor_loop(
     cfg: Arc<Config>,
     shared: FleetShared,
     reconnect: Reconnect,
+    mode: crate::NavMode,
 ) {
     let mut attempts: u32 = 0;
     let mut backoff_ms: u64 = 1000;
@@ -368,7 +366,7 @@ async fn bot_supervisor_loop(
             &shared.nav,
             &shared.shutdown,
             &shared.stats,
-            shared.mode,
+            mode,
         )
         .await
         {
