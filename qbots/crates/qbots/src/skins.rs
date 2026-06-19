@@ -78,6 +78,35 @@ impl SkinSelection {
     }
 }
 
+/// `n` **distinct** `model/skin` strings, drawn at random from the combined male+female pool —
+/// one per competitor so each (e.g. each nav `--mode` fleet) is tellable apart on sight. When the
+/// pool is smaller than `n`, the shuffled pool is cycled (with a warning) so callers always get
+/// `n` entries. Never empty for `n > 0` (the pool falls back to the built-in id sets).
+pub fn distinct_skins(baseq2: &Path, n: usize, rng: &mut Rng) -> Vec<String> {
+    let mut pool = model_skin_pool(baseq2, "male", MALE_SKINS);
+    pool.extend(model_skin_pool(baseq2, "female", FEMALE_SKINS));
+    let len = pool.len();
+    if n == 0 || len == 0 {
+        return Vec::new();
+    }
+    // Fisher–Yates partial shuffle: randomise the first `min(n, len)` slots in place.
+    let take = n.min(len);
+    for i in 0..take {
+        let j = i + (rng.next_u64() as usize) % (len - i);
+        pool.swap(i, j);
+    }
+    if n <= len {
+        pool.truncate(n);
+        return pool;
+    }
+    tracing::warn!(
+        requested = n,
+        available = len,
+        "more competitors than distinct skins — repeating some"
+    );
+    (0..n).map(|i| pool[i % len].clone()).collect()
+}
+
 /// Resolve a `--skin` value to a `model/skin`. A value already containing `/` is taken
 /// verbatim. A bare name is matched to its owning model: first by scanning
 /// `baseq2/players/<model>/<name>.pcx`, then against the built-in male/female sets.
@@ -247,6 +276,19 @@ mod tests {
             let s = sel.per_bot(&mut rng).unwrap();
             assert!(s == "male/grunt" || s == "male/sniper");
         }
+    }
+
+    #[test]
+    fn distinct_skins_are_unique_and_count_matches() {
+        // Built-in combined pool is 15 male + 11 female = 26 distinct.
+        let mut rng = Rng::new();
+        let picks = distinct_skins(&no_baseq2(), 6, &mut rng);
+        assert_eq!(picks.len(), 6);
+        let uniq: std::collections::HashSet<_> = picks.iter().collect();
+        assert_eq!(uniq.len(), 6, "skins must be distinct: {picks:?}");
+        assert!(picks
+            .iter()
+            .all(|s| s.starts_with("male/") || s.starts_with("female/")));
     }
 
     #[test]

@@ -153,6 +153,26 @@ enum Cmd {
         #[arg(long, group = "skin_sel")]
         skin_random_female: bool,
     },
+    /// Spawn N bots for EACH nav `--mode` at once in one process (shared nav cache), each mode
+    /// wearing a distinct skin, and print a per-mode frag scoreboard. Bots are named
+    /// `<mode>_<i>` (e.g. `race_1`). Ctrl-C ends the competition and prints the final board.
+    Competition {
+        /// Server address (defaults to config's server).
+        #[arg(long)]
+        addr: Option<String>,
+        /// Bots to spawn **per mode** (default 8). Total = modes × count, clamped by
+        /// `[fleet].max_bots` (server maxclients headroom).
+        #[arg(long, default_value = "8")]
+        count: usize,
+        /// Comma-separated modes to include (default: all). e.g.
+        /// `--modes astar,navmesh,hybrid-race`.
+        #[arg(long)]
+        modes: Option<String>,
+        /// Base qport; mode `mi` bot `i` uses `base + mi*count + i` (disjoint per-mode blocks).
+        /// Per-process default if omitted.
+        #[arg(long)]
+        qport_base: Option<u16>,
+    },
     /// Print the loaded config (server + paths + fleet) and exit.
     Config,
     /// Query the server's connectionless `status` (map + player list). The fleet
@@ -1730,6 +1750,72 @@ async fn main() -> ExitCode {
                 count,
                 qport_base,
                 skin_sel,
+            )
+            .await
+            {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    tracing::error!("{e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Cmd::Competition {
+            addr,
+            count,
+            modes,
+            qport_base,
+        } => {
+            if count == 0 {
+                tracing::error!("--count must be >= 1");
+                return ExitCode::FAILURE;
+            }
+            // Default to all modes; else parse the comma list via the same names `--mode` accepts.
+            let modes: Vec<NavMode> = match modes {
+                None => NavMode::value_variants().to_vec(),
+                Some(list) => {
+                    let mut out = Vec::new();
+                    for tok in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                        match <NavMode as ValueEnum>::from_str(tok, true) {
+                            Ok(m) => out.push(m),
+                            Err(_) => {
+                                tracing::error!(
+                                    "unknown mode '{tok}' (valid: astar, navmesh, \
+                                     hybrid-fallback, hybrid-race, hybrid-hier, hybrid-segment)"
+                                );
+                                return ExitCode::FAILURE;
+                            }
+                        }
+                    }
+                    if out.is_empty() {
+                        tracing::error!("--modes was empty");
+                        return ExitCode::FAILURE;
+                    }
+                    out
+                }
+            };
+            // One distinct skin per mode so the fleets are tellable apart on sight.
+            let mut rng = skins::Rng::new();
+            let skins_per_mode: Vec<Option<String>> =
+                skins::distinct_skins(&cfg.paths.baseq2, modes.len(), &mut rng)
+                    .into_iter()
+                    .map(Some)
+                    .collect();
+            let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
+            let addr = match resolve_addr(&addr_str).await {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::error!("{e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            match supervisor::run_competition(
+                Arc::new(cfg),
+                addr,
+                modes,
+                count,
+                qport_base,
+                skins_per_mode,
             )
             .await
             {

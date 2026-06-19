@@ -338,6 +338,182 @@ pub async fn run_fleet(
     Ok(())
 }
 
+/// Short, stable tag for a nav backend — used as the competitor name prefix (`<tag>_<i>`) so the
+/// scoreboard can group bots by mode, and as the per-mode skin label.
+pub(crate) fn mode_tag(mode: crate::NavMode) -> &'static str {
+    match mode {
+        crate::NavMode::Astar => "astar",
+        crate::NavMode::Navmesh => "navmesh",
+        crate::NavMode::HybridFallback => "fallback",
+        crate::NavMode::HybridRace => "race",
+        crate::NavMode::HybridHier => "hier",
+        crate::NavMode::HybridSegment => "segment",
+    }
+}
+
+/// Run a **competition**: spawn `per_mode_count` bots for each of `modes` in a single process,
+/// all sharing one `NavCache` (built once, not once per mode), each mode wearing the distinct
+/// skin in `skins_per_mode[mi]`. Bots are named `<mode_tag>_<i>` so a per-mode frag scoreboard
+/// can group them. Returns when all bots exit (after shutdown). Reuses the fleet's per-bot
+/// supervisor loop (reconnect/backoff/graceful disconnect) with a **per-bot** `mode`.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_competition(
+    cfg: Arc<Config>,
+    addr: SocketAddr,
+    modes: Vec<crate::NavMode>,
+    per_mode_count: usize,
+    qport_base_override: Option<u16>,
+    skins_per_mode: Vec<Option<String>>,
+) -> std::io::Result<()> {
+    if modes.is_empty() || per_mode_count == 0 {
+        tracing::error!("competition needs at least one mode and --count >= 1");
+        return Ok(());
+    }
+    // maxclients guard: clamp the per-mode count so `modes × count` leaves human headroom.
+    let mut per_mode_count = per_mode_count;
+    if cfg.fleet.max_bots > 0 && modes.len() * per_mode_count > cfg.fleet.max_bots {
+        let clamped = (cfg.fleet.max_bots / modes.len()).max(1);
+        tracing::warn!(
+            requested_per_mode = per_mode_count,
+            modes = modes.len(),
+            cap = cfg.fleet.max_bots,
+            clamped_per_mode = clamped,
+            "clamping per-mode count to fit max_bots"
+        );
+        per_mode_count = clamped;
+    }
+    let total = modes.len() * per_mode_count;
+
+    let stagger = cfg.fleet.connect_stagger_ms;
+    let reconnect = Reconnect {
+        enabled: cfg.fleet.reconnect,
+        max_attempts: cfg.fleet.max_reconnects,
+    };
+    let shutdown = Shutdown::new();
+    let stats = FleetStats::new();
+    let _signals = spawn_signal_listener(shutdown.clone());
+    let shared = FleetShared {
+        nav: NavCache::new(), // ONE shared cache across every mode (the in-process perf win)
+        shutdown: shutdown.clone(),
+        stats: stats.clone(),
+    };
+    // Contiguous per-mode qport blocks (`base + mi*count + i`) are disjoint, so the server's
+    // (ip, qport) slot keys never collide across modes.
+    let qport_base = qport_base_override.unwrap_or_else(crate::default_fleet_qport_base);
+    tracing::info!(
+        modes = modes.len(),
+        per_mode_count,
+        total,
+        qport_base,
+        "launching competition to {addr}"
+    );
+
+    let mut tasks = Vec::new();
+    for (mi, &mode) in modes.iter().enumerate() {
+        let tag = mode_tag(mode);
+        let skin = skins_per_mode.get(mi).cloned().flatten();
+        tracing::info!(mode = tag, skin = ?skin, count = per_mode_count, "competitor entering");
+        for i in 0..per_mode_count {
+            let name = format!("{tag}_{}", i + 1);
+            let qport = qport_base.wrapping_add((mi * per_mode_count + i) as u16);
+            let bot_skin = skin.clone();
+            let cfg = Arc::clone(&cfg);
+            let shared = shared.clone();
+            tasks.push(tokio::spawn(async move {
+                bot_supervisor_loop(addr, name, qport, bot_skin, cfg, shared, reconnect, mode)
+                    .await;
+            }));
+            time::sleep(Duration::from_millis(stagger)).await;
+        }
+    }
+
+    // Heartbeat: a live per-mode scoreboard every 30 s.
+    let sd = shutdown.clone();
+    let hb_stats = stats.clone();
+    let hb_modes = modes.clone();
+    let status = tokio::spawn(async move {
+        let mut interval = time::interval(Duration::from_secs(30));
+        interval.tick().await; // skip immediate first tick
+        loop {
+            interval.tick().await;
+            log_competition_scoreboard(&hb_stats, &hb_modes, "live");
+            if sd.requested() {
+                break;
+            }
+        }
+    });
+
+    for t in tasks {
+        let _ = t.await;
+    }
+    status.abort();
+    log_competition_scoreboard(&stats, &modes, "FINAL");
+    tracing::info!("competition exited");
+    Ok(())
+}
+
+/// One mode's aggregate competition standing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ModeScore {
+    tag: String,
+    kills: u64,
+    deaths: u64,
+    bots: usize,
+}
+
+/// Group the fleet's per-bot tallies by the `<mode_tag>_<i>` name prefix and sum kills/deaths,
+/// seeding every competing mode so a frag-less mode still shows. Returned ranked by kills desc
+/// (then tag) — pure, so the scoreboard formatting is unit-testable.
+fn mode_scoreboard(stats: &FleetStats, modes: &[crate::NavMode]) -> Vec<ModeScore> {
+    use std::collections::HashMap;
+    let mut by_tag: HashMap<String, (u64, u64, usize)> = HashMap::new();
+    for &m in modes {
+        by_tag.entry(mode_tag(m).to_string()).or_default();
+    }
+    for (name, tally) in stats.snapshot() {
+        let tag = name
+            .rsplit_once('_')
+            .map(|(p, _)| p.to_string())
+            .unwrap_or(name);
+        let e = by_tag.entry(tag).or_default();
+        e.0 += tally.kills;
+        e.1 += tally.deaths;
+        e.2 += 1;
+    }
+    let mut rows: Vec<ModeScore> = by_tag
+        .into_iter()
+        .map(|(tag, (kills, deaths, bots))| ModeScore {
+            tag,
+            kills,
+            deaths,
+            bots,
+        })
+        .collect();
+    rows.sort_by(|a, b| b.kills.cmp(&a.kills).then_with(|| a.tag.cmp(&b.tag)));
+    rows
+}
+
+/// Log a per-mode frag scoreboard. `label` distinguishes the periodic "live" board from "FINAL".
+fn log_competition_scoreboard(stats: &FleetStats, modes: &[crate::NavMode], label: &str) {
+    tracing::info!("── competition scoreboard [{label}] (mode: kills/deaths, K/D) ──");
+    for (rank, s) in mode_scoreboard(stats, modes).iter().enumerate() {
+        let kd = if s.deaths > 0 {
+            s.kills as f32 / s.deaths as f32
+        } else {
+            s.kills as f32
+        };
+        tracing::info!(
+            "  #{:<2} {:<9} bots={:<2} kills={:<4} deaths={:<4} kd={:.2}",
+            rank + 1,
+            s.tag,
+            s.bots,
+            s.kills,
+            s.deaths,
+            kd
+        );
+    }
+}
+
 /// Per-bot supervisor: run `bot_task`, and if it exits due to a disconnect
 /// (not shutdown), reconnect with exponential backoff up to `max_reconnects`.
 #[allow(clippy::too_many_arguments)]
@@ -425,5 +601,38 @@ fn log_final_stats(stats: &FleetStats) {
     );
     for (name, t) in stats.snapshot() {
         tracing::info!("{:>3} kills / {:>3} deaths  {}", t.kills, t.deaths, name);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mode_scoreboard_groups_by_name_prefix_and_ranks_by_kills() {
+        let stats = FleetStats::new();
+        // race fleet: 3 kills / 1 death across 2 bots; astar fleet: 1 kill / 2 deaths.
+        stats.record_kill("race_1");
+        stats.record_kill("race_1");
+        stats.record_kill("race_2");
+        stats.record_death("race_2");
+        stats.record_kill("astar_1");
+        stats.record_death("astar_1");
+        stats.record_death("astar_2");
+
+        let modes = vec![
+            crate::NavMode::Astar,
+            crate::NavMode::HybridRace,
+            crate::NavMode::Navmesh, // never fragged → must still appear, last
+        ];
+        let board = mode_scoreboard(&stats, &modes);
+        assert_eq!(board.len(), 3);
+        // Ranked by kills desc: race (3) > astar (1) > navmesh (0).
+        assert_eq!(board[0].tag, "race");
+        assert_eq!((board[0].kills, board[0].deaths, board[0].bots), (3, 1, 2));
+        assert_eq!(board[1].tag, "astar");
+        assert_eq!((board[1].kills, board[1].deaths, board[1].bots), (1, 2, 2));
+        assert_eq!(board[2].tag, "navmesh");
+        assert_eq!((board[2].kills, board[2].deaths, board[2].bots), (0, 0, 0));
     }
 }
