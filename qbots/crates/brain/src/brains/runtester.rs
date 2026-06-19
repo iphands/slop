@@ -267,18 +267,33 @@ impl Brain for RunTesterBrain {
                                                              // direction (above the bot when ascending, below when descending). Drive
                                                              // toward it — `up>0` climbs, `up<0` descends (Q2 `PM_AddCurrents`).
                     let dz = dismount.z - pos.z;
-                    tracing::trace!(pz = pos.z, dz, "ladder climb");
+                    tracing::trace!(pz = pos.z, dz, bz = board.z, "ladder climb");
                     if dz.abs() < 20.0 {
                         intent_forward = go(&mut mv, dismount); // level with the exit → step off
                     } else {
+                        // Face the ladder so the 1u forward trace hits CONTENTS_LADDER (sets
+                        // `pml.ladder`) and press into it.
                         let to_c = center - pos;
                         let lyaw = to_c.y.atan2(to_c.x).to_degrees();
-                        mv.look_at(lyaw, 0.0); // face the ladder (so it's detected)
-                        mv.move_forward(1.0); // press into the ladder
+                        mv.look_at(lyaw, 0.0);
+                        mv.move_forward(1.0);
                         mv.move_side(0.0);
-                        mv.up = dz.signum(); // +1 climb up, -1 climb down
-                        mv.jump = false;
                         intent_forward = 1.0;
+                        if dz > 0.0 {
+                            // ASCENDING — hold up; `upmove>0` climbs (Q2 `PM_AddCurrents`).
+                            mv.up = 1.0;
+                            mv.jump = false;
+                        } else if pos.z > board.z - 24.0 {
+                            // DESCENDING but still standing on the top floor next to the shaft:
+                            // the floor holds us up, so `up<0` does nothing. JUMP forward off the
+                            // edge INTO the shaft (CONTENTS_LADDER is open) to start the descent.
+                            mv.up = 0.0;
+                            mv.jump = true;
+                        } else {
+                            // In the shaft, below the top → climb down (`upmove<0`).
+                            mv.up = -1.0;
+                            mv.jump = false;
+                        }
                     }
                     self.ride_boarded = false;
                 } else if info.vertical {
@@ -306,24 +321,32 @@ impl Brain for RunTesterBrain {
                         "train ride state"
                     );
                     if !self.ride_boarded {
-                        if board_horiz > 48.0 {
-                            intent_forward = go(&mut mv, board); // approach the board ledge
-                        } else if train_here {
-                            // Train is here → step onto the PLATFORM TOP (T7). Aim at the platform's
-                            // live top-center (NOT the far dismount, which can be hundreds of units
-                            // away across the lava). Only JUMP if the top is meaningfully ABOVE us
-                            // (need to hop up); a moving platform at our level (e.g. *10) must be
-                            // *stepped* onto — a full 1s jump arc lets a 60u/s platform slide out
-                            // from under us and we land in the lava behind it.
-                            let onto =
-                                crate::ride::train_stand_now(view, &info).unwrap_or(dismount);
-                            intent_forward = go(&mut mv, onto);
-                            if onto.z > pos.z + 8.0 {
-                                mv.jump();
-                            }
+                        let plat = crate::ride::train_now(view, &info);
+                        let grounded = view.self_state().flags & 4 != 0;
+                        // GROUNDED on the platform top? (near its live pos, at its height) → commit.
+                        let on_top = plat.is_some_and(|(p, _)| {
+                            grounded
+                                && (pos.truncate() - p.truncate()).length() < 60.0
+                                && (pos.z - p.z).abs() < 28.0
+                        });
+                        if on_top {
                             self.ride_boarded = true;
+                            mv.move_forward(0.0); // let the platform's push carry us
+                            mv.move_side(0.0);
+                            intent_forward = 0.0;
+                        } else if board_horiz > 48.0 {
+                            intent_forward = go(&mut mv, board); // walk to the board ledge first
+                        } else if train_here {
+                            // At the board ledge with the platform at this corner. The ledge is
+                            // across a lava gap from the small, continuously-moving platform, so
+                            // JUMP onto it — and LEAD it: a ~0.8s arc onto where it *is* lands
+                            // behind a 60u/s platform in the lava, so aim where it *will be*.
+                            let (ppos, pvel) = plat.unwrap_or((dismount, glam::Vec3::ZERO));
+                            let led = ppos + pvel * 0.6;
+                            intent_forward = go(&mut mv, led);
+                            mv.jump();
                         } else {
-                            mv.move_forward(0.0); // wait clear until the train arrives
+                            mv.move_forward(0.0); // wait clear until the platform arrives
                             mv.move_side(0.0);
                             intent_forward = 0.0;
                         }
@@ -332,22 +355,36 @@ impl Brain for RunTesterBrain {
                         intent_forward = go(&mut mv, dismount);
                         mv.jump();
                     } else if let Some(stand) = crate::ride::train_stand_now(view, &info) {
-                        // Boarded, mid-transit. A Q2 func_train PUSHES entities on its top, so once
-                        // we're centered on it we STAND STILL and let it carry us — chasing the
-                        // moving center at sprint speed just runs us off an edge into the lava. Only
-                        // nudge (gently) back toward center if we've drifted near an edge.
-                        let hdist = (pos.truncate() - stand.truncate()).length();
-                        if hdist > 40.0 {
-                            let f = go(&mut mv, stand);
-                            let scale = 0.35; // gentle correction, never a sprint
-                            mv.move_forward(mv.forward * scale);
-                            mv.move_side(mv.side * scale);
-                            intent_forward = f * scale;
+                        // Boarded, mid-transit. A Q2 func_train PUSHES entities on its top, so the
+                        // winning move is to have ZERO velocity relative to the world — then the
+                        // platform's push carries us perfectly. The danger is our own leftover
+                        // momentum (from boarding) sliding us off the small (80u) platform into the
+                        // lava. So BRAKE: drive against our horizontal velocity, plus a gentle pull
+                        // back toward the platform center if we've drifted.
+                        let vel = view.self_state().velocity;
+                        let vh = glam::Vec3::new(vel.x, vel.y, 0.0);
+                        let speed = vh.length();
+                        let to_center = stand - pos;
+                        let to_center_h = glam::Vec3::new(to_center.x, to_center.y, 0.0);
+                        let hdist = to_center_h.length();
+                        // Brake hard while we carry speed; once near-stopped, gently re-center.
+                        let desired = if speed > 20.0 {
+                            -vh.normalize_or_zero()
+                        } else if hdist > 24.0 {
+                            to_center_h.normalize_or_zero() * 0.4
                         } else {
-                            mv.move_forward(0.0); // centered → let the platform carry us
+                            glam::Vec3::ZERO
+                        };
+                        if desired.length_squared() > 1e-6 {
+                            let (bf, bs) = move_from_world_dir(desired.normalize(), view_yaw, true);
+                            let mag = desired.length().min(1.0);
+                            mv.move_forward(bf * mag);
+                            mv.move_side(bs * mag);
+                        } else {
+                            mv.move_forward(0.0);
                             mv.move_side(0.0);
-                            intent_forward = 0.0;
                         }
+                        intent_forward = 0.0;
                     } else {
                         // Lost sight of the train → hold and hope it re-enters PVS.
                         mv.move_forward(0.0);
