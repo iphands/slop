@@ -26,7 +26,7 @@ use std::path::Path;
 
 use crate::bsp::Bsp;
 use crate::build::{BRIDGE_HDIST, JUMP_SPACING, PRUNE_MAX_HD};
-use crate::navgraph::{NavGraph, CONNECT_RADIUS, STAIR_MAX, STEP};
+use crate::navgraph::{NavGraph, CONNECT_RADIUS, STAIR_MAX, STEP, SWIM_COST_FACTOR, SWIM_SPACING};
 
 const MAGIC: &[u8; 7] = b"QBNAVC2";
 // Version 2: multi-floor column probing (see navgraph::floor_waypoints_multi).
@@ -41,7 +41,10 @@ const MAGIC: &[u8; 7] = b"QBNAVC2";
 // (lift_penalty_bits); fingerprint is now 48 bytes. Older caches auto-rejected.
 // Version 8: prune_long_blocked_edges also drops FLAT hull-blocked edges (false
 // same-level wall-crossings), not just long ones. Algorithm change → invalidate caches.
-const VERSION: u8 = 12;
+// Version 13: water nav (Plan 39) — swim edges + water-node tags serialized after the
+// jump edges, plus two new fingerprint fields (SWIM_SPACING, SWIM_COST_FACTOR); the
+// fingerprint is now 56 bytes. Older caches auto-rejected.
+const VERSION: u8 = 13;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]
@@ -72,6 +75,12 @@ pub struct Fingerprint {
     /// runtime knob (`--lift-penalty`), so it must be part of the cache key.
     /// TODO(elevator-hack): remove with the penalty once real lift behaviour exists.
     lift_penalty_bits: u32,
+    /// `SWIM_SPACING` (f32 bits) — submerged swim-node vertical spacing (Plan 39). Changing
+    /// it alters which water nodes/edges are generated, so it must invalidate stale caches.
+    swim_spacing_bits: u32,
+    /// `SWIM_COST_FACTOR` (f32 bits) — swim-edge cost multiplier (Plan 39). Part of the
+    /// generated graph's edge costs, so changing it must invalidate stale caches.
+    swim_cost_factor_bits: u32,
 }
 
 impl Fingerprint {
@@ -108,6 +117,8 @@ impl Fingerprint {
             prune_max_hd_bits: PRUNE_MAX_HD.to_bits(),
             connect_radius_bits: CONNECT_RADIUS.to_bits(),
             lift_penalty_bits: lift_penalty.to_bits(),
+            swim_spacing_bits: SWIM_SPACING.to_bits(),
+            swim_cost_factor_bits: SWIM_COST_FACTOR.to_bits(),
         }
     }
 
@@ -125,6 +136,8 @@ impl Fingerprint {
             self.prune_max_hd_bits,
             self.connect_radius_bits,
             self.lift_penalty_bits,
+            self.swim_spacing_bits,
+            self.swim_cost_factor_bits,
         ] {
             buf.extend_from_slice(&v.to_le_bytes());
         }
@@ -134,7 +147,7 @@ impl Fingerprint {
         if data.len() < FP_BYTES {
             return None;
         }
-        let mut fields = [0u32; 12];
+        let mut fields = [0u32; 14];
         for (i, f) in fields.iter_mut().enumerate() {
             *f = u32::from_le_bytes(data[i * 4..i * 4 + 4].try_into().ok()?);
         }
@@ -151,12 +164,14 @@ impl Fingerprint {
             prune_max_hd_bits: fields[9],
             connect_radius_bits: fields[10],
             lift_penalty_bits: fields[11],
+            swim_spacing_bits: fields[12],
+            swim_cost_factor_bits: fields[13],
         })
     }
 }
 
-/// Fingerprint on-disk size in bytes (12 × u32).
-const FP_BYTES: usize = 48;
+/// Fingerprint on-disk size in bytes (14 × u32).
+const FP_BYTES: usize = 56;
 
 /// Write a nav graph to `path`. Overwrites any existing file.
 pub fn save(path: &Path, graph: &NavGraph, fingerprint: &Fingerprint) -> io::Result<()> {
@@ -196,6 +211,18 @@ pub fn save(path: &Path, graph: &NavGraph, fingerprint: &Fingerprint) -> io::Res
         buf.extend_from_slice(&(*from as u32).to_le_bytes());
         buf.extend_from_slice(&(*to as u32).to_le_bytes());
         buf.extend_from_slice(&yaw.to_le_bytes());
+    }
+
+    // Swim edges + water-node tags (Plan 39).
+    let (swim, water) = graph.raw_swim_and_water();
+    buf.extend_from_slice(&(swim.len() as u32).to_le_bytes());
+    for (from, to) in &swim {
+        buf.extend_from_slice(&(*from as u32).to_le_bytes());
+        buf.extend_from_slice(&(*to as u32).to_le_bytes());
+    }
+    buf.extend_from_slice(&(water.len() as u32).to_le_bytes());
+    for &idx in &water {
+        buf.extend_from_slice(&(idx as u32).to_le_bytes());
     }
 
     if let Some(parent) = path.parent() {
@@ -266,7 +293,23 @@ fn parse(data: &[u8], expected: &Fingerprint) -> Option<NavGraph> {
         jump_triples.push((from, to, yaw));
     }
 
-    Some(NavGraph::from_raw_with_jumps(nodes, adj, jump_triples))
+    // Swim edges + water-node tags (Plan 39).
+    let sc = read_u32(data, &mut pos)? as usize;
+    let mut swim = Vec::with_capacity(sc);
+    for _ in 0..sc {
+        let from = read_u32(data, &mut pos)? as usize;
+        let to = read_u32(data, &mut pos)? as usize;
+        swim.push((from, to));
+    }
+    let wc = read_u32(data, &mut pos)? as usize;
+    let mut water = Vec::with_capacity(wc);
+    for _ in 0..wc {
+        water.push(read_u32(data, &mut pos)? as usize);
+    }
+
+    let mut graph = NavGraph::from_raw_with_jumps(nodes, adj, jump_triples);
+    graph.set_swim_and_water(swim, water);
+    Some(graph)
 }
 
 fn read_u32(data: &[u8], pos: &mut usize) -> Option<u32> {
@@ -287,11 +330,14 @@ mod tests {
     use crate::navgraph::NavGraph;
 
     fn simple_graph() -> NavGraph {
-        NavGraph::from_raw_with_jumps(
+        let mut g = NavGraph::from_raw_with_jumps(
             vec![[0.0, 0.0, 0.0], [64.0, 0.0, 0.0], [64.0, 64.0, 0.0]],
             vec![vec![(1, 64.0)], vec![(0, 64.0), (2, 90.5)], vec![(1, 90.5)]],
             vec![(0, 2, 45.0)], // jump edge from 0→2
-        )
+        );
+        // Swim edge 1↔2 (both directions) + node 2 tagged as water (Plan 39).
+        g.set_swim_and_water(vec![(1, 2), (2, 1)], vec![2]);
+        g
     }
 
     fn test_fingerprint() -> Fingerprint {
@@ -308,6 +354,8 @@ mod tests {
             prune_max_hd_bits: PRUNE_MAX_HD.to_bits(),
             connect_radius_bits: CONNECT_RADIUS.to_bits(),
             lift_penalty_bits: 5000.0_f32.to_bits(),
+            swim_spacing_bits: SWIM_SPACING.to_bits(),
+            swim_cost_factor_bits: SWIM_COST_FACTOR.to_bits(),
         }
     }
 
@@ -331,6 +379,16 @@ mod tests {
             crate::navgraph::EdgeKind::Jump { launch_yaw }
                 if (launch_yaw - 45.0).abs() < 0.001
         ));
+
+        // Swim edge + water tag survive the round-trip (Plan 39).
+        assert!(loaded.is_swim_edge(1, 2));
+        assert!(loaded.is_swim_edge(2, 1));
+        assert!(matches!(
+            loaded.edge_kind(1, 2),
+            crate::navgraph::EdgeKind::Swim
+        ));
+        assert!(loaded.is_water_node(2));
+        assert!(!loaded.is_water_node(0));
     }
 
     #[test]
