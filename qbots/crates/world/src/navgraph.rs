@@ -113,6 +113,13 @@ pub struct RideInfo {
     /// is carried straight up/down (no horizontal wait-for-arrival). `false` for a horizontal
     /// `func_train` the bot boards at a path endpoint when it arrives.
     pub vertical: bool,
+    /// Expected **wire entity origin** of the platform when it sits at the board corner
+    /// (`path_corner - model.mins`, Q2's `train_next` rule). The brush model's wire origin is
+    /// this offset, NOT the stand-center, so the brain matches the live entity against this to
+    /// know the train has arrived (Plan 43). Unused for vertical lifts.
+    pub board_ent: [f32; 3],
+    /// Expected wire entity origin at the far corner (the reverse ride's board). See `board_ent`.
+    pub far_ent: [f32; 3],
 }
 
 /// A navigation graph: waypoints (bot-origin positions) + LOS-checked edges.
@@ -562,6 +569,8 @@ impl NavGraph {
                 dismount: self.nodes[a],
                 model_index: info_ab.model_index,
                 vertical: info_ab.vertical,
+                board_ent: info_ab.far_ent,
+                far_ent: info_ab.board_ent,
             },
         );
     }

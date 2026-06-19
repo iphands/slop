@@ -16,10 +16,10 @@ use world::RideInfo;
 use crate::perception::{EntityClass, Worldview};
 
 /// Horizontal distance (units) within which the bot is "at the board point".
-const BOARD_NEAR: f32 = 40.0;
+const BOARD_NEAR: f32 = 48.0;
 /// A platform counts as present if a (non-actor) entity is within this 3-D distance of the
-/// board point. Generous — the trains are large and their wire origin isn't the stand center.
-const PLATFORM_DETECT: f32 = 160.0;
+/// platform's expected wire origin at the board corner ([`RideInfo::board_ent`]).
+const PLATFORM_DETECT: f32 = 48.0;
 
 /// What the bot should do this frame on a ride edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,10 +32,11 @@ pub enum RidePhase {
     Cross,
 }
 
-/// True if a moving platform appears to be at/near `board` this frame (Plan 43). The
-/// `func_train` is a brush-model entity (classified [`EntityClass::Unknown`]); we treat any
-/// non-actor, non-projectile entity within [`PLATFORM_DETECT`] of the board as the platform.
-pub fn platform_present(view: &Worldview, board: Vec3) -> bool {
+/// True if the train is at the board corner this frame (Plan 43). The `func_train` is a
+/// brush-model entity (classified [`EntityClass::Unknown`]) whose **wire origin** equals
+/// `path_corner - model.mins` — captured at build time in [`RideInfo::board_ent`]. We match
+/// any non-actor, non-projectile entity within [`PLATFORM_DETECT`] of that expected origin.
+pub fn platform_present(view: &Worldview, board_ent: Vec3) -> bool {
     view.entities().any(|e| {
         !matches!(
             e.class,
@@ -44,7 +45,7 @@ pub fn platform_present(view: &Worldview, board: Vec3) -> bool {
                 | EntityClass::AllyPlayer
                 | EntityClass::ProjectileRocket
                 | EntityClass::ProjectileGrenade
-        ) && (e.origin - board).length() <= PLATFORM_DETECT
+        ) && (e.origin - board_ent).length() <= PLATFORM_DETECT
     })
 }
 
@@ -59,7 +60,7 @@ pub fn ride_phase(pos: Vec3, info: &RideInfo, view: &Worldview) -> RidePhase {
     let horiz = (pos.truncate() - board.truncate()).length();
     if horiz > BOARD_NEAR {
         RidePhase::Approach
-    } else if info.vertical || platform_present(view, board) {
+    } else if info.vertical || platform_present(view, Vec3::from(info.board_ent)) {
         RidePhase::Cross
     } else {
         RidePhase::Wait
@@ -90,6 +91,8 @@ mod tests {
             dismount: [430.0, 0.0, 50.0],
             model_index: 3,
             vertical: false,
+            board_ent: [100.0, 0.0, 50.0],
+            far_ent: [400.0, 0.0, 50.0],
         }
     }
 

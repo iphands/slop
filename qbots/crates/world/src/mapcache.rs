@@ -54,7 +54,9 @@ const MAGIC: &[u8; 7] = b"QBNAVC2";
 // serialized after the water-node tags. Generation change → older caches auto-rejected.
 // Version 15: ride edges gain a `vertical` flag (Plan 43) — func_plat/door lifts are now
 // vertical ride edges too; RideInfo serializes one extra byte. Older caches auto-rejected.
-const VERSION: u8 = 15;
+// Version 16: RideInfo gains board_ent/far_ent (expected wire entity origins, Plan 43) so the
+// brain can detect a train's arrival; six more floats per ride edge. Older caches auto-rejected.
+const VERSION: u8 = 16;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]
@@ -241,7 +243,14 @@ pub fn save(path: &Path, graph: &NavGraph, fingerprint: &Fingerprint) -> io::Res
     for (from, to, info) in &rides {
         buf.extend_from_slice(&(*from as u32).to_le_bytes());
         buf.extend_from_slice(&(*to as u32).to_le_bytes());
-        for v in info.board.iter().chain(&info.far).chain(&info.dismount) {
+        for v in info
+            .board
+            .iter()
+            .chain(&info.far)
+            .chain(&info.dismount)
+            .chain(&info.board_ent)
+            .chain(&info.far_ent)
+        {
             buf.extend_from_slice(&v.to_le_bytes());
         }
         buf.extend_from_slice(&info.model_index.to_le_bytes());
@@ -336,7 +345,7 @@ fn parse(data: &[u8], expected: &Fingerprint) -> Option<NavGraph> {
     for _ in 0..rc {
         let from = read_u32(data, &mut pos)? as usize;
         let to = read_u32(data, &mut pos)? as usize;
-        let mut p = [0.0f32; 9];
+        let mut p = [0.0f32; 15];
         for slot in p.iter_mut() {
             *slot = read_f32(data, &mut pos)?;
         }
@@ -352,6 +361,8 @@ fn parse(data: &[u8], expected: &Fingerprint) -> Option<NavGraph> {
                 dismount: [p[6], p[7], p[8]],
                 model_index,
                 vertical,
+                board_ent: [p[9], p[10], p[11]],
+                far_ent: [p[12], p[13], p[14]],
             },
         ));
     }

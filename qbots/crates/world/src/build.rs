@@ -242,7 +242,10 @@ fn entity_model_index(entity: &BspEntity) -> Option<u32> {
 
 /// Horizontal radius (units) within which a moving-platform path endpoint connects to
 /// existing walkable nodes (the board / dismount ledges). Plan 42. In the cache via VERSION.
-pub const TRAIN_BOARD_RADIUS: f32 = 112.0;
+pub const TRAIN_BOARD_RADIUS: f32 = 144.0;
+/// Max vertical offset (units) between a train's platform-top and the boarding ledge node
+/// ([`nearest_ground`], Plan 43) — you board at platform-top height. In the cache via VERSION.
+pub const TRAIN_BOARD_DZ: f32 = 56.0;
 /// Max horizontal offset (units) for a vertical jump-down floor bridge
 /// ([`NavGraph::bridge_components_via_jump`], Plan 42). Tight — only near-vertical drops
 /// between stacked floors link, never a horizontal false bridge. In the cache via VERSION.
@@ -308,7 +311,7 @@ pub fn add_train_edges(graph: &mut NavGraph, cm: &CollisionModel, bsp: &Bsp) -> 
 
 fn try_add_train(
     graph: &mut NavGraph,
-    cm: &CollisionModel,
+    _cm: &CollisionModel,
     bsp: &Bsp,
     entity: &BspEntity,
 ) -> Option<usize> {
@@ -337,47 +340,87 @@ fn try_add_train(
         })
         .collect();
 
-    // One nav node per corner, each wired to nearby walkable ground (board/dismount).
-    let mut nodes = Vec::with_capacity(stand.len());
-    let mut local_edges = 0;
-    for s in &stand {
-        let idx = graph.add_node(*s);
-        local_edges += graph.connect_node_to_nearby(cm, idx, TRAIN_BOARD_RADIUS);
-        nodes.push(idx);
-    }
+    // The bot boards/dismounts from SOLID GROUND adjacent to the platform's path endpoint —
+    // NOT from the platform-top coordinate itself, which is open air over a pit/gap whenever
+    // the train isn't at that corner. So for each corner, find the nearest existing walkable
+    // node near the platform top (the boarding ledge); corners with no nearby ledge (mid-pit)
+    // get nothing. The train visits every corner, so any boarding ledge can ride to any other.
+    // Per corner, the platform's wire entity origin when it rests there is `corner - mins`
+    // (Q2 train_next, `g_func.c:2310`) — the brain matches the live entity against this.
+    let ent_origin: Vec<[f32; 3]> = corners
+        .iter()
+        .map(|c| {
+            [
+                c[0] - model.mins[0],
+                c[1] - model.mins[1],
+                c[2] - model.mins[2],
+            ]
+        })
+        .collect();
 
-    // Ride edges between consecutive corners (the train carries the bot). A 2-corner train
-    // oscillates A↔B (one undirected edge); a longer chain is a closed loop (wrap last→first).
-    let segs = nodes.len();
+    // (corner index, ground node, stand pos) for corners with a nearby boarding ledge.
+    let board: Vec<(usize, usize, [f32; 3])> = stand
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| {
+            nearest_ground(graph, *s, TRAIN_BOARD_RADIUS, TRAIN_BOARD_DZ).map(|n| (i, n, *s))
+        })
+        .collect();
+
     let mut rides = 0;
-    let limit = if segs == 2 { 1 } else { segs };
-    for i in 0..limit {
-        let j = (i + 1) % segs;
-        let cost = dist3(stand[i], stand[j]);
-        graph.add_ride_edge(
-            nodes[i],
-            nodes[j],
-            cost,
-            RideInfo {
-                board: stand[i],
-                far: stand[j],
-                dismount: stand[j],
-                model_index,
-                vertical: false,
-            },
-        );
-        rides += 1;
+    for a in 0..board.len() {
+        for b in (a + 1)..board.len() {
+            let (ci_a, na, _) = board[a];
+            let (ci_b, nb, far_b) = board[b];
+            if na == nb || graph.neighbors(na).iter().any(|&(x, _)| x == nb) {
+                continue; // same ledge, or already walk-connected → no ride needed
+            }
+            let cost = dist3(graph.nodes[na], graph.nodes[nb]);
+            graph.add_ride_edge(
+                na,
+                nb,
+                cost,
+                RideInfo {
+                    board: graph.nodes[na],
+                    far: far_b,
+                    dismount: graph.nodes[nb],
+                    model_index,
+                    vertical: false,
+                    board_ent: ent_origin[ci_a],
+                    far_ent: ent_origin[ci_b],
+                },
+            );
+            rides += 1;
+        }
     }
 
     tracing::info!(
         model = model_index,
         corners = corners.len(),
+        boarding_ledges = board.len(),
         ride_edges = rides,
-        local_edges,
-        first_stand = ?[stand[0][0] as i32, stand[0][1] as i32, stand[0][2] as i32],
         "func_train ride edges added"
     );
-    Some(rides + local_edges)
+    Some(rides)
+}
+
+/// Nearest existing walkable node to `pos` within `max_h` horizontal and `max_dz` vertical
+/// (Plan 43). Used to anchor a train's board/dismount to solid ground (the pit-edge ledge at
+/// platform-top height), so the bot waits on ground rather than walking out over the gap.
+fn nearest_ground(graph: &NavGraph, pos: [f32; 3], max_h: f32, max_dz: f32) -> Option<usize> {
+    let mut best = None;
+    let mut best_d2 = max_h * max_h;
+    for (i, n) in graph.nodes.iter().enumerate() {
+        if (n[2] - pos[2]).abs() > max_dz {
+            continue;
+        }
+        let d2 = (n[0] - pos[0]).powi(2) + (n[1] - pos[1]).powi(2);
+        if d2 < best_d2 {
+            best_d2 = d2;
+            best = Some(i);
+        }
+    }
+    best
 }
 
 /// Euclidean distance between two world points.
@@ -427,6 +470,10 @@ fn add_lift(
             dismount: top_node,
             model_index,
             vertical: true,
+            // Vertical lifts never use entity detection (the bot's presence summons the pad),
+            // so these are unused; the pad's own position is its wire origin if ever needed.
+            board_ent: bot_node,
+            far_ent: top_node,
         },
     );
     let mut n = 1;

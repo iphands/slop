@@ -401,6 +401,11 @@ enum Cmd {
         /// (e.g. q2dm3) is a known-broken exception. Without it, any failure exits non-zero.
         #[arg(long)]
         allow_failures: bool,
+        /// A* cost added to elevator/lift ride edges (must match the `--lift-penalty` the
+        /// scenario/fleet loads with — it's part of the cache fingerprint). 0 = lifts used
+        /// freely (now that lifts are rideable, Plan 43). Default keeps the legacy 5000 bias.
+        #[arg(long, default_value = "5000")]
+        lift_penalty: f32,
     },
 }
 
@@ -1478,6 +1483,7 @@ fn nav_debug(cfg: &Config, map: &str, pairs: usize) -> ExitCode {
 
 /// `generate-map-cache` handler (Plan 18 T3). Synchronous — nav graph generation
 /// is CPU-bound so we run it on plain threads, not tokio tasks.
+#[allow(clippy::too_many_arguments)]
 fn generate_map_cache(
     cfg: &Config,
     map_arg: &str,
@@ -1485,6 +1491,7 @@ fn generate_map_cache(
     out_dir: &str,
     spacing: f32,
     allow_failures: bool,
+    lift_penalty: f32,
 ) -> ExitCode {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
@@ -1558,7 +1565,7 @@ fn generate_map_cache(
                     let built = match world::generate_map_nav(
                         &baseq2,
                         map,
-                        world::ELEVATOR_PENALTY,
+                        lift_penalty,
                         spacing,
                     ) {
                         Ok(b) => b,
@@ -1595,7 +1602,7 @@ fn generate_map_cache(
                         );
                     }
                     let fp =
-                        world::Fingerprint::from_bsp(&built.bsp, world::ELEVATOR_PENALTY, spacing);
+                        world::Fingerprint::from_bsp(&built.bsp, lift_penalty, spacing);
                     let cache_path = out_path.join(format!("{map}.qnav"));
                     match world::save_mapcache(&cache_path, &built.graph, &fp) {
                         Ok(()) => {
@@ -2289,7 +2296,16 @@ async fn main() -> ExitCode {
             out_dir,
             spacing,
             allow_failures,
-        } => generate_map_cache(&cfg, &map, jobs, &out_dir, spacing, allow_failures),
+            lift_penalty,
+        } => generate_map_cache(
+            &cfg,
+            &map,
+            jobs,
+            &out_dir,
+            spacing,
+            allow_failures,
+            lift_penalty,
+        ),
         Cmd::BspInfo { map } => match world::Bsp::load(&cfg.paths.baseq2, &map) {
             Ok(bsp) => {
                 tracing::info!(
