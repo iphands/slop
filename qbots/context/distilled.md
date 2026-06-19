@@ -211,3 +211,30 @@ and `!startsolid` = clear. Eye = `origin + [0,0,22]` (Q2 standing viewheight). C
 target acquisition AND nav-goal override on this check. Keep a 2-frame grace after LOS loss so
 thin-pillar flicker doesn't cause target thrashing. The server already PVS-filters entities, so
 the LOS pass runs only on ≤8 visible candidates — cheap at 10 Hz.
+
+## Hybrid navigation modes — Plan 20
+Both nav backends (waypoint-graph A* `astar`, polygon-mesh `navmesh`) implement one
+`Navigator` trait (`brain::nav_mode`), so a hybrid is a thin `Navigator` that owns **both**
+sub-drivers and delegates per trait call. They share `brain::hybrid::Sub` (astar+navmesh+graph)
+and `goal_to_pos`/`goal_key` (navmesh ignores `NavGoal::Waypoint`, so resolve it to the node's
+world pos first). Dispatch for both call sites (`bot_task`, movement scenarios) goes through one
+`build_navigator` factory in `qbots/main.rs` that builds the mesh lazily (`get_or_build_navmesh`
+is cached; skip for pure `astar`). Four modes, by selection strategy:
+- **`hybrid-fallback`** (reactive): A* drives; a `force_replan` (raised by the loop's
+  `StuckDetector::Hard`) while A* is active = "A* wedged" → switch to navmesh for the rest of
+  the goal; a changed goal re-arms A*.
+- **`hybrid-race`** (selective): on a changed goal, plan both, score
+  `len + 64·jumps + 256·recent_stuck[backend]` (graph: `planned_cost`+`planned_jump_count`;
+  navmesh: `planned_len`), run the lower; stuck recovery replans the active backend (no per-tick
+  switch — that's fallback's job). `recent_stuck` halves each new goal so old wedges fade.
+- **`hybrid-hier`** (cooperative): navmesh plans the corridor; each tick project the bot onto
+  `navmesh.path()` and feed A* a sliding sub-goal `point_ahead(LOCAL_HORIZON≈300)`; all
+  steering/jump trait calls delegate to A*. No corridor → A* straight to goal.
+- **`hybrid-segment`** (ownership): navmesh owns open routing; when the bot is within ~96u of a
+  graph node with a goal-ward `EdgeKind::Jump` (cos > 0.26), A* takes the segment to execute the
+  launch (navmesh's `current_edge_is_jump` is always false), then control returns to navmesh.
+
+Gotcha: `NavigationDriver::current_edge_is_jump` keys on `(prev_waypoint → current_waypoint)`,
+and `prev_waypoint` is `None` until the first waypoint advance — so a jump on the **first** edge
+of a fresh plan isn't reported until the bot advances off the start node. Hybrids that rely on it
+(segment) must not assume the jump flag fires immediately after `set_goal`.

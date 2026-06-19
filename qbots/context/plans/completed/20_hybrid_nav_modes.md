@@ -1,6 +1,6 @@
 # Plan 20 — Hybrid Navigation Modes
 
-> **Status**: in-progress
+> **Status**: done
 > **Created**: 2026-06-18
 > **Depends on**: Plan 14 (nav-graph quality), Plan 10 (movement harness); navmesh backend
 > **Goal**: Add four `hybrid-*` `--mode` backends that combine the A* waypoint graph and the navmesh, selectable alongside the untouched `astar`/`navmesh` controls.
