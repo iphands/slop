@@ -124,6 +124,11 @@ pub struct RideInfo {
     /// presses `up` to climb (Q2 `PM_AddCurrents` ladder rule). `board_ent`/`far_ent` hold the
     /// ladder center (the facing target). `false` for func_train/func_plat movers.
     pub ladder: bool,
+    /// Constant offset from a train's live **wire origin** to its **standable top-center**
+    /// (Plan 43): `platform_top = entity.origin + stand_offset`. The brain uses this to track
+    /// the moving platform's top and stay centered on it (over lava) instead of sliding off.
+    /// Zero for lifts/ladders.
+    pub stand_offset: [f32; 3],
 }
 
 /// A navigation graph: waypoints (bot-origin positions) + LOS-checked edges.
@@ -576,6 +581,7 @@ impl NavGraph {
                 board_ent: info_ab.far_ent,
                 far_ent: info_ab.board_ent,
                 ladder: info_ab.ladder,
+                stand_offset: info_ab.stand_offset,
             },
         );
     }

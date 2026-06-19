@@ -366,17 +366,26 @@ fn try_add_train(
     // coordinate, which is open air whenever the train isn't there).
     let mut rides = 0;
     for top_mode in [false, true] {
+        // Surface offset above the corner for this ride height (0 = corner level, size.z = top).
+        let surf = if top_mode { size[2] } else { 0.0 };
+        // Constant offset from the train's live wire origin (`corner - mins`) to its standable
+        // top-center, used by the brain to track the moving top (Plan 43): for a corner `c`,
+        // top-center = `[c.x+sx/2, c.y+sy/2, c.z+surf+24]` and wire origin = `c - mins`.
+        let stand_offset = [
+            size[0] / 2.0 + model.mins[0],
+            size[1] / 2.0 + model.mins[1],
+            surf + 24.0 + model.mins[2],
+        ];
         // (corner index, ground node) for corners with adjacent ground at this ride height.
         let board: Vec<(usize, usize)> = corners
             .iter()
             .enumerate()
             .filter_map(|(i, c)| {
-                let ride_z = if top_mode {
-                    c[2] + size[2] + 24.0
-                } else {
-                    c[2] + 24.0
-                };
-                let probe = [c[0] + size[0] / 2.0, c[1] + size[1] / 2.0, ride_z];
+                let probe = [
+                    c[0] + size[0] / 2.0,
+                    c[1] + size[1] / 2.0,
+                    c[2] + surf + 24.0,
+                ];
                 nearest_ground(graph, probe, TRAIN_BOARD_RADIUS, TRAIN_RIDE_DZ).map(|n| (i, n))
             })
             .collect();
@@ -407,6 +416,7 @@ fn try_add_train(
                         board_ent: ent_origin[ci_a],
                         far_ent: ent_origin[ci_b],
                         ladder: false,
+                        stand_offset,
                     },
                 );
                 rides += 1;
@@ -522,6 +532,7 @@ pub fn add_ladder_edges(graph: &mut NavGraph, bsp: &Bsp) -> usize {
                 board_ent: center,
                 far_ent: center,
                 ladder: true,
+                stand_offset: [0.0; 3],
             },
         );
         added += 1;
@@ -586,6 +597,7 @@ fn add_lift(
             board_ent: bot_node,
             far_ent: top_node,
             ladder: false,
+            stand_offset: [0.0; 3],
         },
     );
     let mut n = 1;

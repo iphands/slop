@@ -58,7 +58,9 @@ const MAGIC: &[u8; 7] = b"QBNAVC2";
 // brain can detect a train's arrival; six more floats per ride edge. Older caches auto-rejected.
 // Version 17: RideInfo gains a `ladder` flag (Plan 35) — CONTENTS_LADDER climbs are ride edges
 // too; one more byte per ride edge. Older caches auto-rejected.
-const VERSION: u8 = 17;
+// Version 18: RideInfo gains `stand_offset` (Plan 43) — wire-origin→platform-top offset so the
+// brain tracks a moving train's top; three more floats per ride edge. Older caches auto-rejected.
+const VERSION: u8 = 18;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]
@@ -255,6 +257,9 @@ pub fn save(path: &Path, graph: &NavGraph, fingerprint: &Fingerprint) -> io::Res
         {
             buf.extend_from_slice(&v.to_le_bytes());
         }
+        for v in &info.stand_offset {
+            buf.extend_from_slice(&v.to_le_bytes());
+        }
         buf.extend_from_slice(&info.model_index.to_le_bytes());
         buf.push(info.vertical as u8);
         buf.push(info.ladder as u8);
@@ -348,7 +353,7 @@ fn parse(data: &[u8], expected: &Fingerprint) -> Option<NavGraph> {
     for _ in 0..rc {
         let from = read_u32(data, &mut pos)? as usize;
         let to = read_u32(data, &mut pos)? as usize;
-        let mut p = [0.0f32; 15];
+        let mut p = [0.0f32; 18];
         for slot in p.iter_mut() {
             *slot = read_f32(data, &mut pos)?;
         }
@@ -369,6 +374,7 @@ fn parse(data: &[u8], expected: &Fingerprint) -> Option<NavGraph> {
                 board_ent: [p[9], p[10], p[11]],
                 far_ent: [p[12], p[13], p[14]],
                 ladder,
+                stand_offset: [p[15], p[16], p[17]],
             },
         ));
     }

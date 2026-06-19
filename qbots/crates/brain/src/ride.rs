@@ -62,7 +62,7 @@ const TRAIN_TRACK_MAX: f32 = 256.0;
 pub fn train_stand_now(view: &Worldview, info: &RideInfo) -> Option<Vec3> {
     let board_ent = Vec3::from(info.board_ent);
     let far_ent = Vec3::from(info.far_ent);
-    let offset = Vec3::from(info.far) - far_ent;
+    let offset = Vec3::from(info.stand_offset);
     let mut best: Option<(f32, Vec3)> = None;
     for e in view.entities() {
         if matches!(
@@ -139,6 +139,7 @@ mod tests {
             board_ent: [100.0, 0.0, 50.0],
             far_ent: [400.0, 0.0, 50.0],
             ladder: false,
+            stand_offset: [0.0; 3],
         }
     }
 
