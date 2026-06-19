@@ -176,13 +176,17 @@ impl NavGraph {
         // Cell radius derived from the world-unit CONNECT_RADIUS, so changing `spacing`
         // keeps the absolute connection radius constant (see CONNECT_RADIUS docs).
         let cells = connect_cells(spacing);
-        let adj: Vec<Vec<(usize, f32)>> = nodes
+        // Each edge carries an `is_swim` flag so the sequential merge below can populate
+        // `swim_edges` (Plan 39). Water-involved pairs use 3-D swim connectivity; dry pairs
+        // keep the XY-grid stair logic.
+        let per_node: Vec<Vec<(usize, f32, bool)>> = nodes
             .par_iter()
             .enumerate()
             .map(|(i, &a)| {
                 let gx = (a[0] / spacing).round() as i32;
                 let gy = (a[1] / spacing).round() as i32;
-                let mut edges = Vec::new();
+                let a_water = water_nodes.contains(&i);
+                let mut edges: Vec<(usize, f32, bool)> = Vec::new();
                 // Connect a neighbourhood of ±cells grid cells, not just the 8 immediate
                 // neighbours. A ±1 (24u) connection misses real walkable links that span
                 // 2-4 cells — e.g. across a ramp/step where the intermediate column has no
@@ -192,7 +196,22 @@ impl NavGraph {
                 // widening only adds genuinely walkable edges.
                 for ddx in -cells..=cells {
                     for ddy in -cells..=cells {
+                        // Same column (0,0): only water nodes link here (vertical swim
+                        // lattice). Dry floors never stack walkably in one column.
                         if ddx == 0 && ddy == 0 {
+                            if !a_water {
+                                continue;
+                            }
+                            if let Some(col) = grid.get(&(gx, gy)) {
+                                for &j in col {
+                                    if j == i || !water_nodes.contains(&j) {
+                                        continue;
+                                    }
+                                    if let Some(c) = try_swim_edge(cm, &a, &nodes[j], true) {
+                                        edges.push((j, c, true));
+                                    }
+                                }
+                            }
                             continue;
                         }
                         let Some(col) = grid.get(&(gx + ddx, gy + ddy)) else {
@@ -210,6 +229,17 @@ impl NavGraph {
                             if (b[0] - a[0]).abs() > CONNECT_RADIUS
                                 || (b[1] - a[1]).abs() > CONNECT_RADIUS
                             {
+                                continue;
+                            }
+                            let b_water = water_nodes.contains(&j);
+                            // Water-involved pair (swim↔swim, or dry↔water entry/exit):
+                            // 3-D reduced-hull connectivity that bypasses the STEP/STAIR
+                            // gates. The exit edge (water-surface → dry railgun ledge) is
+                            // the critical bridge that fuses the railgun room (Plan 39 T4).
+                            if a_water || b_water {
+                                if let Some(c) = try_swim_edge(cm, &a, &b, a_water && b_water) {
+                                    edges.push((j, c, true));
+                                }
                                 continue;
                             }
                             let dz = b[2] - a[2];
@@ -238,7 +268,7 @@ impl NavGraph {
                                 walkable_stair(cm, lower, upper)
                             };
                             if ok {
-                                edges.push((j, dist(&a, &b)));
+                                edges.push((j, dist(&a, &b), false));
                             }
                         }
                     }
@@ -247,12 +277,26 @@ impl NavGraph {
             })
             .collect();
 
+        // Merge per-node edge lists sequentially: build the adjacency and record swim
+        // edges. Each direction is computed independently, so a bidirectional swim edge
+        // appears in both endpoints' lists → both `(i,j)` and `(j,i)` enter `swim_edges`.
+        let mut adj: Vec<Vec<(usize, f32)>> = vec![Vec::new(); nodes.len()];
+        let mut swim_edges: HashSet<(usize, usize)> = HashSet::new();
+        for (i, list) in per_node.into_iter().enumerate() {
+            for (j, cost, is_swim) in list {
+                adj[i].push((j, cost));
+                if is_swim {
+                    swim_edges.insert((i, j));
+                }
+            }
+        }
+
         NavGraph {
             nodes,
             adj,
             jump_edges: HashSet::new(),
             jump_yaws: HashMap::new(),
-            swim_edges: HashSet::new(),
+            swim_edges,
             water_nodes,
         }
     }
@@ -276,12 +320,19 @@ impl NavGraph {
     fn classify_prune_edges_par(&self, cm: &CollisionModel, max_hd: f32) -> Vec<EdgeClass> {
         let nodes = &self.nodes;
         let adj = &self.adj;
+        let swim = &self.swim_edges;
         (0..nodes.len())
             .into_par_iter()
             .flat_map_iter(|a| {
-                adj[a]
-                    .iter()
-                    .filter_map(move |&(b, _)| classify_prune_edge(nodes, cm, max_hd, a, b))
+                adj[a].iter().filter_map(move |&(b, _)| {
+                    // Swim edges (Plan 39) are validated by a 3-D reduced-hull trace, not a
+                    // walk/stair trace — the prune's hull check would falsely flag them. Keep
+                    // them as trustworthy (visited once per undirected pair, a < b).
+                    if a < b && swim.contains(&(a, b)) {
+                        return Some(EdgeClass::Trustworthy(a, b));
+                    }
+                    classify_prune_edge(nodes, cm, max_hd, a, b)
+                })
             })
             .collect()
     }
@@ -293,6 +344,10 @@ impl NavGraph {
         let mut v = Vec::new();
         for a in 0..self.nodes.len() {
             for &(b, _) in &self.adj[a] {
+                if a < b && self.swim_edges.contains(&(a, b)) {
+                    v.push(EdgeClass::Trustworthy(a, b));
+                    continue;
+                }
                 if let Some(c) = classify_prune_edge(&self.nodes, cm, max_hd, a, b) {
                     v.push(c);
                 }
@@ -1366,6 +1421,25 @@ fn water_waypoints_multi(
         }
     }
     results
+}
+
+/// Try to connect two nodes with a **swim** edge (Plan 39 T3/T4). At least one endpoint is
+/// a water node. Returns the edge cost if a reduced-hull 3-D trace is clear, else `None`.
+///
+/// Unlike walk edges, swim edges have **no STEP/STAIR gate** — a submerged bot moves freely
+/// in 3-D — but `|dz|` is capped at [`WATER_VLINK`] so a single edge can't span a whole pool.
+/// `both_water` (swim↔swim) scales cost by [`SWIM_COST_FACTOR`] (slow water move); a dry
+/// endpoint (entry/exit) keeps the raw distance — walking/falling in/out is cheap.
+fn try_swim_edge(cm: &CollisionModel, a: &[f32; 3], b: &[f32; 3], both_water: bool) -> Option<f32> {
+    if (b[2] - a[2]).abs() > WATER_VLINK {
+        return None;
+    }
+    let t = cm.trace(a, b, &SWIM_HULL_MINS, &SWIM_HULL_MAXS, MASK_SOLID);
+    if t.startsolid || t.fraction < 1.0 {
+        return None;
+    }
+    let d = dist(a, b);
+    Some(if both_water { d * SWIM_COST_FACTOR } else { d })
 }
 
 /// Validate a candidate swim node at `(x, y, z)` and push it to `results` if it is inside
