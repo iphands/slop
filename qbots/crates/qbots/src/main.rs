@@ -171,9 +171,10 @@ enum Cmd {
         q3char: Option<brain::Q3CharPreset>,
     },
     /// Spawn N bots for EACH `--navmode` × `--brains` group at once in one process (shared nav
-    /// cache), each nav mode wearing a distinct skin, and print a per-group frag scoreboard. Bots
-    /// are named `<group>_<i>` (e.g. `race_1`, or `sentry-race_1` when brains vary). Ctrl-C ends
-    /// the competition and prints the final board.
+    /// cache), each group wearing a distinct skin, and print a per-group frag scoreboard. Bots are
+    /// named `<navmode>_<brain>[_<q3char>]_<i>` (e.g. `astar_main_1`, `race_q3_1`,
+    /// `astar_q3_grunt_1`). `runtester` (non-combat) is rejected. Ctrl-C ends the competition and
+    /// prints the final board.
     Competition {
         /// Server address (defaults to config's server).
         #[arg(long)]
@@ -1720,11 +1721,18 @@ async fn main() -> ExitCode {
                     let mut out = Vec::new();
                     for tok in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
                         match <brain::BrainKind as ValueEnum>::from_str(tok, true) {
+                            // `runtester` is the combat-free movement-scenario brain — it never
+                            // fires or frags, so it's meaningless on a frag scoreboard.
+                            Ok(brain::BrainKind::RunTester) => {
+                                tracing::error!(
+                                    "'runtester' is a non-combat brain and cannot compete \
+                                     (valid: main, sentry, q3)"
+                                );
+                                return ExitCode::FAILURE;
+                            }
                             Ok(b) => out.push(b),
                             Err(_) => {
-                                tracing::error!(
-                                    "unknown brain '{tok}' (valid: main, sentry, runtester, q3)"
-                                );
+                                tracing::error!("unknown brain '{tok}' (valid: main, sentry, q3)");
                                 return ExitCode::FAILURE;
                             }
                         }
