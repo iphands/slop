@@ -33,7 +33,7 @@
 | 5 | T5: cache fingerprint bump + serialization | `mapcache.rs` | done | v13, +2 fp fields, swim/water serialized |
 | 6 | T6: `navinspect contents`/`watermap` modes | `navinspect.rs` | done | + `gpath` (A* graph path) |
 | 7 | T7: offline proof + regression tests | `world/tests/`, `navgraph.rs` | done | synthetic channel + q2dm1 railgun (gated) |
-| 8 | T8: distilled + pitfalls + move to completed | `context/*`, `SERIES.md` | pending | folded into Plan 40 close-out (Rule C) |
+| 8 | T8: distilled + pitfalls + move to completed | `context/*`, `SERIES.md` | done | distilled/pathing/water_nav.md + pitfalls; moved with Plan 40 |
 
 ## Result (2026-06-19)
 - **Offline proof PASSES**: `gpath 1488 -48 664 → 240 -384 464` on q2dm1 returns a path

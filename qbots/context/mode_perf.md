@@ -144,3 +144,26 @@ major,sarge,camper}`) produce a clear, intentional hierarchy — **no float retu
 
 0 panics. The spread matches the design intent (Grunt dies most, Major most efficient, Sarge
 aggressive, Camper passive) → roster is distinct **and** balanced. Presets stand as-is.
+
+## Railgun swim route — `spawn-to-weapon railgun` per navmode (Plan 40 T7, 2026-06-19)
+
+The q2dm1 railgun (`240 -384 464`) is reachable **only by swimming** (dive → submerged tunnel →
+surface → climb onto the ledge). Plan 39 added water to the **A* graph**; Plan 40 made the brain
+swim it. Sweep: local yquake2 dedicated (q2dm1), `--brain runtester --count 1 --max-secs 95`,
+one run per mode (spawn point is random per run, so elapsed varies — the **reached** column is the
+signal):
+
+| navmode | reached | elapsed (s) | mean_speed | notes |
+|-----------------|:-------:|:-----------:|:----------:|-------|
+| astar           | ✅ | 11–27 | 165–207 | A* graph has the swim route; baseline |
+| hybrid-fallback | ✅ | 28 | 197 | A* primary → plans the swim directly |
+| hybrid-race     | ✅ | 40 | 222 | plans both; the A* (swim) plan wins |
+| hybrid-hier     | ✅ | 18 | 212 | navmesh corridor + A* local; A* local finds water |
+| navmesh         | ❌ | 95 (cap) | 185 | **no navmesh water** — Plan 39 scope; expected |
+| hybrid-segment  | ❌ | 95 (cap) | 185 | navmesh corridor mis-routes (railgun room is navmesh-isolated → goal lands away from the water entry, so the bot never reaches a swim node). Selector IS swim-aware now (parity with jump links), but that's necessary-not-sufficient here. |
+
+**Verdict:** **4/6 reach** — every A*-driven mode swims to the railgun; the two pure-navmesh-corridor
+modes can't (the navmesh has no water by design). Swim proof: the astar log showed **46/93 frames
+`S`-flagged**, z 238 → 434 (dive → surface). Navmesh water is a deferred follow-up; `hybrid-segment`
+would also need a water-aware navmesh corridor (or a fallback-to-A* when the navmesh goal is
+unreachable) to reach.

@@ -212,6 +212,18 @@ target acquisition AND nav-goal override on this check. Keep a 2-frame grace aft
 thin-pillar flicker doesn't cause target thrashing. The server already PVS-filters entities, so
 the LOS pass runs only on ≤8 visible candidates — cheap at 10 Hz.
 
+## Water navigation — swim nodes/edges + swim movement (Plans 39–40)
+The A* `NavGraph` + brain now traverse water; before, all water positions were discarded so
+water-only routes (q2dm1 railgun, reachable ONLY by swimming) were isolated → A* NO PATH.
+Fix: sample submerged+surface swim nodes, connect them with 3-D `EdgeKind::Swim` edges (no
+STEP gate, `|dz|<=48`, cost ×2, reduced `±12` hull, `CONTENTS_WATER` only), add dry↔water
+entry/exit (the exit edge fuses the railgun room), protect swim edges from the prune, bump
+mapcache to v13. Brain: recompute `water_level` (it's not on the wire) like
+`PM_CategorizePosition`; on a swim edge set sustained `intent.up` (NOT one-shot `jump`) +
+pitch toward the 3-D target; climb out with the Q2 water-jump (look up `<=-15` + forward,
+`pmove.c:414`); suspend recovery while swimming. Live q2dm1: `astar` reaches the railgun
+(~11–27 s). **Full detail in `context/distilled/pathing/water_nav.md`.**
+
 ## Hybrid navigation modes — Plan 20
 Both nav backends (waypoint-graph A* `astar`, polygon-mesh `navmesh`) implement one
 `Navigator` trait (`brain::nav_mode`), so a hybrid is a thin `Navigator` that owns **both**

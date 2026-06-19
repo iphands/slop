@@ -202,3 +202,26 @@ T6 gate cleared; plan closed.
   is intentional + balanced: **major 5/1 (K/D 5.00, precise), sarge 5/4 (1.25, aggressive/mobile),
   camper 1/1 (1.00, cautious), grunt 0/7 (0.00, cannon fodder)**. 0 panics. Recorded in
   `mode_perf.md`. The Plan 36 preset value sets stand as-is.
+
+## 2026-06-19 — Plan 40: swim movement, water-exit & navmode ranking
+- Goal: make the brain execute the Plan 39 swim edges — dive, swim the tunnel, surface, and
+  climb onto the q2dm1 railgun ledge — then prove + rank `spawn-to-weapon railgun` across navmodes.
+- New `brain::water`: `water_level(cm, origin) -> 0..3` recomputed like `PM_CategorizePosition`
+  (`pmove.c:765`; waterlevel is NOT on the wire) by sampling `CONTENTS_WATER` at feet/mid/eye.
+  `is_swimming(level) = level >= 2`. Pure + unit-tested against `world::water_channel_world`.
+- RunTesterBrain (the `spawn-to-*` driver) swim path: on a swim edge / `waterlevel>=2`, use the
+  RAW 3-D look-ahead (`pursue_target`, not `_safe` — no floor to validate underwater), set
+  `intent.up = clamp(dz/32, -1, 1)` (sustained, NEVER `mv.jump()` in water) and pitch toward the
+  3-D target. Water-exit climb-out: when the swim edge's target is a dry node above
+  (`water_level(target)==0 && dz>0`), force look-up `pitch=-20` (Q2 water-jump gate is `<=-15`,
+  `pmove.c:414`) + `up=1` + forward, held `EXIT_HYSTERESIS_TICKS=12` so it clears the lip.
+- Recovery SUSPENDED while swimming (skip the whole `evaluate`): `find_best_direction` steers
+  away from water and the 4u/1s StuckDetector false-fires on 0.5× swim speed.
+- MainBrain got the same swim override (section 8) so LIVE bots swim too; combat aim wins the view
+  pitch when firing (else pitch toward the 3-D target). Recovery also gated when swimming.
+- Recorder `S` flag (waterlevel>=2) wired from the scenario sample.
+- **LIVE PROOF (q2dm1, local yquake2 dedicated, 2026-06-19):** `astar` `reached=true` ~11–27 s;
+  the bot's log shows 46/93 frames `S`-flagged with z 238→434 = dive→swim tunnel→surface→exit.
+- **Navmode ranking** (see `mode_perf.md`): `astar` + all A*-backed hybrids reach; pure `navmesh`
+  fails (no navmesh water — Plan 39 scope). `hybrid-race` reaches because it plans both and the A*
+  plan (with the swim route) wins.

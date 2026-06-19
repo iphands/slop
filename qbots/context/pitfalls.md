@@ -729,3 +729,47 @@ matching the scenario path and the connectivity check.
 ## Sources
 - qbots: `crates/qbots/src/status.rs` (`parse_status_body`), `crates/qbots/src/supervisor.rs` (`build_map_nav`)
 - vendor: `yquake2/src/server/sv_init.c:366` (`mapname` CVAR_SERVERINFO)
+
+# Water positions discarded → water-only routes appear unreachable (q2dm1 railgun)
+Nav graph generation dropped EVERY position inside a water volume (`navgraph.rs`
+`floor_waypoints_multi` skipped `point_contents & MASK_WATER`; the navmesh heightfield
+did the same). On q2dm1 the railgun room (`weapon_railgun` at `240 -384 464`) is reachable
+ONLY by jumping into water, swimming a submerged tunnel, and surfacing — so with water
+excluded, the railgun's dry floor was an ISOLATED component and A* returned NO PATH from
+every spawn. This violated the project invariant "all q2dm spawns/items are mutually
+reachable": the map was fine, our world model had no representation of water.
+
+Fix (Plan 39): sample submerged + surface swim nodes per water column, connect them with
+3-D `EdgeKind::Swim` edges (no STEP/STAIR gate, cost ×2 for slow water move), and add
+dry↔water entry/exit edges — the water-surface→dry-ledge EXIT edge is what fuses the
+railgun room into the main component. Cap each water edge's |dz| (`WATER_VLINK`=48) so one
+edge can't span a whole pool, and validate with a REDUCED hull (`±12`) — the full standing
+hull is too strict for tight tunnels. Sample only `CONTENTS_WATER` (never lava/slime).
+Protect swim edges from `prune_long_blocked_edges` (a walk/stair hull trace falsely flags
+the 3-D vertical link). Then the brain must actually swim it (Plan 40, below).
+
+Diagnose with `navinspect <baseq2> <map> gpath <sx sy sz> <gx gy gz>` (A*-graph path, not
+the navmesh `navpath`) + `contents`/`watermap`.
+## Sources
+- world: `crates/world/src/navgraph.rs` (`water_waypoints_multi`, `try_swim_edge`, `generate`)
+- world: `crates/world/src/mapcache.rs` (v13: swim edges + water tags serialized)
+- vendor: `yquake2/src/common/pmove.c` (`PM_WaterMove`, `PM_CategorizePosition`)
+
+# No brain set intent.up; recovery avoided water → swim edges weren't followed (Plan 40)
+Even after Plan 39 put swim nodes/edges in the graph, bots couldn't traverse them: NO brain
+ever set `intent.up` (only `jump` touched `upmove`, a one-shot 270 launch — useless for
+sustained swimming), and stuck-recovery's `find_best_direction` actively `continue`s past any
+water endpoint while the 4u/1s `StuckDetector` false-fires on slow (0.5×) water movement.
+
+Fix: recompute waterlevel ourselves (`brain::water::water_level`, mirrors
+`PM_CategorizePosition` — it's NOT on the wire) since we own the `CollisionModel`+origin; on a
+swim edge / when `waterlevel>=2`, set `intent.up = clamp(dz/32,-1,1)` (sustained, NOT
+`mv.jump()`) and pitch toward the 3-D target so `pml.forward` carries the vertical component.
+For the climb-out onto a ledge, trigger Q2's water-jump: look up (`pitch<=-15`,
+`pmove.c:414`) + forward + hold up, with a few-tick hysteresis so the bot doesn't oscillate
+at the lip. SUSPEND recovery entirely while swimming. Result: q2dm1
+`spawn-to-weapon railgun --navmode astar` reaches in ~11 s (46/93 frames `S`-flagged,
+z 238→434 = dive→surface). Pure-navmesh modes still fail (navmesh has no water — by design).
+## Sources
+- brain: `crates/brain/src/water.rs`, `crates/brain/src/brains/runtester.rs` (+ `main.rs`)
+- vendor: `yquake2/src/common/pmove.c:414` (`PM_CheckSpecialMovement` water-jump), `:545` (`PM_WaterMove`)
