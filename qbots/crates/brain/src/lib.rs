@@ -22,6 +22,7 @@ pub mod navmesh_driver;
 pub mod observed;
 pub mod perception;
 pub mod pursuit;
+pub mod q3char;
 pub mod recorder;
 pub mod recover;
 pub mod skill;
@@ -45,6 +46,7 @@ pub use nav_mode::Navigator;
 pub use navmesh_driver::NavmeshDriver;
 pub use observed::{parse_obituary, HeatmapObserver, HeatmapSnapshot, Obituary};
 pub use perception::{EntityClass, PerceivedEntity, SelfState, Worldview};
+pub use q3char::Q3Character;
 pub use recorder::{
     CmWallProbe, FrameRecord, MovementRecorder, RunSummary, Sample, WallBump, WallProbe,
 };
