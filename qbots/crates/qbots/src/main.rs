@@ -370,14 +370,30 @@ impl tracing_subscriber::fmt::time::FormatTime for ElapsedFormatter {
     }
 }
 
-/// Abbreviate tracing level to single letter: T, D, I, W, E
-fn abbreviate_level(level: tracing::Level) -> &'static str {
-    match level {
-        tracing::Level::TRACE => "T",
-        tracing::Level::DEBUG => "D",
-        tracing::Level::INFO => "I",
-        tracing::Level::WARN => "W",
-        tracing::Level::ERROR => "E",
+/// Abbreviate tracing level to a single letter: T, D, I, W, E.
+///
+/// When `ansi` is true, each letter is wrapped in the same ANSI color
+/// tracing-subscriber paints the long level names with
+/// (`fmt/format/mod.rs::FmtLevel`): TRACE=purple(35), DEBUG=blue(34),
+/// INFO=green(32), WARN=yellow(33), ERROR=red(31). The color+letter+reset
+/// runs are precomputed so this stays a cheap `&'static str` lookup.
+fn abbreviate_level(level: tracing::Level, ansi: bool) -> &'static str {
+    if ansi {
+        match level {
+            tracing::Level::TRACE => "\x1b[35mT\x1b[0m",
+            tracing::Level::DEBUG => "\x1b[34mD\x1b[0m",
+            tracing::Level::INFO => "\x1b[32mI\x1b[0m",
+            tracing::Level::WARN => "\x1b[33mW\x1b[0m",
+            tracing::Level::ERROR => "\x1b[31mE\x1b[0m",
+        }
+    } else {
+        match level {
+            tracing::Level::TRACE => "T",
+            tracing::Level::DEBUG => "D",
+            tracing::Level::INFO => "I",
+            tracing::Level::WARN => "W",
+            tracing::Level::ERROR => "E",
+        }
     }
 }
 
@@ -466,13 +482,17 @@ fn write_coda(
 struct AbbreviatedFormat {
     start_time: Instant,
     dedup: Arc<Mutex<Deduper>>,
+    /// Color the abbreviated level letter with ANSI codes (only when the sink
+    /// is a terminal, so redirected/piped output stays plain text).
+    ansi: bool,
 }
 
 impl AbbreviatedFormat {
-    fn new(start_time: Instant) -> Self {
+    fn new(start_time: Instant, ansi: bool) -> Self {
         Self {
             start_time,
             dedup: Arc::new(Mutex::new(Deduper::default())),
+            ansi,
         }
     }
 }
@@ -489,7 +509,7 @@ where
         event: &tracing::Event<'_>,
     ) -> std::fmt::Result {
         let elapsed = self.start_time.elapsed();
-        let level = abbreviate_level(*event.metadata().level());
+        let level = abbreviate_level(*event.metadata().level(), self.ansi);
 
         // Format the event's fields into a buffer (the dedup key + the emit body).
         let mut fields = String::new();
@@ -1538,12 +1558,15 @@ async fn main() -> ExitCode {
     let start_time = Instant::now();
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    // Color the level letters only when writing to a terminal; piped/redirected
+    // output (e.g. `> run.log`) stays free of ANSI escapes.
+    let ansi = std::io::IsTerminal::is_terminal(&std::io::stdout());
     tracing_subscriber::fmt()
         .with_env_filter(env_filter)
         .with_timer(ElapsedFormatter(start_time))
         .with_target(false)
         .with_thread_ids(false)
-        .event_format(AbbreviatedFormat::new(start_time))
+        .event_format(AbbreviatedFormat::new(start_time, ansi))
         .init();
 
     let cli = Cli::parse();
