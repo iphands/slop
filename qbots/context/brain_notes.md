@@ -136,3 +136,45 @@ T6 gate cleared; plan closed.
 - 12 unit tests pin the thresholds (rail+slugs→95/chase, MG+50hp→0/retreat, shotgun→50
   boundary, rail-no-ammo→0, hurt-but-armored→press, enemy-above→0, threshold bias spread,
   feeling_bad ladder, from_skill monotonicity, preset spread). All green; clippy/fmt clean.
+
+## 2026-06-19 — Plan 37: Quake 3 brain plugin (`--brain q3`)
+- New `brains::q3` (`BrainKind::Quake3`, CLI `q3`) — a full sibling brain to `MainBrain`/`Sentry`/
+  `RunTester`, assembled from the Plan 36 `q3char` primitives. `MainBrain` untouched.
+- **Node FSM** (`mod.rs`, `ai_dmnet.c`): `SeekLtg/SeekNbg/BattleFight/BattleChase/BattleRetreat/
+  BattleNbg` driven by per-tick transitions gated by `q3char::wants_to_retreat/chase` (the
+  aggression scalar). `BattleRetreat` (disengage when out-gunned/hurt) is the new behavior vs
+  MainBrain's flat FSM. Timers in absolute seconds (driven by `dt`): chase 10s, retreat-unseen 4s,
+  NBG 5s deadline + 0.5s poll. Per-tick switch guard ≤50 (`MAX_NODESWITCHES`).
+- **Enemy selection** (`BotFindEnemy`): over PVS-limited `view.enemies()` — alertness range gate
+  `(900+alertness·4000)`, awareness FOV (360° the frame health drops, else 150°→90° by distance),
+  LOS trace, closest-preference, and the **sneak-past** branch (skip a distant non-facing enemy
+  we'd rather not fight). `enemy_first_seen` set to now (fresh) / now−2 (upgrade) for the reaction
+  gate.
+- **Aim** (`q3/aim.rs`, `BotAimAtEnemy`): per-weapon accuracy (`Q3Character::weapon_accuracy`),
+  reaction-time sight gate (high-skill bots don't aim early), 0.5s velocity memory + direction-
+  change penalty, radial ground-aim for splash weapons (`trace_floor`), and the worldspace +
+  angular + hitscan-falloff error model. **AAS exact-predict → constant-velocity lead** via the
+  shared `crate::aim::aim_direction` (the exact path was only `aim_skill>0.8`, so high skill just
+  gets a better linear lead). `would_self_splash` for the self-preservation abort.
+- **Fire** (`BotCheckAttack`): reaction gate + 0.1s weapon-change lockout + facing-FOV gate (120°
+  close / 50° far) + LOS + range sanity + self-preservation splash abort + **fire-throttle duty
+  cycle** (`random()>firethrottle` → wait `ft`s, else shoot `1−ft`s).
+- **Move** (`q3/move.rs`, `BotAttackMove`): circle-strafe perpendicular with a skill-tuned random
+  flip cadence (`0.4+(1−attack_skill)·0.2`s, flip on roll>0.935), ideal-distance band (300±100),
+  random back-up, jump (roll<jumper) / crouch (roll<croucher) dodge with 1s cooldowns. Retreat
+  biases the move backward while still firing. **CROUCHER is best-effort**: `MovementIntent.crouch`
+  is a controller no-op today (the wire/pmove duck path isn't wired), so jumper is the real dodge —
+  documented deferral (Plan 37 Risk 2).
+- **"Enemy is shooting"** is not wire-observable → treated as not-shooting (Risk 3); the health-drop
+  branch still grants 360° awareness when we actually take damage.
+- **Held weapon for combat** reads the wire-resolved `view.held_weapon` for *aggression*, but
+  weapon *switching* still tracks an optimistic `held_weapon` (`use <name>`; server grants if owned).
+- **T8 LIVE ACCEPTANCE (q2dm1, noir.lan, 2026-06-19): PASSED.** First A/B `main,q3` ×3 over 130s:
+  q3 scored **0** — root cause: Q2 starts everyone on the **blaster** (tier 0 → aggression 0 →
+  permanent `BattleRetreat` → bot backs out of blaster range → never frags). Fix: **blaster-floor**
+  — in `bot_aggression`, a *healthy* bot holding the blaster floors at 50 (engage-worthy; the
+  blaster is Q2's infinite-ammo start weapon, unlike Q3's melee gauntlet). Out-gunned MG/CG and
+  *hurt* bots still flee (all Plan 36/37 tests still green). Re-run A/B (110s): **q3 2 kills/1 death
+  K/D 2.00 vs main 3/4 K/D 0.75**. Pure-q3 fleet (6 navmodes ×2, 90s): **9 frags, 0 panics, 0
+  kicks**; q3-race best (K/D 2.50). q3 connects, navigates multi-level, perceives, fights, frags —
+  competitive with main.

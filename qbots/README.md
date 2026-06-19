@@ -78,8 +78,9 @@ qbots status                         # query server (map + player list) — the 
 ```
 
 `run` and `connect-one` honor `--addr`, `--qport`/`--qport-base`, `--navmode` (nav backend,
-see below), and `--brain` (decision plugin: `main` default, or `sentry`; independent of
-`--navmode`). `run` adds skin selection (`--skin model/skin`, `--skin-random-male`,
+see below), and `--brain` (decision plugin: `main` default, `sentry`, `runtester`, or `q3` —
+the Quake 3-derived node-FSM brain; independent of `--navmode`). `run` adds skin selection
+(`--skin model/skin`, `--skin-random-male`,
 `--skin-random-female`) and `--name`/`--count` overrides.
 
 ### World-model inspection (no server needed)
@@ -127,7 +128,7 @@ navigation backend. The steering loop is identical for all; only the path source
 The `navmesh` and `hybrid-*` modes require the navmesh to be available (built lazily from
 the map cache). `competition` spawns bots for every `--navmode` (× `--brains`) at once and
 prints a per-group frag scoreboard (e.g. `qbots competition --navmodes astar,navmesh
---brains main,sentry --count 2`).
+--brains main,q3 --count 2`).
 
 ---
 
