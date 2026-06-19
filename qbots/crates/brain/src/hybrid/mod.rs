@@ -23,8 +23,10 @@ use crate::nav::{NavGoal, NavigationDriver};
 use crate::navmesh_driver::NavmeshDriver;
 
 pub mod fallback;
+pub mod race;
 
 pub use fallback::HybridFallback;
+pub use race::HybridRace;
 
 /// A goal that moves less than this (units) between ticks is treated as unchanged — matches
 /// the navmesh driver's own replan threshold, so the hybrids and the navmesh agree on "new goal".

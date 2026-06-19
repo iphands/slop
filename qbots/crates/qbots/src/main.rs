@@ -31,6 +31,8 @@ pub enum NavMode {
     Navmesh,
     /// Hybrid: A* primary, navmesh takes over the segment on a hard-stuck (Plan 20).
     HybridFallback,
+    /// Hybrid: plan both backends per goal, run the cheaper-scoring one to completion.
+    HybridRace,
 }
 
 impl NavMode {
@@ -57,6 +59,11 @@ fn build_navigator(
         NavMode::Astar => Box::new(brain::NavigationDriver::new(graph)),
         NavMode::Navmesh => Box::new(brain::NavmeshDriver::new(mesh.unwrap(), AGENT_RADIUS)),
         NavMode::HybridFallback => Box::new(brain::hybrid::HybridFallback::new(
+            graph,
+            mesh.unwrap(),
+            AGENT_RADIUS,
+        )),
+        NavMode::HybridRace => Box::new(brain::hybrid::HybridRace::new(
             graph,
             mesh.unwrap(),
             AGENT_RADIUS,
