@@ -1,15 +1,30 @@
-# Plan 34 — q2dm3 nav fragmentation fix (lift anchoring + spawn-aware bridge)
+# Plan 34 — q2dm3 nav fragmentation: diagnostics + resilient cache batch
 
-> **Status**: in-progress
+> **Status**: done
 > **Created**: 2026-06-18
 > **Depends on**: Plan 17, Plan 18
-> **Goal**: Make `generate-map-cache --map 'q2dm*'` succeed by getting all 7 q2dm3 spawns into one connected component, without re-introducing global false bridges.
+> **Goal**: Unblock `generate-map-cache --map 'q2dm*'` (cache all good maps, report the rest) and diagnose why q2dm3 fragments — the deep nav fix is deferred to Plan 35.
 > **Agent**: main session
 
 ---
 
 > **Before writing any code, re-read `context/plans/RULES.md` in full.**
 > For historical context, completed plans live in `context/plans/completed/`.
+
+---
+
+## OUTCOME (2026-06-18) — rescoped mid-flight
+
+Diagnosis (T3) overturned the "single surgical lift fix" premise. Restoring
+`BRIDGE_HDIST=512` does **not** restore connectivity, and the batch revealed the regression
+is **broad: 5 of 8 stock DM maps fail** (q2dm2 3/7, q2dm3 3/7, q2dm5 7/9, q2dm6 7/8,
+q2dm7 3/6; only q2dm1/4/8 pass). The 2026-06-16 notes had 7/8 passing — so this is a code
+regression (likely `walkable_stair`'s floor-existence check `662580e69` + the `BRIDGE_HDIST`
+512→256 cut), not a q2dm3 quirk.
+
+**Per user decision: this plan delivers diagnostics (T1–T3) + the resilient batch (T6) to
+unblock now.** The nav-graph fix (originally T4/T5/T7) is **deferred to Plan 35**
+(broad q2dm connectivity regression). Done tasks: **T1, T2, T3, T6**.
 
 ---
 
