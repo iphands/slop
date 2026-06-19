@@ -39,7 +39,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(world::GRID_SPACING);
-    let built = cached_map_nav(baseq2, map, Some(cache), world::ELEVATOR_PENALTY, spacing)?;
+    // `QBOTS_LIVE=1` builds the nav graph live (`generate_map_nav`) instead of loading the
+    // disk cache. Essential for inspecting a map that FAILS the connectivity gate: such a map
+    // has no cache (generation refuses to write a broken graph), so the default cache-load
+    // path can't open it at all. Live build skips the cache + the gate, so we can see why.
+    let live = std::env::var("QBOTS_LIVE").is_ok_and(|v| v != "0" && !v.is_empty());
+    let built = if live {
+        eprintln!("[navinspect] QBOTS_LIVE set — building nav live (bypassing cache + gate)");
+        world::generate_map_nav(baseq2, map, world::ELEVATOR_PENALTY, spacing)?
+    } else {
+        cached_map_nav(baseq2, map, Some(cache), world::ELEVATOR_PENALTY, spacing)?
+    };
     let g = &built.graph;
     let cm = &built.cm;
 
