@@ -16,7 +16,7 @@ use crate::brains::main::MainBrain;
 use crate::brains::q3::Q3Brain;
 use crate::brains::runtester::RunTesterBrain;
 use crate::brains::sentry::SentryBrain;
-use crate::q3char::Q3Character;
+use crate::q3char::{Q3CharPreset, Q3Character};
 use crate::skill::BotSkill;
 
 /// Which brain implementation a bot runs. Mirrors `NavMode` (the nav-backend selector); a
@@ -51,17 +51,30 @@ pub fn brain_tag(kind: BrainKind) -> &'static str {
 
 /// Build the brain implementation for `kind`. Single match — the kind→impl mapping lives here,
 /// exactly mirroring `build_navigator` for nav backends. `Send` so a bot task can own the box.
-pub fn build_brain(kind: BrainKind, skill: BotSkill, cfg: BrainConfig) -> Box<dyn Brain + Send> {
+///
+/// `q3char` selects a named Q3 personality for the `Quake3` brain (Plan 38 roster); `None` →
+/// `Q3Character::from_skill(skill)` (the Plan 37 default). Every other arm ignores it.
+pub fn build_brain(
+    kind: BrainKind,
+    skill: BotSkill,
+    cfg: BrainConfig,
+    q3char: Option<Q3CharPreset>,
+) -> Box<dyn Brain + Send> {
     match kind {
         BrainKind::Main => Box::new(MainBrain::new(skill, cfg)),
         // Sentry ignores `cfg` (no nav, no goal override) — it's a proof-of-pluggability.
         BrainKind::Sentry => Box::new(SentryBrain::new(skill)),
         // RunTester is combat-free and goal-driven per tick; it needs neither skill nor cfg.
         BrainKind::RunTester => Box::new(RunTesterBrain::new()),
-        // Quake3 derives its `Q3Character` from the master skill level (Plan 37); a selectable
-        // named-character roster (`--q3char`) lands in Plan 38. `cfg` is unused: in a movement
-        // scenario there are no enemies, so the Q3 combat path never fires anyway.
-        BrainKind::Quake3 => Box::new(Q3Brain::new(Q3Character::from_skill(skill.skill))),
+        // Quake3: a named roster preset if given, else derive the character from the master skill
+        // level. `cfg` is unused: in a movement scenario there are no enemies, so the Q3 combat
+        // path never fires anyway.
+        BrainKind::Quake3 => {
+            let ch = q3char
+                .map(Q3CharPreset::character)
+                .unwrap_or_else(|| Q3Character::from_skill(skill.skill));
+            Box::new(Q3Brain::new(ch))
+        }
     }
 }
 
@@ -71,7 +84,12 @@ mod tests {
 
     #[test]
     fn build_main_brain_starts_roaming() {
-        let brain = build_brain(BrainKind::Main, BotSkill::default(), BrainConfig::default());
+        let brain = build_brain(
+            BrainKind::Main,
+            BotSkill::default(),
+            BrainConfig::default(),
+            None,
+        );
         assert_eq!(brain.status(), "roam");
     }
 
@@ -81,6 +99,7 @@ mod tests {
             BrainKind::Sentry,
             BotSkill::default(),
             BrainConfig::default(),
+            None,
         );
         assert_eq!(brain.status(), "sentry");
     }
@@ -108,6 +127,7 @@ mod tests {
             BrainKind::Quake3,
             BotSkill::default(),
             BrainConfig::default(),
+            None,
         );
         assert_eq!(brain.status(), "seek-ltg");
     }

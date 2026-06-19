@@ -250,6 +250,7 @@ pub async fn run_fleet(
     count_override: Option<usize>,
     qport_base_override: Option<u16>,
     skin: crate::skins::SkinSelection,
+    q3char: Option<brain::Q3CharPreset>,
 ) -> std::io::Result<()> {
     // Apply the maxclients guard: never spawn more than `max_bots` (leave slots
     // for humans). 0 = uncapped. `--count` overrides the config roster size first.
@@ -299,13 +300,16 @@ pub async fn run_fleet(
             None => cfg.fleet.bot_name(i),
         };
         let qport = qport_base.wrapping_add(i as u16);
-        // Drawn once per bot (kept across reconnects); `None` keeps the userinfo default.
-        let bot_skin = skin.per_bot(&mut skin_rng);
+        // A selected Q3 character pins its recognizable skin; else draw once per bot (kept
+        // across reconnects); `None` keeps the userinfo default.
+        let bot_skin = q3char
+            .map(|q| q.skin().to_string())
+            .or_else(|| skin.per_bot(&mut skin_rng));
         let cfg = Arc::clone(&cfg);
         let shared = shared.clone();
         tasks.push(tokio::spawn(async move {
             bot_supervisor_loop(
-                addr, name, qport, bot_skin, cfg, shared, reconnect, mode, brain,
+                addr, name, qport, bot_skin, cfg, shared, reconnect, mode, brain, q3char,
             )
             .await;
         }));
@@ -444,7 +448,7 @@ pub async fn run_competition(
                 let shared = shared.clone();
                 tasks.push(tokio::spawn(async move {
                     bot_supervisor_loop(
-                        addr, name, qport, bot_skin, cfg, shared, reconnect, mode, bk,
+                        addr, name, qport, bot_skin, cfg, shared, reconnect, mode, bk, None,
                     )
                     .await;
                 }));
@@ -565,6 +569,7 @@ async fn bot_supervisor_loop(
     reconnect: Reconnect,
     mode: crate::NavMode,
     brain: brain::BrainKind,
+    q3char: Option<brain::Q3CharPreset>,
 ) {
     let mut attempts: u32 = 0;
     let mut backoff_ms: u64 = 1000;
@@ -583,6 +588,7 @@ async fn bot_supervisor_loop(
             &shared.stats,
             mode,
             brain,
+            q3char,
         )
         .await
         {
@@ -612,6 +618,7 @@ async fn bot_supervisor_loop(
 
 /// Run a single bot for `connect-one`. Builds a private nav cache + shutdown and
 /// installs the signal listener, then runs one `bot_task` (no reconnect loop).
+#[allow(clippy::too_many_arguments)]
 pub async fn run_single(
     cfg: &Config,
     addr: SocketAddr,
@@ -619,13 +626,16 @@ pub async fn run_single(
     qport: u16,
     mode: crate::NavMode,
     brain: brain::BrainKind,
+    q3char: Option<brain::Q3CharPreset>,
 ) -> std::io::Result<()> {
     let nav = NavCache::new();
     let shutdown = Shutdown::new();
     let stats = FleetStats::new();
     let _signals = spawn_signal_listener(shutdown.clone());
+    // A selected Q3 character wears its recognizable skin even as a single bot.
+    let skin = q3char.map(|q| q.skin());
     let res = crate::bot_task(
-        addr, name, qport, None, cfg, &nav, &shutdown, &stats, mode, brain,
+        addr, name, qport, skin, cfg, &nav, &shutdown, &stats, mode, brain, q3char,
     )
     .await;
     // bot_task has disconnected (or errored) — emit the single-bot tally.

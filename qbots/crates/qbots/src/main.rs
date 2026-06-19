@@ -120,6 +120,10 @@ enum Cmd {
         /// Quake 3-derived brain). Independent of `--navmode`.
         #[arg(long, value_enum, default_value_t = brain::BrainKind::Main)]
         brain: brain::BrainKind,
+        /// Q3 personality (only for `--brain q3`): `grunt`/`major`/`sarge`/`camper`. Absent →
+        /// the skill-derived default character.
+        #[arg(long, value_enum)]
+        q3char: Option<brain::Q3CharPreset>,
     },
     /// Launch the full bot fleet from the config's `[fleet]` roster.
     Run {
@@ -160,6 +164,11 @@ enum Cmd {
         /// Give each bot a random female skin.
         #[arg(long, group = "skin_sel")]
         skin_random_female: bool,
+        /// Q3 personality for the whole fleet (only for `--brain q3`):
+        /// `grunt`/`major`/`sarge`/`camper`. Overrides `[fleet].q3char`. Pins each bot's skin to
+        /// the character's. Absent → the skill-derived default character.
+        #[arg(long, value_enum)]
+        q3char: Option<brain::Q3CharPreset>,
     },
     /// Spawn N bots for EACH `--navmode` × `--brains` group at once in one process (shared nav
     /// cache), each nav mode wearing a distinct skin, and print a per-group frag scoreboard. Bots
@@ -623,6 +632,7 @@ pub(crate) async fn bot_task(
     stats: &supervisor::FleetStats,
     mode: NavMode,
     brain_kind: brain::BrainKind,
+    q3char: Option<brain::Q3CharPreset>,
 ) -> std::io::Result<()> {
     use brain::perception::Worldview;
     // `Brain` is the plugin trait (its methods resolve on the `Box<dyn Brain>` the factory
@@ -667,8 +677,12 @@ pub(crate) async fn bot_task(
     // The decision layer (Plan 22): owns combat/FSM/dodge/steering/recovery/skill/roam.
     // Built early; learns the nav graph at map load via `set_map`. The `Navigator` is
     // injected into `brain.tick` each frame — the brain uses nav, never owns it.
-    let mut brain: Box<dyn Brain + Send> =
-        build_brain(brain_kind, BotSkill::default(), BrainConfig::default());
+    let mut brain: Box<dyn Brain + Send> = build_brain(
+        brain_kind,
+        BotSkill::default(),
+        BrainConfig::default(),
+        q3char,
+    );
     // Boxed behind the `Navigator` trait so the tick loop is backend-agnostic: `--navmode`
     // picks A* (waypoint graph) or navmesh (polygons + funnel) at map load. `+ Send`
     // because this future is spawned on tokio and holds the driver across awaits.
@@ -1541,6 +1555,7 @@ async fn main() -> ExitCode {
             qport,
             mode,
             brain,
+            q3char,
         } => {
             let name = name.unwrap_or_else(|| "qbots".to_string());
             let qport = qport.unwrap_or_else(default_qport);
@@ -1566,7 +1581,7 @@ async fn main() -> ExitCode {
             }
             tracing::info!("connecting '{name}' to {addr} (qport {qport})…  Ctrl-C to stop.");
 
-            match supervisor::run_single(&cfg, addr, &name, qport, mode, brain).await {
+            match supervisor::run_single(&cfg, addr, &name, qport, mode, brain, q3char).await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     tracing::error!("{e}");
@@ -1584,6 +1599,7 @@ async fn main() -> ExitCode {
             skin,
             skin_random_male,
             skin_random_female,
+            q3char,
         } => {
             // `--count` can enable a fleet even when the config roster is empty (and a
             // `--count 0` disables one the config would otherwise enable).
@@ -1610,6 +1626,11 @@ async fn main() -> ExitCode {
             // CLI `--brain` overrides `[fleet].brain` (which defaults to `main`).
             let brain = brain.unwrap_or_else(|| cfg.fleet.brain_kind());
             tracing::info!(brain = brain::brain_tag(brain), "fleet brain selection");
+            // CLI `--q3char` overrides `[fleet].q3char`; only meaningful for `--brain q3`.
+            let q3char = q3char.or_else(|| cfg.fleet.q3char_preset());
+            if let Some(q) = q3char {
+                tracing::info!(q3char = q.tag(), "fleet q3 character");
+            }
             let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
             let addr = match resolve_addr(&addr_str).await {
                 Ok(a) => a,
@@ -1640,6 +1661,7 @@ async fn main() -> ExitCode {
                 count,
                 qport_base,
                 skin_sel,
+                q3char,
             )
             .await
             {

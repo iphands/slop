@@ -47,6 +47,9 @@ pub struct Fleet {
     /// `None`/absent → `main`. The CLI `--brain` overrides this. Independent of the nav backend
     /// (`--navmode`).
     pub brain: Option<String>,
+    /// Q3 personality for the fleet when `brain = "q3"`: `grunt`/`major`/`sarge`/`camper`.
+    /// `None`/absent → the skill-derived default character. CLI `--q3char` overrides this.
+    pub q3char: Option<String>,
 }
 
 impl Default for Fleet {
@@ -60,6 +63,7 @@ impl Default for Fleet {
             max_reconnects: 0,
             max_bots: 0,
             brain: None,
+            q3char: None,
         }
     }
 }
@@ -80,6 +84,21 @@ impl Fleet {
                 tracing::warn!(brain = s, "unknown [fleet].brain; falling back to 'main'");
                 brain::BrainKind::Main
             }),
+        }
+    }
+
+    /// Parse the configured `q3char` string into a `Q3CharPreset`. `None` (absent) → `None`
+    /// (skill-derived default); an unrecognized value falls back to `None` (logged).
+    pub fn q3char_preset(&self) -> Option<brain::Q3CharPreset> {
+        use clap::ValueEnum;
+        match self.q3char.as_deref() {
+            None => None,
+            Some(s) => brain::Q3CharPreset::from_str(s, true)
+                .map(Some)
+                .unwrap_or_else(|_| {
+                    tracing::warn!(q3char = s, "unknown [fleet].q3char; ignoring");
+                    None
+                }),
         }
     }
 

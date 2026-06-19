@@ -70,6 +70,7 @@ fn build_q3_roundtrips_to_seek_ltg() {
         BrainKind::Quake3,
         BotSkill::new(9, brain::Personality::Balanced),
         BrainConfig::default(),
+        None,
     );
     assert_eq!(brain.status(), "seek-ltg");
 }
@@ -82,6 +83,7 @@ fn q3_fires_at_a_visible_enemy_after_reaction() {
         BrainKind::Quake3,
         BotSkill::new(9, brain::Personality::Balanced),
         BrainConfig::default(),
+        None,
     );
     let cm = open_world();
     let view = view_with_enemy("models/weapons/v_rail/tris.md2", 20);
@@ -123,6 +125,7 @@ fn q3_requests_a_better_weapon_against_a_ranged_enemy() {
         BrainKind::Quake3,
         BotSkill::new(7, brain::Personality::Balanced),
         BrainConfig::default(),
+        None,
     );
     let cm = open_world();
     // We "hold" a railgun on the wire but the brain tracks its own optimistic held weapon
@@ -155,6 +158,7 @@ fn q3_roams_with_no_enemy() {
         BrainKind::Quake3,
         BotSkill::new(5, brain::Personality::Balanced),
         BrainConfig::default(),
+        None,
     );
     let cm = open_world();
     let view = Worldview::from_frame(&Frame::default(), &ConfigStrings::default(), 0);

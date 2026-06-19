@@ -224,6 +224,54 @@ impl Default for Q3Character {
     }
 }
 
+/// A selectable named Q3 personality (Plan 38 roster). A clap `ValueEnum` so `--q3char <name>`
+/// picks one; each maps to a [`Q3Character`] preset and carries a stable [`tag`](Self::tag) for
+/// per-character bot names + scoreboard grouping.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum Q3CharPreset {
+    /// Low skill, high spray, weak aim ([`Q3Character::grunt`]).
+    Grunt,
+    /// High aim skill, precise, low firethrottle ([`Q3Character::major`]).
+    Major,
+    /// High aggression + jumper, mobile brawler ([`Q3Character::sarge`]).
+    Sarge,
+    /// High camper/alertness, low aggression ([`Q3Character::camper`]).
+    Camper,
+}
+
+impl Q3CharPreset {
+    /// The `Q3Character` this preset selects.
+    pub fn character(self) -> Q3Character {
+        match self {
+            Q3CharPreset::Grunt => Q3Character::grunt(),
+            Q3CharPreset::Major => Q3Character::major(),
+            Q3CharPreset::Sarge => Q3Character::sarge(),
+            Q3CharPreset::Camper => Q3Character::camper(),
+        }
+    }
+
+    /// Stable kebab tag for names / scoreboard grouping.
+    pub fn tag(self) -> &'static str {
+        match self {
+            Q3CharPreset::Grunt => "grunt",
+            Q3CharPreset::Major => "major",
+            Q3CharPreset::Sarge => "sarge",
+            Q3CharPreset::Camper => "camper",
+        }
+    }
+
+    /// A distinct Q2 player skin (`model/skin`) per character, so the roster is visually
+    /// recognizable in-game and on the scoreboard.
+    pub fn skin(self) -> &'static str {
+        match self {
+            Q3CharPreset::Grunt => "male/grunt",
+            Q3CharPreset::Major => "male/major",
+            Q3CharPreset::Sarge => "male/sarge",
+            Q3CharPreset::Camper => "female/athena",
+        }
+    }
+}
+
 /// Does the **held** weapon have enough ammo to count toward aggression? Thresholds mirror
 /// the Q3 ladder (`ai_dmq3.c:2199`, distilled §2), read against the only ammo we see —
 /// `STAT_AMMO`, the held weapon's count. Weapons that are never a "real" aggression weapon
@@ -495,6 +543,31 @@ mod tests {
         // Neutral aggression (0.5) → exactly 50.
         let neutral = Q3Character::from_skill(5);
         assert!((neutral.retreat_threshold() - 50.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn presets_map_to_characters_and_tags() {
+        use clap::ValueEnum;
+        assert_eq!(
+            Q3CharPreset::from_str("grunt", true),
+            Ok(Q3CharPreset::Grunt)
+        );
+        assert_eq!(
+            Q3CharPreset::from_str("major", true),
+            Ok(Q3CharPreset::Major)
+        );
+        assert!(Q3CharPreset::from_str("nope", true).is_err());
+        assert_eq!(Q3CharPreset::Sarge.character(), Q3Character::sarge());
+        assert_eq!(Q3CharPreset::Camper.tag(), "camper");
+        // Each preset has a distinct skin.
+        let skins = [
+            Q3CharPreset::Grunt.skin(),
+            Q3CharPreset::Major.skin(),
+            Q3CharPreset::Sarge.skin(),
+            Q3CharPreset::Camper.skin(),
+        ];
+        let unique: std::collections::HashSet<_> = skins.iter().collect();
+        assert_eq!(unique.len(), 4, "distinct skins per character");
     }
 
     #[test]
