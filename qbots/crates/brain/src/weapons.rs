@@ -130,6 +130,63 @@ impl Weapon {
         }
     }
 
+    /// Quake 3 aggression tier for this weapon — the 0–100 score the **held**
+    /// weapon contributes to [`crate::q3char::bot_aggression`] (`ai_dmq3.c:2199`,
+    /// `BotAggression`). Q3 scans a full inventory for the *best* owned weapon; on
+    /// the Q2 wire we only see the held weapon, which (Q2 auto-switches to best on
+    /// pickup) is a decent proxy. The Q3 tier ladder mapped onto Q2 weapons
+    /// (distilled `quake3.md` §2): BFG=100, Railgun=95, Hyperblaster=90,
+    /// RocketLauncher=90, GrenadeLauncher=80, Super/Shotgun=50, Machine/Chaingun=25,
+    /// Blaster=0. The caller still gates each tier on the held weapon's ammo.
+    pub fn power_tier(self) -> u8 {
+        match self {
+            Self::Bfg10k => 100,
+            Self::Railgun => 95,
+            Self::Hyperblaster => 90,
+            Self::RocketLauncher => 90,
+            Self::GrenadeLauncher => 80,
+            Self::SuperShotgun => 50,
+            Self::Shotgun => 50,
+            Self::Machinegun => 25,
+            Self::Chaingun => 25,
+            Self::Blaster => 0,
+        }
+    }
+
+    /// Resolve a Q2 **view-weapon model** path (e.g. `models/weapons/v_rail/tris.md2`,
+    /// the `gunindex` configstring) to a [`Weapon`]. This is how an external client
+    /// learns which weapon it is *holding* — the playerstate carries only `gunindex`
+    /// (a CS_MODELS index), and the view-model name disambiguates it. Mapping from
+    /// `g_items.c` precache (`v_blast/v_shotg/v_shotg2/v_machn/v_chain/v_launch/
+    /// v_rocket/v_hyperb/v_rail/v_bfg`). Returns `None` for non-weapon models.
+    pub fn from_view_model(model_str: &str) -> Option<Self> {
+        let s = model_str.to_ascii_lowercase();
+        // Order matters: check `v_shotg2` (SSG) before `v_shotg` (SG).
+        if s.contains("v_shotg2") {
+            Some(Self::SuperShotgun)
+        } else if s.contains("v_shotg") {
+            Some(Self::Shotgun)
+        } else if s.contains("v_blast") {
+            Some(Self::Blaster)
+        } else if s.contains("v_machn") {
+            Some(Self::Machinegun)
+        } else if s.contains("v_chain") {
+            Some(Self::Chaingun)
+        } else if s.contains("v_launch") {
+            Some(Self::GrenadeLauncher)
+        } else if s.contains("v_rocket") {
+            Some(Self::RocketLauncher)
+        } else if s.contains("v_hyperb") {
+            Some(Self::Hyperblaster)
+        } else if s.contains("v_rail") {
+            Some(Self::Railgun)
+        } else if s.contains("v_bfg") {
+            Some(Self::Bfg10k)
+        } else {
+            None
+        }
+    }
+
     /// Minimum seconds between shots (Eraser `fire_interval`, `bot_wpns.c`).
     /// `0.0` = every frame (chain-/machine-/hyper-blaster). Source: distilled
     /// `eraser.md` §5 fire-interval table.
@@ -255,5 +312,58 @@ mod tests {
     fn select_best_keeps_held_when_near_best() {
         // If we already hold the top weapon, no switch is requested.
         assert_eq!(select_best_weapon(Weapon::Railgun, 2000.0), Weapon::Railgun);
+    }
+
+    #[test]
+    fn power_tier_ranks_q3_aggression_ladder() {
+        // BFG > Railgun > {RL,HB} > GL > {SSG,SG} > {MG,CG} > Blaster (distilled §2).
+        assert_eq!(Weapon::Bfg10k.power_tier(), 100);
+        assert_eq!(Weapon::Railgun.power_tier(), 95);
+        assert!(Weapon::Bfg10k.power_tier() > Weapon::Railgun.power_tier());
+        assert!(Weapon::Railgun.power_tier() > Weapon::RocketLauncher.power_tier());
+        assert_eq!(
+            Weapon::RocketLauncher.power_tier(),
+            Weapon::Hyperblaster.power_tier()
+        );
+        assert!(Weapon::RocketLauncher.power_tier() > Weapon::GrenadeLauncher.power_tier());
+        assert!(Weapon::GrenadeLauncher.power_tier() > Weapon::SuperShotgun.power_tier());
+        assert_eq!(
+            Weapon::SuperShotgun.power_tier(),
+            Weapon::Shotgun.power_tier()
+        );
+        assert!(Weapon::Shotgun.power_tier() > Weapon::Machinegun.power_tier());
+        assert_eq!(
+            Weapon::Machinegun.power_tier(),
+            Weapon::Chaingun.power_tier()
+        );
+        assert!(Weapon::Machinegun.power_tier() > Weapon::Blaster.power_tier());
+        assert_eq!(Weapon::Blaster.power_tier(), 0);
+    }
+
+    #[test]
+    fn from_view_model_resolves_held_weapon() {
+        assert_eq!(
+            Weapon::from_view_model("models/weapons/v_rail/tris.md2"),
+            Some(Weapon::Railgun)
+        );
+        // SSG must win over SG (substring `v_shotg` is in both `v_shotg` and `v_shotg2`).
+        assert_eq!(
+            Weapon::from_view_model("models/weapons/v_shotg2/tris.md2"),
+            Some(Weapon::SuperShotgun)
+        );
+        assert_eq!(
+            Weapon::from_view_model("models/weapons/v_shotg/tris.md2"),
+            Some(Weapon::Shotgun)
+        );
+        assert_eq!(
+            Weapon::from_view_model("models/weapons/v_launch/tris.md2"),
+            Some(Weapon::GrenadeLauncher)
+        );
+        assert_eq!(
+            Weapon::from_view_model("models/weapons/v_bfg/tris.md2"),
+            Some(Weapon::Bfg10k)
+        );
+        assert_eq!(Weapon::from_view_model("players/male/tris.md2"), None);
+        assert_eq!(Weapon::from_view_model(""), None);
     }
 }
