@@ -27,6 +27,7 @@ pub mod recorder;
 pub mod recover;
 pub mod skill;
 pub mod steer;
+pub mod water;
 pub mod weapons;
 
 // The brain plugin contract + bundled I/O (Plan 23). The root `Brain` is the **trait** (the

@@ -653,12 +653,13 @@ fn box_on_plane_side(b: &Aabb, p: &Plane) -> i8 {
     sides
 }
 
-/// A layered world for water-nav tests (Plan 39): a solid floor for all `z < 0`, a water
-/// volume in the central channel `-64 ≤ x ≤ 64` for `0 ≤ z < 120`, and air everywhere
-/// else. Dry floor nodes form on the side ledges (`|x| > 64`); swim nodes fill the channel;
-/// an entry/exit swim edge bridges them. `pub(crate)` so the `navgraph` tests can build it.
-#[cfg(test)]
-pub(crate) fn water_channel_world() -> CollisionModel {
+/// A layered world for water-nav tests (Plan 39/40): a solid floor for all `z < 0`, a water
+/// volume in the central channel `-64 ≤ x ≤ 64` for `0 ≤ z < 120`, and air everywhere else.
+/// Dry floor nodes form on the side ledges (`|x| > 64`); swim nodes fill the channel; an
+/// entry/exit swim edge bridges them. Test-support only — exposed (doc-hidden) so dependent
+/// crates' tests (`brain::water`) can build a water collision model without a real BSP.
+#[doc(hidden)]
+pub fn water_channel_world() -> CollisionModel {
     let mk = |normal: [f32; 3], dist: f32, typ: i32| {
         let sb = (0..3).fold(0u8, |b, j| if normal[j] < 0.0 { b | (1 << j) } else { b });
         Plane {

@@ -22,8 +22,8 @@ pub use build::{
     ELEVATOR_PENALTY, GRID_SPACING, JUMP_SPACING,
 };
 pub use collision::{
-    CollisionModel, Trace, CONTENTS_LAVA, CONTENTS_SLIME, CONTENTS_SOLID, CONTENTS_WATER,
-    CONTENTS_WINDOW, MASK_SOLID, MASK_WATER,
+    water_channel_world, CollisionModel, Trace, CONTENTS_LAVA, CONTENTS_SLIME, CONTENTS_SOLID,
+    CONTENTS_WATER, CONTENTS_WINDOW, MASK_SOLID, MASK_WATER,
 };
 pub use mapcache::{load as load_mapcache, save as save_mapcache, Fingerprint};
 pub use navgraph::{walkable_stair, EdgeKind, NavGraph, HULL_MAXS, HULL_MINS, STAIR_MAX, STEP};
