@@ -178,3 +178,27 @@ T6 gate cleared; plan closed.
   K/D 2.00 vs main 3/4 K/D 0.75**. Pure-q3 fleet (6 navmodes ×2, 90s): **9 frags, 0 panics, 0
   kicks**; q3-race best (K/D 2.50). q3 connects, navigates multi-level, perceives, fights, frags —
   competitive with main.
+
+## 2026-06-19 — Plan 38: Quake 3 personality roster (`--q3char`/`--q3chars`)
+- Turned the single default `q3` brain (Plan 37) into a selectable **roster** of named Q3
+  characters. Additive; non-`q3` brains unchanged.
+- `q3char::Q3CharPreset` (clap `ValueEnum`: `grunt`/`major`/`sarge`/`camper`) — `character()` →
+  the `Q3Character` preset, `tag()` for names/scoreboard, `skin()` for a distinct per-character
+  Q2 skin (male/grunt, male/major, male/sarge, female/athena).
+- Wiring: `build_brain` gained an `Option<Q3CharPreset>` arg (only the `Quake3` arm reads it;
+  `None` → `Q3Character::from_skill(skill)`, the Plan 37 default — every other arm + scenario pass
+  `None`). `--q3char` on `connect-one`/`run`, `[fleet].q3char` config (+ `q3char_preset()`),
+  threaded through `bot_task`/`bot_supervisor_loop`/`run_single`/`run_fleet`. A selected character
+  pins its skin even as a single bot.
+- `competition --q3chars grunt,major,…` — a per-character group axis that **only expands the `q3`
+  brain** (others get a single `None` sub-group). Group = `(mode, brain, q3char?)`; tag becomes
+  `q3-grunt-astar` etc.; disjoint qport blocks per group; each character wears its own skin. Group
+  counting (`groups_per_mode`) folds the variable char-count into the maxclients clamp.
+- **T3 observed-inventory: DEFERRED.** The Plan 37 blaster-floor already makes held-weapon
+  aggression competitive (q3 K/D 2.0 vs main 0.75; roster spread clean), so mining pickups/
+  obituaries for a "best-owned" weapon is unnecessary for now — left as a future option (the
+  `bot_aggression` doc already flags it). No `observed.rs` change.
+- **T4 LIVE TUNING (q2dm1, 160 s, 8 q3 bots): presets validated, no float changes.** Frag spread
+  is intentional + balanced: **major 5/1 (K/D 5.00, precise), sarge 5/4 (1.25, aggressive/mobile),
+  camper 1/1 (1.00, cautious), grunt 0/7 (0.00, cannon fodder)**. 0 panics. Recorded in
+  `mode_perf.md`. The Plan 36 preset value sets stand as-is.
