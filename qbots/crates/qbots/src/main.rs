@@ -190,8 +190,13 @@ enum Cmd {
         /// `{modes} × {brains}` cross product. e.g. `--brains main,q3`.
         #[arg(long)]
         brains: Option<String>,
+        /// Comma-separated Q3 personalities to field for the `q3` brain (e.g.
+        /// `--q3chars grunt,major,sarge,camper`). Each becomes its own group/skin. Ignored by
+        /// non-`q3` brains. Absent → one default-character `q3` group.
+        #[arg(long = "q3chars")]
+        q3chars: Option<String>,
         /// Base qport; group `g` bot `i` uses `base + g*count + i` (disjoint per-group blocks,
-        /// group = a (mode,brain) pair). Per-process default if omitted.
+        /// group = a (mode,brain[,q3char]) tuple). Per-process default if omitted.
         #[arg(long)]
         qport_base: Option<u16>,
     },
@@ -1677,6 +1682,7 @@ async fn main() -> ExitCode {
             count,
             modes,
             brains,
+            q3chars,
             qport_base,
         } => {
             if count == 0 {
@@ -1730,6 +1736,26 @@ async fn main() -> ExitCode {
                     out
                 }
             };
+            // Optional Q3 personality roster (only fields the `q3` brain). Empty → one
+            // default-character group.
+            let q3chars: Vec<brain::Q3CharPreset> = match q3chars {
+                None => Vec::new(),
+                Some(list) => {
+                    let mut out = Vec::new();
+                    for tok in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                        match <brain::Q3CharPreset as ValueEnum>::from_str(tok, true) {
+                            Ok(c) => out.push(c),
+                            Err(_) => {
+                                tracing::error!(
+                                    "unknown q3char '{tok}' (valid: grunt, major, sarge, camper)"
+                                );
+                                return ExitCode::FAILURE;
+                            }
+                        }
+                    }
+                    out
+                }
+            };
             // One distinct skin per mode so the fleets are tellable apart on sight.
             let mut rng = skins::Rng::new();
             let skins_per_mode: Vec<Option<String>> =
@@ -1762,6 +1788,7 @@ async fn main() -> ExitCode {
                 addr,
                 modes,
                 brains,
+                q3chars,
                 count,
                 qport_base,
                 skins_per_mode,
