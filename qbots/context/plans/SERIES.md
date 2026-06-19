@@ -40,6 +40,9 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 | **34** | q2dm3 nav: diagnostics + resilient cache batch | 17, 18 | done | Tooling + unblock: `navinspect QBOTS_LIVE=1` (inspect a map that fails the gate), compgaps flat-gap walkability fix, q2dm3 fragmentation diagnosis, and `generate-map-cache --allow-failures` (caches good maps, names failures). Diagnosis found the regression is **broad (5/8 stock maps fail)**, not a q2dm3 quirk → deep nav fix split to Plan 35. |
 | **35** | q2dm nav connectivity regression (5/8 maps) | 34 | pending | Root-cause + fix the regression failing `check_spawn_connectivity` on q2dm2/3/5/6/7: suspect `walkable_stair` floor-check (`662580e69`) over-rejecting real cross-floor stairs + `BRIDGE_HDIST` 512→256 cut + missing z-band tread sampling + lift anchoring. Bisect-driven; restore full spawn connectivity (q2dm7 may stay 5/6). |
 | **20** | Hybrid navigation modes | 14, 10 | done | Four `hybrid-*` `--mode` backends combining the A* waypoint graph + navmesh, selectable alongside the untouched `astar`/`navmesh` controls: `hybrid-fallback` (A* primary, navmesh on stuck), `hybrid-race` (plan both, run winner), `hybrid-hier` (navmesh corridor + A* local), `hybrid-segment` (navmesh open + A* jump links). Thin `Navigator` supervisors over both sub-drivers (`brain::hybrid`); one `build_navigator` factory wires both dispatch sites. Code complete + unit-tested; **live A/B against the Plan 10 baselines still pending** (needs a running server). |
+| **36** | Quake 3 character + aggression core | 23, 06 | pending | Port Q3's personality + decision scalars into a pure, unit-tested `brain::q3char`: `Q3Character` (named [0,1] traits, presets, skill mapping), `bot_aggression`/`bot_feeling_bad` (`ai_dmq3.c:2199`, the engage/disengage scalar) adapted to wire-visible inventory (held-weapon proxy), `Weapon::power_tier()`. No brain/CLI yet — the tested primitives Plan 37 assembles. Research: `context/distilled/quake3.md` §2–3. |
+| **37** | Quake 3 brain plugin (`q3`) | 36, 24, 25 | pending | `Q3Brain` (`BrainKind::Quake3`, `--brain q3`) — Q3's node FSM (Seek_LTG/NBG, Battle_Fight/Chase/Retreat/NBG; `ai_dmnet.c`) with aggression-gated retreat/chase, Q3 enemy selection (alertness range, awareness FOV, LOS), and the Q3 aim/fire model (per-weapon accuracy, reaction-time sight gate, fire-throttle duty cycle, radial ground-aim, self-preservation abort, circle-strafe + jump/crouch dodge). Reuses `Navigator`/`steer`/`recover`/`los`; injected nav, no `MainBrain` fork. Wired through `build_brain`/CLI/config/competition; deterministic FSM/fire tests + live q2dm1 A/B vs `main`. Research: `context/distilled/quake3.md` §1, §4–7. |
+| **38** | Quake 3 personality roster + tuning | 37, 21 | pending | Turn `q3` into a selectable roster of named Q3 characters (`--q3char`/`[fleet].q3char`/`competition --q3chars`) with distinct skins/names; optional observed-inventory upgrade (best-*owned* weapon for aggression via pickup/obituary mining in `observed.rs`); live tuning pass on q2dm1 so Grunt/Major/Sarge/Camper are distinct + balanced. Reference shapes: `vendor/Quake-III-Arena/.../bots/*.c` (distill, don't commit). |
 
 **Milestones**
 - After **03**: a bot connects and shows in the server's player list.
@@ -68,8 +71,14 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
   scenario duplication is gone (Plan 22 T4 closed); all 6 navmodes still match `mode_perf.md`.
 - After **27–33**: bots make real persona-driven tactical decisions (weapon matchups,
   third-party disengage, resource seeking, elevators, underwater, danger preference).
+- After **36**: Quake 3's aggression scalar + character personality exist as pure, tested
+  `brain::q3char` primitives (no brain yet).
+- After **37**: a full Quake-3-derived brain (`--brain q3`) connects and plays deathmatch with
+  Q3's node FSM, aggression-gated retreat/chase, and Q3 aim/fire texture — a sibling to `main`.
+- After **38**: `q3` is a roster of recognizably different, tuned Q3 personalities fielded via
+  `--q3char`/competition.
 
-> **Brain-notes discipline (Plans 23–33):** every brain plan appends a dated section to
+> **Brain-notes discipline (Plans 23–33, 36–38):** every brain plan appends a dated section to
 > `context/brain_notes.md` (running log, same shape as `map_errors.notes.log.md`). It is a
 > verification-checklist item in each brain plan — not optional.
 
