@@ -2,7 +2,7 @@
 //!
 //! A Q2 server replies to the connectionless packet `\xff\xff\xff\xffstatus\n`
 //! with `\xff\xff\xff\xffprint\n` + `SV_StatusString()` (`sv_main.c:92`):
-//! the server infostring on one line (`\map\q2dm1\…\maxclients\16\…`), then one
+//! the server infostring on one line (`\mapname\q2dm1\…\maxclients\16\…`), then one
 //! line per connected client: `<frags> <ping> "<name>"`. We parse that into a
 //! report so `qbots status` can confirm our bots are connected and fragging.
 
@@ -48,7 +48,12 @@ pub fn parse_status_body(body: &str) -> StatusReport {
     let mut lines = body.lines();
     let info = lines.next().unwrap_or("");
     StatusReport {
-        map: infostring_value(info, "map").map(str::to_owned),
+        // Q2 servers publish the level under the serverinfo key `mapname`
+        // (`vendor/yquake2/src/server/sv_init.c:366`, CVAR_SERVERINFO). Older/other
+        // servers occasionally use `map`, so fall back to it.
+        map: infostring_value(info, "mapname")
+            .or_else(|| infostring_value(info, "map"))
+            .map(str::to_owned),
         maxclients: infostring_value(info, "maxclients").and_then(|v| v.parse().ok()),
         infostring_player_count: infostring_value(info, "players").and_then(|v| v.parse().ok()),
         players: lines.filter_map(parse_player_line).collect(),
@@ -88,7 +93,7 @@ mod tests {
 
     #[test]
     fn parses_infostring_and_players() {
-        let body = "\\gamename\\baseq2\\map\\q2dm1\\maxclients\\16\\players\\3\\protocol\\34\n\
+        let body = "\\gamename\\baseq2\\mapname\\q2dm1\\maxclients\\16\\players\\3\\protocol\\34\n\
                     15 50 \"qb0\"\n\
                     8 65 \"qb1\"\n\
                     0 0 \"human\"\n";
@@ -111,7 +116,7 @@ mod tests {
 
     #[test]
     fn parses_full_oob_packet() {
-        let pkt = b"\xff\xff\xff\xffprint\n\\map\\q2dm1\\maxclients\\8\n5 40 \"qb0\"\n";
+        let pkt = b"\xff\xff\xff\xffprint\n\\mapname\\q2dm1\\maxclients\\8\n5 40 \"qb0\"\n";
         let r = parse_status_response(pkt).unwrap();
         assert_eq!(r.map.as_deref(), Some("q2dm1"));
         assert_eq!(r.maxclients, Some(8));
@@ -128,14 +133,33 @@ mod tests {
 
     #[test]
     fn name_with_spaces_preserved() {
-        let body = "\\map\\q2dm1\n10 30 \"My Cool Bot\"\n";
+        let body = "\\mapname\\q2dm1\n10 30 \"My Cool Bot\"\n";
         let r = parse_status_body(body);
         assert_eq!(r.players[0].name, "My Cool Bot");
     }
 
     #[test]
+    fn real_server_uses_mapname_key() {
+        // Yamagi/q2pro publish the level as `mapname` (CVAR_SERVERINFO), not `map`.
+        let r = parse_status_body("\\mapname\\q2dm3\\maxclients\\16\n");
+        assert_eq!(r.map.as_deref(), Some("q2dm3"));
+    }
+
+    #[test]
+    fn legacy_map_key_still_parsed() {
+        let r = parse_status_body("\\map\\q2dm3\n");
+        assert_eq!(r.map.as_deref(), Some("q2dm3"));
+    }
+
+    #[test]
+    fn missing_map_is_none() {
+        let r = parse_status_body("\\gamename\\baseq2\\maxclients\\16\n");
+        assert_eq!(r.map, None);
+    }
+
+    #[test]
     fn blank_and_garbage_lines_skipped() {
-        let body = "\\map\\q2dm1\n\nnot a player line\n3 20 \"qb0\"\n";
+        let body = "\\mapname\\q2dm1\n\nnot a player line\n3 20 \"qb0\"\n";
         let r = parse_status_body(body);
         assert_eq!(r.player_count(), 1, "only the valid player line counts");
     }
