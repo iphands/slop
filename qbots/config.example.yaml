@@ -1,11 +1,36 @@
-# qbots configuration. Copy to `config.yaml` and adjust for your machine.
-# (`config.yaml` is gitignored — it holds machine-specific paths.)
-server:
-  host: noir.lan        # server hostname or IP (DNS-resolved at connect)
-  port: 27910           # Q2 server port
+# qbots configuration — TEMPLATE.
+#
+# Copy to `config.yaml` and edit for your machine:
+#
+#     cp config.example.yaml config.yaml
+#
+# `config.yaml` is gitignored (it holds machine-specific paths) — never commit it.
+# All values below are DUMMIES; replace them. Commented lines show the default a
+# field falls back to when omitted.
 
+# ── Server to connect the bots to ──────────────────────────────────────────────
+server:
+  host: q2.example.com    # server hostname or IP (DNS-resolved at connect)
+  port: 27910             # Q2 server port (stock default 27910)
+
+# ── On-disk Quake 2 data ───────────────────────────────────────────────────────
+# A local mount/copy of the server's `baseq2` dir — qbots reads `.bsp` maps from it
+# (loose files *and* inside pak0..pak9 archives) to build the world model.
 paths:
-  # Local mount of the server's baseq2 dir — used by Plan 05 to read .bsp maps
-  # (loose files *and* inside pak0/pak1 archives).
-  server_cfg: /mnt/noir/scratch/games/q2/baseq2/server.cfg
-  baseq2: /mnt/noir/scratch/games/q2/baseq2
+  # `server.cfg` is the SERVER's config (rcon password, hostname, maps…). qbots
+  # only references the path; it does NOT parse or send it — that's qctrl's job.
+  # Keep any real rcon password out of this repo.
+  server_cfg: /path/to/quake2/baseq2/server.cfg
+  baseq2: /path/to/quake2/baseq2
+
+# ── Fleet roster — `qbots run` spawns this many bots ───────────────────────────
+# Omit the whole block to disable the fleet (then use `qbots run --count N`).
+fleet:
+  count: 8                # bots to spawn (default: 0 = fleet disabled)
+  # name_prefix: qb       # bots are named <prefix>0, <prefix>1, … (default: qb)
+  # qport_base: 28000     # bot i uses qport_base + i; must be distinct (default: 28000)
+  # connect_stagger_ms: 250  # delay between connects, ms (default: 250)
+  # reconnect: true       # restart a bot that drops, with backoff (default: true)
+  # max_reconnects: 0     # cap reconnect attempts; 0 = unlimited (default: 0)
+  # max_bots: 0           # hard cap regardless of count; 0 = uncapped (default: 0)
+                          #   leave server maxclients headroom for humans

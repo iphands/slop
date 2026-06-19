@@ -38,11 +38,11 @@ collision model + navigation graph parsed locally.
 
    ```yaml
    server:
-     host: noir.lan        # server hostname or IP (DNS-resolved at connect)
+     host: q2.example.com  # server hostname or IP (DNS-resolved at connect)
      port: 27910
    paths:
-     server_cfg: /mnt/noir/scratch/games/q2/baseq2/server.cfg
-     baseq2:     /mnt/noir/scratch/games/q2/baseq2
+     server_cfg: /path/to/quake2/baseq2/server.cfg
+     baseq2:     /path/to/quake2/baseq2
    # Fleet roster — `qbots run` spawns this many bots.
    fleet:
      count: 8
