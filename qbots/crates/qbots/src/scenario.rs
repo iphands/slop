@@ -119,6 +119,13 @@ pub async fn run_scenario(
     let (scenario_name, goal_origin, goal_label, spawn_origins) =
         resolve_goal(&bsp, &map, &goal_kind)?;
 
+    // For a weapon goal, the scenario is only possible if some spawn can reach
+    // the goal node. An isolated goal (stranded in a disconnected nav component)
+    // makes the run impossible — a nav-graph bug per the all-locations-mutually-
+    // reachable invariant. Default true; the spawn→goal A* sweep below sets it
+    // for weapon goals (spawn goals are always reachable, so they stay true).
+    let mut goal_reachable_from_spawn = true;
+
     // Seed the scenario goal position as an exact nav node when it isn't already one
     // of the DM spawns (T2). For FarthestSpawn the goal is always one of bsp_spawns
     // (already seeded); for Weapon the goal is a single weapon origin that may lie
@@ -161,10 +168,12 @@ pub async fn run_scenario(
                 neighbor_z_levels = ?neighbor_zs,
                 "goal node adj info"
             );
-            // Check A* from each spawn to goal
+            // Check A* from each spawn to goal; remember if *any* spawn reaches it.
+            let mut any_reach = false;
             for (i, sp) in bsp_spawns.iter().enumerate() {
                 if let Some(sp_idx) = graph.nearest(sp) {
                     let can_reach = graph.path(sp_idx, goal_idx).is_some();
+                    any_reach |= can_reach;
                     let sp_pos = graph.nodes[sp_idx];
                     tracing::info!(
                         spawn = i,
@@ -175,6 +184,7 @@ pub async fn run_scenario(
                     );
                 }
             }
+            goal_reachable_from_spawn = any_reach;
         }
     }
 
@@ -244,6 +254,19 @@ pub async fn run_scenario(
         total_spawns,
         "scenario nav graph"
     );
+
+    // Hard abort: if no spawn can reach the goal, the scenario is impossible.
+    // All Q2 dm map locations are mutually reachable by design — an isolated
+    // goal node is a bug in BSP parsing / collision / nav generation, never a
+    // legitimate map property. Diagnostics above have already been dumped.
+    if !goal_reachable_from_spawn {
+        crate::fatal!(
+            %map,
+            goal = %goal_label,
+            "scenario goal unreachable from every spawn — nav graph bug (goal node isolated); aborting before connecting"
+        );
+    }
+
     let graph = Arc::new(graph);
 
     // 3. Connect the bot (the same handshake `connect-one` uses).
