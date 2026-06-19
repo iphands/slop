@@ -541,14 +541,8 @@ pub(crate) async fn bot_task(
     stats: &supervisor::FleetStats,
     mode: NavMode,
 ) -> std::io::Result<()> {
-    use brain::fsm::{BehaviorIntent, BehaviorState};
-    use brain::nav::NavGoal;
     use brain::perception::Worldview;
-    use brain::steer::{move_from_world_dir, Steering};
-    use brain::{
-        BotSkill, CombatDriver, DangerDriver, MovementController, MovementIntent, Navigator,
-        Recovery, RecoveryAction,
-    };
+    use brain::{BotSkill, Brain, BrainConfig, MovementController, Navigator};
     use client::{Conn, ConnState};
     use q2proto::Usercmd;
     use std::time::Duration;
@@ -581,28 +575,20 @@ pub(crate) async fn bot_task(
     let mut ticker = time::interval(Duration::from_millis(100));
     let mut ticks: u32 = 0;
 
-    let mut fsm = BehaviorState::Roam;
-    let mut combat = CombatDriver::new();
-    let danger = DangerDriver::new();
     let mut move_ctrl = MovementController::new();
-    let mut skill = BotSkill::default();
-    let mut steering = Steering::new(skill.combat());
+    // The decision layer (Plan 22): owns combat/FSM/dodge/steering/recovery/skill/roam.
+    // Built early; learns the nav graph at map load via `set_map`. The `Navigator` is
+    // injected into `brain.tick` each frame — the brain uses nav, never owns it.
+    let mut brain = Brain::new(BotSkill::default(), BrainConfig::default());
     // Boxed behind the `Navigator` trait so the tick loop is backend-agnostic: `--mode`
     // picks A* (waypoint graph) or navmesh (polygons + funnel) at map load. `+ Send`
     // because this future is spawned on tokio and holds the driver across awaits.
     let mut nav_driver: Option<Box<dyn Navigator + Send>> = None;
-    // Roam goals are node indices into the A* graph; the navmesh backend ignores
-    // `NavGoal::Waypoint`, so a navmesh bot resolves them to world positions via this
-    // graph handle. Set alongside `nav_driver` at map load.
-    let mut nav_graph: Option<Arc<world::NavGraph>> = None;
     // Collision model the nav graph was built from — for LOS gating (Plan 11) and
     // reactive wall probes (Plan 13). Set when the map loads.
     let mut collision: Option<Arc<world::CollisionModel>> = None;
-    let mut roam_nodes: Vec<usize> = Vec::new();
-    let mut roam_idx: usize = 0;
     let mut map_loaded = false;
     let mut last_serverframe: Option<i32> = None;
-    let mut recovery = Recovery::new();
     let mut last_health: Option<i32> = None; // Track health across frames for damage detection
     let mut last_frags: Option<i32> = None; // Track frags for kill detection
 
@@ -688,8 +674,13 @@ pub(crate) async fn bot_task(
                             tracing::info!(map, bsp = %bsp_path, "loading nav graph");
                             // Shared across the fleet: built once per map, reused as Arc.
                             if let Some(map_nav) = nav_cache.get_or_build(cfg, &map) {
-                                roam_nodes = map_nav.roam_nodes.clone();
-                                nav_graph = Some(Arc::clone(&map_nav.graph));
+                                // The navmesh backend can't path to a bare A* node index,
+                                // so it resolves roam goals to world positions instead.
+                                brain.set_map(
+                                    map_nav.roam_nodes.clone(),
+                                    Arc::clone(&map_nav.graph),
+                                    matches!(mode, NavMode::Navmesh),
+                                );
                                 nav_driver = Some(build_navigator(
                                     mode,
                                     Arc::clone(&map_nav.graph),
@@ -734,10 +725,9 @@ pub(crate) async fn bot_task(
                                     tracing::error!(health = 0, "bot death detected");
                                     // Respawn resets us to the spawn loadout (Blaster)
                                     // and the server reseeds delta_angles; let the
-                                    // next frame's playerstate re-feed both.
-                                    combat.on_respawn();
-                                    // Eraser auto-skill: ease down after a death.
-                                    skill.on_death();
+                                    // next frame's playerstate re-feed both. `on_death`
+                                    // also eases the Eraser auto-skill down.
+                                    brain.on_death();
                                     stats.record_death(name);
                                     // Plan 08: record where we died (highest-confidence
                                     // danger) and force a replan so the new path avoids it.
@@ -770,7 +760,7 @@ pub(crate) async fn bot_task(
                         if let Some(prev) = last_frags {
                             if current_frags > prev {
                                 tracing::info!(frags = current_frags, gained = current_frags - prev, "*** FRAG ***");
-                                skill.on_kill();
+                                brain.on_kill();
                                 stats.record_kill(name);
                             }
                         }
@@ -788,7 +778,7 @@ pub(crate) async fn bot_task(
                             for text in conn.drain_prints() {
                                 obs.on_print(&text, name, frame.serverframe);
                             }
-                            let (w_danger, w_pop) = skill.heatmap_weights();
+                            let (w_danger, w_pop) = brain.heatmap_weights();
                             let overlay = obs.cost_overlay(w_danger, w_pop);
                             if let Some(nav) = nav_driver.as_mut() {
                                 nav.set_risk_overlay(overlay);
@@ -812,57 +802,6 @@ pub(crate) async fn bot_task(
                         // is rotated by the persistent spawn-yaw offset. (pmove.c:1255)
                         move_ctrl.set_delta_angles(frame.playerstate.pmove.delta_angles);
 
-                        // Health tracking is done above, before creating the view
-                        // No need to call view.detect_damage() here
-                        let jitter = (ticks as f32) * 0.1;
-                        let combat_dec =
-                            combat.evaluate(&view, &skill, jitter, collision.as_deref());
-
-                        // Pass combat target to FSM for navigation goal.
-                        // Only chase via nav when LOS holds (Plan 11 T4) — without
-                        // LOS the bot was walking into walls toward walled enemies.
-                        let fsm_intent = if let Some(target) = combat_dec.target_entity {
-                            let target_entity = view.entities()
-                                .find(|e| e.entity_number == target);
-                            let target_pos = target_entity
-                                .map(|e| e.origin)
-                                .unwrap_or(view.self_state().origin);
-
-                            // LOS check: only set Entity nav goal when the path is clear.
-                            let has_los = target_entity
-                                .and_then(|te| collision.as_deref().map(|cm| {
-                                    let eye = brain::los::eye_origin(view.self_state().origin.into());
-                                    brain::los::has_los_player(cm, eye, te.origin.into())
-                                }))
-                                .unwrap_or(true); // no cm yet → optimistic (old behavior)
-
-                            if has_los {
-                                if !matches!(fsm, BehaviorState::Engage { .. }) {
-                                    tracing::debug!("forcing FSM into Engage (target={})", target);
-                                    fsm = BehaviorState::Engage { target_entity: target };
-                                }
-                                tracing::trace!("combat target override: target={} pos={:?}", target, target_pos);
-                                BehaviorIntent {
-                                    nav_goal: Some(NavGoal::Entity(target_pos)),
-                                    should_pickup: None,
-                                }
-                            } else {
-                                // Target exists (grace-period fire still possible) but
-                                // no clear path → let FSM navigate (Hunt last-known pos).
-                                fsm.tick(&view, collision.as_deref())
-                            }
-                        } else {
-                            fsm.tick(&view, collision.as_deref())
-                        };
-
-                        let mut mv = MovementIntent::new();
-
-                        if combat_dec.should_fire {
-                            mv.attack();
-                        }
-
-                        let pos = view.self_state().origin;
-
                         // Measured frame delta for turn-rate limiting (Open Q1, Plan 12).
                         let current_sf = frame.serverframe;
                         let dt = if let Some(prev_sf) = last_serverframe {
@@ -873,245 +812,26 @@ pub(crate) async fn bot_task(
                         };
                         last_serverframe = Some(current_sf);
 
-                        if let Some(nav) = nav_driver.as_mut() {
-                            nav.update(pos, None);
+                        // The brain owns all per-frame decisions (Plan 22): combat, FSM,
+                        // goal selection, steering, stuck recovery, jump-edge, dodge. The
+                        // nav driver is injected (used, never owned); the brain returns a
+                        // MovementIntent + an optional weapon switch.
+                        let out = brain.tick(
+                            &view,
+                            nav_driver.as_deref_mut().map(|n| n as &mut dyn Navigator),
+                            collision.as_deref(),
+                            dt,
+                            ticks,
+                        );
 
-                            // Give-up watchdog: if we've chased this goal too long
-                            // without reaching a waypoint, abandon the current
-                            // combat target so we stop re-issuing the same stale
-                            // position and fall back to roaming.
-                            if nav.goal_abandoned() {
-                                combat.clear_target();
-                                fsm = BehaviorState::Roam;
-                            }
-
-                            let goal = if let Some(g) = fsm_intent.nav_goal {
-                                g
-                            } else if let Some((item_pos, _)) =
-                                brain::items::best_item_goal(&view, &skill)
-                            {
-                                // Seek the highest-value visible item (powerups,
-                                // armor, weapons) weighted by value/distance and
-                                // the bot's health need / quad_freak personality.
-                                NavGoal::Position(item_pos)
-                            } else if !roam_nodes.is_empty() {
-                                // Campers dwell ~5x longer per node (first-cut
-                                // camping; a true camp-node picker with cover/LOS
-                                // is a follow-up). Default roamer cycles every 5s.
-                                let dwell = if skill.camper { 250 } else { 50 };
-                                if ticks.is_multiple_of(dwell) {
-                                    roam_idx = (roam_idx + roam_nodes.len() / 7 + 1)
-                                        % roam_nodes.len();
-                                }
-                                let node = roam_nodes[roam_idx];
-                                // The navmesh backend doesn't index the A* graph's nodes, so
-                                // express the roam target as a world position it can path to.
-                                match (mode, nav_graph.as_deref()) {
-                                    (NavMode::Navmesh, Some(g)) => {
-                                        NavGoal::Position(Vec3::from(g.node_pos(node)))
-                                    }
-                                    _ => NavGoal::Waypoint(node),
-                                }
-                            } else {
-                                NavGoal::Position(pos)
-                            };
-
-                            nav.set_goal(goal, pos);
-                            // String-pull the path into longer straight runs (Plan 14 T1).
-                            if let Some(cm) = collision.as_deref() {
-                                nav.smooth_with_cm(cm, pos);
-                            }
-
-                            // Ideal-distance combat constants (Eraser BOT_IDEAL_DIST_FROM_ENEMY).
-                            const IDEAL_DIST: f32 = 160.0;
-                            const BACKUP_DIST: f32 = 80.0;
-
-                            // Resolve enemy position + distance (if we have a target in view).
-                            let enemy_dist_dir: Option<(f32, Vec3)> =
-                                combat_dec.target_entity.and_then(|t| {
-                                    view.entities()
-                                        .find(|e| e.entity_number == t)
-                                        .map(|enemy| {
-                                            let to = enemy.origin - pos;
-                                            let d = to.length();
-                                            let dir = if d > 1.0 { to / d } else { Vec3::X };
-                                            (d, dir)
-                                        })
-                                });
-
-                            // ── 1. Ideal view yaw (priority: fire-aim > enemy-face > path) ──
-                            let (ideal_yaw, ideal_pitch) = if combat_dec.should_fire {
-                                (combat_dec.aim_yaw, combat_dec.aim_pitch)
-                            } else if let Some((d, dir)) = enemy_dist_dir {
-                                if d < IDEAL_DIST {
-                                    // Face enemy while in ideal-distance range.
-                                    let yaw = dir.y.atan2(dir.x).to_degrees();
-                                    (yaw, 0.0)
-                                } else {
-                                    // Far from enemy — steer along the path toward them.
-                                    nav.pursue_target(pos)
-                                        .filter(|pt| (pt - pos).length_squared() > 1.0)
-                                        .map(|pt| {
-                                            let d = pt - pos;
-                                            (d.y.atan2(d.x).to_degrees(), 0.0)
-                                        })
-                                        .unwrap_or((steering.view_yaw(), 0.0))
-                                }
-                            } else {
-                                // No combat: steer along the path.
-                                nav.pursue_target(pos)
-                                    .filter(|pt| (pt - pos).length_squared() > 1.0)
-                                    .map(|pt| {
-                                        let d = pt - pos;
-                                        (d.y.atan2(d.x).to_degrees(), 0.0)
-                                    })
-                                    .unwrap_or((steering.view_yaw(), 0.0))
-                            };
-
-                            // ── 2. Rate-limit the yaw turn toward ideal ───────────────────
-                            let view_yaw = steering.change_yaw(ideal_yaw, dt);
-                            mv.look_at(view_yaw, ideal_pitch);
-
-                            // ── 3. World move direction + face-then-go mode ───────────────
-                            // T5 circle-strafe: when Engage + LOS holds, separate aim (view_yaw →
-                            // enemy) from walk (radial ± tangential). Eraser: combat 1 = no strafe.
-                            let is_engage_los = combat_dec.should_fire
-                                || matches!(fsm, BehaviorState::Engage { .. });
-                            let strafe_weight =
-                                if is_engage_los && skill.combat() > 1.5 { 0.7 } else { 0.0 };
-
-                            let (world_move_dir, face_then_go) =
-                                if let Some((d, dir)) = enemy_dist_dir {
-                                    if d < BACKUP_DIST {
-                                        // Back away from enemy while keeping aim on them.
-                                        let away =
-                                            Vec3::new(-dir.x, -dir.y, 0.0).normalize_or_zero();
-                                        // Add tangential even while backing (keeps bot moving).
-                                        let tan = Vec3::new(-dir.y, dir.x, 0.0)
-                                            * steering.strafe_tick(dt)
-                                            * strafe_weight;
-                                        ((away + tan).normalize_or_zero(), false)
-                                    } else if d < IDEAL_DIST {
-                                        // Hold ideal distance — pure circle-strafe tangentially.
-                                        let tan = Vec3::new(-dir.y, dir.x, 0.0)
-                                            * steering.strafe_tick(dt);
-                                        (tan.normalize_or_zero() * strafe_weight, false)
-                                    } else {
-                                        // Chase via nav look-ahead + light tangential strafe.
-                                        let nav_dir = nav
-                                            .pursue_target(pos)
-                                            .map(|pt| {
-                                                let d = pt - pos;
-                                                Vec3::new(d.x, d.y, 0.0).normalize_or_zero()
-                                            })
-                                            .unwrap_or(Vec3::ZERO);
-                                        if strafe_weight > 0.0 {
-                                            let tan = Vec3::new(-dir.y, dir.x, 0.0)
-                                                * steering.strafe_tick(dt)
-                                                * strafe_weight;
-                                            ((nav_dir + tan).normalize_or_zero(), false)
-                                        } else {
-                                            (nav_dir, true)
-                                        }
-                                    }
-                                } else {
-                                    // Roaming: follow path look-ahead.
-                                    let dir = nav
-                                        .pursue_target(pos)
-                                        .map(|pt| {
-                                            let d = pt - pos;
-                                            Vec3::new(d.x, d.y, 0.0).normalize_or_zero()
-                                        })
-                                        .unwrap_or(Vec3::ZERO);
-                                    (dir, true)
-                                };
-
-                            // ── 4. Arrive throttle (slows near final goal) ────────────────
-                            let arrive = nav
-                                .pursue_target(pos)
-                                .map(|pt| brain::steer::Steering::arrive_scale((pt - pos).length()))
-                                .unwrap_or(1.0);
-
-                            // ── 5. Decompose into view-relative (forward, side) ───────────
-                            let (fwd, side) =
-                                move_from_world_dir(world_move_dir, view_yaw, face_then_go);
-                            mv.move_forward(fwd * arrive);
-                            mv.move_side(side * arrive);
-
-                            // ── 6. Stuck recovery (Plan 13) ───────────────────────────────
-                            let has_nav_target = nav.pursue_target(pos).is_some();
-                            let engaging = matches!(fsm, BehaviorState::Engage { .. });
-                            let rec_action = recovery.evaluate(
-                                pos, dt,
-                                collision.as_deref(),
-                                view_yaw,
-                                has_nav_target,
-                                engaging,
-                            );
-                            match rec_action {
-                                RecoveryAction::None => {}
-                                RecoveryAction::Jump => {
-                                    tracing::debug!(?pos, "stuck — jump");
-                                    mv.jump();
-                                }
-                                RecoveryAction::Strafe { dir } => {
-                                    tracing::debug!(?pos, dir, "stuck — strafe");
-                                    mv.move_side(dir);
-                                }
-                                RecoveryAction::BackOffThenRepath => {
-                                    tracing::debug!(?pos, "stuck — back off + repath");
-                                    mv.move_forward(-0.5);
-                                    nav.force_replan();
-                                }
-                                RecoveryAction::UseHeading(yaw) => {
-                                    tracing::debug!(?pos, yaw, "no nav — steer free heading");
-                                    let r = yaw.to_radians();
-                                    let free_dir = Vec3::new(r.cos(), r.sin(), 0.0);
-                                    let (hfwd, hside) =
-                                        move_from_world_dir(free_dir, view_yaw, true);
-                                    mv.move_forward(hfwd);
-                                    mv.move_side(hside);
-                                }
-                            }
-
-                            // ── 7. Jump-edge activation (Plan 14 T2) ─────────────────────
-                            if nav.current_edge_is_jump() {
-                                mv.jump();
-                            }
-                        } else if !combat_dec.should_fire {
-                            // No nav graph loaded yet — just walk forward.
-                            mv.move_forward(1.0);
-                            if ticks.is_multiple_of(20) {
-                                mv.jump();
-                            }
-                        }
-
-                        // Request a weapon switch via `use <name>` stringcmd (Q2
-                        // ignores impulse). Queued as a reliable message; flushed
-                        // on the next transmit_cmd below.
-                        if let Some(req) = combat_dec.weapon_request {
-                            conn.queue_stringcmd(&format!("use {}", req.0.name()));
-                        }
-
-                        // Tactical override: dodge an incoming projectile. This is
-                        // frame-scale and takes precedence over nav/engage intent.
-                        // The dodge direction (world space) is projected onto the
-                        // bot's right vector → a view-relative `side` strafe so we
-                        // keep facing the target while stepping off the line.
-                        let dodge = danger.evaluate(&view, skill.combat());
-                        if dodge.is_active() {
-                            tracing::debug!(?dodge.strafe_dir, jump = dodge.jump, "dodging projectile");
-                            let yaw_rad = mv.yaw.to_radians();
-                            let right = Vec3::new(yaw_rad.sin(), -yaw_rad.cos(), 0.0);
-                            mv.side = dodge.strafe_dir.dot(right).clamp(-1.0, 1.0);
-                            mv.forward = 0.0;
-                            if dodge.jump {
-                                mv.jump();
-                            }
+                        // Request a weapon switch via `use <name>` stringcmd (Q2 ignores
+                        // impulse). Queued as a reliable message; flushed on transmit.
+                        if let Some(w) = out.weapon_request {
+                            conn.queue_stringcmd(&format!("use {}", w.name()));
                         }
 
                         move_ctrl.set_msec(dt);
-                        move_ctrl.build_cmd(mv)
+                        move_ctrl.build_cmd(out.intent)
                     } else {
                         Usercmd::default()
                     }
@@ -1134,7 +854,7 @@ pub(crate) async fn bot_task(
                                 ents = f.entities.len(),
                                 "origin=({:.1},{:.1},{:.1}) fsm={:?}",
                                 o[0], o[1], o[2],
-                                fsm
+                                brain.behavior()
                             );
                         }
                         None => tracing::debug!(state = ?conn.state(), "(no frame yet)"),

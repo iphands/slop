@@ -65,33 +65,31 @@ Phase-2 pull-up of elevator + heatmap *policy* (see end of file).
 
 ## Step-by-Step Tasks
 
-### T1: `Brain` skeleton
+### T1: `Brain` module — struct + lifted `tick` body
 **File**: `crates/brain/src/brain.rs` (new), `crates/brain/src/lib.rs`.
 Define `Brain`, `BrainConfig { combat_enabled: bool, goal_override: Option<NavGoal> }`,
 `BrainOutput { intent: MovementIntent, weapon_request: Option<Weapon> }`, `Brain::new(skill,
-roam_nodes, cfg)`, and empty hooks `on_kill`/`on_death`/`heatmap_weights`. Compose the
-existing sub-driver types as fields; **no logic moved yet**. Export from `lib.rs`. Unit-test
-construction + default config. Commit `task(T1)`.
+cfg)` + `set_map(roam_nodes, nav_graph, roam_as_position)`, hooks
+`on_kill`/`on_death`/`heatmap_weights`/`behavior`, and `tick(&mut self, view, nav: Option<&mut
+dyn Navigator>, cm, dt, ticks) -> BrainOutput`. Lift `main.rs` decision/steering body
+**verbatim** into `tick`, swapping locals for `self.*` + the injected `nav`. Guard combat
+behind `cfg.combat_enabled` and goal selection behind `cfg.goal_override` so the **default
+config reproduces today's behavior exactly**. (Skeleton + body land together — splitting them
+warns on unused fields.) Export from `lib.rs`. Unit-test construction + default config.
+Commit `task(T1)`.
 
-### T2: Move the decision/steering body into `Brain::tick`
-**File**: `crates/brain/src/brain.rs`, `crates/qbots/src/main.rs`.
-Lift `main.rs:818–1111` **verbatim** into `Brain::tick(&mut self, view, nav: &mut dyn
-Navigator, cm, dt, ticks) -> BrainOutput`, swapping locals (`nav_driver`/`combat`/`fsm`/
-`steering`/`recovery`/`danger`/`skill`/`roam_*`/`ticks`) for `self.*` and the injected `nav`.
-Guard combat paths behind `cfg.combat_enabled` and goal selection behind `cfg.goal_override`
-so the **default config reproduces today's behavior exactly**. Move the death/kill
-side-effects (`combat.on_respawn`, `skill.on_death`/`on_kill`) into `on_death`/`on_kill`.
+### T2: Thin out `bot_task` onto `Brain`
+**File**: `crates/qbots/src/main.rs`.
+Construct `Brain` early; `brain.set_map(...)` at map load (`roam_as_position = mode ==
+Navmesh`). Replace the moved body with: build `Worldview`, compute `dt`, call `brain.tick(...,
+nav_driver.as_deref_mut().map(|n| n as &mut dyn Navigator), ...)`, queue `use <weapon>` from
+`BrainOutput.weapon_request`, `move_ctrl.build_cmd(out.intent)`, transmit. Keep `heatmap_obs`
+feeding the overlay via `brain.heatmap_weights()`; route death/frag detection through
+`brain.on_death()` / `brain.on_kill()`; periodic log via `brain.behavior()`. Delete the
+now-dead locals (`fsm`/`combat`/`danger`/`skill`/`steering`/`recovery`/`roam_*`/`nav_graph`).
 Commit `task(T2)`.
 
-### T3: Thin out `bot_task`
-**File**: `crates/qbots/src/main.rs`.
-Replace the moved body with: build `Worldview`, compute `dt`, call `brain.tick(...)`, queue
-`use <weapon>` from `BrainOutput.weapon_request`, `move_ctrl.build_cmd(output.intent)`,
-transmit. Keep `heatmap_obs` feeding the overlay via `brain.heatmap_weights()`; route the
-existing death/frag detection through `brain.on_death()` / `brain.on_kill()`. Delete the
-now-dead locals. Commit `task(T3)`.
-
-### T4: Zero-behavior-change verification + close
+### T3: Zero-behavior-change verification + close
 **File**: tracker, `SERIES.md`.
 Run before vs after and diff:
 ```bash
@@ -101,15 +99,15 @@ cargo run -p qbots -- connect-one
 ```
 `reached` / `elapsed` (±1 tick) / flag counts (`B/W/H/A/R`) / exit codes must match the
 pre-refactor run. `cargo fmt` + `clippy -D warnings` + `cargo test` green. Record before/after
-SUMMARY lines in the tracker. Commit `task(T4)`. Then `git mv` plan + tracker to `completed/`
+SUMMARY lines in the tracker. Commit `task(T3)`. Then `git mv` plan + tracker to `completed/`
 and mark `SERIES.md` done (Rule C).
 
-### T5 (optional, separable): Migrate `scenario.rs` onto `Brain`
+### T4 (optional, separable): Migrate `scenario.rs` onto `Brain`
 **File**: `crates/qbots/src/scenario.rs`.
 Replace the duplicated decision/steering logic with a `Brain` built from `BrainConfig {
 combat_enabled: false, goal_override: Some(pinned) }`, retiring the Plan 15 parity
 duplication. Re-run the scenarios; identical `reached`/`elapsed`. If scope runs long, defer
-to a fast-follow plan rather than risk T4's clean diff. Commit `task(T5)`.
+to a fast-follow plan rather than risk T3's clean diff. Commit `task(T4)`.
 
 ## Critical Files
 
@@ -131,23 +129,22 @@ penalty, the heatmap overlay (all Phase 2).
 
 ## Open Questions / Risks
 
-1. **Scenario duplication (T5)** — biggest behavior-diff risk (combat-off, pinned-goal path).
-   *Mitigation*: land T1–T4 (bot_task only, byte-identical) first; keep T5 separable/deferrable.
+1. **Scenario duplication (T4)** — biggest behavior-diff risk (combat-off, pinned-goal path).
+   *Mitigation*: land T1–T3 (bot_task only, byte-identical) first; keep T4 separable/deferrable.
 2. **`ticks`/jitter coupling** — combat jitter + roam dwell derive from the loop's `ticks`.
    *Mitigation*: pass `ticks` into `tick`, don't re-derive inside Brain.
 3. **Heatmap stays in main this plan** — *Mitigation*: expose only `heatmap_weights()`; don't
    move `heatmap_obs`; resist scope creep.
 4. **"Zero behavior change" is the contract** — any SUMMARY drift means the lift wasn't
-   verbatim. *Mitigation*: T2 is a mechanical move; review the diff for logic edits before T4.
+   verbatim. *Mitigation*: T1's lift is mechanical; review the diff for logic edits before T3.
 
 ## Verification Checklist
 
-- [ ] T1: `Brain` constructs; unit test green; `cargo fmt` + `clippy -D warnings` + `test` clean.
-- [ ] T2: decision/steering body lives in `Brain::tick`; builds with zero warnings.
-- [ ] T3: `bot_task` is thin orchestration; dead locals removed; builds clean.
-- [ ] T4: `spawn-to-spawn` / `spawn-to-weapon` SUMMARY lines + exit codes match pre-refactor;
+- [x] T1: `Brain` constructs; `tick` holds the lifted body; unit tests green; clippy clean.
+- [x] T2: `bot_task` is thin orchestration; dead locals removed; clippy clean; tests green.
+- [ ] T3: `spawn-to-spawn` / `spawn-to-weapon` SUMMARY lines + exit codes match pre-refactor;
       `connect-one` boots without kick; fmt/clippy/test all green.
-- [ ] T5 (if in-scope): `scenario.rs` uses `Brain`; duplication removed; identical reach.
+- [ ] T4 (if in-scope): `scenario.rs` uses `Brain`; duplication removed; identical reach.
 
 ---
 

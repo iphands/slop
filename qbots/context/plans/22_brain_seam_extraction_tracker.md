@@ -1,7 +1,7 @@
 # Brain Seam Extraction — Tracker
 
 ## Overview
-- Status: 10% complete
+- Status: 70% complete (T0–T2 done; T3 verification pending, T4 scenario optional)
 - Start date: 2026-06-18
 - Deliverable: a single `brain::Brain` owning the decision sub-drivers; `bot_task` reduced to
   thin orchestration; byte-identical bot behavior (Plan 10 SUMMARY-line parity).
@@ -19,12 +19,11 @@ run fmt + `clippy -D warnings` + test before every commit.
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 0 | T0: plan + tracker + SERIES | `context/plans/22_*`, `SERIES.md` | in-progress | this file |
-| 1 | T1: Brain skeleton | `brain/src/brain.rs`, `lib.rs` | pending | types + hooks, no logic moved |
-| 2 | T2: lift body into `Brain::tick` | `brain/src/brain.rs`, `main.rs` | pending | verbatim; cfg guards for combat-off/goal-override |
-| 3 | T3: thin `bot_task` | `qbots/src/main.rs` | pending | brain.tick + move_ctrl + hooks; delete dead locals |
-| 4 | T4: zero-behavior verification | tracker, `SERIES.md` | pending | before/after SUMMARY parity; move to completed/ |
-| 5 | T5: migrate scenario.rs (optional) | `qbots/src/scenario.rs` | pending | combat-off, pinned-goal; or defer to follow-up |
+| 0 | T0: plan + tracker + SERIES | `context/plans/22_*`, `SERIES.md` | done | |
+| 1 | T1: Brain module + lifted `tick` body | `brain/src/brain.rs`, `lib.rs` | done | struct + ctor + `set_map` + hooks + verbatim tick; skeleton+body together (split warns on unused fields); 2 unit tests |
+| 2 | T2: thin `bot_task` onto Brain | `qbots/src/main.rs` | done | construct Brain early, `set_map` at map load; `brain.tick` + hooks + `behavior()` log; removed fsm/combat/danger/skill/steering/recovery/roam_*/nav_graph locals; clippy clean, 104 brain + full workspace tests green |
+| 3 | T3: zero-behavior verification | tracker, `SERIES.md` | pending | before/after SUMMARY parity; needs live server; move to completed/ |
+| 4 | T4: migrate scenario.rs (optional) | `qbots/src/scenario.rs` | pending | combat-off, pinned-goal; or defer to follow-up |
 
 ## Baseline (pre-refactor SUMMARY lines — fill in T4)
 | Scenario | reached | elapsed | flags (B/W/H/A/R) | exit |
