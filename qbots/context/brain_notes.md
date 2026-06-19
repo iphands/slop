@@ -225,3 +225,29 @@ T6 gate cleared; plan closed.
 - **Navmode ranking** (see `mode_perf.md`): `astar` + all A*-backed hybrids reach; pure `navmesh`
   fails (no navmesh water — Plan 39 scope). `hybrid-race` reaches because it plans both and the A*
   plan (with the swim route) wins.
+
+## 2026-06-19 — Plan 42/43: moving-platform (func_train) + lift ride behavior (q2dm3)
+
+- **New seam:** `EdgeKind::Ride` + `RideInfo` (board/far/dismount/model_index/vertical/board_ent/
+  far_ent) in `world::navgraph`; `Navigator::current_edge_is_ride()`/`current_ride_info()` mirror
+  the swim seam through `NavigationDriver` + all four hybrids. `brain::ride` decides
+  approach/wait/cross; both `MainBrain` and `RunTesterBrain` execute it; stuck-recovery suspended
+  while `ride_active` (same discipline as `swim_active`, Plan 40).
+- **Lifts (func_plat/func_door) now ride.** Tagged as *vertical* ride edges (was a plain Walk
+  edge the brain tried to "walk" straight up → stuck at the shaft). Verified live on q2dm3: the
+  bot rides the lift up to the upper levels (z≈393) where it previously could not leave z-16.
+  This starts Plan 31 (the `lift_penalty`/`ELEVATOR_PENALTY` hack can retire once multi-bot
+  de-conflict lands; `generate-map-cache --lift-penalty` now lets you build a lift-preferred cache).
+- **Trains (horizontal) are the hard part.** Detection now works (wire-origin match, see
+  pitfalls), board ledges anchored to solid ground (no approach-deaths), and a stateful
+  board→ride-hold→dismount machine. BUT reliably riding a *moving* train across q2dm3's pit
+  still fails — the bot falls into the pit (z-104) at the loop-train crossings (~6-7 deaths/110s).
+  The board window is brief (train at a corner ~0.8s every ~8s loop), PVS visibility of the train
+  at that instant is unreliable, and "ride-hold while carried" needs the train's live top surface
+  which isn't traceable (inline models aren't in the CM). **Next:** track the train's live origin
+  to keep the bot centered on the moving top, and time the board to the corner-dwell window.
+- **Reachability vs. execution:** q2dm3 railgun (`--instance 1`, `(768,816,208)`) is
+  **A\*-reachable from all 7 spawns** (path = walk + jump-bridge drops + 2 train rides); physical
+  reach is gated on train-riding above. The **quad** (`item_quad (192,320,216)`) is **not yet
+  nav-reachable** — it's in the upper level (comp0) which has no spawn-side up-route in our graph;
+  that's the broad q2dm3 floor fragmentation = **Plan 35**.

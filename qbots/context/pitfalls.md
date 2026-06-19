@@ -773,3 +773,23 @@ z 238→434 = dive→surface). Pure-navmesh modes still fail (navmesh has no wat
 ## Sources
 - brain: `crates/brain/src/water.rs`, `crates/brain/src/brains/runtester.rs` (+ `main.rs`)
 - vendor: `yquake2/src/common/pmove.c:414` (`PM_CheckSpecialMovement` water-jump), `:545` (`PM_WaterMove`)
+
+# Inline-model (func_train/func_plat) wire origin is `corner - mins`, not the stand-center
+Detecting a moving platform from a bot client is subtle. A brush model entity (`*N`:
+func_train/func_plat/func_door) is sent over the wire with `entity_state.origin` equal to its
+**render origin**, which Q2's `train_next` sets to `path_corner.origin - model.mins`
+(`g_func.c:2310`; "the targets origin specifies the min point of the train"). That is NOT the
+platform's standable top-center — for q2dm3's `*3` it's near `(-32,0,8)`, hundreds of units from
+the board ledge `(768,624,~40)`. So a brain that looks for "an entity near the board point" never
+matches and waits forever. Fix: at nav-build time, store the platform's expected wire origin per
+corner (`corner - model.mins`) in the ride edge (`RideInfo::board_ent`/`far_ent`) and match the
+live PVS entity against THAT. Also note inline models are absent from the CollisionModel (only
+world model 0), so you cannot trace the platform's surface — detection must be entity-based.
+Second pitfall: a func_train's standable top-center is `corner.xy + size.xy/2`,
+`corner.z + size.z` (min-corner rule), but that point is open air over a pit whenever the train
+isn't there — anchor the bot's board/dismount to an existing solid-ground nav node near it
+(`nearest_ground`), or the bot walks off the ledge into the pit while merely approaching.
+## Sources
+- world: `crates/world/src/build.rs` (`try_add_train`, `add_lift`, `nearest_ground`), `navgraph.rs` (`RideInfo`)
+- brain: `crates/brain/src/ride.rs` (`platform_present`)
+- vendor: `yquake2/src/game/g_func.c:2155-2362` (func_train / train_next / path_corner)
