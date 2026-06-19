@@ -70,15 +70,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if dz > STAIR_MAX {
                 continue;
             }
-            // Walkability re-check, same logic generate uses.
+            // Walkability re-check. For near-flat pairs (dz <= STEP) the answer is the
+            // direct hull trace alone: do NOT fall back to walkable_stair, because
+            // walkable_stair with total_dz < STEP does zero step iterations and returns
+            // `true` unconditionally (navgraph.rs: steps = ceil(dz/STEP) = 0) — that would
+            // report wall-blocked flat pairs as "walkable" and massively over-count gaps.
+            // Only real steps (dz > STEP) use the stair trace.
             let walk = if dz <= STEP {
                 let t = cm.trace(&a, &b, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
-                if !t.startsolid && t.fraction >= 1.0 {
-                    true
-                } else {
-                    let (lo, hi) = if a[2] < b[2] { (a, b) } else { (b, a) };
-                    walkable_stair(&cm, lo, hi)
-                }
+                !t.startsolid && t.fraction >= 1.0
             } else {
                 let (lo, hi) = if a[2] < b[2] { (a, b) } else { (b, a) };
                 walkable_stair(&cm, lo, hi)
