@@ -69,6 +69,20 @@ impl Q3Node {
 #[allow(dead_code)]
 const MAX_NODESWITCHES: u32 = 50;
 
+/// Is `to_target` (a non-unit direction *from* the viewer) inside a horizontal FOV cone of total
+/// angle `fov_deg` centered on the unit `forward`? `fov_deg >= 360` is always true (full
+/// awareness). Used for both our awareness cone and the enemy's "is it looking at me?" check.
+fn fov_cone(forward: Vec3, to_target: Vec3, fov_deg: f32) -> bool {
+    if fov_deg >= 360.0 {
+        return true;
+    }
+    let dir = Vec3::new(to_target.x, to_target.y, 0.0).normalize_or_zero();
+    if dir == Vec3::ZERO {
+        return true;
+    }
+    forward.dot(dir) > (fov_deg * 0.5).to_radians().cos()
+}
+
 /// The Quake 3-derived decision brain. Owns the node FSM + Q3 character + combat sub-state;
 /// the `Navigator` is injected each [`tick`](Brain::tick).
 // Several combat sub-state fields are populated as the FSM + aim/fire model land across T2–T5;
@@ -366,25 +380,98 @@ impl Q3Brain {
         NavGoal::Position(pos + away * 256.0)
     }
 
-    /// Acquire / refresh the current enemy (basic version; T3 replaces this with Q3's
-    /// alertness-ranged, awareness-FOV `BotFindEnemy`). Picks the nearest LOS-visible enemy in a
-    /// 90° cone and remembers its position; leaves a lost enemy in place so the chase node can
-    /// path to its last-known spot. `took_damage` is reserved for T3's 360° awareness.
+    /// **`BotFindEnemy`** (`ai_dmq3.c:2929`, distilled §4) — pick the best enemy from the
+    /// PVS-limited `view.enemies()`:
+    /// 1. **Range gate by ALERTNESS:** skip enemies past `√` of `(900 + alertness·4000)²`.
+    /// 2. **Closest-preference:** never switch to an enemy farther than the current one.
+    /// 3. **Awareness FOV:** full 360° the frame our health dropped (we notice who's hurting
+    ///    us); otherwise a cone that widens up close and narrows (~90°) at range.
+    /// 4. **Visibility:** LOS trace (zero-size) when a collision model is present.
+    /// 5. **Sneak-past:** a distant (`>100u`) enemy who isn't looking at us and whom we'd rather
+    ///    not fight (`wants_to_retreat`) is skipped — we slip by instead of committing.
+    ///
+    /// On a fresh sight `enemy_first_seen` is set to *now* (drives the reaction-time gate); when
+    /// *upgrading* from an existing enemy it's set to `now − 2 s` so the reaction delay doesn't
+    /// re-trigger mid-fight (Q3 `enemysight_time = now − 2`). "Enemy is shooting" is not
+    /// wire-observable, so it's treated as `false` (conservative); the health-drop branch still
+    /// grants full awareness when we actually take damage.
     fn select_enemy(
         &mut self,
         view: &crate::perception::Worldview,
         cm: Option<&world::CollisionModel>,
-        _took_damage: bool,
+        took_damage: bool,
     ) {
-        let pick = match cm {
-            Some(cm) => view.nearest_visible_enemy(cm, 90.0),
-            None => view.nearest_enemy(90.0),
-        };
-        if let Some(e) = pick {
-            let n = e.entity_number;
-            let origin = e.origin;
+        let self_pos = view.self_state().origin;
+        let eye = crate::los::eye_origin(self_pos.into());
+        let our_yaw = view.self_state().angles.y;
+        let our_forward = crate::steer::view_forward(our_yaw);
+
+        let alert_range = 900.0 + self.ch.alertness * 4000.0;
+        let alert_range_sq = alert_range * alert_range;
+
+        // Distance² to the current enemy (closest-preference baseline).
+        let cur_dist_sq = self
+            .enemy
+            .and_then(|n| {
+                view.entities()
+                    .find(|e| e.entity_number == n && !e.is_stale)
+            })
+            .map(|e| (e.origin - self_pos).length_squared());
+
+        let mut best: Option<(i32, Vec3, f32)> = None;
+        for e in view.enemies() {
+            let to = e.origin - self_pos;
+            let d2 = to.length_squared();
+            if d2 > alert_range_sq {
+                continue; // out of detection range
+            }
+            if matches!(cur_dist_sq, Some(cd) if d2 > cd) {
+                continue; // don't switch to a farther enemy than the current
+            }
+            let dist = d2.sqrt();
+
+            // Awareness FOV: 360° on damage, else 150° close → 90° far.
+            let awareness_fov = if took_damage {
+                360.0
+            } else {
+                (150.0 - (dist / alert_range) * 60.0).clamp(90.0, 150.0)
+            };
+            if !fov_cone(our_forward, to, awareness_fov) {
+                continue;
+            }
+
+            // Line of sight (zero-size trace) when geometry is loaded.
+            if let Some(cm) = cm {
+                if !crate::los::has_los_player(cm, eye, e.origin.into()) {
+                    continue;
+                }
+            }
+
+            // Sneak-past: distant enemy not looking at us + we'd rather retreat → skip.
+            if dist > 100.0 && !took_damage {
+                let enemy_forward = crate::steer::view_forward(e.angles.y);
+                let in_their_fov = fov_cone(enemy_forward, self_pos - e.origin, 90.0);
+                if !in_their_fov {
+                    let hdelta = Some(e.origin.z - self_pos.z);
+                    if crate::q3char::wants_to_retreat(view, &self.ch, hdelta) {
+                        continue;
+                    }
+                }
+            }
+
+            if best.map(|(_, _, bd)| d2 < bd).unwrap_or(true) {
+                best = Some((e.entity_number, e.origin, d2));
+            }
+        }
+
+        if let Some((n, origin, _)) = best {
             if self.enemy != Some(n) {
-                self.enemy_first_seen = Some(self.time);
+                // Fresh sight → reaction timer starts now; upgrade → now−2 (don't re-trigger).
+                self.enemy_first_seen = Some(if self.enemy.is_some() {
+                    self.time - 2.0
+                } else {
+                    self.time
+                });
             }
             self.enemy = Some(n);
             self.last_enemy_pos = Some(origin);
@@ -660,7 +747,8 @@ mod tests {
         frame.entities = vec![EntityState {
             number: 9,
             origin: [200.0, 0.0, 0.0],
-            modelindex: 255, // player
+            angles: [0.0, 180.0, 0.0], // facing −x, toward the bot at the origin
+            modelindex: 255,           // player
             ..Default::default()
         }];
         let mut cs = ConfigStrings::default();
@@ -729,5 +817,69 @@ mod tests {
         drive(&mut b, &empty);
         assert_eq!(b.status(), "seek-ltg");
         assert!(b.enemy.is_none());
+    }
+
+    /// Build a view with one enemy at a chosen distance + facing yaw + our health.
+    fn view_enemy_at(
+        dist: f32,
+        enemy_yaw: f32,
+        view_model: &str,
+        ammo: i16,
+        health: i16,
+    ) -> Worldview {
+        use q2proto::EntityState;
+        let mut frame = Frame::default();
+        frame.playerstate.gunindex = 1;
+        frame.playerstate.stats[1] = health;
+        frame.playerstate.stats[3] = ammo;
+        frame.playerstate.stats[5] = 100;
+        frame.entities = vec![EntityState {
+            number: 9,
+            origin: [dist, 0.0, 0.0],
+            angles: [0.0, enemy_yaw, 0.0],
+            modelindex: 255,
+            ..Default::default()
+        }];
+        let mut cs = ConfigStrings::default();
+        cs.set(32 + 1, view_model);
+        Worldview::from_frame(&frame, &cs, 0)
+    }
+
+    #[test]
+    fn sneak_past_distant_outgunned_enemy_not_facing_us() {
+        // Default char, machinegun (wants_retreat), distant (200u), enemy facing AWAY (+x) →
+        // not in their FOV + we'd rather retreat → sneak past → stay SeekLtg.
+        let mut b = Q3Brain::new(Q3Character::default());
+        let view = view_enemy_at(200.0, 0.0, "models/weapons/v_machn/tris.md2", 200, 100);
+        drive(&mut b, &view);
+        assert_eq!(b.status(), "seek-ltg");
+        assert!(b.enemy.is_none(), "did not commit to the sneak-past enemy");
+    }
+
+    #[test]
+    fn alertness_range_gates_far_enemy() {
+        // Default alertness 0.6 → range 900 + 0.6·4000 = 3300u. An enemy at 4000u (facing us,
+        // railgun) is out of detection range → not engaged.
+        let mut b = Q3Brain::new(Q3Character::default());
+        let view = view_enemy_at(4000.0, 180.0, "models/weapons/v_rail/tris.md2", 8, 100);
+        drive(&mut b, &view);
+        assert_eq!(b.status(), "seek-ltg");
+        assert!(b.enemy.is_none());
+    }
+
+    #[test]
+    fn taking_damage_grants_full_awareness() {
+        // Enemy facing AWAY (would normally be sneak-past), but we took damage this frame → 360°
+        // awareness commits to them regardless. Machinegun → out-gunned → Retreat.
+        let mut b = Q3Brain::new(Q3Character::default());
+        b.last_health = 100; // previous frame
+        let view = view_enemy_at(200.0, 0.0, "models/weapons/v_machn/tris.md2", 200, 70); // hurt
+        drive(&mut b, &view);
+        assert_eq!(
+            b.enemy,
+            Some(9),
+            "committed despite the enemy not facing us"
+        );
+        assert_eq!(b.status(), "retreat");
     }
 }
