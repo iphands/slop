@@ -278,6 +278,221 @@ impl Q3Brain {
             mv.jump();
         }
     }
+
+    // ── enemy / visibility helpers ─────────────────────────────────────────────────────
+
+    /// Is the current enemy entity still present in the worldview at all (even stale)? `false`
+    /// once the server stops sending it (dead / left PVS for good).
+    fn enemy_alive(&self, view: &crate::perception::Worldview) -> bool {
+        self.enemy
+            .map(|n| view.entities().any(|e| e.entity_number == n))
+            .unwrap_or(false)
+    }
+
+    /// Do we have a clear line of sight to the current enemy *this frame*? With no collision
+    /// model loaded we optimistically treat a non-stale enemy as visible.
+    fn enemy_visible(
+        &self,
+        view: &crate::perception::Worldview,
+        cm: Option<&world::CollisionModel>,
+    ) -> bool {
+        let Some(n) = self.enemy else { return false };
+        let Some(e) = view.entities().find(|x| x.entity_number == n) else {
+            return false;
+        };
+        if e.is_stale {
+            return false;
+        }
+        match cm {
+            Some(cm) => {
+                let eye = crate::los::eye_origin(view.self_state().origin.into());
+                crate::los::has_los_player(cm, eye, e.origin.into())
+            }
+            None => true,
+        }
+    }
+
+    /// `enemy.z − self.z` (world units) for the [`crate::q3char`] bad-angle guard. `None` if no
+    /// enemy is in view.
+    fn enemy_height_delta(&self, view: &crate::perception::Worldview) -> Option<f32> {
+        let n = self.enemy?;
+        let e = view.entities().find(|x| x.entity_number == n)?;
+        Some(e.origin.z - view.self_state().origin.z)
+    }
+
+    /// Is there a transient item within Q3's nearby-goal range (~150 u)?
+    fn item_nearby(&self, view: &crate::perception::Worldview) -> bool {
+        !view.items_in_range(150.0).is_empty()
+    }
+
+    /// Switch FSM node, recording per-node entry timers (`chase_time`, `nbg_time`). Returns
+    /// `true` so the caller's switch loop counts it.
+    fn enter(&mut self, node: Q3Node) -> bool {
+        match node {
+            Q3Node::BattleChase => self.chase_deadline = self.time + 10.0,
+            Q3Node::SeekNbg | Q3Node::BattleNbg => self.nbg_deadline = self.time + 5.0,
+            Q3Node::SeekLtg => self.enemy = None,
+            _ => {}
+        }
+        self.node = node;
+        true
+    }
+
+    /// Goal for a battle node: the enemy's current origin if known, else the last place we saw
+    /// it, else hold.
+    fn battle_goal(&self, view: &crate::perception::Worldview) -> NavGoal {
+        if let Some(n) = self.enemy {
+            if let Some(e) = view.entities().find(|x| x.entity_number == n) {
+                return NavGoal::Entity(e.origin);
+            }
+        }
+        if let Some(p) = self.last_enemy_pos {
+            return NavGoal::Position(p);
+        }
+        NavGoal::Position(view.self_state().origin)
+    }
+
+    /// Goal while retreating: grab the best nearby item if one exists (back away *toward* a
+    /// pickup, Q3 `BotLongTermGoal(retreat=true)`); otherwise step directly away from the enemy.
+    fn retreat_goal(&self, view: &crate::perception::Worldview) -> NavGoal {
+        if let Some((item_pos, _)) = items::best_item_goal(view, &self.item_skill) {
+            return NavGoal::Position(item_pos);
+        }
+        let pos = view.self_state().origin;
+        let away = self
+            .last_enemy_pos
+            .map(|enemy| (pos - enemy).normalize_or_zero())
+            .unwrap_or(Vec3::X);
+        NavGoal::Position(pos + away * 256.0)
+    }
+
+    /// Acquire / refresh the current enemy (basic version; T3 replaces this with Q3's
+    /// alertness-ranged, awareness-FOV `BotFindEnemy`). Picks the nearest LOS-visible enemy in a
+    /// 90° cone and remembers its position; leaves a lost enemy in place so the chase node can
+    /// path to its last-known spot. `took_damage` is reserved for T3's 360° awareness.
+    fn select_enemy(
+        &mut self,
+        view: &crate::perception::Worldview,
+        cm: Option<&world::CollisionModel>,
+        _took_damage: bool,
+    ) {
+        let pick = match cm {
+            Some(cm) => view.nearest_visible_enemy(cm, 90.0),
+            None => view.nearest_enemy(90.0),
+        };
+        if let Some(e) = pick {
+            let n = e.entity_number;
+            let origin = e.origin;
+            if self.enemy != Some(n) {
+                self.enemy_first_seen = Some(self.time);
+            }
+            self.enemy = Some(n);
+            self.last_enemy_pos = Some(origin);
+            self.enemy_seen_time = self.time;
+        }
+    }
+
+    /// Apply one round of node transitions (distilled §1), looping until the node is stable or
+    /// the `MAX_NODESWITCHES` guard trips. `enemy_visible` is this frame's LOS+sight result.
+    fn run_fsm(
+        &mut self,
+        view: &crate::perception::Worldview,
+        wants_retreat: bool,
+        wants_chase: bool,
+        enemy_visible: bool,
+    ) {
+        let enemy_alive = self.enemy_alive(view);
+        let item_nearby = self.item_nearby(view);
+        let mut switches = 0u32;
+        loop {
+            let switched = match self.node {
+                Q3Node::SeekLtg => {
+                    if enemy_visible {
+                        let next = if wants_retreat {
+                            Q3Node::BattleRetreat
+                        } else {
+                            Q3Node::BattleFight
+                        };
+                        self.enter(next)
+                    } else if item_nearby && self.time >= self.next_nbg_check {
+                        self.next_nbg_check = self.time + 0.5;
+                        self.enter(Q3Node::SeekNbg)
+                    } else {
+                        false
+                    }
+                }
+                Q3Node::SeekNbg => {
+                    if enemy_visible {
+                        let next = if wants_retreat {
+                            Q3Node::BattleRetreat
+                        } else {
+                            Q3Node::BattleFight
+                        };
+                        self.enter(next)
+                    } else if self.time >= self.nbg_deadline || !item_nearby {
+                        self.enter(Q3Node::SeekLtg)
+                    } else {
+                        false
+                    }
+                }
+                Q3Node::BattleFight => {
+                    if !enemy_alive {
+                        self.enter(Q3Node::SeekLtg)
+                    } else if !enemy_visible {
+                        let next = if wants_chase {
+                            Q3Node::BattleChase
+                        } else {
+                            Q3Node::SeekLtg
+                        };
+                        self.enter(next)
+                    } else if wants_retreat {
+                        self.enter(Q3Node::BattleRetreat)
+                    } else if item_nearby && self.time >= self.next_nbg_check {
+                        self.next_nbg_check = self.time + 0.5;
+                        self.return_node = Q3Node::BattleFight;
+                        self.enter(Q3Node::BattleNbg)
+                    } else {
+                        false
+                    }
+                }
+                Q3Node::BattleChase => {
+                    if enemy_visible {
+                        self.enter(Q3Node::BattleFight)
+                    } else if !enemy_alive || self.time >= self.chase_deadline {
+                        self.enter(Q3Node::SeekLtg)
+                    } else {
+                        false
+                    }
+                }
+                Q3Node::BattleRetreat => {
+                    if wants_chase {
+                        self.enter(Q3Node::BattleChase)
+                    } else if !enemy_alive || (self.time - self.enemy_seen_time) > 4.0 {
+                        self.enter(Q3Node::SeekLtg)
+                    } else {
+                        false
+                    }
+                }
+                Q3Node::BattleNbg => {
+                    if !enemy_alive {
+                        self.enter(Q3Node::SeekLtg)
+                    } else if self.time >= self.nbg_deadline || !item_nearby {
+                        self.enter(self.return_node)
+                    } else {
+                        false
+                    }
+                }
+            };
+            if !switched {
+                break;
+            }
+            switches += 1;
+            if switches >= MAX_NODESWITCHES {
+                tracing::warn!(node = self.node.label(), "Q3 FSM node-switch guard tripped");
+                break;
+            }
+        }
+    }
 }
 
 impl Brain for Q3Brain {
@@ -322,21 +537,44 @@ impl Brain for Q3Brain {
         } = ctx;
         self.time += dt;
 
-        let mut mv = MovementIntent::new();
         let pos = view.self_state().origin;
+        let health = view.self_state().health;
+        let took_damage = health < self.last_health;
 
-        // T1: roam-only. T2 layers node transitions; T3–T5 enemy select + aim/fire/move.
+        // ── 1. Perceive: acquire/refresh the enemy + this frame's aggression decision ──
+        self.select_enemy(view, cm, took_damage);
+        let enemy_visible = self.enemy_visible(view, cm);
+        let hdelta = self.enemy_height_delta(view);
+        let wants_retreat = crate::q3char::wants_to_retreat(view, &self.ch, hdelta);
+        let wants_chase = crate::q3char::wants_to_chase(view, &self.ch, hdelta);
+
+        // ── 2. Node FSM transitions (aggression-gated) ──
+        self.run_fsm(view, wants_retreat, wants_chase, enemy_visible);
+
+        // ── 3. Drive movement per node (combat aim/fire layered in T4–T5) ──
+        let mut mv = MovementIntent::new();
         if let Some(nav) = nav {
-            let goal = goal_override
-                .clone()
-                .unwrap_or_else(|| self.roam_goal(view, ticks, pos));
+            let goal = if let Some(g) = goal_override.clone() {
+                g
+            } else {
+                match self.node {
+                    Q3Node::SeekLtg => self.roam_goal(view, ticks, pos),
+                    Q3Node::SeekNbg | Q3Node::BattleNbg => {
+                        items::best_item_goal(view, &self.item_skill)
+                            .map(|(p, _)| NavGoal::Position(p))
+                            .unwrap_or_else(|| self.roam_goal(view, ticks, pos))
+                    }
+                    Q3Node::BattleFight | Q3Node::BattleChase => self.battle_goal(view),
+                    Q3Node::BattleRetreat => self.retreat_goal(view),
+                }
+            };
             self.locomote(nav, cm, pos, goal, dt, &mut mv);
         } else {
             // No nav graph yet — walk forward so the bot isn't a statue.
             mv.move_forward(1.0);
         }
 
-        self.last_health = view.self_state().health;
+        self.last_health = health;
 
         BrainOutput {
             intent: mv,
@@ -406,6 +644,89 @@ mod tests {
         b.node = Q3Node::BattleFight;
         b.enemy = Some(7);
         b.on_death();
+        assert_eq!(b.status(), "seek-ltg");
+        assert!(b.enemy.is_none());
+    }
+
+    /// A view with one visible enemy in the open + a held weapon/health that the caller chooses,
+    /// so the FSM can be driven deterministically with no server/cm (LOS optimistic).
+    fn view_enemy(view_model: &str, health: i16, ammo: i16) -> Worldview {
+        use q2proto::EntityState;
+        let mut frame = Frame::default();
+        frame.playerstate.gunindex = 1;
+        frame.playerstate.stats[1] = health;
+        frame.playerstate.stats[3] = ammo;
+        frame.playerstate.stats[5] = 100; // armor
+        frame.entities = vec![EntityState {
+            number: 9,
+            origin: [200.0, 0.0, 0.0],
+            modelindex: 255, // player
+            ..Default::default()
+        }];
+        let mut cs = ConfigStrings::default();
+        cs.set(32 + 1, view_model);
+        Worldview::from_frame(&frame, &cs, 0)
+    }
+
+    fn drive(b: &mut Q3Brain, view: &Worldview) {
+        let mut nav = StubNav {
+            pursue: Some(Vec3::new(200.0, 0.0, 0.0)),
+            ..Default::default()
+        };
+        b.tick(BrainContext {
+            view,
+            nav: Some(&mut nav),
+            cm: None, // optimistic LOS so the enemy counts as visible
+            dt: 0.1,
+            ticks: 1,
+            goal_override: None,
+        });
+    }
+
+    #[test]
+    fn high_aggression_enemy_enters_fight() {
+        // Sarge (high aggression) + railgun + slugs + full health → wants_chase → Fight.
+        let mut b = Q3Brain::new(Q3Character::sarge());
+        let view = view_enemy("models/weapons/v_rail/tris.md2", 100, 8);
+        drive(&mut b, &view);
+        assert_eq!(b.status(), "fight");
+        assert_eq!(b.enemy, Some(9));
+    }
+
+    #[test]
+    fn out_gunned_enemy_enters_retreat() {
+        // Machinegun (tier<50 → aggression 0) → wants_retreat → Retreat on contact.
+        let mut b = Q3Brain::new(Q3Character::default());
+        let view = view_enemy("models/weapons/v_machn/tris.md2", 100, 200);
+        drive(&mut b, &view);
+        assert_eq!(b.status(), "retreat");
+    }
+
+    #[test]
+    fn fight_loses_sight_chases_when_aggressive() {
+        let mut b = Q3Brain::new(Q3Character::sarge());
+        let view = view_enemy("models/weapons/v_rail/tris.md2", 100, 8);
+        drive(&mut b, &view); // → Fight
+        assert_eq!(b.status(), "fight");
+        // Now the enemy goes stale (out of PVS) → not visible but still wants_chase → Chase.
+        let mut stale = view.clone();
+        for e in stale.entities_mut() {
+            if e.entity_number == 9 {
+                e.is_stale = true;
+            }
+        }
+        drive(&mut b, &stale);
+        assert_eq!(b.status(), "chase");
+    }
+
+    #[test]
+    fn enemy_gone_returns_to_seek() {
+        let mut b = Q3Brain::new(Q3Character::sarge());
+        let view = view_enemy("models/weapons/v_rail/tris.md2", 100, 8);
+        drive(&mut b, &view); // → Fight
+                              // Enemy entity vanishes entirely (dead) → SeekLtg.
+        let empty = empty_view();
+        drive(&mut b, &empty);
         assert_eq!(b.status(), "seek-ltg");
         assert!(b.enemy.is_none());
     }
