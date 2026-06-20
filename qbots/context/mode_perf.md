@@ -191,3 +191,12 @@ live top-center while carried (the user's "I always jump" insight — cut deaths
 
 **Quad** (`spawn-to-item quaddamage`): still nav-unreachable (q2dm3 upper-level fragmentation,
 Plan 35) — pending, not a ride-behavior issue.
+
+### q2dm3 update (2026-06-19, final this session)
+- **Railgun (`spawn-to-weapon railgun --instance 1`, astar): reaches reliably, 3/4** (range 1–4/4
+  across runs — high spawn-variance, 4/4 observed). Rides the `*3/*4` loop trains + `*2` lift.
+- **Quad (`spawn-to-item quaddamage --count 1`, astar): NOT reached (0/N).** Nav-reachable via
+  `*10` over the lava; the bot boards and the platform carries it (Q2 push; verified z holds with
+  zero input), but the over-lava **board + dismount** for the long oscillating `*10` don't
+  complete — and the board style that `*10` needs (gentle, no-jump) conflicts with what the
+  railgun loop trains need (jump-on). Closest ~229u. A genuine control-feasibility wall.
