@@ -324,11 +324,9 @@ impl Brain for RunTesterBrain {
                         if board_horiz > 48.0 {
                             intent_forward = go(&mut mv, board); // approach the board ledge
                         } else if train_here {
-                            // Train is here → JUMP onto it (T7: a human hops on). Aim at the
-                            // platform's live TOP, not the far dismount: for the railgun loop
-                            // trains the top sits right by the dismount ledge (unchanged), but for
-                            // the central *10 the dismount is the quad hundreds of units north, so
-                            // aiming there launches the bot off the ledge into the lava.
+                            // Train is here → JUMP onto its TOP (T7: a human hops on). Aim at the
+                            // platform's live top (near the board for the railgun loop trains; for
+                            // *10 the dismount is the far quad, so aim at the top, not the dismount).
                             let onto =
                                 crate::ride::train_stand_now(view, &info).unwrap_or(dismount);
                             intent_forward = go(&mut mv, onto);
@@ -343,14 +341,15 @@ impl Brain for RunTesterBrain {
                         // Train at the far corner → JUMP off onto the dismount ledge (T7).
                         intent_forward = go(&mut mv, dismount);
                         mv.jump();
-                    } else if let Some(stand) = crate::ride::train_stand_now(view, &info) {
-                        // Boarded, mid-transit → track the train's LIVE top-center so we stay
-                        // centered as it moves (no jump — that launches us off).
-                        intent_forward = go(&mut mv, stand);
                     } else {
-                        // Lost sight of the train → hold and hope it re-enters PVS.
+                        // Boarded, mid-transit → DO NOTHING. A Q2 func_train PUSHES riders, so zero
+                        // input keeps us perfectly carried (verified: z holds steady on *10).
+                        // ANY movement (chasing the moving center) slid us off the small platform
+                        // into the lava — the winning move is to stand still and let it carry us to
+                        // the far corner, where `train_far` above fires the dismount.
                         mv.move_forward(0.0);
                         mv.move_side(0.0);
+                        mv.jump = false;
                         intent_forward = 0.0;
                     }
                 }
