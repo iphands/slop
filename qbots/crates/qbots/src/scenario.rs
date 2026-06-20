@@ -51,6 +51,10 @@ pub enum ScenarioGoal {
     /// A named item's BSP origin, resolved through [`item_classname`] aliases
     /// (e.g. `quaddamage` → `item_quad`). `instance` selects among multiple matches.
     Item { name: String, instance: usize },
+    /// An arbitrary world coordinate — used to ISOLATE a single nav feature (e.g. drive to a
+    /// func_train's board ledge) without the full item route, so route-reliability and
+    /// ride-correctness can be measured separately (Plan 35 T3).
+    Point { x: f32, y: f32, z: f32 },
 }
 
 /// Resolve a friendly item name to its Q2 entity classname.
@@ -608,6 +612,12 @@ fn resolve_goal(
                 spawn_origins,
             ))
         }
+        ScenarioGoal::Point { x, y, z } => Ok((
+            "spawn-to-point".to_string(),
+            Some([*x, *y, *z]),
+            format!("point_{}_{}_{}", *x as i32, *y as i32, *z as i32),
+            spawn_origins,
+        )),
     }
 }
 

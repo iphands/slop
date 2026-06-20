@@ -365,6 +365,44 @@ enum Cmd {
         #[arg(long, value_enum, default_value_t = brain::BrainKind::RunTester)]
         brain: brain::BrainKind,
     },
+    /// Drive a bot to an ARBITRARY world coordinate (Plan 35 T3). Isolates a single nav
+    /// feature — e.g. `spawn-to-point 191 -329 216` drives to the q2dm3 *10 board ledge —
+    /// so route-reliability and ride-correctness can be measured apart from the full item route.
+    SpawnToPoint {
+        /// Target world X.
+        x: f32,
+        /// Target world Y.
+        y: f32,
+        /// Target world Z.
+        z: f32,
+        /// Map to load. Autodetected from the server's `status` reply if omitted.
+        #[arg(long)]
+        map: Option<String>,
+        /// Server address (defaults to config's server).
+        #[arg(long)]
+        addr: Option<String>,
+        /// Bot display name.
+        #[arg(long)]
+        name: Option<String>,
+        /// Number of bots to spawn (default 1).
+        #[arg(long, default_value = "1")]
+        count: u8,
+        /// Hard wall-clock cap per bot in seconds (default 30).
+        #[arg(long, default_value = "30.0")]
+        max_secs: f32,
+        /// Extra A* cost on elevator/ride edges (0 = use freely).
+        #[arg(long, default_value = "5000")]
+        lift_penalty: f32,
+        /// Grid spacing (units) of the nav graph to use. Default 24.
+        #[arg(long, default_value = "24")]
+        spacing: f32,
+        /// Navigation backend: `astar` (default) or `navmesh`.
+        #[arg(long = "navmode", value_enum, default_value_t = NavMode::Astar)]
+        mode: NavMode,
+        /// Decision brain: `runtester` (default) or `main`.
+        #[arg(long, value_enum, default_value_t = brain::BrainKind::RunTester)]
+        brain: brain::BrainKind,
+    },
     /// Diagnose disconnected nav-graph components: for each small component show
     /// the closest boundary-node pair to the main component, distances, and
     /// whether the direct hull trace / stair trace succeed. Run when
@@ -2319,6 +2357,35 @@ async fn main() -> ExitCode {
                     name: item_name,
                     instance,
                 },
+                count,
+                max_secs,
+                lift_penalty,
+                spacing,
+                mode,
+                brain,
+            )
+            .await
+        }
+        Cmd::SpawnToPoint {
+            x,
+            y,
+            z,
+            map,
+            addr,
+            name,
+            count,
+            max_secs,
+            lift_penalty,
+            spacing,
+            mode,
+            brain,
+        } => {
+            run_scenario_cmd(
+                &cfg,
+                addr,
+                name,
+                map,
+                scenario::ScenarioGoal::Point { x, y, z },
                 count,
                 max_secs,
                 lift_penalty,
