@@ -354,3 +354,22 @@ After extensive iteration on q2dm3's movers:
   - **Closest approach ~229–236u** (the quad ledge vicinity, but at z≈12–17 after falling).
 - **Single-platform constraint**: the quad scenario must run `--count 1` (one small platform;
   multi-bot wait/de-conflict is Plan 31).
+
+## 2026-06-19 — QUAD REACHED (q2dm3 *10 ride) — measure-first debugging
+
+`spawn-to-item quaddamage` now REACHES the quad (closest=8, ~20-26s) when the bot starts near the
+board. The whole 60-iteration stall was caused by GUESSING the platform physics; one live capture
+(`QBOTS_OBSERVE_MOVERS=1 connect-one`) + ride telemetry exposed the real bugs in minutes:
+- `*10` deck is z216 (corner-level), NOT the bbox top z410 (it's a deck with tall rails).
+- Brush models stream with **modelindex=0** → match by position; and there are many **null
+  `[0,0,0]` world entities** that made `platform_present` fire constantly (false `train_here`).
+- Q2 trains PUSH riders → carry = **zero input** ("sit still", per the human who plays the map).
+- The nav advances off the ride edge mid-transit → must LOCK the ride active while boarded.
+Ride sequence that works: wait at the board ledge → when the platform is at the near (far-from-quad)
+corner, HOP onto its live deck → commit only when GROUNDED on the deck → zero-input carry (locked)
+→ when the platform nears the far corner, JUMP off onto the quad ledge.
+
+**Remaining limiter (separate problem):** the ROUTE to the board from FAR spawns (8 jump-bridges +
+a ladder through the fragmented q2dm3 upper level) is unreliable, so `--count 4` (bots spread across
+far spawns) reaches 0-1/4 even though the ride itself is solid. From the near spawn (spawn3, on the
+board's ledge) it reaches reliably. Improving far-spawn route reliability is the next task.
