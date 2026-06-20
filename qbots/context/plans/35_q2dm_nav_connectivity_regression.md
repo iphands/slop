@@ -107,3 +107,9 @@ gen change.
 - [ ] T5: q2dm1/2/3/4/5/6/8 full spawns; q2dm7 ≥ 5/6; `generate-map-cache --map 'q2dm*'` err≤1.
 - [ ] Live spawn-to-spawn on a previously-failing map traverses the restored connection.
 - [ ] fmt + clippy(-D warnings) + tests green before each commit; `mapcache::VERSION` bumped.
+
+## DEFERRED 2026-06-19: q2dm3 upper-level far-spawn route reliability
+The quad RIDE is solved (Plan 43); the quad is reached from spawn3 (the board ledge). Making
+FAR spawns route reliably to the board needs hull-validating + splitting bridge edges and
+resampling the fragmented upper level (confirmed blocker: hull-blocked 354u 'walk' bridges).
+User decision (2026-06-19): defer — stop at ride-from-spawn3. See brain_notes.md.

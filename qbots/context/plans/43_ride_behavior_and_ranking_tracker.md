@@ -65,3 +65,18 @@ qbots spawn-to-weapon railgun --instance 1 --count 4 --max-secs 150 --navmode <m
    dismount the whole time, and don't revert to `Approach` after leaving the board point.
 2. **Plan 35** (broad q2dm3 floor connectivity) to make the quad reachable.
 3. Then the live proof + 6-navmode ranking (T5/T6).
+
+## Update 2026-06-19 (T5 closeout): QUAD REACHED — ride solved
+- `spawn-to-item quaddamage` (astar) **reaches the quad** (closest=8, ~20-26s) when the bot starts
+  on/near the board ledge (spawn3) — the natural human start (rides `*10` over the lava, sits still
+  while carried, jumps off onto the quad ledge). `spawn-to-weapon railgun --instance 1` reaches too.
+- Three ride bugs fixed by MEASURING (T1 live `QBOTS_OBSERVE_MOVERS` + ride telemetry), not guessing:
+  null `[0,0,0]` world entities falsely triggered `train_here`; `boarded` committed before actually
+  on the deck; the nav advanced off the ride edge mid-transit (now locked via `active_ride`). See
+  `context/brain_notes.md` (2026-06-19) + `context/pitfalls.md` (func_train deck height).
+- New diagnostics retained: `QBOTS_OBSERVE_MOVERS=1 connect-one` (live mover log) and the
+  `spawn-to-point <x> <y> <z>` scenario (isolate a nav feature).
+- **Deferred (user decision):** far-spawn ROUTE reliability to the board (`--count 4` lands ~1/4
+  because bots spread across far spawns). Root cause = q2dm3 upper-level nav fragmentation +
+  hull-blocked over-long bridge edges (e.g. a 354u "walk" the hull can't traverse). This is a
+  substantial nav-graph rebuild = Plan 35 scope; user opted to stop at the proven ride-from-spawn3.
