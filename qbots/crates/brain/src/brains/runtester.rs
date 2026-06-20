@@ -337,14 +337,14 @@ impl Brain for RunTesterBrain {
                         } else if board_horiz > 48.0 {
                             intent_forward = go(&mut mv, board); // walk to the board ledge first
                         } else if train_here {
-                            // At the board ledge with the platform at this corner. The ledge is
-                            // across a lava gap from the small, continuously-moving platform, so
-                            // JUMP onto it — and LEAD it: a ~0.8s arc onto where it *is* lands
-                            // behind a 60u/s platform in the lava, so aim where it *will be*.
+                            // At the board ledge with the platform at this corner. RUN (full speed)
+                            // toward the platform's live top, leading it slightly: the lava gap must
+                            // be crossed fast (in ~0.1s, before gravity drops us below the platform
+                            // top), and the `on_top` brake above kills our momentum the instant we
+                            // land so we don't overshoot the ~80u platform into the lava.
                             let (ppos, pvel) = plat.unwrap_or((dismount, glam::Vec3::ZERO));
-                            let led = ppos + pvel * 0.6;
+                            let led = ppos + pvel * 0.3;
                             intent_forward = go(&mut mv, led);
-                            mv.jump();
                         } else {
                             mv.move_forward(0.0); // wait clear until the platform arrives
                             mv.move_side(0.0);
