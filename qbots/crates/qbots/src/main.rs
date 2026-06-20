@@ -767,6 +767,9 @@ pub(crate) async fn bot_task(
     use tokio::net::UdpSocket;
     use tokio::time;
 
+    // T1 diagnostic toggle: log live brush-model (`*N`) entity origins each frame (read-only).
+    let observe_movers = std::env::var("QBOTS_OBSERVE_MOVERS").is_ok();
+
     // Attribute every event in this task to the bot name so fleet logs are
     // per-bot filterable (Plan 09 T3).
     let span = tracing::info_span!("bot", %name, qport);
@@ -928,6 +931,42 @@ pub(crate) async fn bot_task(
                 let cmd = if state == ConnState::Active {
                     if let Some(frame) = frame_opt {
                         let view = Worldview::from_frame(&frame, &cs, playernum);
+
+                        // T1 (diagnostic): with QBOTS_OBSERVE_MOVERS set, log MOVING non-player
+                        // entities each frame — their live wire origin + per-frame delta. Brush
+                        // models (func_train/plat/door) arrive with modelindex=0 (our delta-decode
+                        // drops it) but a moving non-zero origin, so we key on motion, not model.
+                        // Lets us MEASURE a func_train's actual wire origin/motion (vs the assumed
+                        // `corner - mins`) and, with the model bounds, its standable top. Read-only.
+                        if observe_movers {
+                            const CS_MODELS: usize = 32;
+                            for e in &frame.entities {
+                                let moved = e.origin != e.old_origin;
+                                let nonzero = e.origin != [0.0, 0.0, 0.0];
+                                if !(moved && nonzero) {
+                                    continue; // skip static + null [0,0,0] entities
+                                }
+                                let name = if e.modelindex > 0 {
+                                    cs.get(CS_MODELS + e.modelindex as usize).unwrap_or("?")
+                                } else {
+                                    "*?(brush)"
+                                };
+                                let d = [
+                                    e.origin[0] - e.old_origin[0],
+                                    e.origin[1] - e.old_origin[1],
+                                    e.origin[2] - e.old_origin[2],
+                                ];
+                                tracing::info!(
+                                    sf = frame.serverframe,
+                                    ent = e.number,
+                                    mi = e.modelindex,
+                                    model = name,
+                                    origin = ?[e.origin[0] as i32, e.origin[1] as i32, e.origin[2] as i32],
+                                    dorigin = ?[d[0] as i32, d[1] as i32, d[2] as i32],
+                                    "MOVER"
+                                );
+                            }
+                        }
 
                         // Detect damage before creating worldview (need previous health)
                         let current_health = view.self_state().health;

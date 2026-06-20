@@ -357,17 +357,17 @@ fn try_add_train(
         })
         .collect();
 
-    // The standable top of a func_train relative to its path_corner differs by map: q2dm3's
-    // loop trains (*3/*4) ride at the brush **top** (`corner.z + size.z` — the platform rises
-    // out of the lava), but the central quad train (*10, origin-brushed) rides at the
-    // **corner level** (`corner.z`, the brush is a stem hanging below). We don't parse origin
-    // brushes, so we try BOTH heights and keep whichever finds reachable ground adjacent to the
-    // path. The bot boards/dismounts from that SOLID GROUND (never the over-lava platform-top
-    // coordinate, which is open air whenever the train isn't there).
+    // A func_train ALWAYS rides on its brush **TOP** (`corner.z + size.z`). MEASURED on q2dm3
+    // (see pitfalls.md): both the loop trains (*3/*4, top z≈9) and the tall central train (*10,
+    // top z≈410) ride their top — there is no "hangs below / corner-level" case. (An earlier
+    // two-height `[false,true]` search anchored *10 at the brush BOTTOM, z208, which only matched
+    // the quad ground by coincidence and sent the bot to board open air.) The bot boards/dismounts
+    // from the SOLID GROUND adjacent to that top height (never the over-lava platform coordinate,
+    // which is open air whenever the train isn't there).
     let mut rides = 0;
-    for top_mode in [false, true] {
-        // Surface offset above the corner for this ride height (0 = corner level, size.z = top).
-        let surf = if top_mode { size[2] } else { 0.0 };
+    {
+        // Surface offset above the corner: the brush top.
+        let surf = size[2];
         // Constant offset from the train's live wire origin (`corner - mins`) to its standable
         // top-center, used by the brain to track the moving top (Plan 43): for a corner `c`,
         // top-center = `[c.x+sx/2, c.y+sy/2, c.z+surf+24]` and wire origin = `c - mins`.

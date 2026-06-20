@@ -793,3 +793,28 @@ isn't there — anchor the bot's board/dismount to an existing solid-ground nav 
 - world: `crates/world/src/build.rs` (`try_add_train`, `add_lift`, `nearest_ground`), `navgraph.rs` (`RideInfo`)
 - brain: `crates/brain/src/ride.rs` (`platform_present`)
 - vendor: `yquake2/src/game/g_func.c:2155-2362` (func_train / train_next / path_corner)
+
+# func_train ride height: MEASURE the live brush, never assume "hangs below" (q2dm3 *10 quad)
+
+**Problem.** Spent ~60 brain-tuning iterations trying to make a bot ride q2dm3's central
+`func_train *10` to the quad — board/carry/dismount tweaked endlessly, never worked. Root cause
+(found in minutes once we MEASURED instead of guessing): the nav anchored `*10`'s ride edge at the
+**brush BOTTOM** (a `corner-level` height, z≈208) on the false assumption that the origin-brushed
+train "hangs below" its path_corner. The bot dutifully walked to z208 to board a platform that is
+actually at **z410** — open air; no platform was ever there.
+
+**Measured truth** (T1: `QBOTS_OBSERVE_MOVERS=1 connect-one` logs live `*N` entity origins; plus a
+one-shot `model.mins/maxs` trace in `try_add_train`): `*10` wire origin = `corner - mins` (CONFIRMED
+≈`[0,Y,0]`), model size `[98,82,226]`, so its **world brush is z175..401, standable top z≈410**.
+`*10` oscillates y−296↔88 (footprint x143-241) — it **never reaches the quad** (quad=(192,320,224),
+151u north & ~186u below `*10`). `*10` is the lift to the central UPPER level (z424 ledges sit right
+at its t1/t2 tops); the quad is reached from there / from the z168 west level, NOT by `*10` directly.
+
+**Avoid.** (1) A func_train rides on its brush **TOP** (`corner.z + size.z`), full stop — there is
+no "hangs below" case; the two-height `[false,true]` search's corner-mode is bogus and only ever
+matched ground by coincidence. (2) Brush models arrive over the wire with **modelindex=0** (our
+delta-decode drops it) and `EntityClass::Unknown` — identify movers by POSITION (`corner-mins`), not
+modelindex. (3) Before tuning ANY ride/jump physics, observe the live entity for one capture and
+print the model bounds — one measurement beats 60 guesses.
+## Sources
+- qbots: world/src/build.rs (try_add_train two-height search), brain/src/ride.rs, brain/src/brains/runtester.rs
