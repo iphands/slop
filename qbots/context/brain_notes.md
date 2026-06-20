@@ -373,3 +373,15 @@ corner, HOP onto its live deck → commit only when GROUNDED on the deck → zer
 a ladder through the fragmented q2dm3 upper level) is unreliable, so `--count 4` (bots spread across
 far spawns) reaches 0-1/4 even though the ride itself is solid. From the near spawn (spawn3, on the
 board's ledge) it reaches reliably. Improving far-spawn route reliability is the next task.
+
+## 2026-06-19 — far-spawn route to the quad board: blocked by bogus upper-level bridge edges
+Improved the ladder ASCENT (face the EXIT/dismount, not the ladder center, so the bot climbs
+up-and-over onto the top ledge instead of topping out on the entry side and falling; hop near the
+top). This let a far bot climb + get within 107u (was trapped on an isolated z152 island before).
+BUT far-spawn → board is still ~0/6: the A* route over the q2dm3 upper level uses **over-long
+"walk" bridge edges that are hull-BLOCKED** — e.g. (-121,-161,216)→board(191,-329,216) is a 354u
+"Walk" whose hull trace stops at fraction 0.07 (point trace clear). The bot can't physically
+traverse it. Root cause = nav-graph quality on the fragmented upper level (bridge/seed edges not
+hull-validated for the player hull over distance). Fixing it = a substantial Plan 35 nav-generation
+task (hull-validate + split long bridges; resample the upper level). The RIDE itself is solved and
+the quad is reached from the near spawn (spawn3, on the board ledge) — the natural human start.

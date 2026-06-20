@@ -278,23 +278,40 @@ impl Brain for RunTesterBrain {
                                                              // direction (above the bot when ascending, below when descending). Drive
                                                              // toward it — `up>0` climbs, `up<0` descends (Q2 `PM_AddCurrents`).
                     let dz = dismount.z - pos.z;
-                    tracing::trace!(pz = pos.z, dz, bz = board.z, "ladder climb");
-                    if dz.abs() < 20.0 {
-                        intent_forward = go(&mut mv, dismount); // level with the exit → step off
+                    let horiz_to_exit = (pos.truncate() - dismount.truncate()).length();
+                    tracing::trace!(
+                        pz = pos.z,
+                        dz,
+                        bz = board.z,
+                        h = horiz_to_exit,
+                        "ladder climb"
+                    );
+                    if dz.abs() < 20.0 && horiz_to_exit < 40.0 {
+                        intent_forward = go(&mut mv, dismount); // on the exit ledge → step off
+                    } else if dz > 0.0 {
+                        // ASCENDING. Face the EXIT ledge (the dismount), not the ladder center: the
+                        // ladder sits between us and the exit, so the 1u forward trace still hits
+                        // CONTENTS_LADDER (sets `pml.ladder`, enabling `up`), but climbing "into the
+                        // exit" carries us up-and-OVER onto the top ledge instead of topping out on
+                        // the wrong (entry) side of the shaft and falling. JUMP near the top to clear
+                        // the lip onto the ledge.
+                        let to_x = dismount - pos;
+                        let lyaw = to_x.y.atan2(to_x.x).to_degrees();
+                        mv.look_at(lyaw, 0.0);
+                        mv.move_forward(1.0);
+                        mv.move_side(0.0);
+                        intent_forward = 1.0;
+                        mv.up = 1.0; // `upmove>0` climbs (Q2 `PM_AddCurrents`)
+                        mv.jump = dz < 24.0; // near the top → hop onto the ledge
                     } else {
-                        // Face the ladder so the 1u forward trace hits CONTENTS_LADDER (sets
-                        // `pml.ladder`) and press into it.
+                        // DESCENDING. Face the ladder center to stay on it while going down.
                         let to_c = center - pos;
                         let lyaw = to_c.y.atan2(to_c.x).to_degrees();
                         mv.look_at(lyaw, 0.0);
                         mv.move_forward(1.0);
                         mv.move_side(0.0);
                         intent_forward = 1.0;
-                        if dz > 0.0 {
-                            // ASCENDING — hold up; `upmove>0` climbs (Q2 `PM_AddCurrents`).
-                            mv.up = 1.0;
-                            mv.jump = false;
-                        } else if pos.z > board.z - 24.0 {
+                        if pos.z > board.z - 24.0 {
                             // DESCENDING but still standing on the top floor next to the shaft:
                             // the floor holds us up, so `up<0` does nothing. JUMP forward off the
                             // edge INTO the shaft (CONTENTS_LADDER is open) to start the descent.
