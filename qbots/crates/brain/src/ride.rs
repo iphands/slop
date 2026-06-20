@@ -37,16 +37,24 @@ pub enum RidePhase {
 /// `path_corner - model.mins` — captured at build time in [`RideInfo::board_ent`]. We match
 /// any non-actor, non-projectile entity within [`PLATFORM_DETECT`] of that expected origin.
 pub fn platform_present(view: &Worldview, board_ent: Vec3) -> bool {
-    view.entities().any(|e| {
-        !matches!(
-            e.class,
-            EntityClass::SelfPlayer
-                | EntityClass::EnemyPlayer
-                | EntityClass::AllyPlayer
-                | EntityClass::ProjectileRocket
-                | EntityClass::ProjectileGrenade
-        ) && (e.origin - board_ent).length() <= PLATFORM_DETECT
-    })
+    view.entities()
+        .any(|e| is_mover(e) && (e.origin - board_ent).length() <= PLATFORM_DETECT)
+}
+
+/// True if `e` could be a moving brush-model platform: not an actor/projectile, and not one of
+/// the many **null `[0,0,0]` world entities** the server streams (unspawned slots / worldspawn).
+/// Those sit within `PLATFORM_DETECT` of a near-origin board corner (q2dm3 `*10` t1 wire ≈
+/// `(0,1,9)`) and would make `platform_present` fire CONSTANTLY — the bug that made the bot "board"
+/// whenever it reached the ledge regardless of where the real platform was.
+fn is_mover(e: &crate::perception::PerceivedEntity) -> bool {
+    !matches!(
+        e.class,
+        EntityClass::SelfPlayer
+            | EntityClass::EnemyPlayer
+            | EntityClass::AllyPlayer
+            | EntityClass::ProjectileRocket
+            | EntityClass::ProjectileGrenade
+    ) && e.origin.length() > 1.0
 }
 
 /// Max distance (units) from the board↔far path within which a non-actor entity is taken to be
@@ -65,15 +73,8 @@ pub fn train_stand_now(view: &Worldview, info: &RideInfo) -> Option<Vec3> {
     let offset = Vec3::from(info.stand_offset);
     let mut best: Option<(f32, Vec3)> = None;
     for e in view.entities() {
-        if matches!(
-            e.class,
-            EntityClass::SelfPlayer
-                | EntityClass::EnemyPlayer
-                | EntityClass::AllyPlayer
-                | EntityClass::ProjectileRocket
-                | EntityClass::ProjectileGrenade
-        ) {
-            continue;
+        if !is_mover(e) {
+            continue; // skip actors/projectiles + null [0,0,0] world entities
         }
         let d = dist_point_segment(e.origin, board_ent, far_ent);
         if d <= TRAIN_TRACK_MAX && best.is_none_or(|(bd, _)| d < bd) {

@@ -40,6 +40,11 @@ pub struct RunTesterBrain {
     /// train carry it, stepping off only when the train nears the far corner. Without this the
     /// bot would keep steering at the dismount and walk off the moving platform into the pit.
     ride_boarded: bool,
+    /// The ride edge we are mid-traversal on (Plan 35). Stored when boarding so the ride stays
+    /// LOCKED active until dismount even if the navigator advances off the ride edge while the
+    /// platform carries us (which happened over the central lava — the nav advanced, `ride_active`
+    /// went false, and the bot fell off mid-transit).
+    active_ride: Option<world::RideInfo>,
 }
 
 impl RunTesterBrain {
@@ -52,6 +57,7 @@ impl RunTesterBrain {
             escape_yaw: None,
             exit_ticks: 0,
             ride_boarded: false,
+            active_ride: None,
         }
     }
 }
@@ -126,7 +132,10 @@ impl Brain for RunTesterBrain {
         let swimming = is_swimming(water) || nav.current_edge_is_swim();
         // Ride a moving platform (Plan 43): suspend recovery (stand-and-wait / being carried
         // is not a wedge) and override steering below.
-        let ride_active = nav.current_edge_is_ride();
+        // Ride is active when the nav says so OR we're mid-ride (boarded) — the latter keeps the
+        // ride logic + recovery-suspension locked while the platform carries us, even if the
+        // navigator advances off the ride edge mid-transit.
+        let ride_active = nav.current_edge_is_ride() || self.ride_boarded;
 
         // Stuck recovery — SUSPENDED while swimming (Plan 40 T4): water move is 0.5× speed and a
         // bob at the surface is not a wedge, so the StuckDetector would false-fire; and
@@ -241,7 +250,9 @@ impl Brain for RunTesterBrain {
         // stateful board → ride → dismount. Aiming at the far node the whole time would walk the
         // bot off the ledge (before the train is here) or off the moving train (after boarding).
         if ride_active {
-            if let Some(info) = nav.current_ride_info() {
+            // Prefer the nav's current ride edge; fall back to the one we stored when boarding so
+            // a mid-transit nav advance can't strand us on the moving platform.
+            if let Some(info) = nav.current_ride_info().or(self.active_ride) {
                 let board = Vec3::from(info.board);
                 let dismount = Vec3::from(info.dismount);
                 let go = |mv: &mut MovementIntent, target: Vec3| -> f32 {
@@ -321,24 +332,50 @@ impl Brain for RunTesterBrain {
                         "train ride state"
                     );
                     if !self.ride_boarded {
-                        if board_horiz > 48.0 {
-                            intent_forward = go(&mut mv, board); // approach the board ledge
-                        } else if train_here {
-                            // Train is here → JUMP onto its TOP (T7: a human hops on). Aim at the
-                            // platform's live top (near the board for the railgun loop trains; for
-                            // *10 the dismount is the far quad, so aim at the top, not the dismount).
-                            let onto =
-                                crate::ride::train_stand_now(view, &info).unwrap_or(dismount);
-                            intent_forward = go(&mut mv, onto);
-                            mv.jump();
+                        // Are we ACTUALLY standing on the platform deck right now? (grounded, near
+                        // its live top-center horizontally, at its height.) Only THEN commit to the
+                        // ride — committing the instant `train_here` fired left the bot frozen on
+                        // the board ledge (zero-input carry) while the platform left without it.
+                        let stand = crate::ride::train_stand_now(view, &info);
+                        let grounded = view.self_state().flags & 4 != 0;
+                        let on_deck = stand.is_some_and(|s| {
+                            grounded
+                                && (pos.truncate() - s.truncate()).length() < 56.0
+                                && (pos.z - s.z).abs() < 36.0
+                        });
+                        if on_deck {
                             self.ride_boarded = true;
+                            self.active_ride = Some(info); // lock the ride until dismount
+                            mv.move_forward(0.0); // carried from here — stand still
+                            mv.move_side(0.0);
+                            intent_forward = 0.0;
+                        } else if board_horiz > 48.0 {
+                            intent_forward = go(&mut mv, board); // walk to the board ledge, wait
+                        } else if let Some(s) = stand.filter(|_| train_here) {
+                            // Platform is at the near corner → HOP onto its deck (T7: jump the gap).
+                            // Aim at the live top-center; the jump clears the ~33u lava gap and we
+                            // commit `on_deck` the instant we land grounded on it.
+                            intent_forward = go(&mut mv, s);
+                            mv.jump();
                         } else {
-                            mv.move_forward(0.0); // wait clear until the train arrives
+                            mv.move_forward(0.0); // platform not here yet — wait at the ledge
                             mv.move_side(0.0);
                             intent_forward = 0.0;
                         }
+                    } else if (pos - dismount).truncate().length() < 48.0
+                        && (view.self_state().flags & 4 != 0)
+                    {
+                        // We've made it onto the dismount ledge (grounded near it) → ride DONE.
+                        self.ride_boarded = false;
+                        self.active_ride = None;
+                        intent_forward = go(&mut mv, dismount);
+                    } else if pos.z < dismount.z - 96.0 {
+                        // Fell off into the pit/lava → abandon the ride; let respawn/nav recover.
+                        self.ride_boarded = false;
+                        self.active_ride = None;
+                        intent_forward = 0.0;
                     } else if train_far {
-                        // Train at the far corner → JUMP off onto the dismount ledge (T7).
+                        // Train at the far corner (near the quad) → JUMP off onto the dismount ledge.
                         intent_forward = go(&mut mv, dismount);
                         mv.jump();
                     } else {
@@ -356,6 +393,7 @@ impl Brain for RunTesterBrain {
             }
         } else {
             self.ride_boarded = false;
+            self.active_ride = None;
         }
         if nav.current_edge_is_jump() && !swimming && !ride_active {
             mv.jump();
