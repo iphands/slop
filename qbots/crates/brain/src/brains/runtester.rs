@@ -324,9 +324,14 @@ impl Brain for RunTesterBrain {
                         if board_horiz > 48.0 {
                             intent_forward = go(&mut mv, board); // approach the board ledge
                         } else if train_here {
-                            // Train is here → JUMP onto it (T7): a human hops on, clearing the gap
-                            // and tolerating the train still settling at the corner.
-                            intent_forward = go(&mut mv, dismount);
+                            // Train is here → JUMP onto it (T7: a human hops on). Aim at the
+                            // platform's live TOP, not the far dismount: for the railgun loop
+                            // trains the top sits right by the dismount ledge (unchanged), but for
+                            // the central *10 the dismount is the quad hundreds of units north, so
+                            // aiming there launches the bot off the ledge into the lava.
+                            let onto =
+                                crate::ride::train_stand_now(view, &info).unwrap_or(dismount);
+                            intent_forward = go(&mut mv, onto);
                             mv.jump();
                             self.ride_boarded = true;
                         } else {
