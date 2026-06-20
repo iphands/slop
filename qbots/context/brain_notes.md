@@ -330,3 +330,27 @@ trains got. NAV is correct (7/7 + quad reachable); these are execution-tuning fo
   - Result: the bot now boards and **rides `*10` at z≈200 for ~14s**, but full completion is
     still flaky — occasional ladder-climb stall (~z120) before `*10`, and the final dismount at
     t2 onto the quad ledge. Quad physical reach still 0; needs more single-bot ride tuning.
+
+## 2026-06-19 — Plan 35/43 FINAL state: railgun rides; quad *10 ride is a control wall
+
+After extensive iteration on q2dm3's movers:
+- **Railgun (`spawn-to-weapon railgun --instance 1`) WORKS**: astar reaches **1–4/4** (high
+  spawn-variance; 4/4 and 3/4 observed). Bot rides the `*3/*4` loop trains + the `*2` func_plat
+  lift. This is the user's first target — done.
+- **q2dm3 fully spawn-connected (7/7)** via ladder nav edges (ascent + descent both work) +
+  train ride edges + jump-down floor bridges. `generate-map-cache q2dm3` clean.
+- **Quad (`spawn-to-item quaddamage --count 1`): nav-reachable via `*10` over the lava, and the
+  bot DOES board `*10`** — but the ride doesn't sustain: it falls off after ~1.5 s. Root cause is
+  a genuine control-feasibility wall, not a missing feature:
+  - `*10` is a SMALL platform OSCILLATING a long way (t1 y−296 ↔ t2 y+88 = 384u) at 60 u/s over
+    **instant-death lava**, boarded across a ~33u lava gap and dismounted across another gap onto
+    the quad ledge. Q2 jumps overshoot the ~80u platform (~290u arc); a slow approach falls in
+    the gap; once airborne there's no air-braking; and staying centered for the full 6 s ride is
+    brutal at 10 Hz external control. The railgun's `*3/*4` loop trains work because their rides
+    are SHORT and tight; `*10`'s long over-lava oscillation is the hard case.
+  - Tried (all committed/iterated): jump-on/lead/low-speed/full-speed boards, stand+push,
+    world-frame and platform-relative momentum braking, near-edge targeting, grounded on-top
+    commit. Each helped a phase but none made the full board→ride→dismount reliable.
+  - **Closest approach ~229–236u** (the quad ledge vicinity, but at z≈12–17 after falling).
+- **Single-platform constraint**: the quad scenario must run `--count 1` (one small platform;
+  multi-bot wait/de-conflict is Plan 31).
