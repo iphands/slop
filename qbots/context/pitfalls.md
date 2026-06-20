@@ -794,27 +794,31 @@ isn't there — anchor the bot's board/dismount to an existing solid-ground nav 
 - brain: `crates/brain/src/ride.rs` (`platform_present`)
 - vendor: `yquake2/src/game/g_func.c:2155-2362` (func_train / train_next / path_corner)
 
-# func_train ride height: MEASURE the live brush, never assume "hangs below" (q2dm3 *10 quad)
+# func_train deck height ≠ brush bbox top: MEASURE, and don't trust EITHER assumption (q2dm3 *10)
 
-**Problem.** Spent ~60 brain-tuning iterations trying to make a bot ride q2dm3's central
-`func_train *10` to the quad — board/carry/dismount tweaked endlessly, never worked. Root cause
-(found in minutes once we MEASURED instead of guessing): the nav anchored `*10`'s ride edge at the
-**brush BOTTOM** (a `corner-level` height, z≈208) on the false assumption that the origin-brushed
-train "hangs below" its path_corner. The bot dutifully walked to z208 to board a platform that is
-actually at **z410** — open air; no platform was ever there.
+**Problem.** Spent ~60 brain-tuning iterations failing to ride q2dm3's central `func_train *10` to
+the quad. Guessed the deck height repeatedly. Two WRONG guesses, both refuted only by measuring +
+asking the human who plays the map:
+  1. First the nav used **corner-level** (z≈208) — which is actually CORRECT for *10 — but the
+     brain's ride tracking + board/dismount were broken, so it looked wrong.
+  2. Then, after measuring the brush bbox (`maxs.z=401`), wrongly concluded the deck was the bbox
+     **TOP z≈410** and deleted the corner-level edge — also wrong.
 
-**Measured truth** (T1: `QBOTS_OBSERVE_MOVERS=1 connect-one` logs live `*N` entity origins; plus a
-one-shot `model.mins/maxs` trace in `try_add_train`): `*10` wire origin = `corner - mins` (CONFIRMED
-≈`[0,Y,0]`), model size `[98,82,226]`, so its **world brush is z175..401, standable top z≈410**.
-`*10` oscillates y−296↔88 (footprint x143-241) — it **never reaches the quad** (quad=(192,320,224),
-151u north & ~186u below `*10`). `*10` is the lift to the central UPPER level (z424 ledges sit right
-at its t1/t2 tops); the quad is reached from there / from the z168 west level, NOT by `*10` directly.
+**Measured truth.** (a) `QBOTS_OBSERVE_MOVERS=1 connect-one` logs live `*N` movers: they arrive
+with **modelindex=0** (our delta-decode drops it) and `EntityClass::Unknown`, so match movers by
+POSITION (`corner - mins`), not modelindex. (b) `*10` wire origin ≈ `[0,Y,0]` (confirms
+`corner-mins`), Y oscillates 0..384 (corners t1 y−296 ↔ t2 y88). (c) model bbox z175..401 — but
+that is a **DECK at z≈216 with TALL RAILS up to z410**, NOT a solid box. The human's route confirms:
+board the deck from the **z216 spawn ledge** at the FAR corner (t1), **sit still** (Q2 trains PUSH
+riders — zero input carries you; verified z holds at 216), then **jump off near the near corner onto
+the quad ledge z224**. So *10's real ride edge is **board z216 → quad z224** (corner-level), and the
+bbox-top z424 ledges are the WRONG anchor.
 
-**Avoid.** (1) A func_train rides on its brush **TOP** (`corner.z + size.z`), full stop — there is
-no "hangs below" case; the two-height `[false,true]` search's corner-mode is bogus and only ever
-matched ground by coincidence. (2) Brush models arrive over the wire with **modelindex=0** (our
-delta-decode drops it) and `EntityClass::Unknown` — identify movers by POSITION (`corner-mins`), not
-modelindex. (3) Before tuning ANY ride/jump physics, observe the live entity for one capture and
-print the model bounds — one measurement beats 60 guesses.
+**Avoid.** (1) The standable deck is NOT derivable from the bbox alone — a func_train can be a deck
+with rails (bbox top ≫ deck). `*3/*4` deck = bbox top (z9); `*10` deck = corner level (z216). Keep
+the two-height search (try corner AND top, keep whichever finds adjacent ground). (2) When unsure of
+a map's geometry, ASK the human who plays it — one sentence ("board at the far point, sit still, jump
+off near the quad") beats 60 guesses. (3) Verify ride physics by a live zero-input capture before
+tuning board/carry/dismount.
 ## Sources
 - qbots: world/src/build.rs (try_add_train two-height search), brain/src/ride.rs, brain/src/brains/runtester.rs

@@ -357,17 +357,19 @@ fn try_add_train(
         })
         .collect();
 
-    // A func_train ALWAYS rides on its brush **TOP** (`corner.z + size.z`). MEASURED on q2dm3
-    // (see pitfalls.md): both the loop trains (*3/*4, top z≈9) and the tall central train (*10,
-    // top z≈410) ride their top — there is no "hangs below / corner-level" case. (An earlier
-    // two-height `[false,true]` search anchored *10 at the brush BOTTOM, z208, which only matched
-    // the quad ground by coincidence and sent the bot to board open air.) The bot boards/dismounts
-    // from the SOLID GROUND adjacent to that top height (never the over-lava platform coordinate,
-    // which is open air whenever the train isn't there).
+    // The standable DECK of a func_train differs by map and is NOT always the brush bbox top:
+    //   - q2dm3 loop trains (*3/*4): deck = brush top (`corner.z + size.z` ≈ z9 — solid platforms
+    //     rising out of the lava).
+    //   - q2dm3 central quad train (*10): deck = CORNER level (`corner.z` ≈ z216) — the brush is a
+    //     deck with TALL rails whose bbox top is z≈410, but you walk on the deck at the corner.
+    // The model bbox top alone can't tell these apart, so we try BOTH heights and keep whichever
+    // finds reachable ground adjacent to the path. (User-confirmed *10 route: board from the z216
+    // spawn ledge at the far corner, ride sitting still, jump off onto the quad ledge z224. So the
+    // corner-level edge for *10 is REAL — board z216 → quad z224 — not the bbox-top z424 ledges.)
     let mut rides = 0;
-    {
-        // Surface offset above the corner: the brush top.
-        let surf = size[2];
+    for top_mode in [false, true] {
+        // Surface offset above the corner: 0 = deck at corner level, size.z = deck at brush top.
+        let surf = if top_mode { size[2] } else { 0.0 };
         // Constant offset from the train's live wire origin (`corner - mins`) to its standable
         // top-center, used by the brain to track the moving top (Plan 43): for a corner `c`,
         // top-center = `[c.x+sx/2, c.y+sy/2, c.z+surf+24]` and wire origin = `c - mins`.
