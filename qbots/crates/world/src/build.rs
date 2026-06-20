@@ -433,12 +433,29 @@ fn try_add_train(
     Some(rides)
 }
 
-/// Nearest existing walkable node to `pos` within `max_h` horizontal and `max_dz` vertical
-/// (Plan 43/35). Used to anchor a train's board/dismount and a ladder's base/top to solid
-/// ground. Minimizes **3-D** distance (within the gates) so the chosen node sits at the right
-/// HEIGHT, not just the nearest XY — a ladder top must snap to the top-floor ledge, never a
-/// mid-height node that would make the bot "top out" early.
+/// Nearest existing walkable node to `pos` within `max_h` HORIZONTAL and `max_dz` vertical
+/// (Plan 43). Minimizes horizontal distance within the dz gate — used to anchor a train's
+/// board/dismount to the pit-edge ledge at platform height.
 fn nearest_ground(graph: &NavGraph, pos: [f32; 3], max_h: f32, max_dz: f32) -> Option<usize> {
+    let mut best = None;
+    let mut best_d2 = max_h * max_h;
+    for (i, n) in graph.nodes.iter().enumerate() {
+        if (n[2] - pos[2]).abs() > max_dz {
+            continue;
+        }
+        let dh2 = (n[0] - pos[0]).powi(2) + (n[1] - pos[1]).powi(2);
+        if dh2 < best_d2 {
+            best_d2 = dh2;
+            best = Some(i);
+        }
+    }
+    best
+}
+
+/// Like [`nearest_ground`] but minimizes **3-D** distance within the gates (Plan 35). Used to
+/// anchor a ladder's base/top to the floor at the RIGHT HEIGHT — a ladder top must snap to the
+/// top-floor ledge, never a horizontally-closer mid-height node (which makes the bot top out early).
+fn nearest_ground_3d(graph: &NavGraph, pos: [f32; 3], max_h: f32, max_dz: f32) -> Option<usize> {
     let mut best = None;
     let mut best_d2 = f32::MAX;
     for (i, n) in graph.nodes.iter().enumerate() {
@@ -509,8 +526,8 @@ pub fn add_ladder_edges(graph: &mut NavGraph, bsp: &Bsp) -> usize {
     for (mn, mx) in ladder_aabbs(bsp) {
         let cx = (mn[0] + mx[0]) / 2.0;
         let cy = (mn[1] + mx[1]) / 2.0;
-        let bottom = nearest_ground(graph, [cx, cy, mn[2] + 24.0], LADDER_RADIUS, LADDER_DZ);
-        let top = nearest_ground(graph, [cx, cy, mx[2] + 24.0], LADDER_RADIUS, LADDER_DZ);
+        let bottom = nearest_ground_3d(graph, [cx, cy, mn[2] + 24.0], LADDER_RADIUS, LADDER_DZ);
+        let top = nearest_ground_3d(graph, [cx, cy, mx[2] + 24.0], LADDER_RADIUS, LADDER_DZ);
         let (Some(bottom), Some(top)) = (bottom, top) else {
             continue;
         };

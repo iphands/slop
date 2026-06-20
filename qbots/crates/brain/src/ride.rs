@@ -83,34 +83,6 @@ pub fn train_stand_now(view: &Worldview, info: &RideInfo) -> Option<Vec3> {
     best.map(|(_, o)| o + offset)
 }
 
-/// The platform's standable top **and** its current velocity (Plan 43), for *leading* a board
-/// jump: a small platform moving at ~60 u/s slides out from under a bot that jumps at where it
-/// *is* (the ~0.8 s arc lands behind it in the lava), so we aim where it *will be*. Returns the
-/// matched mover's `(top_center, velocity)`.
-pub fn train_now(view: &Worldview, info: &RideInfo) -> Option<(Vec3, Vec3)> {
-    let board_ent = Vec3::from(info.board_ent);
-    let far_ent = Vec3::from(info.far_ent);
-    let offset = Vec3::from(info.stand_offset);
-    let mut best: Option<(f32, Vec3, Vec3)> = None;
-    for e in view.entities() {
-        if matches!(
-            e.class,
-            EntityClass::SelfPlayer
-                | EntityClass::EnemyPlayer
-                | EntityClass::AllyPlayer
-                | EntityClass::ProjectileRocket
-                | EntityClass::ProjectileGrenade
-        ) {
-            continue;
-        }
-        let d = dist_point_segment(e.origin, board_ent, far_ent);
-        if d <= TRAIN_TRACK_MAX && best.is_none_or(|(bd, _, _)| d < bd) {
-            best = Some((d, e.origin, e.velocity.unwrap_or(Vec3::ZERO)));
-        }
-    }
-    best.map(|(_, o, v)| (o + offset, v))
-}
-
 /// Distance from point `p` to segment `a`–`b`.
 fn dist_point_segment(p: Vec3, a: Vec3, b: Vec3) -> f32 {
     let ab = b - a;
