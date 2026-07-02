@@ -27,9 +27,12 @@ const SIGHT_GRACE_FRAMES: u32 = 2;
 /// to frames at this cadence.
 const TICK_HZ: f32 = 10.0;
 
-/// `BOT_CHANGEWEAPON_DELAY` — withhold `BUTTON_ATTACK` for 0.9 s after
-/// requesting a weapon switch (Eraser `bot_procs.h`). Firing mid-switch is wasted.
-const SWITCH_LOCKOUT_SECS: f32 = 0.9;
+/// Withhold `BUTTON_ATTACK` briefly after requesting a weapon switch so we don't fire the
+/// old weapon mid-change. Eraser used a full `0.9 s` (`BOT_CHANGEWEAPON_DELAY`), but that —
+/// stacked on the reaction delay — left `main` idle >1 s at the start of every engagement
+/// while `q3` (0.1 s lockout) shot first and won the duel (Plan 45). Trimmed to a realistic
+/// switch time; the server still ignores fire during the actual change.
+const SWITCH_LOCKOUT_SECS: f32 = 0.2;
 
 /// A requested weapon switch (`use <name>`). The connection layer converts this
 /// to a reliable stringcmd.
@@ -281,9 +284,12 @@ impl CombatDriver {
             return false;
         }
 
-        // Reaction delay on target acquisition: `0.8 * (5 - combat*0.5)/5` s.
-        // combat1 → 0.72 s, combat3 → 0.56 s, combat5 → 0.40 s.
-        let reaction_secs = 0.8 * (5.0 - combat * 0.5) / 5.0;
+        // Reaction delay on target acquisition. Eraser's `0.8 * (5 - combat*0.5)/5` floored a
+        // skilled bot at 0.40 s — slower than `q3` major's 0.30 s, so `main` always shot
+        // second and lost the duel (Plan 45). Halved the base so a high-combat `main` reacts
+        // in ~0.20 s (still a human-ish delay, now faster than the opponent).
+        // combat1 → 0.36 s, combat3 → 0.28 s, combat5 → 0.20 s.
+        let reaction_secs = 0.4 * (5.0 - combat * 0.5) / 5.0;
         let reaction_frames = (reaction_secs * TICK_HZ).round() as u32;
         if self.sight_frames < reaction_frames {
             return false;

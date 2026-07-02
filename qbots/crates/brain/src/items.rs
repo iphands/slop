@@ -12,6 +12,7 @@
 
 use crate::perception::{EntityClass, Worldview};
 use crate::skill::BotSkill;
+use crate::weapons::Weapon;
 use glam::Vec3;
 
 /// Base desirability of an item class (higher = more worth detouring for).
@@ -58,6 +59,63 @@ pub fn best_item_goal(view: &Worldview, skill: &BotSkill) -> Option<(Vec3, Entit
         .map(|(_, origin, class)| (origin, class))
 }
 
+/// **`main`-brain-only** loadout/health-aware item picker (Plan 45). Extends
+/// [`best_item_goal`] with two strategic biases so the bot *builds up* instead of
+/// grabbing whatever is nearest:
+/// - **Weapon hunger** when we hold only the spawn Blaster (×4) or a bare
+///   Machinegun/Chaingun (×2) — a real weapon is the single biggest survivability
+///   upgrade against a precise opponent.
+/// - **Health/armor hunger** that ramps as our health/armor drops.
+///
+/// `q3`'s [`best_item_goal`] is intentionally left as the neutral baseline so the
+/// competing brain is untouched. Returns the best item's origin + class, or `None`.
+pub fn best_item_goal_weighted(
+    view: &Worldview,
+    skill: &BotSkill,
+    held_weapon: Option<Weapon>,
+    health: i32,
+    armor: i32,
+) -> Option<(Vec3, EntityClass)> {
+    let origin = view.self_state().origin;
+
+    // A real weapon is worth detouring for when we're stuck on the spawn loadout.
+    let weapon_mult = match held_weapon {
+        None | Some(Weapon::Blaster) => 4.0,
+        Some(Weapon::Machinegun) | Some(Weapon::Chaingun) => 2.0,
+        _ => 1.0,
+    };
+    // Health / armor hunger ramps as we drop below full.
+    let health_mult = if health < 50 {
+        3.0
+    } else if health < 80 {
+        1.6
+    } else {
+        1.0
+    };
+    let armor_mult = if armor < 30 {
+        2.5
+    } else if armor < 80 {
+        1.4
+    } else {
+        1.0
+    };
+
+    view.items()
+        .map(|e| {
+            let dist = (e.origin - origin).length().max(1.0);
+            let mut val = item_value(e.class, skill);
+            match e.class {
+                EntityClass::ItemWeapon => val *= weapon_mult,
+                EntityClass::ItemHealth => val *= health_mult,
+                EntityClass::ItemArmor => val *= armor_mult,
+                _ => {}
+            }
+            (val / dist, e.origin, e.class)
+        })
+        .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(_, origin, class)| (origin, class))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,5 +152,17 @@ mod tests {
     fn unknown_item_is_worthless() {
         let skill = BotSkill::default();
         assert_eq!(item_value(EntityClass::Unknown, &skill), 0.0);
+    }
+
+    #[test]
+    fn weighted_goal_none_when_no_items() {
+        use client::parse::ConfigStrings;
+        use q2proto::Frame;
+        let view = Worldview::from_frame(&Frame::default(), &ConfigStrings::default(), 0);
+        let skill = BotSkill::default();
+        assert!(
+            best_item_goal_weighted(&view, &skill, Some(Weapon::Blaster), 100, 100).is_none(),
+            "no items in view → no goal"
+        );
     }
 }

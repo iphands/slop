@@ -35,6 +35,19 @@ use crate::{items, los};
 // re-exported here for the convenience of code that reaches them via the `main` module.
 pub use crate::brains::core::{BrainConfig, BrainOutput};
 
+/// Health below which `main` hard-disengages (sprints to a resource, breaking the fight) —
+/// staying in a fight this hurt loses to a precise opponent (Plan 45). Above it, a hurt bot
+/// *kites* (keeps facing + firing while opening range) rather than turning its back.
+const FLEE_HEALTH: i32 = 30;
+
+/// Health below which `main` prefers to *kite* a fight (hold open range + keep firing) rather
+/// than press to melee distance. A *healthy* `main` fights flat-out — its aim is near-perfect,
+/// so kiting on a weak weapon (an earlier attempt) just threw away kills; only injury kites.
+const KITE_HEALTH: i32 = 50;
+
+/// While kiting, back away from the enemy until at least this range, then hold + strafe.
+const KITE_DIST: f32 = 450.0;
+
 /// The `main` decision brain: owns combat/FSM/dodge/steering/recovery/skill/roam state.
 pub struct MainBrain {
     skill: BotSkill,
@@ -82,6 +95,31 @@ impl MainBrain {
     #[cfg(test)]
     pub(crate) fn behavior(&self) -> &BehaviorState {
         &self.fsm
+    }
+
+    /// Where to run while disengaging an unwinnable fight (Plan 45): grab the best resource
+    /// (weapon when weak, health/armor when hurt) if one is visible, else step directly away
+    /// from `enemy_pos`. Mirrors the Q3 brain's `retreat_goal` but uses `main`'s loadout-aware
+    /// item picker.
+    fn retreat_goal(
+        &self,
+        view: &crate::perception::Worldview,
+        enemy_pos: Option<Vec3>,
+    ) -> NavGoal {
+        let ss = view.self_state();
+        if let Some((p, _)) =
+            items::best_item_goal_weighted(view, &self.skill, ss.held_weapon, ss.health, ss.armor)
+        {
+            return NavGoal::Position(p);
+        }
+        let pos = ss.origin;
+        let away = enemy_pos
+            .map(|e| {
+                let a = pos - e;
+                Vec3::new(a.x, a.y, 0.0).normalize_or_zero()
+            })
+            .unwrap_or(Vec3::X);
+        NavGoal::Position(pos + away * 300.0)
     }
 }
 
@@ -152,10 +190,36 @@ impl crate::brains::core::Brain for MainBrain {
             CombatDecision::default()
         };
 
+        // ── Underpowered handling (Plan 45) ──────────────────────────────────
+        // Two regimes, tuned to cut deaths without going passive. A full run-to-item
+        // retreat gets the bot shot in the back (measured worse), so we only *hard-flee*
+        // when near death; an out-gunned-but-viable bot *kites* — keeps facing + firing
+        // while holding open range (driven in the movement block below).
+        let self_ss = view.self_state();
+        let health = self_ss.health;
+        let has_target = combat_dec.target_entity.is_some();
+        let flee_hard = self.cfg.combat_enabled && has_target && health < FLEE_HEALTH;
+        let kite = self.cfg.combat_enabled && has_target && !flee_hard && health < KITE_HEALTH;
+        let enemy_pos_now: Option<Vec3> = combat_dec.target_entity.and_then(|t| {
+            view.entities()
+                .find(|e| e.entity_number == t)
+                .map(|e| e.origin)
+        });
+
         // Pass combat target to FSM for navigation goal.
         // Only chase via nav when LOS holds (Plan 11 T4) — without
         // LOS the bot was walking into walls toward walled enemies.
-        let fsm_intent = if let Some(target) = combat_dec.target_entity {
+        let fsm_intent = if flee_hard {
+            // Near death: break off and sprint to the best resource (health/weapon/armor).
+            if !matches!(self.fsm, BehaviorState::Flee) {
+                tracing::debug!(target = ?combat_dec.target_entity, health, "critical — flee");
+            }
+            self.fsm = BehaviorState::Flee;
+            BehaviorIntent {
+                nav_goal: Some(self.retreat_goal(view, enemy_pos_now)),
+                should_pickup: None,
+            }
+        } else if let Some(target) = combat_dec.target_entity {
             let target_entity = view.entities().find(|e| e.entity_number == target);
             let target_pos = target_entity
                 .map(|e| e.origin)
@@ -220,10 +284,16 @@ impl crate::brains::core::Brain for MainBrain {
                 g
             } else if let Some(g) = fsm_intent.nav_goal {
                 g
-            } else if let Some((item_pos, _)) = items::best_item_goal(view, &self.skill) {
-                // Seek the highest-value visible item (powerups,
-                // armor, weapons) weighted by value/distance and
-                // the bot's health need / quad_freak personality.
+            } else if let Some((item_pos, _)) = items::best_item_goal_weighted(
+                view,
+                &self.skill,
+                view.self_state().held_weapon,
+                view.self_state().health,
+                view.self_state().armor,
+            ) {
+                // Seek the highest-value visible item (powerups, armor, weapons)
+                // weighted by value/distance and — for `main` (Plan 45) — by loadout
+                // need (weapon hunger when weak) and health/armor need when hurt.
                 NavGoal::Position(item_pos)
             } else if !self.roam_nodes.is_empty() {
                 // Campers dwell ~5x longer per node (first-cut
@@ -259,15 +329,23 @@ impl crate::brains::core::Brain for MainBrain {
             const IDEAL_DIST: f32 = 160.0;
             const BACKUP_DIST: f32 = 80.0;
 
-            // Resolve enemy position + distance (if we have a target in view).
-            let enemy_dist_dir: Option<(f32, Vec3)> = combat_dec.target_entity.and_then(|t| {
-                view.entities().find(|e| e.entity_number == t).map(|enemy| {
-                    let to = enemy.origin - pos;
-                    let d = to.length();
-                    let dir = if d > 1.0 { to / d } else { Vec3::X };
-                    (d, dir)
+            // Resolve enemy position + distance (if we have a target in view). While
+            // hard-fleeing (Plan 45) we treat the enemy as absent for the distance-band
+            // movement logic so the bot path-follows its escape route instead of holding
+            // ideal combat distance — the dedicated flee branch below drives the move.
+            // (Kiting keeps the enemy here: it needs the distance/direction to back off.)
+            let enemy_dist_dir: Option<(f32, Vec3)> = if flee_hard {
+                None
+            } else {
+                combat_dec.target_entity.and_then(|t| {
+                    view.entities().find(|e| e.entity_number == t).map(|enemy| {
+                        let to = enemy.origin - pos;
+                        let d = to.length();
+                        let dir = if d > 1.0 { to / d } else { Vec3::X };
+                        (d, dir)
+                    })
                 })
-            });
+            };
 
             // ── 1. Ideal view yaw (priority: fire-aim > enemy-face > path) ──
             let (ideal_yaw, ideal_pitch) = if combat_dec.should_fire {
@@ -313,8 +391,39 @@ impl crate::brains::core::Brain for MainBrain {
                 0.0
             };
 
-            let (world_move_dir, face_then_go) = if let Some((d, dir)) = enemy_dist_dir {
-                if d < BACKUP_DIST {
+            let (world_move_dir, face_then_go) = if flee_hard {
+                // Hard flee (Plan 45): move along the escape path (toward the resource /
+                // away node). If we're firing (view is locked on the enemy behind us) use
+                // raw decomposition (`face_then_go = false`) so `forward` can go negative
+                // and we backpedal while shooting; otherwise face the escape heading and run.
+                let escape = nav
+                    .pursue_target(pos)
+                    .map(|pt| {
+                        let d = pt - pos;
+                        Vec3::new(d.x, d.y, 0.0).normalize_or_zero()
+                    })
+                    .unwrap_or_else(|| {
+                        enemy_pos_now
+                            .map(|e| {
+                                let a = pos - e;
+                                Vec3::new(a.x, a.y, 0.0).normalize_or_zero()
+                            })
+                            .unwrap_or(Vec3::ZERO)
+                    });
+                (escape, !combat_dec.should_fire)
+            } else if let Some((d, dir)) = enemy_dist_dir {
+                if kite {
+                    // Kite (Plan 45): out-gunned but viable — keep facing + firing (aim/yaw
+                    // still lock the enemy) while opening range. Back away until `KITE_DIST`,
+                    // then hold and strafe. `face_then_go = false` so we backpedal facing them.
+                    let tan = Vec3::new(-dir.y, dir.x, 0.0) * self.steering.strafe_tick(dt);
+                    if d < KITE_DIST {
+                        let away = Vec3::new(-dir.x, -dir.y, 0.0).normalize_or_zero();
+                        ((away + tan * 0.6).normalize_or_zero(), false)
+                    } else {
+                        (tan.normalize_or_zero() * 0.7, false)
+                    }
+                } else if d < BACKUP_DIST {
                     // Back away from enemy while keeping aim on them.
                     let away = Vec3::new(-dir.x, -dir.y, 0.0).normalize_or_zero();
                     // Add tangential even while backing (keeps bot moving).
