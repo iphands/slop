@@ -14,8 +14,13 @@ const YAW_SPEED_PER_LEVEL: f32 = 120.0;
 pub const ARRIVE_RADIUS: f32 = 80.0;
 /// Minimum arrive throttle so the bot doesn't stop short.
 const ARRIVE_MIN: f32 = 0.25;
-/// Strafe direction flips every this many seconds (Eraser `strafe_changedir_time`).
-pub const STRAFE_PERIOD_SECS: f32 = 3.0;
+/// Combat strafe direction flip period (seconds). Only `MainBrain` consumes this (`q3` has
+/// its own `move::StrafeState`). Eraser's `strafe_changedir_time` was 3.0 s — but a
+/// 3-second straight-line strafe is trivial for a precise opponent to *lead*, and obituaries
+/// showed `main` getting farmed while sliding predictably (Plan 45). A short juke period makes
+/// `main` a hard target to track without any jump (which stays grounded and doesn't disturb
+/// its near-perfect hitscan aim).
+pub const STRAFE_PERIOD_SECS: f32 = 0.6;
 
 /// Per-bot steering state. One instance per bot; created next to `MovementController`.
 #[derive(Debug, Clone)]

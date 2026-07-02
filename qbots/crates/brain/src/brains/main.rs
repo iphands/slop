@@ -29,6 +29,7 @@ use crate::recover::{Recovery, RecoveryAction};
 use crate::skill::BotSkill;
 use crate::steer::{move_from_world_dir, Steering};
 use crate::water::{is_swimming, water_level, EXIT_LOOKUP_PITCH, SWIM_VERT_SCALE};
+use crate::weapons::Weapon;
 use crate::{items, los};
 
 // `BrainConfig`/`BrainOutput` live in `brains::core` next to the `trait Brain` contract;
@@ -191,15 +192,34 @@ impl crate::brains::core::Brain for MainBrain {
         };
 
         // ── Underpowered handling (Plan 45) ──────────────────────────────────
-        // Two regimes, tuned to cut deaths without going passive. A full run-to-item
-        // retreat gets the bot shot in the back (measured worse), so we only *hard-flee*
-        // when near death; an out-gunned-but-viable bot *kites* — keeps facing + firing
-        // while holding open range (driven in the movement block below).
+        // Obituaries showed the losing loop: `main` dies → respawns with only the spawn
+        // Blaster → loses the projectile duel to `q3` (whose aim + dodge win it) → dies →
+        // repeat. So loadout, not just health, gates our posture:
+        //   • Blaster (or nothing) → we're out-gunned: fight *evasively* (kite — a moving
+        //     target survives the duel we'd lose standing still) and, if a real gun is in
+        //     reach, *disengage to grab it* (`flee_hard`). Arming up is the whole game.
+        //   • A real (hitscan) weapon → `main`'s aim is near-perfect: stand and delete.
+        // A full run-to-nowhere retreat measured worse (shot in the back), so `flee_hard`
+        // only fires when near death or when an actual weapon pickup is visible to run to.
         let self_ss = view.self_state();
         let health = self_ss.health;
+        let held = self_ss.held_weapon;
         let has_target = combat_dec.target_entity.is_some();
-        let flee_hard = self.cfg.combat_enabled && has_target && health < FLEE_HEALTH;
-        let kite = self.cfg.combat_enabled && has_target && !flee_hard && health < KITE_HEALTH;
+        // Stuck on the near-useless spawn Blaster? (No resolved weapon counts the same.)
+        let blaster_only = matches!(held, None | Some(Weapon::Blaster));
+        // A weapon pickup we could grab to escape the Blaster phase (weighted picker puts
+        // weapons first while we hold the Blaster).
+        let weapon_in_reach = matches!(
+            items::best_item_goal_weighted(view, &self.skill, held, health, self_ss.armor),
+            Some((_, crate::perception::EntityClass::ItemWeapon))
+        );
+        let flee_hard = self.cfg.combat_enabled
+            && has_target
+            && (health < FLEE_HEALTH || (blaster_only && weapon_in_reach));
+        let kite = self.cfg.combat_enabled
+            && has_target
+            && !flee_hard
+            && (health < KITE_HEALTH || blaster_only);
         let enemy_pos_now: Option<Vec3> = combat_dec.target_entity.and_then(|t| {
             view.entities()
                 .find(|e| e.entity_number == t)
