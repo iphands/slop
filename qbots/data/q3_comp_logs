@@ -1,0 +1,25 @@
+256461.145 I ── competition scoreboard [FINAL] (group: kills/deaths, K/D) ──
+256461.145 I   #1  q3_fallback_major bots=1  kills=7104 deaths=6470 kd=1.10
+256461.145 I   #2  q3_hier_major bots=1  kills=7041 deaths=6508 kd=1.08
+256461.145 I   #3  q3_astar_sarge bots=1  kills=6967 deaths=6745 kd=1.03
+256461.145 I   #4  q3_segment_major bots=1  kills=6963 deaths=6366 kd=1.09
+256461.145 I   #5  q3_race_major bots=1  kills=6874 deaths=6514 kd=1.06
+256461.145 I   #6  q3_fallback_sarge bots=1  kills=6839 deaths=6762 kd=1.01
+256461.145 I   #7  q3_race_sarge bots=1  kills=6815 deaths=6835 kd=1.00
+256461.145 I   #8  q3_astar_major bots=1  kills=6769 deaths=6376 kd=1.06
+256461.145 I   #9  q3_hier_sarge bots=1  kills=6689 deaths=6821 kd=0.98
+256461.145 I   #10 q3_navmesh_sarge bots=1  kills=6640 deaths=6799 kd=0.98
+256461.145 I   #11 q3_navmesh_major bots=1  kills=6627 deaths=6392 kd=1.04
+256461.145 I   #12 q3_segment_camper bots=1  kills=6593 deaths=5711 kd=1.15
+256461.145 I   #13 q3_segment_sarge bots=1  kills=6581 deaths=6748 kd=0.98
+256461.145 I   #14 q3_fallback_camper bots=1  kills=6578 deaths=5626 kd=1.17
+256461.145 I   #15 q3_race_camper bots=1  kills=6537 deaths=5433 kd=1.20
+256461.145 I   #16 q3_astar_camper bots=1  kills=6532 deaths=5559 kd=1.18
+256461.145 I   #17 q3_navmesh_camper bots=1  kills=6410 deaths=5768 kd=1.11
+256461.145 I   #18 q3_hier_camper bots=1  kills=6116 deaths=5555 kd=1.10
+256461.145 I   #19 q3_astar_grunt bots=1  kills=4487 deaths=8257 kd=0.54
+256461.145 I   #20 q3_fallback_grunt bots=1  kills=4409 deaths=8212 kd=0.54
+256461.145 I   #21 q3_segment_grunt bots=1  kills=4382 deaths=8174 kd=0.54
+256461.145 I   #22 q3_navmesh_grunt bots=1  kills=4344 deaths=8301 kd=0.52
+256461.145 I   #23 q3_race_grunt bots=1  kills=4320 deaths=8303 kd=0.52
+256461.146 I   #24 q3_hier_grunt bots=1  kills=4276 deaths=8387 kd=0.51
