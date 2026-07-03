@@ -822,3 +822,30 @@ off near the quad") beats 60 guesses. (3) Verify ride physics by a live zero-inp
 tuning board/carry/dismount.
 ## Sources
 - qbots: world/src/build.rs (try_add_train two-height search), brain/src/ride.rs, brain/src/brains/runtester.rs
+
+# External-client bot "loses despite perfect aim": look at fire cadence, strafe period, and loadout
+When tuning `main` to beat `q3`-major in the deathmatch competition (Plan 45), several
+"obvious" combat fixes did NOT move the K/D, and the real levers were unintuitive. A bot with
+*perfect hitscan aim and a faster reaction than the opponent* can still get farmed. Debug it by
+logging OBITUARY prints (`svc_print` names the victim + killer or `None`=self/env), not by
+staring at the scoreboard — the death cause is the signal.
+
+What actually starved `main`'s damage / inflated its deaths:
+1. **Fire lockouts stack.** Eraser's 0.9 s weapon-switch lockout + a 0.4 s reaction reset =
+   ~1.3 s idle at the START of every engagement; the opponent (q3, 0.1 s + 0.3 s) shot first
+   every time. Trim `SWITCH_LOCKOUT_SECS` (main+sentry `combat.rs` only, q3 has its own model).
+2. **A long circle-strafe period is a straight line.** `STRAFE_PERIOD_SECS = 3.0 s` meant `main`
+   slid predictably for 3 s — trivial to LEAD. Dropping to 0.6 s (a real juke) cut deaths 38→25.
+   But randomizing the leg to [0.3,0.9]s was WORSE: legs <~0.4 s just vibrate in place (net-zero
+   displacement = no dodge). Keep a fixed, ground-covering juke.
+3. **Respawn-loadout death spiral.** die → respawn Blaster → lose the projectile duel → die.
+   Fix with a loadout-gated posture: Blaster ⇒ evade + go grab a real gun; hitscan ⇒ stand & fight.
+
+Avoid: (a) don't add combat JUMP-jink vs a hitscan opponent — it leads the predictable hop and
+tanks your own kills. (b) Widening acquire-FOV / holding long range / full run-to-item retreat all
+plateaued ~0.5 (they cut kills ~1:1 with deaths). (c) Positioning/strategy cannot close a
+per-engagement combat-quality gap; if aim+reaction are already maxed, the remaining gap is
+combat strength, not tactics — say so instead of grinding neutral tweaks.
+## Sources
+- qbots: brain/src/combat.rs (SWITCH_LOCKOUT_SECS, reaction base), brain/src/steer.rs
+  (STRAFE_PERIOD_SECS), brain/src/brains/main.rs (weapon-rush kite/flee_hard), Plan 45 tracker

@@ -33,9 +33,33 @@
   Progress came from **shooting sooner + being harder to hit + arming up**, not fighting less.
 
 ## Task status
-- [x] T1 underpowered disengage (main.rs) — reuses `q3char::bot_aggression`, fighting retreat.
+- [x] T1 disengage/kite when underpowered (main.rs) — evolved into loadout-gated kite +
+  hard-flee-to-weapon (the raw `bot_aggression<50` trigger was too twitchy; see iters 1–3).
 - [x] T2 weighted item picker (`items::best_item_goal_weighted`, main-only).
-- [ ] T3 flee tuning + dodge; iterate to a consistent win.
+- [x] T3 flee tuning + dodge — fast strafe juke (STRAFE_PERIOD 3.0→0.6s) + fire-cadence fix.
+
+## Outcome (stopped by user decision, 2026-07-03)
+**Result: main kd 0.47 → 0.68 (~+45%), deaths 38 → 25.** Not a win over q3-major (~1.3).
+
+Shipped changes (all q3-untouched; two commits):
+1. Fire cadence: switch-lockout 0.9→0.2s, reaction base halved (main+sentry `combat.rs`).
+2. Weapon-rush: Blaster → fight evasively + disengage to grab a real gun; hitscan → stand & delete.
+3. Weighted item picker (weapon hunger when weak, health/armor hunger when hurt).
+4. Fast combat strafe juke (0.6s flip; main-only).
+
+**Why we stopped:** main already has perfect hitscan aim and a *faster* reaction than q3
+(0.20 vs 0.30s), yet still loses per-engagement — the gap is raw combat quality, not tactics.
+Every defensive/positioning variant plateaus at ~0.5–0.68 (flee/kite/hold-range/jink all cut
+kills ~1:1 with deaths). Closing the rest needs a real combat-strength edge (a different kind
+of change than the requested strategy work); user chose to keep the ~45% gain and stop here.
+
+### Reverted experiments (measured worse or neutral — do not re-try blindly)
+- Combat jink (jump during fights): kills tanked — a hitscan railer leads the predictable hop.
+- Hold long range (320u): neutral; cut kills as much as deaths.
+- 360° acquire FOV: no help (main's 90° param is already a 180° cone; LOS still gates).
+- Randomized strafe leg [0.3,0.9]s: worse — short legs vibrate in place (net-zero dodge). Fixed
+  0.6s is better.
+- Full run-to-item retreat (aggression<50): passive, back-turned deaths — worst of all.
 
 ## Notes
 - Baseline diagnosis: `main` dies ~2× as often as `q3` (38 vs 19). Kills are competitive

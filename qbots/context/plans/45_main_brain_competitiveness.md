@@ -1,10 +1,16 @@
 # Plan 45 — `main` brain competitiveness vs `q3`
 
-> **Status**: in-progress
+> **Status**: stopped (partial — user decision 2026-07-03; ~+45% kd, not a full win)
 > **Created**: 2026-07-02
 > **Depends on**: Plan 24 (main brain), Plan 37 (q3 brain / q3char)
 > **Goal**: Make the `main` brain out-fight the `q3` brain in a 4v4 deathmatch by adding strategic disengage, resource-seeking, and dodge — **without modifying the `q3` brain or hurting its performance**.
 > **Agent**: interactive loop
+>
+> **Outcome**: main kd 0.47 → 0.68 (deaths 38 → 25) via fire-cadence fix, weapon-rush,
+> weighted items, and a fast strafe juke. Did **not** surpass q3-major (~1.3) — the residual
+> gap is per-engagement combat quality, not tactics, and closing it needs a combat-strength
+> change outside this plan's strategy scope. Stopped at the ~45% gain by user decision. Full
+> iteration log + reverted experiments in the tracker.
 
 ---
 
