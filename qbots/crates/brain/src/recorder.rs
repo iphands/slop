@@ -31,8 +31,9 @@
 //! angles (deg); `move_yaw` velocity-heading yaw (`nan` when ~still);
 //! `face_delta` `|yaw − move_yaw|` (0 when still); `wp` current waypoint index
 //! (`-` if none); `wpd` 3D distance to it (`-`); `flags` a char run — `B` wall
-//! bump, `W` wrong turn, `H` hindered, `A` airborne, `P` phantom-target (combat with
-//! no LOS), `R` recovery-active (Plan 13), `S` swimming (waterlevel ≥ 2, Plan 40), `.` none.
+//! bump, `W` wrong turn, `H` hindered, `A` airborne, `T` phantom-target (combat with
+//! no LOS), `R` recovery-active (Plan 13), `S` swimming (waterlevel ≥ 2, Plan 40),
+//! `P` riding a mover (platform/lift/train, Plan 43), `.` none.
 //! The `SUMMARY` line is the headline: it is what Plans 11–14 must beat.
 
 use std::path::Path;
@@ -97,6 +98,9 @@ pub struct FrameRecord {
     pub recovery: bool,
     /// True when the bot is waist-deep or deeper in water (`waterlevel >= 2`, Plan 40).
     pub swimming: bool,
+    /// True when the bot is executing a `Ride` edge — approaching/waiting/boarding/carried
+    /// on a `func_train`/`func_plat`/lift (Plan 43). Mirrors `swimming` for the mover case.
+    pub riding: bool,
 }
 
 /// Raw inputs the tick gathers for one frame; the recorder derives everything in
@@ -124,6 +128,8 @@ pub struct Sample {
     pub recovery: bool,
     /// True when the bot is waist-deep or deeper in water (`waterlevel >= 2`, Plan 40).
     pub swimming: bool,
+    /// True when the bot is executing a `Ride` edge (moving platform / lift, Plan 43).
+    pub riding: bool,
 }
 
 /// Geometry probe for the wall-bump detector. Production wraps
@@ -342,6 +348,7 @@ impl MovementRecorder {
             phantom_target: s.phantom_target,
             recovery: s.recovery,
             swimming: s.swimming,
+            riding: s.riding,
         });
 
         self.prev_origin = Some(s.origin);
@@ -440,8 +447,12 @@ impl MovementRecorder {
     }
 }
 
-/// Per-frame flag string: `B`=wall_bump, `W`=wrong_turn, `H`=hindered,
-/// `A`=airborne, `P`=phantom_target, `R`=recovery_active, `S`=swimming, `.`=none.
+/// Per-frame flag string: `B`=wall_bump, `W`=wrong_turn, `H`=hindered, `A`=airborne,
+/// `T`=phantom_target (phanTom-chase, Plan 11), `R`=recovery_active, `S`=swimming (Plan 40),
+/// `P`=riding a mover (platform/lift/train, Plan 43), `.`=none.
+///
+/// `S`/`P` are the traversal flags (Plan 46 extends this with `L` for ladder). `phantom_target`
+/// moved from `P`→`T` when riding claimed `P`, so the traversal trio stays contiguous.
 fn flags(f: &FrameRecord) -> String {
     let mut s = String::new();
     if f.wall_bump.is_some() {
@@ -457,13 +468,16 @@ fn flags(f: &FrameRecord) -> String {
         s.push('A');
     }
     if f.phantom_target {
-        s.push('P');
+        s.push('T');
     }
     if f.recovery {
         s.push('R');
     }
     if f.swimming {
         s.push('S');
+    }
+    if f.riding {
+        s.push('P');
     }
     if s.is_empty() {
         s.push('.');
@@ -574,6 +588,7 @@ mod tests {
                 phantom_target: false,
                 recovery: false,
                 swimming: false,
+                riding: false,
             });
         }
         let s = r.summary();
@@ -614,6 +629,7 @@ mod tests {
                 phantom_target: false,
                 recovery: false,
                 swimming: false,
+                riding: false,
             });
         }
         let s = r.summary();
@@ -652,6 +668,7 @@ mod tests {
                 phantom_target: false,
                 recovery: false,
                 swimming: false,
+                riding: false,
             });
         }
         let s = r.summary();
@@ -682,6 +699,7 @@ mod tests {
             phantom_target: false,
             recovery: false,
             swimming: false,
+            riding: false,
         });
         r.sample(Sample {
             t_secs: 0.1,
@@ -697,6 +715,7 @@ mod tests {
             phantom_target: false,
             recovery: false,
             swimming: false,
+            riding: false,
         });
         let s = r.summary();
         assert_eq!(
@@ -726,6 +745,7 @@ mod tests {
                 phantom_target: false,
                 recovery: false,
                 swimming: false,
+                riding: false,
             });
             let d = r.summary().distance;
             assert!(d >= prev, "distance must not decrease");
@@ -752,6 +772,7 @@ mod tests {
             phantom_target: false,
             recovery: false,
             swimming: false,
+            riding: false,
         });
         let dir = std::env::temp_dir().join(format!("qbots-rec-test-{}", std::process::id()));
         let path = dir.join("run.qb0.log");
@@ -790,6 +811,7 @@ mod tests {
             phantom_target: false,
             recovery: false,
             swimming: false,
+            riding: false,
         });
         let dir = std::env::temp_dir().join(format!("qbots-schema-{}", std::process::id()));
         let path = dir.join("run.qb0.log");
@@ -859,6 +881,54 @@ mod tests {
             "+20 not -340"
         );
         assert!((angle_delta_deg(10.0, 350.0) + 20.0).abs() < 1e-3, "-20");
+    }
+
+    /// A neutral [`FrameRecord`] with every flag off — the base for flag-mapping tests.
+    fn blank_frame() -> FrameRecord {
+        FrameRecord {
+            t_secs: 0.0,
+            frame: 0,
+            origin: [0.0; 3],
+            velocity: [0.0; 3],
+            speed: 0.0,
+            view_yaw: 0.0,
+            view_pitch: 0.0,
+            move_yaw: f32::NAN,
+            facing_move_delta_deg: 0.0,
+            waypoint: None,
+            waypoint_dist: None,
+            goal_reached: false,
+            wall_bump: None,
+            wrong_turn: false,
+            hindered: false,
+            grounded: true,
+            phantom_target: false,
+            recovery: false,
+            swimming: false,
+            riding: false,
+        }
+    }
+
+    #[test]
+    fn riding_maps_to_p_and_phantom_moves_to_t() {
+        // No flags → `.`.
+        assert_eq!(flags(&blank_frame()), ".");
+
+        // Riding a mover emits `P` (Plan 43 T4).
+        let mut f = blank_frame();
+        f.riding = true;
+        assert_eq!(flags(&f), "P");
+
+        // phantom_target moved off `P` to `T` when riding claimed `P` (Plan 43 T4).
+        let mut f = blank_frame();
+        f.phantom_target = true;
+        assert_eq!(flags(&f), "T");
+
+        // Swim + ride are the traversal pair; order is S then P.
+        let mut f = blank_frame();
+        f.swimming = true;
+        f.riding = true;
+        assert_eq!(flags(&f), "SP");
     }
 
     /// Tiny hand-rolled "regex" — pull the token after `prefix=` up to the next
