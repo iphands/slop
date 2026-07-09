@@ -28,7 +28,7 @@ use crate::nav::NavGoal;
 use crate::recover::{Recovery, RecoveryAction};
 use crate::skill::BotSkill;
 use crate::steer::{move_from_world_dir, Steering};
-use crate::water::{is_swimming, water_level, EXIT_LOOKUP_PITCH, SWIM_VERT_SCALE};
+use crate::traverse::{TraversalExecutor, TraversalFrame};
 use crate::weapons::Weapon;
 use crate::{items, los};
 
@@ -57,6 +57,9 @@ pub struct MainBrain {
     danger: DangerDriver,
     steering: Steering,
     recovery: Recovery,
+    /// The shared ladder/swim/ride executor (Plan 46). MainBrain previously had only a stateless
+    /// ride + swim and NO ladder machine; delegating gains all three (and the stateful board lock).
+    traverse: TraversalExecutor,
     /// Roam goal cursor (node indices into the A* graph) + position in it.
     roam_nodes: Vec<usize>,
     roam_idx: usize,
@@ -82,6 +85,7 @@ impl MainBrain {
             danger: DangerDriver::new(),
             steering,
             recovery: Recovery::new(),
+            traverse: TraversalExecutor::new(),
             roam_nodes: Vec::new(),
             roam_idx: 0,
             nav_graph: None,
@@ -496,18 +500,19 @@ impl crate::brains::core::Brain for MainBrain {
             mv.move_forward(fwd * arrive);
             mv.move_side(side * arrive);
 
-            // Swimming gate (Plan 40 T4): suspend stuck recovery in water — the StuckDetector
-            // false-fires on slow swim/bob and find_best_direction steers AWAY from water.
-            let swim_active =
-                cm.is_some_and(|c| is_swimming(water_level(c, pos))) || nav.current_edge_is_swim();
-            // Ride gate (Plan 43): suspend recovery while boarding/waiting/riding a moving
-            // platform — the bot stands still to wait or is carried, neither of which is "stuck".
-            let ride_active = nav.current_edge_is_ride();
+            // Traversal gates (Plan 46): the shared TraversalExecutor tells us whether we're
+            // swimming (Plan 40) or riding a platform/lift/ladder (Plan 43/35). Both SUSPEND stuck
+            // recovery — a surface bob or a stand-and-wait on a lift is not a wedge (the
+            // StuckDetector false-fires and find_best_direction steers AWAY from water) — and keep
+            // the ride LOCKED active while boarded. MainBrain now ALSO gets ladder climbs + the
+            // stateful board/carry lock it previously lacked; the swim/ride override is applied
+            // below (after normal steering) via `self.traverse.apply`.
+            let gates = self.traverse.gates(nav, cm, pos);
 
             // ── 6. Stuck recovery (Plan 13) ───────────────────────────────
             let has_nav_target = nav.pursue_target(pos).is_some();
             let engaging = matches!(self.fsm, BehaviorState::Engage { .. });
-            let rec_action = if swim_active || ride_active {
+            let rec_action = if gates.any() {
                 RecoveryAction::None
             } else {
                 self.recovery
@@ -538,82 +543,25 @@ impl crate::brains::core::Brain for MainBrain {
                 }
             }
 
-            // ── 7. Jump-edge activation (Plan 14 T2) ─────────────────────
-            if nav.current_edge_is_jump() {
+            // ── 7. Jump-edge activation (Plan 14 T2) — suspended while traversing ─────
+            if nav.current_edge_is_jump() && !gates.any() {
                 mv.jump();
             }
 
-            // ── 8. Swim activation (Plan 40) ─────────────────────────────
-            // Live bots also swim water routes. Drive sustained vertical thrust toward the
-            // 3-D look-ahead; never the one-shot jump in water. Combat aim wins the view pitch
-            // when firing (Risk #3) — otherwise pitch toward the 3-D target so `pml.forward`
-            // carries the vertical component for surfacing / climb-out.
-            let water = cm.map_or(0, |c| water_level(c, pos));
-            if let Some(cm) = cm {
-                if is_swimming(water) || nav.current_edge_is_swim() {
-                    let target = nav.pursue_target(pos).unwrap_or(pos);
-                    let to = target - pos;
-                    let dz = to.z;
-                    let exiting =
-                        nav.current_edge_is_swim() && dz > 0.0 && water_level(cm, target) == 0;
-                    if exiting {
-                        mv.up = 1.0;
-                        if !combat_dec.should_fire {
-                            mv.pitch = EXIT_LOOKUP_PITCH;
-                        }
-                    } else {
-                        mv.up = (dz / SWIM_VERT_SCALE).clamp(-1.0, 1.0);
-                        if !combat_dec.should_fire {
-                            let hd = to.truncate().length().max(1.0);
-                            mv.pitch = (-dz.atan2(hd).to_degrees()).clamp(-89.0, 89.0);
-                        }
-                    }
-                    mv.jump = false; // jumping in water is a useless one-shot launch
-                }
-            }
-
-            // ── 9. Ride activation (Plan 43): board → wait → cross a moving platform ──
-            // On a ride edge the bot must walk to the board point, WAIT (clear, no forward)
-            // until the platform arrives, then cross to the dismount point — overriding the
-            // normal steer-to-waypoint (which aims across the gap at the far node and would
-            // walk the bot off the ledge). Recovery is already suspended (`ride_active`).
-            if ride_active {
-                if let Some(info) = nav.current_ride_info() {
-                    let phase = crate::ride::ride_phase(pos, &info, view);
-                    match phase {
-                        crate::ride::RidePhase::Wait => {
-                            mv.move_forward(0.0);
-                            mv.move_side(0.0);
-                        }
-                        crate::ride::RidePhase::Approach | crate::ride::RidePhase::Cross => {
-                            let target = crate::ride::ride_target(phase, &info);
-                            let to = target - pos;
-                            let dir = if to.length_squared() > 1e-6 {
-                                to.normalize()
-                            } else {
-                                Vec3::ZERO
-                            };
-                            let (fwd, side) = move_from_world_dir(dir, view_yaw, true);
-                            mv.move_forward(fwd);
-                            mv.move_side(side);
-                            // JUMP on/off like a human (T7): hop when the train is at the board or
-                            // far corner (step-on / step-off). Hold (no jump) mid-transit so we
-                            // don't launch off the moving platform. Vertical lifts: hop on at the
-                            // bottom, ride still otherwise.
-                            let at_step =
-                                crate::ride::platform_present(view, info.board_ent.into())
-                                    || crate::ride::platform_present(view, info.far_ent.into());
-                            let lift_board = info.vertical
-                                && (pos.truncate() - Vec3::from(info.board).truncate()).length()
-                                    > 32.0;
-                            mv.jump = (!info.vertical && at_step) || lift_board;
-                        }
-                    }
-                    if matches!(phase, crate::ride::RidePhase::Wait) {
-                        mv.jump = false; // never jump while waiting clear of a platform
-                    }
-                }
-            }
+            // ── 8. Traversal override (Plan 46): swim (Plan 40) + stateful ride/ladder (Plan
+            // 43/35) movement is owned by the shared TraversalExecutor. On a swim/ride/ladder edge
+            // it OVERWRITES the movement axes (and view) computed above; the fire decision stays
+            // with combat (the bot fires along the traversal heading — accepted for v1). `fwd`/
+            // `side` are the raw (pre-arrive) steering the swim machine reuses.
+            let frame = TraversalFrame {
+                view,
+                cm,
+                pos,
+                view_yaw,
+                steer_fwd: fwd,
+                steer_side: side,
+            };
+            self.traverse.apply(&mut mv, gates, nav, &frame);
         } else if !combat_dec.should_fire {
             // No nav graph loaded yet — just walk forward.
             mv.move_forward(1.0);

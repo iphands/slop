@@ -65,8 +65,9 @@ impl TraversalGates {
 pub struct TraversalFrame<'a> {
     /// This frame's perceived world (self playerstate + PVS entities).
     pub view: &'a Worldview,
-    /// Collision model — for the water-level sample.
-    pub cm: &'a CollisionModel,
+    /// Collision model — for the water-level sample. `None` before the map loads (water samples
+    /// then read as 0 / dry, matching the brains' own `cm.map_or(0, …)` fallback).
+    pub cm: Option<&'a CollisionModel>,
     /// Bot origin this frame.
     pub pos: Vec3,
     /// The brain's already-steered view yaw (movement is view-relative).
@@ -105,8 +106,14 @@ impl TraversalExecutor {
     /// recovery + jump-edge activation whenever [`TraversalGates::any`] holds. Also resets the
     /// boarded-ride lock when no ride edge is active (defensive — matches runtester's else-branch:
     /// a ride that ends without going through a dismount branch must not stay latched).
-    pub fn gates(&mut self, nav: &dyn Navigator, cm: &CollisionModel, pos: Vec3) -> TraversalGates {
-        let swimming = is_swimming(water_level(cm, pos)) || nav.current_edge_is_swim();
+    pub fn gates(
+        &mut self,
+        nav: &dyn Navigator,
+        cm: Option<&CollisionModel>,
+        pos: Vec3,
+    ) -> TraversalGates {
+        let swimming =
+            is_swimming(cm.map_or(0, |c| water_level(c, pos))) || nav.current_edge_is_swim();
         let ride_active = nav.current_edge_is_ride() || self.ride_boarded;
         if !ride_active {
             self.ride_boarded = false;
@@ -161,7 +168,7 @@ impl TraversalExecutor {
             steer_side,
             ..
         } = *frame;
-        let water = water_level(cm, pos);
+        let water = cm.map_or(0, |c| water_level(c, pos));
         // Use the RAW look-ahead (no floor validation — there's no floor underwater for
         // `pursue_target_safe` to confirm).
         let target = nav
@@ -172,7 +179,7 @@ impl TraversalExecutor {
         let hd = to.truncate().length();
         let dz = to.z;
         // Is the target a dry node above us (a water→ledge exit, the railgun climb-out)?
-        let target_dry = water_level(cm, target) == 0;
+        let target_dry = cm.map_or(0, |c| water_level(c, target)) == 0;
         if nav.current_edge_is_swim() && target_dry && dz > 0.0 {
             self.exit_ticks = EXIT_HYSTERESIS_TICKS;
         }
@@ -488,12 +495,12 @@ mod tests {
         let nav = StubNav::default();
         let cm = empty_cm();
         let view = view_at([0.0, 0.0, 0.0], true, &[]);
-        let gates = ex.gates(&nav, &cm, Vec3::ZERO);
+        let gates = ex.gates(&nav, Some(&cm), Vec3::ZERO);
         assert!(!gates.any());
         let mut mv = MovementIntent::new();
         let frame = TraversalFrame {
             view: &view,
-            cm: &cm,
+            cm: Some(&cm),
             pos: Vec3::ZERO,
             view_yaw: 0.0,
             steer_fwd: 0.0,
@@ -513,12 +520,12 @@ mod tests {
         };
         let cm = empty_cm();
         let view = view_at([0.0, 0.0, 0.0], false, &[]);
-        let gates = ex.gates(&nav, &cm, Vec3::ZERO);
+        let gates = ex.gates(&nav, Some(&cm), Vec3::ZERO);
         assert!(gates.swimming && !gates.ride_active);
         let mut mv = MovementIntent::new();
         let frame = TraversalFrame {
             view: &view,
-            cm: &cm,
+            cm: Some(&cm),
             pos: Vec3::ZERO,
             view_yaw: 0.0,
             steer_fwd: 0.0,
@@ -540,12 +547,12 @@ mod tests {
         let cm = empty_cm();
         // Bot near the bottom of the shaft, exit far above → ascend.
         let view = view_at([0.0, 0.0, 10.0], true, &[]);
-        let gates = ex.gates(&nav, &cm, Vec3::new(0.0, 0.0, 10.0));
+        let gates = ex.gates(&nav, Some(&cm), Vec3::new(0.0, 0.0, 10.0));
         assert!(gates.ride_active);
         let mut mv = MovementIntent::new();
         let frame = TraversalFrame {
             view: &view,
-            cm: &cm,
+            cm: Some(&cm),
             pos: Vec3::new(0.0, 0.0, 10.0),
             view_yaw: 0.0,
             steer_fwd: 0.0,
@@ -570,11 +577,11 @@ mod tests {
         let cm = empty_cm();
         // At the board ledge, NO platform entity present → wait (no board, stand still).
         let view = view_at([110.0, 0.0, 50.0], true, &[]);
-        let gates = ex.gates(&nav, &cm, Vec3::new(110.0, 0.0, 50.0));
+        let gates = ex.gates(&nav, Some(&cm), Vec3::new(110.0, 0.0, 50.0));
         let mut mv = MovementIntent::new();
         let frame = TraversalFrame {
             view: &view,
-            cm: &cm,
+            cm: Some(&cm),
             pos: Vec3::new(110.0, 0.0, 50.0),
             view_yaw: 0.0,
             steer_fwd: 0.0,
@@ -585,11 +592,11 @@ mod tests {
 
         // Platform entity sitting on the board point AND the bot grounded on its deck → board.
         let view2 = view_at([100.0, 0.0, 50.0], true, &[[100.0, 0.0, 50.0]]);
-        let gates2 = ex.gates(&nav, &cm, Vec3::new(100.0, 0.0, 50.0));
+        let gates2 = ex.gates(&nav, Some(&cm), Vec3::new(100.0, 0.0, 50.0));
         let mut mv2 = MovementIntent::new();
         let frame2 = TraversalFrame {
             view: &view2,
-            cm: &cm,
+            cm: Some(&cm),
             pos: Vec3::new(100.0, 0.0, 50.0),
             view_yaw: 0.0,
             steer_fwd: 0.0,
@@ -598,7 +605,7 @@ mod tests {
         ex.apply(&mut mv2, gates2, &nav, &frame2);
         // Once boarded, the ride locks active even if the nav edge later clears.
         let nav_off = StubNav::default();
-        let gates3 = ex.gates(&nav_off, &cm, Vec3::new(100.0, 0.0, 50.0));
+        let gates3 = ex.gates(&nav_off, Some(&cm), Vec3::new(100.0, 0.0, 50.0));
         assert!(gates3.ride_active, "boarded → ride stays locked active");
     }
 
@@ -607,7 +614,7 @@ mod tests {
         let mut ex = TraversalExecutor::new();
         let nav = StubNav::default(); // no ride edge
         let cm = empty_cm();
-        let gates = ex.gates(&nav, &cm, Vec3::ZERO);
+        let gates = ex.gates(&nav, Some(&cm), Vec3::ZERO);
         assert!(!gates.ride_active);
     }
 }
