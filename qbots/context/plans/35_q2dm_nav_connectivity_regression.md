@@ -1,10 +1,10 @@
-# Plan 35 — q2dm nav connectivity regression (5/8 stock maps fail)
+# Plan 35 — q2dm nav connectivity: hull-valid routes + residual map gaps
 
-> **Status**: pending
+> **Status**: in-progress (revised 2026-07-09)
 > **Created**: 2026-06-18
-> **Depends on**: Plan 34 (diagnostics + tooling)
-> **Goal**: Restore full spawn connectivity to the stock DM maps so `generate-map-cache --map 'q2dm*'` caches all 8 (q2dm7 may stay 5/6 — the accepted pit).
-> **Agent**: TBD
+> **Depends on**: Plan 34 (diagnostics + tooling), Plan 42 (ride edges), Plan 43 (ride behavior)
+> **Goal**: Every stock q2dm map is fully spawn-connected with routes a bot can *physically walk* (hull-valid edges), so far-spawn bots reliably reach ladder/train/lift-gated items (q2dm3 quad from any spawn; q2dm6 8/8; q2dm7 ≥ 5/6).
+> **Agent**: implementation agent
 
 ---
 
@@ -15,101 +15,128 @@
 
 ## TL;DR
 
-**What**: A nav-graph regression now fails `check_spawn_connectivity` on **5 of 8** stock DM
-maps. Find and fix the regression so they all reach full spawn connectivity again.
+**What**: The original "regression" is root-caused and largely fixed — the missing pieces were
+**connector mechanisms** (ladder edges, train/lift ride edges, jump-down bridges), not a
+`walkable_stair` bug. What remains is **route quality**: some bridge/seed edges are not
+traversable by the player hull (they pass a point trace but not a hull trace), and two maps
+still have residual component gaps. This plan finishes the job.
 
 **Deliverables**:
-1. Root-cause the regression (bisect the suspect commits; confirm per-map).
-2. Fix it without re-introducing the false edges the suspect commits were added to remove.
-3. q2dm1/2/3/4/5/6/8 = full spawns; q2dm7 ≥ 5/6 (accepted pit). Regen + live spot-check.
+1. All bridge/seed edges hull-validated (player hull, full length) — over-long untraversable
+   "walk" bridges are split into real hops or rejected.
+2. q2dm3 upper level resampled/repaired so **far spawns route reliably to the quad board
+   ledge** — live `spawn-to-item quaddamage --count 4` reaches ≥ 3/4 (was 0–1/4).
+3. q2dm6 8/8 and q2dm7 ≥ 5/6 spawn connectivity (per-map diagnosis + fix).
+4. Cache regen for all q2dm* (`mapcache::VERSION` bump) + live spot-checks.
 
-**Estimated effort**: Medium–Large (uncertain; iterative nav work).
+**Estimated effort**: Large (iterative nav work).
 
 ## Context
 
-`qbots generate-map-cache --map 'q2dm*' --spacing 24` (Plan 34 T6, `--allow-failures`):
+### What was already resolved (2026-06-19, see git log P35)
+- Root cause of the broad 5/8 failure was **missing connectors**, not the `walkable_stair`
+  floor-probe (fragmentation persisted with `QBOTS_NO_PRUNE=1`). Fixed via:
+  - **Ladder climb edges** (`CONTENTS_LADDER` → vertical `Ride` edges with `ladder: true`;
+    `build.rs::add_ladder_edges`, `LADDER_RADIUS=96`, `LADDER_DZ=56`) — the key for q2dm3.
+  - **func_train / func_plat ride edges** (Plan 42) + **jump-down floor bridges**
+    (`bridge_components_via_jump`, `navgraph.rs:1197`).
+- Current per-map state: q2dm1/2/4/5/8 **full**; **q2dm3 7/7**; q2dm6 **7/8**; q2dm7 **4/6**
+  (was 3/6). The q2dm3 quad is A*-reachable from all 7 spawns and physically reached from
+  spawn3 (Plan 43).
 
-| map | result |
-|-----|--------|
-| q2dm1 | PASS |
-| q2dm2 | **FAIL 3/7** |
-| q2dm3 | **FAIL 3/7** |
-| q2dm4 | PASS |
-| q2dm5 | **FAIL 7/9** |
-| q2dm6 | **FAIL 7/8** |
-| q2dm7 | **FAIL 3/6** (was 5/6 accepted) |
-| q2dm8 | PASS |
+### The remaining problem (recorded 2026-06-19, brain_notes.md)
+Far-spawn → quad-board routes on q2dm3 traverse the fragmented upper level over **over-long
+bridge "Walk" edges that are hull-BLOCKED** — e.g. `(-121,-161,216) → (191,-329,216)` is a
+354u `Walk` edge whose **hull trace stops at fraction 0.07** while the point trace is clear.
+The bot cannot physically follow the A* path, so `--count 4` (bots spread across far spawns)
+reaches 0–1/4 even though the ride itself is solid.
 
-`context/map_errors.notes.log.md:115-123` recorded **7/8 passing** on 2026-06-16
-(q2dm1/2/3/4/5/6/8 PASS, q2dm7 5/6). So this regressed broadly since.
+> **Deferral superseded**: the 2026-06-19 user decision deferred far-spawn route reliability.
+> The 2026-07-09 user directive (human-like bots that successfully navigate maps and get
+> items from anywhere) **re-opens it as this plan's core scope**.
 
-### Suspect regressions (in order)
-1. **`walkable_stair` floor-existence check** — commit `662580e69` (2026-06-17) added a
-   downward `STEP*2` floor probe at each stair step (`navgraph.rs:1344`). Intended to reject
-   open-air "folded staircase" shortcuts; **now also reports `stair=FAIL` on the real
-   cross-floor candidate pairs** in `nav-debug q2dm3`. CANNOT simply be removed — the worst
-   q2dm3 offenders are genuine same-XY `dz=144` open-air shortcuts it *correctly* rejects.
-2. **`BRIDGE_HDIST` cut 512 → 128 → 256** (`build.rs:28`, commit `1c0756a85`, a
-   steering/smoothing change). But restoring 512 alone **does not** fix q2dm3 (still 3/7),
-   so it's at most a contributing factor.
-3. **`CONNECT_RADIUS` / connection-window changes** (`66c122e6b`, `450e6cdc7`, `3cdf173c3`,
-   `d23a1d411`) — re-shaped which neighbours `generate()` connects; rule in/out by bisect.
+### Key code anchors
+- `crates/world/src/navgraph.rs` — `bridge_*` fns, `walkable_stair` (:1794),
+  `floor_waypoints_multi` (:1547), `bridge_components_via_jump` (:1197), `STEP=18` (:22).
+- `crates/world/src/build.rs` — generation pipeline, `add_ladder_edges` (:521),
+  `add_train_edges`, `add_elevator_edges`, `JUMP_BRIDGE_*` (:268).
+- `crates/world/src/mapcache.rs` — `VERSION` (currently 18) + `Fingerprint`.
+- Tools: `navinspect <map> compgaps|navquery|gpath`, `spawn-to-point <x> <y> <z>` scenario
+  (isolates route-reliability from ride-correctness), `QBOTS_NO_PRUNE=1`.
 
-### Deeper structural finding (q2dm3, Plan 34 T3)
-The real gap on q2dm3 is **no nodes sampled in the z=83..168 band** — the staircase treads
-between the lower (comp1) and mid (comp2) floors aren't in the graph, so the only cross-floor
-candidates are false vertical pairs. Plus a **walled-off `func_plat` pocket (comp4)** and a
-`func_door` top node orphaned 69u below the upper corridor. Re-diagnose each failing map; the
-cause may differ per map.
+## Step-by-Step Tasks
 
-## Step-by-Step Tasks (outline — refine after bisect)
+### T1: Hull-validate every bridge/seed edge
 
-### T1: bisect / attribute the regression
-Use `qbots nav-debug <map>` (live) across the suspect commits to attribute each map's failure
-to a specific commit. Record per-map cause in `map_errors.notes.log.md`.
+**File**: `crates/world/src/navgraph.rs` (+ `build.rs` call sites)
 
-### T2: fix `walkable_stair` floor-check over-rejection
-Make the floor-existence probe distinguish a real stair tread from an open-air shortcut
-without failing real cross-floor stairs (e.g. probe along the actual step XY, tighten only the
-vertical-shortcut case, or gate by horizontal/vertical slope). Keep the false-edge rejection
-that `662580e69` was added for (re-verify the 32-bot improvement it claimed).
+**What to do**: Any edge synthesized by a bridge pass (`bridge_components*`, spawn seeding,
+stair links) must be validated with a **player-hull trace over its full length** (with STEP
+stepping, like `walkable_stair`), not a point trace. Reject edges the hull can't traverse.
+Add a regression unit test around the known-bad q2dm3 edge shape (long flat hull-blocked
+span). Log every rejected bridge with both fractions (point vs hull) for diagnosis.
 
-### T3: re-evaluate `BRIDGE_HDIST` + spawn-aware bridge
-Decide global value vs a spawn-aware escalating bridge (Plan 34's old C2 idea): widen reach
-only between spawn-bearing components, via strict `walkable_stair_link_orig`.
+### T2: Split over-long bridges into real hops / resample the q2dm3 upper level
 
-### T4: lift/plat anchoring + tread sampling (if still needed)
-Anchor lift top nodes (probe floor just outside the shaft) and/or fix `floor_waypoints_multi`
-inline-model blindness so stair treads + platform landings are sampled.
+**Files**: `crates/world/src/navgraph.rs`, `crates/world/src/build.rs`
 
-### T5: regen + verify all q2dm*
-All stock maps full connectivity (q2dm7 ≥ 5/6); live `spawn-to-spawn`/`spawn-to-weapon`
-spot-check on a previously-failing map (false-bridge guard). Bump `mapcache::VERSION` for any
-gen change.
+**What to do**: Where T1 rejection disconnects a previously-"connected" area (q2dm3 upper
+level, comp0 z152–600), restore *genuine* connectivity:
+- Split long bridge candidates at intermediate walkable floor points (probe the midpoint
+  columns with `floor_waypoints_multi`-style sampling; insert nodes; connect hull-valid hops).
+- Densify sampling on floors that currently have sparse/no nodes (the q2dm3 z=83..168 tread
+  band; upper-level islands around the ladder exits and the `*10` board ledge).
+Success metric: A* far-spawn → quad-board path exists **and every edge is hull-valid**.
+
+### T3: q2dm6 + q2dm7 residual gaps
+
+**What to do**: Per-map diagnosis with `navinspect compgaps` (q2dm6 is 7/8, q2dm7 is 4/6).
+Identify each missing spawn's blocking geometry (ladder? lift? jump? tread band?) and apply
+the matching existing mechanism (ladder/ride/jump-bridge/resample) — do **not** invent new
+generic bridges without hull validation (T1). q2dm7's accepted pit means ≥ 5/6 passes.
+
+### T4: Regen + live verification
+
+**Files**: `crates/world/src/mapcache.rs` (VERSION bump), live runs
+
+**What to do**: Bump `mapcache::VERSION`; `generate-map-cache --map 'q2dm*' --spacing 24`
+must cache all 8 maps (q2dm7 ≥ 5/6 with `--allow-failures` documented). Live checks:
+- q2dm3: `spawn-to-item quaddamage --count 4 --max-secs 150 --lift-penalty 0` → ≥ 3/4 reached.
+- q2dm6/q2dm7: `spawn-to-spawn --count 8 --max-secs 90` reaches from the previously-orphaned
+  spawns.
+Record results in `context/map_errors.notes.log.md` (dated) and append `context/brain_notes.md`.
+
+> **Rule B reminder**: commit after *each* task; fmt + clippy(-D warnings) + tests green
+> before every commit; `mapcache::VERSION` bumped in the same commit as any generation change.
 
 ## Critical Files
-- `crates/world/src/navgraph.rs` — `walkable_stair` (floor-check), `bridge_*`,
-  `floor_waypoints_multi`, `connect_cells`/`CONNECT_RADIUS`.
-- `crates/world/src/build.rs` — `BRIDGE_HDIST`, `generate_map_nav`, `add_lift`.
-- `crates/world/src/mapcache.rs` — `VERSION`/`Fingerprint`.
+
+| File | Change | Priority |
+|------|--------|----------|
+| `crates/world/src/navgraph.rs` | hull-valid bridge gate, bridge splitting, resample helpers | P0 |
+| `crates/world/src/build.rs` | pipeline wiring, per-map fixes | P0 |
+| `crates/world/src/mapcache.rs` | `VERSION` bump | P0 |
+| `crates/world/tests/` | hull-blocked-bridge regression test | P1 |
+| `context/map_errors.notes.log.md` | dated per-map results | P2 |
 
 ## Open Questions / Risks
-1. Removing/relaxing the floor-check risks re-introducing the navigation-loop false edges it
-   fixed. *Mitigation*: re-run the 32-bot reach test it cited; keep the vertical-shortcut
-   rejection.
-2. Per-map causes may differ — don't assume one fix covers all 5. *Mitigation*: T1 bisect +
-   per-map nav-debug.
-3. Connectivity passing ≠ navigable. *Mitigation*: live spawn-to-* on a fixed map.
+
+1. **Hull validation may disconnect maps that currently "pass"** (their bridges were fake).
+   *Mitigation*: T2 restores genuine hops; run the full q2dm* gate after T1 and treat new
+   failures as newly-honest, not regressions — fix forward.
+2. **Splitting bridges can explode node count / gen time.** *Mitigation*: split only bridge
+   candidates that fail the hull gate; cap inserted nodes per bridge; measure gen time
+   (Plan 18 cache keeps runtime cost at zero).
+3. **Connectivity passing ≠ navigable** (the recurring pitfall). *Mitigation*: T4's live runs
+   are the gate; `spawn-to-point` isolates route bugs from ride bugs.
+4. **q2dm7's pit** is genuinely one-way. Accepted: ≥ 5/6.
 
 ## Verification Checklist
-- [ ] T1: each failing map's regression attributed to a commit + cause documented.
-- [ ] T2: q2dm3 cross-floor stairs `stair=PASS` again; the `662580e69` false-edge case still rejected.
-- [ ] T5: q2dm1/2/3/4/5/6/8 full spawns; q2dm7 ≥ 5/6; `generate-map-cache --map 'q2dm*'` err≤1.
-- [ ] Live spawn-to-spawn on a previously-failing map traverses the restored connection.
-- [ ] fmt + clippy(-D warnings) + tests green before each commit; `mapcache::VERSION` bumped.
 
-## DEFERRED 2026-06-19: q2dm3 upper-level far-spawn route reliability
-The quad RIDE is solved (Plan 43); the quad is reached from spawn3 (the board ledge). Making
-FAR spawns route reliably to the board needs hull-validating + splitting bridge edges and
-resampling the fragmented upper level (confirmed blocker: hull-blocked 354u 'walk' bridges).
-User decision (2026-06-19): defer — stop at ride-from-spawn3. See brain_notes.md.
+- [ ] T1: bridge/seed edges hull-validated; regression test pins the q2dm3 hull-blocked case; commit.
+- [ ] T2: far-spawn → quad-board A* path is fully hull-valid; q2dm3 upper level has nodes in the
+      previously-empty bands; commit.
+- [ ] T3: q2dm6 8/8; q2dm7 ≥ 5/6; per-map cause documented; commit.
+- [ ] T4: `generate-map-cache --map 'q2dm*'` caches 8/8 (q2dm7 note); live q2dm3 quad ≥ 3/4 from
+      mixed spawns; `map_errors.notes.log.md` + `brain_notes.md` appended; VERSION bumped; commit.
+- [ ] fmt + clippy(-D warnings) + tests green before each commit.

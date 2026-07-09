@@ -1,6 +1,8 @@
 # Plan 42 — Moving-platform (`func_train`) + lift nav-graph integration for q2dm3
 
-> **Status**: pending
+> **Status**: in-progress (~95% — revised 2026-07-09: all nav work shipped, cache v18; the quad
+> IS now A*-reachable from all 7 spawns via the `*10` two-height ride fix, commit `13b08c4ae`.
+> **Only T6 (offline gated reachability tests) remains** — finish it, then move to `completed/`.)
 > **Created**: 2026-06-19
 > **Depends on**: Plan 17 (BSP/collision), Plan 18 (map cache), Plan 39 (EdgeKind pattern), Plan 34/35 (q2dm3 connectivity diagnosis)
 > **Goal**: Represent q2dm3's horizontal moving platforms (`func_train`) and its vertical lift (`func_plat`/`func_door`) in the nav graph as traversable **ride edges**, so A* can plan routes onto the quad and the loop-train railgun, and q2dm3's connectivity gate passes → `generate-map-cache q2dm3` succeeds.

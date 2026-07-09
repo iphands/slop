@@ -1,456 +1,156 @@
-# Plan 44 — 3ZB2-Style Brain Implementation
+# Plan 44 — 3ZB2-Style Brain Plugin (`zb2`)
 
-> **Status**: pending  
-> **Created**: 2026-06-19  
-> **Depends on**: Plan 43 (ride behavior), Plan 06 (brain plugin core)  
-> **Goal**: Implement a pluggable 3ZB2-style brain with route navigation, shortcut optimization, and state machine for elevators/doors/trains.  
-> **Agent**: implementation agent  
+> **Status**: pending (rewritten 2026-07-09 — grounded in the real crate layout)
+> **Created**: 2026-06-19
+> **Depends on**: Plan 23/24/25 (brain plugin contract + multibrain select), Plan 43 (ride behavior), Plan 46 (shared traversal executor)
+> **Goal**: A pluggable `Zb2Brain` (`--brain zb2`) that plays deathmatch with 3ZB2's signature *decision texture* — sequential route memory with LOS shortcut-skipping (`Search_NearlyPod`) and 3ZB2's mover-aware route states — on top of the existing `Navigator`/nav-graph, then measure it against `q3` and `main` in competition.
+> **Agent**: implementation agent
 
-> **Before writing any code, re-read `context/plans/RULES.md` in full.**  
+---
+
+> **Before writing any code, re-read `context/plans/RULES.md` in full.**
 > For historical context, completed plans live in `context/plans/completed/`.
 
 ---
 
 ## TL;DR
 
-**What**: Port 3ZB2's battle-tested navigation system to qbots as a pluggable `Brain` implementation.
+**What**: Port 3ZB2's *behavior* (route following + shortcuts + mover states) as a third
+full brain plugin, the way Plan 37 ported Quake 3's — reusing our nav graph, steering,
+recovery, combat, and (Plan 46) traversal executor. **Do not** port 3ZB2's node-linking
+(`G_FindRouteLink`) into `world/` — our graph already has Walk/Jump/Swim/Ride edges that are
+strictly richer than 3ZB2's `linkpod[6]`; re-porting its linker would be a regression.
 
 **Deliverables**:
-1. `brain::brains::zb2::ZB2Brain` — 3ZB2-style brain implementation
-2. Route navigation with sequential traversal + shortcut optimization
-3. State machine for elevators/doors/trains (critical for multi-level maps)
-4. Competition integration (`--brain zb2` CLI flag)
-5. Performance comparison vs `q3` brain (Plan 37)
+1. `crates/brain/src/brains/zb2.rs` — `Zb2Brain`, `BrainKind::Zb2` (`--brain zb2`), wired
+   through `build_brain` / CLI / fleet config / competition (mirror Plan 37's `q3` wiring).
+2. Sequential route memory + `Search_NearlyPod` shortcut-skip over `Navigator` paths.
+3. 3ZB2 mover route-states (`GRS_ONPLAT`/`GRS_ONTRAIN` semantics) mapped onto our
+   `EdgeKind::Ride`/ladder edges via the Plan 46 shared traversal executor.
+4. Competition results vs `q3` and `main` recorded in `context/mode_perf.md` +
+   `context/brain_notes.md` (brain-notes discipline).
 
-**Estimated effort**: Large (3 days)
-
----
+**Estimated effort**: Large (2–3 days).
 
 ## Context
 
-### Why 3ZB2?
+### Why 3ZB2 (unchanged from the original plan)
+Battle-tested for decades, an essential mover state machine, shortcut optimization, and live
+C source in `vendor/3zb2-zigflag/src/bot/`. Reviewer guidance (2026-06-19): build **one**
+solid additional brain, not six. Reference distillations: `context/distilled/brains/
+3zb2_brain.md`, `context/distilled/pathing/3zb2.md` + `3zb2_linking.md`.
 
-After analyzing 7 classic Quake 2 bots (3ZB2, Eraser, ACE, CRBot, Keys, Gladiator, JABot), reviewers (neckbeard + hoodie) recommended focusing on **1-2 brains** for v1, not 6. 3ZB2 was prioritized because:
+### What changed since the original draft (why this rewrite)
+- `world/src/nav_generator.rs` **does not exist**; nav generation lives in
+  `crates/world/src/build.rs` + `navgraph.rs`, and the graph already models jumps, water,
+  trains, lifts, and ladders (Plans 39/42/35). The old T3 ("port `G_FindRouteLink`") is
+  **dropped** — 3ZB2's value here is its *runtime* behavior, not its offline linker.
+- The brain plugin seam is proven (4 brains: `main`, `sentry`, `runtester`, `q3` —
+  `crates/brain/src/brains/mod.rs:27-79`), and Plan 37 is the canonical example of porting a
+  foreign bot's brain onto the seam. Follow it file-for-file.
+- Traversal execution (ladder/swim/ride) is becoming a shared module (Plan 46). `Zb2Brain`
+  consumes it — 3ZB2's `GRS_*` states become a thin state veneer over that executor.
 
-- ✅ **Battle-tested** — Live in actual Q2 deathmatches for decades
-- ✅ **Essential state machine** — Handles elevators/doors/trains (critical for multi-level maps)
-- ✅ **Shortcut optimization** — `Search_NearlyPod` provides fast navigation
-- ✅ **Live C source** — `vendor/3zb2-zigflag/src/` available for reference
-- ✅ **Pre-built routes** — No dynamic learning overhead
-
-### What We're NOT Building
-
-- ❌ Eraser-style dynamic learning (nice-to-have for v2)
-- ❌ ACE's adjacency matrix (too complex, memory inefficient)
-- ❌ CRBot's BFS (suboptimal vs A* or sequential)
-- ❌ Gladiator's AAS (concept already covered by our BSP nav graph)
-
-### Key Facts
-
-**3ZB2 Architecture** (from `context/distilled/brains/3zb2_brain.md`):
-- Route graph: `route_t Route[MAXNODES]` with `linkpod[6]` adjacency list
-- Path following: Sequential index traversal (`routeindex++`) with shortcuts
-- State machine: `GRS_NORMAL`, `GRS_ONPLAT`, `GRS_ONTRAIN`, `GRS_TELEPORT`, etc.
-- Shortcut optimization: `Search_NearlyPod()` skips intermediate nodes when visible
-- Linking algorithm: Distance/height/LOS filters (port to BSP-based LOS)
-
-**Current State** (as of Plan 43):
-- `Brain` trait exists (Plan 23)
-- `MainBrain` (default) and `SentryBrain` exist (Plan 24)
-- `Q3Brain` exists (Plan 37)
-- Nav graph generation works (Plans 17-18)
-- Ride behavior for elevators/trains exists (Plan 43)
-
-**What's New**:
-- 3ZB2-style sequential navigation (vs current FSM-based)
-- Shortcut optimization (`Search_NearlyPod`)
-- Route table structure (vs adjacency list)
-
----
+### 3ZB2 texture to port (treat the C as pseudocode)
+- **Sequential route memory**: 3ZB2 follows a memorized route index chain (`routeindex++`)
+  rather than re-planning every tick (`vendor/3zb2-zigflag/src/bot/bot_za.c`). Emulate:
+  plan once with `Navigator`, then *commit* to the polyline, replanning only on goal change,
+  route failure, or combat interrupt — this alone gives 3ZB2's characteristic "purposeful
+  runner" feel vs `main`'s reactive re-planning.
+- **`Search_NearlyPod` shortcut** (`bot_za.c:2214-2247`): while following, if a node further
+  along the committed path is visible (BSP LOS via `brain::los`) and closer than the current
+  waypoint chain, skip directly to it.
+- **Mover states** (`GRS_ONPLAT`, `GRS_ONTRAIN`, `GRS_TELEPORT` in `g_spawn.c`): on a ride/
+  ladder edge, enter a dedicated state that delegates to the traversal executor and holds the
+  route index until the traversal completes (3ZB2's "don't advance the route while carried").
+- **Combat**: reuse `combat.rs`/`aim.rs` (as `q3` reuses shared aim); 3ZB2-specific flavor
+  (its aggressive item-route weapon runs) can come from `items::best_item_goal_weighted`
+  with weapon-hunger biases — do not fork combat internals for v1.
 
 ## Step-by-Step Tasks
 
-### T1: Extract 3ZB2 Route Structure
+### T1: `Zb2Brain` skeleton + plugin wiring
 
-**File**: `brain/src/brains/zb2.rs`
+**Files**: `crates/brain/src/brains/zb2.rs` (new), `crates/brain/src/brains/mod.rs`,
+`crates/qbots/src/main.rs` (CLI), fleet config, competition `--brains`
 
-**What to do**: Create the core route-following structure based on 3ZB2's `route_t`.
+**What to do**: Add `BrainKind::Zb2` (tag `zb2`), `build_brain` arm, CLI/config/competition
+plumbing — mirror exactly how `Quake3` was added (Plan 37 commits are the template). The
+skeleton ticks: roam via `Navigator` to `BrainMap.roam_nodes`, shared combat driver, shared
+recovery. Compiles clean; `connect-one --brain zb2` walks and fights.
 
-**Before**:
-```rust
-// brain/src/brains/main.rs (existing)
-pub struct MainBrain {
-    // ... current FSM-based implementation
-}
+### T2: Committed-route follower + `Search_NearlyPod` shortcut
+
+**File**: `crates/brain/src/brains/zb2.rs`
+
+**What to do**: Store the planned polyline + current index; advance on arrival; replan only
+on: goal change, `Navigator` failure/stuck escalation, or combat target change. Implement
+the shortcut scan (cap lookahead ~6 nodes; LOS via `brain::los` BSP trace; require the skip
+target be closer in path-distance terms). Unit-test the skip logic with a synthetic polyline
++ mock LOS.
+
+### T3: Mover route-states over the traversal executor
+
+**File**: `crates/brain/src/brains/zb2.rs`
+
+**What to do**: When the committed edge is `Ride` (train/lift/ladder) or `Swim`, enter
+`ZbState::OnMover`/`InWater` and delegate movement to the Plan 46 executor; freeze the route
+index until the executor reports the edge complete; resume sequential following. No
+duplicated ride/ladder code — that is the whole point of Plan 46.
+
+### T4: Item-run flavor (small)
+
+**File**: `crates/brain/src/brains/zb2.rs`
+
+**What to do**: Goal selection = `items::best_item_goal_weighted` with 3ZB2's weapon-run
+bias (over-weight weapon pickups until armed, like its weapon-aware route selection). Keep
+it parameter-level; no new item model.
+
+### T5: Live proof + competition vs `q3`/`main`
+
+**Files**: `context/mode_perf.md`, `context/brain_notes.md`
+
+**What to do**:
+```bash
+qbots connect-one --brain zb2                                    # sanity: plays, no panics
+qbots spawn-to-weapon railgun --brain zb2 --map q2dm1            # swims (via executor)
+qbots competition --count 4 --brains q3,zb2 --navmodes hybrid-fallback   # 5 min
+qbots competition --count 4 --brains main,zb2 --navmodes hybrid-fallback # 5 min
 ```
+Record K/D tables (q2dm1 + q2dm3) in `mode_perf.md`; append a dated `brain_notes.md`
+section (mandatory). No win threshold — the deliverable is a *distinct, competent* third
+brain; tune to at least mid-pack (beat `main`'s 0.68 baseline kd or document why not).
 
-**After**:
-```rust
-// brain/src/brains/zb2.rs (new)
-use crate::Brain;
-
-/// 3ZB2-style route node (based on vendor/3zb2-zigflag/src/header/bot.h:307-318)
-#[derive(Debug, Clone)]
-pub struct RouteNode {
-    pub pt: glam::Vec3,           // Target point
-    pub linkpod: [Option<usize>; 6], // Connected node indices (up to 6)
-    pub state: RouteState,        // Normal, items, elevator, etc.
-}
-
-/// Route state (based on vendor/3zb2-zigflag/src/g_spawn.c)
-#[derive(Debug, Clone, PartialEq)]
-pub enum RouteState {
-    Normal,
-    Items,
-    Teleport,
-    PushButton,
-    OnPlat,      // Elevator/platform
-    OnTrain,     // Moving platform
-    GrapShot,
-    RedFlag,
-    BlueFlag,
-}
-
-/// 3ZB2-style brain implementation
-pub struct ZB2Brain {
-    current_route: Vec<usize>,      // Route indices
-    current_index: usize,           // Current route index
-    route_state: RouteState,
-    // ... other state
-}
-
-impl Brain for ZB2Brain {
-    // ... implementation
-}
-```
-
-**Verification**:
-- [ ] T1: File compiles with zero warnings
-- [ ] T1: Unit tests pass for RouteNode/RouteState
-
----
-
-### T2: Port Sequential Path Following
-
-**File**: `brain/src/brains/zb2.rs`
-
-**What to do**: Implement sequential route traversal with shortcut detection.
-
-**Before**:
-```rust
-// Current MainBrain uses FSM-based navigation
-```
-
-**After**:
-```rust
-impl ZB2Brain {
-    /// Move toward current route node
-    fn follow_route(&mut self, ctx: &BrainContext) -> BrainOutput {
-        let target = &self.route[self.current_index];
-        
-        // Check if reached target
-        if ctx.position.distance(target.pt) < TOUCH_DIST {
-            self.current_index += 1;
-            self.update_state(ctx);
-        }
-        
-        // Generate movement intent toward target
-        BrainOutput {
-            move_intent: MoveIntent::Forward,
-            look_at: Some(target.pt),
-            ..
-        }
-    }
-    
-    /// Shortcut optimization (based on vendor/3zb2-zigflag/src/bot/bot_za.c:2214-2247)
-    fn try_shortcut(&mut self, ctx: &BrainContext) {
-        let current = self.current_index;
-        let next = current + 1;
-        
-        // Check if we can skip to next+1
-        if let Some(next_next) = self.route.get(next + 1) {
-            // If next+1 is visible and closer, skip!
-            if ctx.has_los(next_next.pt) 
-                && ctx.position.distance(next_next.pt) < ctx.position.distance(self.route[current].pt)
-            {
-                self.current_index = next + 1;  // Skip ahead!
-            }
-        }
-    }
-}
-```
-
-**Verification**:
-- [ ] T2: Sequential path following works
-- [ ] T2: Shortcut detection triggers when appropriate
-- [ ] T2: `cargo test` passes
-
----
-
-### T3: Port Linking Algorithm
-
-**File**: `world/src/nav_generator.rs`
-
-**What to do**: Port 3ZB2's `G_FindRouteLink()` algorithm with BSP-based LOS.
-
-**Before**:
-```rust
-// Current nav graph linking uses simple distance-based linking
-```
-
-**After**:
-```rust
-/// Port of vendor/3zb2-zigflag/src/g_spawn.c:780-902 (G_FindRouteLink)
-fn link_nodes_3zb2(nodes: &mut [RouteNode], bsp: &BspMap) {
-    const MAX_LINK_DIST: f32 = 200.0;
-    const MAX_JUMP_UP: f32 = 40.0;
-    const MAX_JUMP_DOWN: f32 = -500.0;
-    
-    for i in 0..nodes.len() {
-        for j in (i+1)..nodes.len().min(i + 50) {
-            let node_a = &nodes[i];
-            let node_b = &nodes[j];
-            
-            // Distance check
-            let dist = node_a.pt.distance(node_b.pt);
-            if dist > MAX_LINK_DIST { continue; }
-            
-            // Height check
-            let height_diff = node_a.pt.z - node_b.pt.z;
-            if height_diff > MAX_JUMP_UP { continue; }
-            if height_diff < MAX_JUMP_DOWN { continue; }
-            
-            // Jump validation (port RTJump_Chk)
-            if !validate_jump(node_a.pt, node_b.pt) { continue; }
-            
-            // LOS check (BSP-based, NOT gi.trace!)
-            if !bsp.trace_line_of_sight(node_a.pt, node_b.pt) {
-                continue;
-            }
-            
-            // Add link (up to 6 connections)
-            add_link_to_pod(nodes, i, j, dist);
-        }
-    }
-}
-
-/// Port of vendor/3zb2-zigflag/src/g_spawn.c:739 (RTJump_Chk)
-fn validate_jump(from: glam::Vec3, to: glam::Vec3) -> bool {
-    let dist = from.distance(to);
-    let height_diff = to.z - from.z;
-    
-    // Simulate jump trajectory
-    let time = dist / 340.0;  // VEL_BOT_JUMP
-    let height_check = (340.0 * time) - (0.5 * 800.0 * time * time);
-    
-    height_check >= height_diff
-}
-```
-
-**Verification**:
-- [ ] T3: Linking algorithm creates valid connections
-- [ ] T3: Jump validation prevents impossible jumps
-- [ ] T3: BSP-based LOS works correctly
-- [ ] T3: `cargo test` passes
-
----
-
-### T4: Implement State Machine
-
-**File**: `brain/src/brains/zb2.rs`
-
-**What to do**: Port 3ZB2's state machine for elevators/doors/trains.
-
-**Before**:
-```rust
-// Current ride behavior (Plan 43) is generic
-```
-
-**After**:
-```rust
-impl ZB2Brain {
-    /// Update state based on current route node
-    fn update_state(&mut self, ctx: &BrainContext) {
-        let node = &self.route[self.current_index];
-        self.route_state = node.state.clone();
-        
-        match node.state {
-            RouteState::OnPlat => {
-                // Wait for platform to reach destination
-                if let Some(ent) = ctx.get_entity(node.ent_id) {
-                    if ent.state != EntityState::Top {
-                        self.waiting = true;
-                        return;
-                    }
-                }
-                // Ride platform
-            },
-            RouteState::OnTrain => {
-                // Similar to elevator but horizontal
-            },
-            RouteState::Teleport => {
-                // Enter teleporter trigger
-            },
-            _ => {}
-        }
-    }
-}
-```
-
-**Verification**:
-- [ ] T4: State machine handles elevators correctly
-- [ ] T4: State machine handles trains correctly
-- [ ] T4: `cargo test` passes
-
----
-
-### T5: Integrate with Brain Plugin System
-
-**File**: `brain/src/brains/mod.rs`, `brain/src/lib.rs`
-
-**What to do**: Add `ZB2Brain` to the plugin system.
-
-**Before**:
-```rust
-pub enum BrainKind {
-    Main,
-    Sentry,
-    Quake3,
-}
-```
-
-**After**:
-```rust
-pub enum BrainKind {
-    Main,
-    Sentry,
-    Quake3,
-    ZB2,  // 3ZB2-style brain
-}
-
-pub fn build_brain(kind: BrainKind, config: BrainConfig) -> Box<dyn Brain> {
-    match kind {
-        BrainKind::Main => Box::new(MainBrain::new(config)),
-        BrainKind::Sentry => Box::new(SentryBrain::new(config)),
-        BrainKind::Quake3 => Box::new(Q3Brain::new(config)),
-        BrainKind::ZB2 => Box::new(ZB2Brain::new(config)),  // NEW
-    }
-}
-```
-
-**Verification**:
-- [ ] T5: `--brain zb2` CLI flag works
-- [ ] T5: ZB2Brain integrates with fleet supervisor
-- [ ] T5: `cargo build` passes
-
----
-
-### T6: Competition Integration
-
-**File**: `qbots/src/main.rs`
-
-**What to do**: Add ZB2 brain to competition runner.
-
-**Before**:
-```rust
-// Competition supports: main, q3
-```
-
-**After**:
-```rust
-// Competition supports: main, q3, zb2
-```
-
-**Verification**:
-- [ ] T6: `qbots competition --brains main,q3,zb2 --count 4` works
-- [ ] T6: Per-brain frag scoreboard displays
-- [ ] T6: `cargo test` passes
-
----
-
-### T7: Performance Comparison
-
-**File**: `context/plans/44_3zb2_brain_tracker.md`
-
-**What to do**: Run competition between ZB2 and Q3 brains, record results.
-
-**Tasks**:
-1. Run: `qbots competition --brains q3,zb2 --count 8 --map q2dm1`
-2. Run: `qbots competition --brains q3,zb2 --count 8 --map q2dm3`
-3. Measure: frags/minute, K/D ratio, path efficiency
-4. Record results in tracker
-
-**Verification**:
-- [ ] T7: Competition runs for 120 seconds
-- [ ] T7: Results recorded in tracker
-- [ ] T7: Performance comparison documented
-
----
+> **Rule B reminder**: commit after *each* task; fmt + clippy(-D warnings) + tests green
+> before every commit.
 
 ## Critical Files
 
 | File | Change | Priority |
 |------|--------|----------|
-| `brain/src/brains/zb2.rs` | New file - 3ZB2 implementation | P0 |
-| `brain/src/brains/mod.rs` | Add ZB2 to BrainKind enum | P0 |
-| `world/src/nav_generator.rs` | Port linking algorithm | P0 |
-| `qbots/src/main.rs` | Add --brain zb2 flag | P1 |
-| `context/plans/44_3zb2_brain_tracker.md` | Tracker file | P1 |
-
----
+| `crates/brain/src/brains/zb2.rs` | new brain (route memory, shortcut, mover states) | P0 |
+| `crates/brain/src/brains/mod.rs` | `BrainKind::Zb2` + factory + tag | P0 |
+| `crates/qbots/src/main.rs` + config | `--brain zb2`, competition matrix | P1 |
+| `context/mode_perf.md`, `context/brain_notes.md` | results + notes | P1 |
 
 ## Open Questions / Risks
 
-1. **Route generation from BSP** — How do we generate initial routes from BSP?
-   - Mitigation: Use existing nav graph, convert to route format
-   
-2. **Entity detection for elevators** — How do we detect func_plat/func_train?
-   - Mitigation: Use existing entity tracking from Plan 43
-   
-3. **Shortcut optimization effectiveness** — Will shortcuts work with our nav graph?
-   - Mitigation: Test with q2dm1, measure improvement
-
-4. **State machine integration** — Will 3ZB2's state machine work with existing ride behavior?
-   - Mitigation: Reuse Plan 43's ride logic, wrap in 3ZB2 state machine
-
----
+1. **Committed routes can go stale** (mover moved, path failed). *Mitigation*: replan
+   triggers in T2; the recovery escalation already signals hard failure.
+2. **Shortcut skips onto un-walkable straight lines** (LOS ≠ walkable — the classic bot
+   trap). *Mitigation*: only skip to nodes on the *committed path* (never arbitrary graph
+   nodes), and require a hull-friendly height delta (≤ STEP) between current pos and target.
+3. **Plan 46 not landed yet** → T3 blocked. *Mitigation*: sequence after Plan 46; T1/T2 are
+   independent and can land first.
+4. **Scope creep toward porting 3ZB2's CTF/team logic**. Out of scope for v1 (DM only).
 
 ## Verification Checklist
 
-- [ ] T1: `cargo build` passes with zero warnings
-- [ ] T1: Unit tests pass for RouteNode/RouteState
-- [ ] T2: Sequential path following works
-- [ ] T2: Shortcut detection triggers when appropriate
-- [ ] T2: `cargo test` passes
-- [ ] T3: Linking algorithm creates valid connections
-- [ ] T3: Jump validation prevents impossible jumps
-- [ ] T3: BSP-based LOS works correctly
-- [ ] T3: `cargo test` passes
-- [ ] T4: State machine handles elevators correctly
-- [ ] T4: State machine handles trains correctly
-- [ ] T4: `cargo test` passes
-- [ ] T5: `--brain zb2` CLI flag works
-- [ ] T5: ZB2Brain integrates with fleet supervisor
-- [ ] T5: `cargo build` passes
-- [ ] T6: Competition runs with ZB2 brain
-- [ ] T6: Per-brain scoreboard displays correctly
-- [ ] T6: `cargo test` passes
-- [ ] T7: Competition results recorded
-- [ ] T7: Performance comparison documented
-
----
-
-## Review Sign-off
-
-**neckbeard**: "3ZB2 is the right choice for v1. Focus on the state machine and shortcut optimization — those are the key differentiators."
-
-**hoodie**: "Start with one solid 3ZB2 brain, not six different implementations. Fix the movement bugs first, then add the brain."
-
----
-
-**Related**:
-- `context/distilled/brains/3zb2_brain.md` - Full 3ZB2 implementation guide
-- `context/distilled/brains/brain_priorities.md` - Brain prioritization decision
-- `context/plans/23_brain_plugin_core.md` - Brain trait definition
-- `context/plans/37_quake3_brain.md` - Q3 brain implementation (for comparison)
-- `context/plans/43_ride_behavior.md` - Elevator/train behavior (prerequisite)
+- [ ] T1: `--brain zb2` connects, roams, fights; all brains still build; commit.
+- [ ] T2: unit tests for route commitment + shortcut skip pass; live: visibly runs routes
+      (fewer replans/tick than `main` in logs); commit.
+- [ ] T3: q2dm3 `spawn-to-weapon railgun --instance 1 --brain zb2` reaches (rides); q2dm1
+      `spawn-to-weapon railgun --brain zb2` reaches (swims); commit.
+- [ ] T4: item weapon-run bias active when Blaster-armed; commit.
+- [ ] T5: two 5-min competitions recorded in `mode_perf.md`; `brain_notes.md` appended; commit.
+- [ ] fmt + clippy(-D warnings) + tests green before each commit.

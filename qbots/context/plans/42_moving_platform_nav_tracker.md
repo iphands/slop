@@ -1,8 +1,20 @@
 # Plan 42 — Moving-platform (`func_train`) nav integration — Tracker
 
 ## Overview
-- Status: 85% complete — railgun nav done; quad blocked on Plan 35 (broad floor fragmentation)
+- Status: 95% complete — railgun AND quad both A*-reachable from all 7 spawns; only T6
+  (offline gated reachability tests) remains, then move to `completed/`
 - Start date: 2026-06-19
+
+## Update 2026-07-09 (revision pass)
+- **The quad IS now A*-reachable from all 7 spawns** — the "blocked on Plan 35" note below is
+  stale. Fixed by the `func_train` two-height ride search (`13b08c4ae`: `*10` deck is
+  corner-level z216, not bbox-top z410) + directional ladder edges (`019f99f13`). Cache is
+  **v18** (stand_offset added in `4cfdd2cb8`).
+- What Plan 35 still owns is far-spawn **route quality** (hull-blocked bridges), not
+  reachability.
+- **Remaining here: T6 only** — a gated offline test (mirror `world/tests/water_q2dm1.rs`)
+  asserting q2dm3 A* spawn→quad and spawn→railgun(instance 1) paths exist and contain ≥1
+  `Ride` edge. Then `git mv` plan + tracker to `completed/`.
 - Goal: q2dm3 quad + loop-train railgun join the reachable nav graph via `EdgeKind::Ride`
   train edges + lift anchoring; `generate-map-cache q2dm3` succeeds.
 

@@ -1,8 +1,20 @@
 # Plan 43 — Ride behavior + q2dm3 reach proof & navmode ranking — Tracker
 
 ## Overview
-- Status: 90% complete — railgun REACHED (rides lifts + trains); only the quad (Plan 35) remains
+- Status: 90% complete — railgun REACHED (astar 3/4); QUAD REACHED from spawn3 (see the
+  2026-06-19 T5-closeout section below). Remaining: T4 (`P` flag) + T6 (finish the 6-navmode
+  ranking rows), then move to `completed/`. Far-spawn quad routes moved to Plan 35 (revised).
 - Start date: 2026-06-19
+
+## Remaining work (2026-07-09 revision)
+1. **T4 — recorder `P` flag**: add `riding: bool` to the recorder frame + `P` flag char
+   (`crates/brain/src/recorder.rs`); set it from the ride gate in `MainBrain` and
+   `RunTesterBrain` (mirror the swim `S` flag). Verify no `R` (recovery) frames during `P`.
+2. **T6 — complete the ranking**: `mode_perf.md`'s q2dm3 section has astar / hybrid-race /
+   hybrid-fallback rows; run the remaining navmodes (navmesh, hybrid-hier, hybrid-segment —
+   expected 0, like water) for BOTH goals and record the full table. Quad rows: run from
+   spawn3 (`--count 1`) per the user's accepted scope; note the far-spawn caveat → Plan 35.
+3. Then `git mv` plan + tracker to `completed/` and mark SERIES done.
 
 ## Update 2026-06-19 (T7 — JUMP on/off + live train tracking): RAILGUN REACHED
 - `spawn-to-weapon railgun --instance 1 --count 4 --max-secs 150 --lift-penalty 0`:

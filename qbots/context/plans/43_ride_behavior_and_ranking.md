@@ -1,6 +1,9 @@
 # Plan 43 — Moving-platform & lift ride behavior + q2dm3 reach proof & navmode ranking
 
-> **Status**: pending
+> **Status**: in-progress (~90% — revised 2026-07-09: ride behavior SOLVED — railgun reached
+> (astar 3/4), quad reached from spawn3 (`ff155abfd`); far-spawn quad routes are **Plan 35**
+> scope. Remaining here: **T4 (recorder `P` flag)** and **T6 (complete the 6-navmode ranking
+> rows for both q2dm3 goals in `mode_perf.md`)** — then move to `completed/`.)
 > **Created**: 2026-06-19
 > **Depends on**: Plan 42 (ride edges), Plan 41 (spawn-to-item/instance), Plan 40 (swim-movement pattern), Plan 26 (runtester brain)
 > **Goal**: Make the brain actually *ride* q2dm3's moving platforms (`func_train`) and the railgun elevator (`func_plat`) — approach, board, ride, dismount — then prove `spawn-to-item quaddamage` and `spawn-to-weapon railgun` reach, ranked across navmodes.
