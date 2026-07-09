@@ -181,8 +181,10 @@ loop `func_train`s across the pit (board/ride/dismount with **jumps**, Plan 43 T
 |---|:--:|---|
 | astar | **3/4** | times 32 / 91 / 108 s; the reference |
 | hybrid-race | **3/4** | plans both, the A* plan (with ride edges) wins |
+| **hybrid-hier** | **3/4** | times 37 / 55 / 91 s — **rides too** (2026-07-09 T6): its A* *local* planner inside the navmesh corridor carries the ride edges. Contradicts the pre-run "expected 0". |
 | hybrid-fallback | 1/4 | degrades to navmesh on stuck; navmesh has no ride edges |
-| navmesh / hybrid-hier / hybrid-segment | (untested / expected 0) | navmesh backend has no ride edges, like water (Plan 40) |
+| navmesh | **0/4** | confirmed 0 (2026-07-09 T6) — pure navmesh backend has no ride edges, like water (Plan 40) |
+| hybrid-segment | **0/4** | confirmed 0 (2026-07-09 T6) — navmesh-open segments carry no ride edges; only the A* *jump*-link segments do |
 
 **Before Plan 43**: 0/N — the bot couldn't ride lifts (tried to "walk" the vertical edge) or
 trains (fell in the pit). **Key fixes**: lifts → vertical ride edges; train board anchored to
@@ -200,3 +202,29 @@ Plan 35) — pending, not a ride-behavior issue.
   zero input), but the over-lava **board + dismount** for the long oscillating `*10` don't
   complete — and the board style that `*10` needs (gentle, no-jump) conflicts with what the
   railgun loop trains need (jump-on). Closest ~229u. A genuine control-feasibility wall.
+
+### q2dm3 T6 closeout (2026-07-09) — full six-navmode ranking
+
+Ran the three previously-untested navmodes live on q2dm3 (`noir.lan:27910`, cache spacing 24,
+`--lift-penalty 0`) for both goals to complete the table. Cap `--max-secs 150`.
+
+**Railgun (`spawn-to-weapon railgun --instance 1 --count 4`)** — full ranking:
+
+| navmode | reached | vs prediction |
+|---|:--:|---|
+| astar | 3/4 | — |
+| hybrid-race | 3/4 | — |
+| hybrid-hier | **3/4** | **beat prediction** (predicted 0) — rides via its A* local planner |
+| hybrid-fallback | 1/4 | — |
+| navmesh | 0/4 | as predicted (no ride edges) |
+| hybrid-segment | 0/4 | as predicted |
+
+**Quad (`spawn-to-item quaddamage --count 1`, random spawn)** — navmesh 0/1, hybrid-hier 0/1,
+hybrid-segment 0/1. Consistent with astar's random-spawn 0/N: the quad reaches only from the
+board-adjacent spawn3 (accepted scope), and `--count 1` draws a random spawn. Far-spawn quad
+routes remain **Plan 35**. Not a ride-behavior regression.
+
+**Takeaway:** ride traversal works on **every A*-backed navmode** (astar, hybrid-race,
+hybrid-hier), plus hybrid-fallback until it degrades to navmesh. Only the pure-navmesh backend
+(navmesh, hybrid-segment's open segments) lacks ride edges — the same structural gap as water
+(Plan 40). Navmesh water/rides is a deferred follow-up, not a Plan 43 blocker.

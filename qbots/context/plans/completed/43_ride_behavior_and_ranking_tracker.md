@@ -1,9 +1,10 @@
 # Plan 43 — Ride behavior + q2dm3 reach proof & navmode ranking — Tracker
 
 ## Overview
-- Status: 90% complete — railgun REACHED (astar 3/4); QUAD REACHED from spawn3 (see the
-  2026-06-19 T5-closeout section below). Remaining: T4 (`P` flag) + T6 (finish the 6-navmode
-  ranking rows), then move to `completed/`. Far-spawn quad routes moved to Plan 35 (revised).
+- Status: **100% complete (2026-07-09).** T4 (`P` flag) shipped `35cd30643`; T6 six-navmode
+  ranking completed live on q2dm3 (`noir.lan:27910`). Railgun rides on every A*-backed navmode
+  (astar/hybrid-race/**hybrid-hier** all 3/4); navmesh & hybrid-segment 0/4 (no ride edges).
+  Quad from far/random spawns = Plan 35 (accepted). Plan + tracker moved to `completed/`.
 - Start date: 2026-06-19
 
 ## Remaining work (2026-07-09 revision)
@@ -68,8 +69,8 @@ qbots spawn-to-weapon railgun --instance 1 --count 4 --max-secs 150 --navmode <m
 | 3 | T3: ride execution in `MainBrain` | `brains/main.rs` | done | lifts work; trains need stateful board |
 | 3b | ride execution in `RunTesterBrain` (scenario) | `brains/runtester.rs` | done | scenario default |
 | 4 | T4: recorder `P` flag | `recorder.rs`, `scenario.rs` | done | `riding` frame field + `P` flag char (phantom moved `P`→`T`); set from `current_edge_is_ride()` in scenario sampler (`35cd30643`) |
-| 5 | T5: live q2dm3 reach proof | (live) | blocked | railgun: train-ride timing; quad: Plan 35 |
-| 6 | T6: navmode ranking + brain_notes + pitfalls | `context/*.md` | partial | notes written; ranking pending reach |
+| 5 | T5: live q2dm3 reach proof | (live) | done | railgun REACHED (astar/race/hier 3/4); quad from spawn3 (far-spawn→Plan 35) |
+| 6 | T6: navmode ranking + brain_notes + pitfalls | `context/*.md` | done | full 6-navmode table in `mode_perf.md`; `brain_notes.md` appended 2026-07-09 |
 
 ## Next steps (to finish)
 1. **Stateful train boarding** (a `Riding` flag in the brain): once boarded, hold/match the train

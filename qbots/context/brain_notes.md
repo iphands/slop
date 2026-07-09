@@ -385,3 +385,19 @@ traverse it. Root cause = nav-graph quality on the fragmented upper level (bridg
 hull-validated for the player hull over distance). Fixing it = a substantial Plan 35 nav-generation
 task (hull-validate + split long bridges; resample the upper level). The RIDE itself is solved and
 the quad is reached from the near spawn (spawn3, on the board ledge) — the natural human start.
+
+## 2026-07-09 — Plan 43 T6 closeout: six-navmode q2dm3 ride ranking
+Completed the q2dm3 ride ranking (mode_perf.md) with the three previously-untested navmodes,
+live on noir.lan:27910 (cache spacing 24, --lift-penalty 0, --max-secs 150).
+- **Railgun (`--instance 1 --count 4`):** astar 3/4, hybrid-race 3/4, **hybrid-hier 3/4** (times
+  37/55/91 s), hybrid-fallback 1/4, navmesh 0/4, hybrid-segment 0/4.
+- **Surprise:** `hybrid-hier` RIDES (predicted 0). Its A* *local* planner inside the navmesh
+  corridor carries the ride edges — so ride traversal works on **every A*-backed navmode**, not
+  just pure astar. Only the pure-navmesh backend (navmesh; hybrid-segment's open segments) lacks
+  ride edges — the same structural gap as water (Plan 40, deferred navmesh-water follow-up).
+- **Quad (`--count 1`, random spawn):** 0/1 on all three (as with astar) — reaches only from the
+  board-adjacent spawn3; far-spawn routes remain Plan 35. Not a ride regression.
+- **T4 recorder `P` flag** shipped (`35cd30643`): `riding` frame field + `P` char, set from
+  `current_edge_is_ride()` in the scenario sampler (phantom-target moved `P`→`T` to keep the
+  traversal trio S/P/L contiguous — Plan 46 adds `L`).
+Plan 43 is now 100% and moved to completed/.
