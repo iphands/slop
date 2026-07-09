@@ -28,6 +28,7 @@ pub mod recover;
 pub mod ride;
 pub mod skill;
 pub mod steer;
+pub mod traverse;
 pub mod water;
 pub mod weapons;
 
