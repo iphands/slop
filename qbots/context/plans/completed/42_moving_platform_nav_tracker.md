@@ -1,8 +1,8 @@
 # Plan 42 — Moving-platform (`func_train`) nav integration — Tracker
 
 ## Overview
-- Status: 95% complete — railgun AND quad both A*-reachable from all 7 spawns; only T6
-  (offline gated reachability tests) remains, then move to `completed/`
+- Status: 100% complete — railgun AND quad both A*-reachable from all 7 spawns; T6 offline
+  gated reachability test landed (`crates/world/tests/ride_q2dm3.rs`). Plan closed 2026-07-09.
 - Start date: 2026-06-19
 
 ## Update 2026-07-09 (revision pass)
@@ -55,5 +55,5 @@
 | 3 | T3: board/dismount synth + `add_train_edges` | `build.rs` | done | ground-anchored boards |
 | 4 | T4: lift anchoring (railgun elevator top) | `build.rs` | done | lifts → vertical ride edges |
 | 5 | T5: connectivity + cache regen + VERSION bump | `mapcache.rs` | done | v16; railgun reachable; quad→Plan 35 |
-| 6 | T6: offline q2dm3 reachability (ride-edge) tests | `world/tests/` | pending | live-verified; gated unit test TODO |
+| 6 | T6: offline q2dm3 reachability (ride-edge) tests | `world/tests/ride_q2dm3.rs` | done | quad + loop railgun path asserts ≥1 Ride edge; passes vs vendor/baseq2 |
 | + | jump-down floor bridge (added) | `navgraph.rs`,`build.rs` | done | `bridge_components_via_jump` |
