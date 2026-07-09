@@ -46,7 +46,12 @@
       "Bash(echo \"\\(exit $?\\)\")",
       "Bash(xargs -I{} grep -n \"pub fn new\\\\|impl.*Writer\\\\|pub struct Writer\" {}/src/fmt/format/mod.rs)",
       "Bash(pkill -9 -f \"target/release/qbots connect-one\")",
-      "Bash(pkill -9 -f qdedup)"
+      "Bash(pkill -9 -f qdedup)",
+      "Bash(python3 *)",
+      "Bash(awk 'END{print NR}' crates/brain/src/recorder.rs)",
+      "Bash(timeout 15 ./target/release/qbots connect-one)",
+      "Bash(echo \"=== raw output above \\(exit $?\\) ===\")",
+      "Bash(timeout 12 env RUST_LOG=info ./target/release/qbots connect-one --name probe0)"
     ]
   }
 }

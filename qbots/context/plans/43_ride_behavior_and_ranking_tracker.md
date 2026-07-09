@@ -67,7 +67,7 @@ qbots spawn-to-weapon railgun --instance 1 --count 4 --max-secs 150 --navmode <m
 | 2 | T2: `current_edge_is_ride`/`current_ride_info` | `nav.rs`, `nav_mode.rs`, `hybrid/*` | done | |
 | 3 | T3: ride execution in `MainBrain` | `brains/main.rs` | done | lifts work; trains need stateful board |
 | 3b | ride execution in `RunTesterBrain` (scenario) | `brains/runtester.rs` | done | scenario default |
-| 4 | T4: recorder `P` flag | `recorder.rs` | pending | deferred (diagnostic) |
+| 4 | T4: recorder `P` flag | `recorder.rs`, `scenario.rs` | done | `riding` frame field + `P` flag char (phantom moved `P`→`T`); set from `current_edge_is_ride()` in scenario sampler (`35cd30643`) |
 | 5 | T5: live q2dm3 reach proof | (live) | blocked | railgun: train-ride timing; quad: Plan 35 |
 | 6 | T6: navmode ranking + brain_notes + pitfalls | `context/*.md` | partial | notes written; ranking pending reach |
 
