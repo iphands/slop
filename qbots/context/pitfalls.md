@@ -849,3 +849,25 @@ combat strength, not tactics — say so instead of grinding neutral tweaks.
 ## Sources
 - qbots: brain/src/combat.rs (SWITCH_LOCKOUT_SECS, reaction base), brain/src/steer.rs
   (STRAFE_PERIOD_SECS), brain/src/brains/main.rs (weapon-rush kite/flee_hard), Plan 45 tracker
+
+# Traversal extraction: movement is view-relative, so an executor must own BOTH
+When extracting a shared traversal executor (Plan 46) from per-brain swim/ride/ladder copies, the
+subtle trap is that `move_from_world_dir(dir, view_yaw, …)` converts a WORLD direction to view-
+relative `forward`/`side` using the current view yaw. So you CANNOT let the brain keep aiming at an
+enemy while the executor sets forward/side — the movement would push in the wrong world direction.
+The executor must own the VIEW as well as the movement axes while a traversal is active; the brain
+keeps only the fire button (the bot fires along the traversal heading). Trying to preserve combat
+aim during a ride/swim silently breaks the movement direction.
+
+Second trap: the three per-brain copies had DRIFTED — `main`'s swim was vertical-only (reused the
+brain's horizontal steer) while `runtester`'s was self-contained, and `main`'s ride was stateless
+while `runtester`'s had the board/carry lock. Lift the SELF-CONTAINED copy (runtester's) even if a
+plan note says otherwise, and make it the regression anchor (must byte-preserve); the partial copies
+then *gain* capability. Verify the anchor live BEFORE adopting it into the other brains.
+
+Third: recovery must be gated OFF *before* it runs (it has side effects — `force_replan`,
+`blacklist_waypoint`), so the executor exposes a cheap `gates()` the brain calls before recovery,
+separate from `apply()` which overrides movement after. Confirm zero `R` (recovery) recorder frames
+overlap `P`/`S`/`L` frames — that's the proof the gate holds.
+## Sources
+- qbots: brain/src/traverse.rs (TraversalExecutor), brains/{runtester,main,q3}.rs (Plan 46)

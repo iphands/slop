@@ -401,3 +401,30 @@ live on noir.lan:27910 (cache spacing 24, --lift-penalty 0, --max-secs 150).
   `current_edge_is_ride()` in the scenario sampler (phantom-target moved `P`→`T` to keep the
   traversal trio S/P/L contiguous — Plan 46 adds `L`).
 Plan 43 is now 100% and moved to completed/.
+
+## 2026-07-09 — Plan 46: shared TraversalExecutor (ladder/swim/ride parity for ALL brains)
+Extracted the three drifted per-brain traversal copies into one `brain::traverse::TraversalExecutor`
+(gates() → swim/ride suspend-recovery gates; apply() → movement override + S/P/L flag). Every brain
+delegates now:
+- **runtester** (T2): verbatim adopt (the byte-preservation anchor). Live q2dm3 railgun ride
+  (astar --count 4) = **4/4** (≥ the 3/4 baseline). Deleted ~180 lines of inline swim/ride/ladder.
+- **main** (T3): GAINED ladders + the stateful board/carry lock (previously only a *stateless* ride
+  + partial swim). Live q2dm3 railgun `--brain main` reaches (34.8s); recorder shows 77 `P` ride
+  frames and **ZERO `P`+`R` frames** — recovery correctly suspended during traversal.
+- **q3** (T4): GAINED ALL traversal (previously none — a q3 bot couldn't swim/ride/climb in a
+  match). Added inside `locomote` (path-following stage; combat_drive with a visible enemy stays
+  non-traversing = accepted v1 priority). Live q2dm3 railgun `--brain q3` reaches (1/3, rides the
+  `*3/*4` trains + `*2` lift) — was structurally 0/N before.
+Key design calls:
+- Executor OWNS movement + view while a traversal edge is active; the brain keeps only the fire
+  decision (attack button) — the bot fires along the traversal heading (accepted for v1). Movement
+  is view-relative, so the view can't be split from movement.
+- `apply()` takes `Option<&CollisionModel>` (main/q3 hold cm as Option) — water samples degrade to
+  0/dry via `cm.map_or(0, …)`, matching the brains' own fallback.
+- The best copy of each machine is **runtester's** (not main's, despite the plan's parenthetical) —
+  it's the self-contained regression anchor; main's swim was partial (vertical-only) and its ride
+  stateless. Lifting runtester's preserved its behavior and *upgraded* main/q3.
+- New recorder `L` flag (ladder) split from `P` (platform), derived in the scenario sampler from
+  `nav.current_ride_info().ladder` (consistent with how `P` is derived from nav state, T4).
+**Batched for the q2dm1 pass:** the swim leg of the T2/T3/T4 live matrix (q2dm1 railgun swim per
+brain) — needs the server on q2dm1.

@@ -31,6 +31,7 @@ use crate::q3char::Q3Character;
 use crate::recover::{Recovery, RecoveryAction};
 use crate::skill::BotSkill;
 use crate::steer::{move_from_world_dir, Steering};
+use crate::traverse::{TraversalExecutor, TraversalFrame};
 use crate::{items, weapons};
 
 /// The Quake 3 deathmatch FSM nodes (`ai_dmnet.h`, DM-relevant subset; distilled §1). The
@@ -102,6 +103,10 @@ pub struct Q3Brain {
     // ── steering / recovery (reused primitives) ────────────────────────────────────────
     steering: Steering,
     recovery: Recovery,
+    /// The shared ladder/swim/ride executor (Plan 46). `q3` previously had NO traversal — a q3 bot
+    /// could not swim, ride a lift/train, or climb a ladder in a live match. Now it delegates like
+    /// every other brain (applied in `locomote`, the path-following stage).
+    traverse: TraversalExecutor,
     /// Skill used only for the shared item-value model (`items::best_item_goal`).
     item_skill: BotSkill,
 
@@ -168,6 +173,7 @@ impl Q3Brain {
             roam_as_position: false,
             steering,
             recovery: Recovery::new(),
+            traverse: TraversalExecutor::new(),
             item_skill: BotSkill::default(),
             enemy: None,
             last_enemy_pos: None,
@@ -228,6 +234,7 @@ impl Q3Brain {
     /// `MovementIntent` (yaw turn + forward/side + arrive throttle + stuck recovery + jump
     /// edges). This is the non-combat locomotion shared by every node. Combat aim/fire is
     /// layered on top by the battle nodes (T4/T5).
+    #[allow(clippy::too_many_arguments)]
     fn locomote(
         &mut self,
         nav: &mut dyn crate::nav_mode::Navigator,
@@ -235,6 +242,7 @@ impl Q3Brain {
         pos: Vec3,
         goal: NavGoal,
         dt: f32,
+        view: &crate::perception::Worldview,
         mv: &mut MovementIntent,
     ) {
         nav.update(pos, None);
@@ -271,12 +279,20 @@ impl Q3Brain {
         mv.move_forward(fwd * arrive);
         mv.move_side(side * arrive);
 
+        // Traversal gates (Plan 46): swim/ride/ladder suspend stuck recovery + jump-edge (a
+        // surface bob or a stand-and-wait on a lift is not a wedge). This is where `q3` GAINS all
+        // traversal — it previously had none in live matches.
+        let gates = self.traverse.gates(nav, cm, pos);
+
         // Stuck recovery (shared with MainBrain; never "engaging" here — combat nodes set their
         // own gates in T5).
         let has_nav_target = nav.pursue_target(pos).is_some();
-        let rec = self
-            .recovery
-            .evaluate(pos, dt, cm, view_yaw, has_nav_target, false);
+        let rec = if gates.any() {
+            RecoveryAction::None
+        } else {
+            self.recovery
+                .evaluate(pos, dt, cm, view_yaw, has_nav_target, false)
+        };
         match rec {
             RecoveryAction::None => {}
             RecoveryAction::Jump => mv.jump(),
@@ -294,9 +310,22 @@ impl Q3Brain {
             }
         }
 
-        if nav.current_edge_is_jump() {
+        if nav.current_edge_is_jump() && !gates.any() {
             mv.jump();
         }
+
+        // Traversal override (Plan 46): swim (Plan 40) + stateful ride/ladder (Plan 43/35) movement
+        // is owned by the shared executor — overwrites the movement axes above on a swim/ride/ladder
+        // edge. `fwd`/`side` are the raw (pre-arrive) steering the swim machine reuses.
+        let frame = TraversalFrame {
+            view,
+            cm,
+            pos,
+            view_yaw,
+            steer_fwd: fwd,
+            steer_side: side,
+        };
+        self.traverse.apply(mv, gates, nav, &frame);
     }
 
     // ── enemy / visibility helpers ─────────────────────────────────────────────────────
@@ -816,7 +845,7 @@ impl Brain for Q3Brain {
         if let Some(nav) = nav {
             if let Some(g) = goal_override.clone() {
                 // Scenario / pinned-goal override always path-follows.
-                self.locomote(nav, cm, pos, g, dt, &mut mv);
+                self.locomote(nav, cm, pos, g, dt, view, &mut mv);
             } else {
                 match self.node {
                     Q3Node::BattleFight if enemy_visible => {
@@ -842,7 +871,7 @@ impl Brain for Q3Brain {
                             Q3Node::BattleRetreat => self.retreat_goal(view),
                             _ => self.roam_goal(view, ticks, pos),
                         };
-                        self.locomote(nav, cm, pos, goal, dt, &mut mv);
+                        self.locomote(nav, cm, pos, goal, dt, view, &mut mv);
                     }
                 }
             }

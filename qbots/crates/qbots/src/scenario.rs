@@ -509,8 +509,13 @@ pub async fn run_scenario(
                             // Recompute waterlevel ourselves (not on the wire) for the `S` flag.
                             let swimming =
                                 brain::water::is_swimming(brain::water::water_level(&cm, pos));
-                            // `P` flag (Plan 43 T4): the current nav edge is a mover ride.
-                            let riding = nav_driver.current_edge_is_ride();
+                            // `P`/`L` flags (Plan 43 T4 + Plan 46 T5): the current nav edge is a
+                            // mover ride — split into a ladder climb (`L`) vs a platform/lift/train
+                            // ride (`P`), which the shared TraversalExecutor drives differently.
+                            let on_ride = nav_driver.current_edge_is_ride();
+                            let on_ladder =
+                                on_ride && nav_driver.current_ride_info().is_some_and(|i| i.ladder);
+                            let riding = on_ride && !on_ladder;
                             if let Some(rec) = recorder.as_mut() {
                                 rec.sample(Sample {
                                     t_secs: elapsed,
@@ -527,6 +532,7 @@ pub async fn run_scenario(
                                     recovery: false,        // no recovery in scenario mode
                                     swimming,
                                     riding,
+                                    ladder: on_ladder,
                                 });
                             }
 

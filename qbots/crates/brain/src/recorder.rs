@@ -33,7 +33,7 @@
 //! (`-` if none); `wpd` 3D distance to it (`-`); `flags` a char run — `B` wall
 //! bump, `W` wrong turn, `H` hindered, `A` airborne, `T` phantom-target (combat with
 //! no LOS), `R` recovery-active (Plan 13), `S` swimming (waterlevel ≥ 2, Plan 40),
-//! `P` riding a mover (platform/lift/train, Plan 43), `.` none.
+//! `P` riding a mover (platform/lift/train, Plan 43), `L` climbing a ladder (Plan 46), `.` none.
 //! The `SUMMARY` line is the headline: it is what Plans 11–14 must beat.
 
 use std::path::Path;
@@ -101,6 +101,10 @@ pub struct FrameRecord {
     /// True when the bot is executing a `Ride` edge — approaching/waiting/boarding/carried
     /// on a `func_train`/`func_plat`/lift (Plan 43). Mirrors `swimming` for the mover case.
     pub riding: bool,
+    /// True when the bot is climbing a **ladder** (a `Ride` edge with `RideInfo::ladder`, Plan
+    /// 46). Distinct from `riding` so the log tells a ladder climb (`L`) apart from a platform
+    /// ride (`P`); the two are mutually exclusive.
+    pub ladder: bool,
 }
 
 /// Raw inputs the tick gathers for one frame; the recorder derives everything in
@@ -130,6 +134,8 @@ pub struct Sample {
     pub swimming: bool,
     /// True when the bot is executing a `Ride` edge (moving platform / lift, Plan 43).
     pub riding: bool,
+    /// True when the bot is climbing a ladder (a `Ride` edge with `RideInfo::ladder`, Plan 46).
+    pub ladder: bool,
 }
 
 /// Geometry probe for the wall-bump detector. Production wraps
@@ -349,6 +355,7 @@ impl MovementRecorder {
             recovery: s.recovery,
             swimming: s.swimming,
             riding: s.riding,
+            ladder: s.ladder,
         });
 
         self.prev_origin = Some(s.origin);
@@ -449,9 +456,10 @@ impl MovementRecorder {
 
 /// Per-frame flag string: `B`=wall_bump, `W`=wrong_turn, `H`=hindered, `A`=airborne,
 /// `T`=phantom_target (phanTom-chase, Plan 11), `R`=recovery_active, `S`=swimming (Plan 40),
-/// `P`=riding a mover (platform/lift/train, Plan 43), `.`=none.
+/// `P`=riding a mover (platform/lift/train, Plan 43), `L`=climbing a ladder (Plan 46), `.`=none.
 ///
-/// `S`/`P` are the traversal flags (Plan 46 extends this with `L` for ladder). `phantom_target`
+/// `S`/`P`/`L` are the traversal trio (Plan 46): swim, platform ride, ladder climb — emitted by
+/// the shared `TraversalExecutor` (via nav ride-edge state in the scenario sampler). `phantom_target`
 /// moved from `P`→`T` when riding claimed `P`, so the traversal trio stays contiguous.
 fn flags(f: &FrameRecord) -> String {
     let mut s = String::new();
@@ -478,6 +486,9 @@ fn flags(f: &FrameRecord) -> String {
     }
     if f.riding {
         s.push('P');
+    }
+    if f.ladder {
+        s.push('L');
     }
     if s.is_empty() {
         s.push('.');
@@ -589,6 +600,7 @@ mod tests {
                 recovery: false,
                 swimming: false,
                 riding: false,
+                ladder: false,
             });
         }
         let s = r.summary();
@@ -630,6 +642,7 @@ mod tests {
                 recovery: false,
                 swimming: false,
                 riding: false,
+                ladder: false,
             });
         }
         let s = r.summary();
@@ -669,6 +682,7 @@ mod tests {
                 recovery: false,
                 swimming: false,
                 riding: false,
+                ladder: false,
             });
         }
         let s = r.summary();
@@ -700,6 +714,7 @@ mod tests {
             recovery: false,
             swimming: false,
             riding: false,
+            ladder: false,
         });
         r.sample(Sample {
             t_secs: 0.1,
@@ -716,6 +731,7 @@ mod tests {
             recovery: false,
             swimming: false,
             riding: false,
+            ladder: false,
         });
         let s = r.summary();
         assert_eq!(
@@ -746,6 +762,7 @@ mod tests {
                 recovery: false,
                 swimming: false,
                 riding: false,
+                ladder: false,
             });
             let d = r.summary().distance;
             assert!(d >= prev, "distance must not decrease");
@@ -773,6 +790,7 @@ mod tests {
             recovery: false,
             swimming: false,
             riding: false,
+            ladder: false,
         });
         let dir = std::env::temp_dir().join(format!("qbots-rec-test-{}", std::process::id()));
         let path = dir.join("run.qb0.log");
@@ -812,6 +830,7 @@ mod tests {
             recovery: false,
             swimming: false,
             riding: false,
+            ladder: false,
         });
         let dir = std::env::temp_dir().join(format!("qbots-schema-{}", std::process::id()));
         let path = dir.join("run.qb0.log");
@@ -906,6 +925,7 @@ mod tests {
             recovery: false,
             swimming: false,
             riding: false,
+            ladder: false,
         }
     }
 
