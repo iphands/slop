@@ -473,3 +473,16 @@ holds range + bails early; scavenger hoards; guard camps) selectable via `connec
 selection + a live spread table are a follow-on: they're a demo, and per the harness lesson a kd
 spread across 4 personas is noise-limited at feasible sample sizes — the persona *values* are the
 tested contract, not a single roster run.
+
+## 2026-07-10 — Plan 29 (engagement): winning/losing read + break-off
+Enemy health/weapon aren't on the wire, so "am I winning?" is inferred from OUR state via
+`brain::engage::EngageTracker`: pressure (fire-on-target proxy, accumulates while firing with LOS)
++ losing (sustained incoming damage with low pressure). MainBrain updates it each combat tick and,
+in the no-LOS chase branch, BREAKS OFF (→ retreat_goal) when:
+- **third-partied** — took damage while the target is out of LOS (an unseen shooter is on us), or
+- **losing** AND persona `chase_commit` < 0.7 (a dogged rusher keeps chasing; a sniper bails).
+This is the "pick and finish fights" disengage half. The velocity-extrapolated Hunt goal (pursue
+*through* the doorway) is deferred — it needs the FSM `Hunt` state to carry the enemy's last
+velocity (state surgery); the existing Hunt-to-last-pos + this break-off gate cover the core.
+Verification: `EngageTracker` unit tests + no-regression sanity (q2dm1 comp: main engages, 3 kills,
+0 panics; kd within the established noise band). A clean kd A/B is noise-limited (harness lesson).
