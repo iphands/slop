@@ -120,7 +120,7 @@ impl Brain for RunTesterBrain {
         // not a wedge either. `gates` also keeps the ride LOCKED active while boarded even if the
         // navigator advances off the ride edge mid-transit. The actual swim/ride movement override
         // is applied further down (after normal steering) via `self.traverse.apply`.
-        let gates = self.traverse.gates(nav, Some(cm), pos);
+        let gates = self.traverse.gates(nav, Some(cm), pos, dt);
 
         if !gates.swimming && !gates.ride_active {
             let has_nav_target = nav.pursue_target(pos).is_some();

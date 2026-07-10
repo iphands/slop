@@ -282,7 +282,7 @@ impl Q3Brain {
         // Traversal gates (Plan 46): swim/ride/ladder suspend stuck recovery + jump-edge (a
         // surface bob or a stand-and-wait on a lift is not a wedge). This is where `q3` GAINS all
         // traversal — it previously had none in live matches.
-        let gates = self.traverse.gates(nav, cm, pos);
+        let gates = self.traverse.gates(nav, cm, pos, dt);
 
         // Stuck recovery (shared with MainBrain; never "engaging" here — combat nodes set their
         // own gates in T5).

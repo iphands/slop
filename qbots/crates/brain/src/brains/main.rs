@@ -660,7 +660,13 @@ impl crate::brains::core::Brain for MainBrain {
             // the ride LOCKED active while boarded. MainBrain now ALSO gets ladder climbs + the
             // stateful board/carry lock it previously lacked; the swim/ride override is applied
             // below (after normal steering) via `self.traverse.apply`.
-            let gates = self.traverse.gates(nav, cm, pos);
+            let gates = self.traverse.gates(nav, cm, pos, dt);
+            // Plan 32 Risk #1: damage while swimming with no enemy in sight is drown damage —
+            // re-sync the executor's air clock to "out of air" so the surface-seek engages now.
+            // (A false positive at level<3 self-corrects: the next breathable tick resets it.)
+            if took_damage && !has_target && gates.swimming {
+                self.traverse.on_underwater_damage();
+            }
 
             // ── 6. Stuck recovery (Plan 13) ───────────────────────────────
             let has_nav_target = nav.pursue_target(pos).is_some();

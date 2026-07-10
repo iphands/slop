@@ -117,6 +117,23 @@ impl AirClock {
     }
 }
 
+/// Estimated seconds to reach breathable water by swimming straight up (Plan 32 T2): scan upward
+/// from the eye for the first non-water sample (32u steps, 640u cap) and divide by
+/// [`SWIM_UP_SPEED`]. A solid ceiling also ends the scan — conservative for covered tunnels (the
+/// swim-path exit logic, which drives toward dry nodes, remains the smarter route; this estimate
+/// only feeds the "how urgent is air" gate).
+pub fn time_to_surface(cm: &CollisionModel, origin: Vec3) -> f32 {
+    let eye = origin.z + VIEWHEIGHT;
+    let mut dz = 0.0;
+    while dz <= 640.0 {
+        if cm.point_contents(&[origin.x, origin.y, eye + dz]) & CONTENTS_WATER == 0 {
+            return dz / SWIM_UP_SPEED;
+        }
+        dz += 32.0;
+    }
+    640.0 / SWIM_UP_SPEED
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,6 +161,20 @@ mod tests {
         assert!(!is_swimming(1));
         assert!(is_swimming(2));
         assert!(is_swimming(3));
+    }
+
+    #[test]
+    fn time_to_surface_scales_with_depth() {
+        let cm = pool(); // water 0..120 in the central channel
+                         // Deep (origin z=60, eye 82): first air sample ~64u up → ~1.1s at 60 u/s.
+        let deep = time_to_surface(&cm, Vec3::new(0.0, 0.0, 60.0));
+        // Shallower (origin z=90, eye 112): air ~one step up → faster.
+        let shallow = time_to_surface(&cm, Vec3::new(0.0, 0.0, 90.0));
+        assert!(
+            deep > shallow,
+            "deeper → longer to surface ({deep} vs {shallow})"
+        );
+        assert!(deep < 3.0, "the pool is shallow in absolute terms");
     }
 
     // ── AirClock (Plan 32 T1) ──────────────────────────────────────────────────────────────

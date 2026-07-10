@@ -94,6 +94,9 @@ pub struct TraversalExecutor {
     /// platform carries us (which happened over the central lava — the nav advanced, `ride_active`
     /// went false, and the bot fell off mid-transit).
     active_ride: Option<RideInfo>,
+    /// Client-side air clock (Plan 32): ticked every `gates()` call, drives the surface-seek
+    /// override in the swim machine so the bot breathes before the server's 12s runs out.
+    air: crate::water::AirClock,
 }
 
 impl TraversalExecutor {
@@ -111,9 +114,13 @@ impl TraversalExecutor {
         nav: &dyn Navigator,
         cm: Option<&CollisionModel>,
         pos: Vec3,
+        dt: f32,
     ) -> TraversalGates {
-        let swimming =
-            is_swimming(cm.map_or(0, |c| water_level(c, pos))) || nav.current_edge_is_swim();
+        let level = cm.map_or(0, |c| water_level(c, pos));
+        let swimming = is_swimming(level) || nav.current_edge_is_swim();
+        // Air clock (Plan 32): ticked here so it advances every frame regardless of which
+        // traversal branch runs. Eyes-under = level 3; any breathable frame resets it.
+        self.air.tick(level == 3, dt);
         let ride_active = nav.current_edge_is_ride() || self.ride_boarded;
         if !ride_active {
             self.ride_boarded = false;
@@ -123,6 +130,12 @@ impl TraversalExecutor {
             swimming,
             ride_active,
         }
+    }
+
+    /// The server dealt us damage underwater that combat can't explain — drown damage. Re-sync
+    /// the air clock to "out of air" so the surface-seek engages immediately (Plan 32 Risk #1).
+    pub fn on_underwater_damage(&mut self) {
+        self.air.on_unexplained_damage();
     }
 
     /// Apply the traversal movement override into `mv` when a traversal is active this frame.
@@ -169,6 +182,27 @@ impl TraversalExecutor {
             ..
         } = *frame;
         let water = cm.map_or(0, |c| water_level(c, pos));
+
+        // ── Surface-seek override (Plan 32 T2) ────────────────────────────────────────────
+        // Air is critical: abandon the current underwater leg and swim STRAIGHT UP for a breath.
+        // Priority above normal swim steering (a dead bot completes no path); the climb-out /
+        // path exit logic below resumes once we've breathed (any level<3 frame resets the clock).
+        if water == 3 {
+            let tts = cm.map_or(0.0, |c| crate::water::time_to_surface(c, pos));
+            if self.air.must_surface(tts) {
+                tracing::debug!(tts, "air critical — surfacing for a breath");
+                mv.look_at(view_yaw, -70.0); // pitch hard up: pml.forward carries us to air
+                mv.move_forward(1.0);
+                mv.move_side(0.0);
+                mv.up = 1.0; // full sustained up-thrust (never jump() in water)
+                mv.jump = false;
+                return TraversalApply {
+                    flag: 'S',
+                    intent_forward: 1.0,
+                };
+            }
+        }
+
         // Use the RAW look-ahead (no floor validation — there's no floor underwater for
         // `pursue_target_safe` to confirm).
         let target = nav
@@ -495,7 +529,7 @@ mod tests {
         let nav = StubNav::default();
         let cm = empty_cm();
         let view = view_at([0.0, 0.0, 0.0], true, &[]);
-        let gates = ex.gates(&nav, Some(&cm), Vec3::ZERO);
+        let gates = ex.gates(&nav, Some(&cm), Vec3::ZERO, 0.1);
         assert!(!gates.any());
         let mut mv = MovementIntent::new();
         let frame = TraversalFrame {
@@ -520,7 +554,7 @@ mod tests {
         };
         let cm = empty_cm();
         let view = view_at([0.0, 0.0, 0.0], false, &[]);
-        let gates = ex.gates(&nav, Some(&cm), Vec3::ZERO);
+        let gates = ex.gates(&nav, Some(&cm), Vec3::ZERO, 0.1);
         assert!(gates.swimming && !gates.ride_active);
         let mut mv = MovementIntent::new();
         let frame = TraversalFrame {
@@ -537,6 +571,54 @@ mod tests {
         assert!(!mv.jump, "never jump in water");
     }
 
+    /// Plan 32 T2: a bot submerged past its air budget abandons the swim path and drives straight
+    /// up for a breath (full up-thrust + hard up-pitch), regardless of the path target.
+    #[test]
+    fn air_critical_overrides_swim_toward_surface() {
+        let mut ex = TraversalExecutor::new();
+        // Path target DOWNWARD (a deep item) — without the override the swim machine would dive.
+        let nav = StubNav {
+            swim: true,
+            pursue: Some(Vec3::new(0.0, 0.0, -200.0)),
+            ..Default::default()
+        };
+        let cm = world::water_channel_world(); // water 0..120 in the central channel
+        let pos = Vec3::new(0.0, 0.0, 60.0); // eyes under (level 3)
+        let view = view_at([0.0, 0.0, 60.0], false, &[]);
+        // Burn ~10s of the 12s air budget (tts here ≈1.1s + 2s margin → critical ≤ ~3.1s left).
+        let mut gates = ex.gates(&nav, Some(&cm), pos, 0.1);
+        for _ in 0..100 {
+            gates = ex.gates(&nav, Some(&cm), pos, 0.1);
+        }
+        let mut mv = MovementIntent::new();
+        let frame = TraversalFrame {
+            view: &view,
+            cm: Some(&cm),
+            pos,
+            view_yaw: 0.0,
+            steer_fwd: 0.0,
+            steer_side: 0.0,
+        };
+        let out = ex.apply(&mut mv, gates, &nav, &frame).expect("swim active");
+        assert_eq!(out.flag, 'S');
+        assert_eq!(mv.up, 1.0, "air critical → full up-thrust, got {}", mv.up);
+        assert!(mv.pitch < -45.0, "pitched hard up, got {}", mv.pitch);
+        assert!(!mv.jump);
+
+        // One breath at the surface resets the clock: the override disengages.
+        let dry_pos = Vec3::new(100.0, 0.0, 30.0); // the dry ledge — level 0
+        ex.gates(&nav, Some(&cm), dry_pos, 0.1);
+        let gates = ex.gates(&nav, Some(&cm), pos, 0.1); // back under, fresh air
+        let mut mv2 = MovementIntent::new();
+        ex.apply(&mut mv2, gates, &nav, &frame)
+            .expect("swim active");
+        assert!(
+            mv2.up < 0.0,
+            "fresh air → normal swim resumes (dives toward the target), got {}",
+            mv2.up
+        );
+    }
+
     #[test]
     fn ladder_edge_ascending_presses_up_and_flags_l() {
         let mut ex = TraversalExecutor::new();
@@ -547,7 +629,7 @@ mod tests {
         let cm = empty_cm();
         // Bot near the bottom of the shaft, exit far above → ascend.
         let view = view_at([0.0, 0.0, 10.0], true, &[]);
-        let gates = ex.gates(&nav, Some(&cm), Vec3::new(0.0, 0.0, 10.0));
+        let gates = ex.gates(&nav, Some(&cm), Vec3::new(0.0, 0.0, 10.0), 0.1);
         assert!(gates.ride_active);
         let mut mv = MovementIntent::new();
         let frame = TraversalFrame {
@@ -577,7 +659,7 @@ mod tests {
         let cm = empty_cm();
         // At the board ledge, NO platform entity present → wait (no board, stand still).
         let view = view_at([110.0, 0.0, 50.0], true, &[]);
-        let gates = ex.gates(&nav, Some(&cm), Vec3::new(110.0, 0.0, 50.0));
+        let gates = ex.gates(&nav, Some(&cm), Vec3::new(110.0, 0.0, 50.0), 0.1);
         let mut mv = MovementIntent::new();
         let frame = TraversalFrame {
             view: &view,
@@ -592,7 +674,7 @@ mod tests {
 
         // Platform entity sitting on the board point AND the bot grounded on its deck → board.
         let view2 = view_at([100.0, 0.0, 50.0], true, &[[100.0, 0.0, 50.0]]);
-        let gates2 = ex.gates(&nav, Some(&cm), Vec3::new(100.0, 0.0, 50.0));
+        let gates2 = ex.gates(&nav, Some(&cm), Vec3::new(100.0, 0.0, 50.0), 0.1);
         let mut mv2 = MovementIntent::new();
         let frame2 = TraversalFrame {
             view: &view2,
@@ -605,7 +687,7 @@ mod tests {
         ex.apply(&mut mv2, gates2, &nav, &frame2);
         // Once boarded, the ride locks active even if the nav edge later clears.
         let nav_off = StubNav::default();
-        let gates3 = ex.gates(&nav_off, Some(&cm), Vec3::new(100.0, 0.0, 50.0));
+        let gates3 = ex.gates(&nav_off, Some(&cm), Vec3::new(100.0, 0.0, 50.0), 0.1);
         assert!(gates3.ride_active, "boarded → ride stays locked active");
     }
 
@@ -614,7 +696,7 @@ mod tests {
         let mut ex = TraversalExecutor::new();
         let nav = StubNav::default(); // no ride edge
         let cm = empty_cm();
-        let gates = ex.gates(&nav, Some(&cm), Vec3::ZERO);
+        let gates = ex.gates(&nav, Some(&cm), Vec3::ZERO, 0.1);
         assert!(!gates.ride_active);
     }
 }
