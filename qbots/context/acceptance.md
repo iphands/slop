@@ -69,10 +69,36 @@ matchups, chase/disengage) target closing this gap — measure them against this
 > the pre-P30 binary re-run ×5). The gap is pre-existing (Plan 45: main 0.68 vs q3 1.3), so Plan
 > 30's resource changes are groundwork, not the combat-quality fix.
 
+## The traversal-matrix driver — `acceptance matrix` (2026-07-10)
+
+One command runs the traversal gates per brain and prints a pass/fail table:
+
+```bash
+# All rows, all maps (prompts you to switch the server between map batches):
+cargo run -p tools --bin acceptance -- matrix --addr <host>:27910 --brains runtester,main,q3
+# One map batch, no prompts (wrong map fails fast on the scenario preflight):
+cargo run -p tools --bin acceptance -- matrix --addr <host>:27910 --maps q2dm1 --yes
+```
+
+Rows (thresholds = proven floors, cited in-source): `swim-railgun` q2dm1 ≥2/3 ·
+`ride-railgun` q2dm3 ≥3/4 · `quad-train-lava` q2dm3 ≥1/4 (target 3/4 pending Plan 35) ·
+`spawn-to-spawn` q2dm2 ≥7/8 (unbaselined — tighten after first green run). The driver
+regenerates the needed nav-cache variant (lift-penalty keyed) before each map batch and exits
+non-zero on any FAIL — the regression gate is scriptable.
+
+### Baseline — q2dm1 batch (2026-07-10, live)
+
+| row | map | brain | result | gate | verdict |
+|---|---|---|---|---|---|
+| swim-railgun | q2dm1 | runtester | 3/3 | ≥2/3 | **PASS** |
+| swim-railgun | q2dm1 | main | 3/3 | ≥2/3 | **PASS** |
+
+(q2dm3/q2dm2 batches + `q3` runs pending a map-switch session — the full-matrix baseline
+completes T3.)
+
 ## Still to build (Plan 47 remainder)
 
 - **T1** behavior counters (`EVT switch/pickup/chase/ride/swim/drown`) + FleetStats aggregation.
-- **T2** full acceptance driver: the traversal matrix (per brain: q2dm1 swim, q2dm3 railgun ≥3/4,
-  q2dm3 quad, q2dm2 s2s 8/8) + the multi-run competition, one pass/fail table.
-- **T3** recorded baseline table (date + commit) as the regression contract.
+- **T3** the FULL matrix baseline (all 4 rows × 3 brains, needs map switches) recorded here with
+  date + commit as the regression contract.
 - **T4** 5-min showcase (persona roster) + "does it feel human" narrative.

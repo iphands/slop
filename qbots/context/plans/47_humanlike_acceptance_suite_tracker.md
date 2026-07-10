@@ -29,6 +29,6 @@ The traversal matrix + showcase (original T2–T4) follow.
 |---|------|---------------|--------|-------|
 | 2a | **Multi-run aggregator (the reordered core)** | `tools/src/bin/acceptance.rs` | **done** | parse N scoreboards → mean±spread + signal-vs-noise verdict (control spread = noise floor); 4 unit tests; demonstrated on real q2dm1 data (main 0.49 vs q3 1.49 → inconclusive, q3 spread 1.74) |
 | 1 | T1: EVT behavior counters + aggregation | `brain/*`, `qbots/*` | pending | greppable one-liners |
-| 2 | T2: acceptance driver (`acceptance matrix`) | `tools/acceptance.rs` | in-progress | 4-row traversal matrix (q2dm1 swim, q2dm3 ride+quad, q2dm2 s2s) × `--brains`; per-map batches w/ operator prompts (`--yes` to skip — wrong map fails fast on scenario preflight); auto cache-regen per lift-penalty variant; pass/fail table + exit code; thresholds = proven floors w/ notes. 2 more unit tests |
+| 2 | T2: acceptance driver (`acceptance matrix`) | `tools/acceptance.rs` | done | 4-row traversal matrix (q2dm1 swim, q2dm3 ride+quad, q2dm2 s2s) × `--brains`; per-map batches w/ operator prompts (`--yes` to skip — wrong map fails fast on scenario preflight); auto cache-regen per lift-penalty variant; pass/fail table + exit code; thresholds = proven floors w/ notes. 2 more unit tests |
 | 3 | T3: baseline recorded | `context/acceptance.md` | partial | harness + variance demo recorded; matrix baseline pending |
 | 4 | T4: showcase run + narrative | `acceptance.md`, `brain_notes.md` | pending | q2dm3 roster match |
