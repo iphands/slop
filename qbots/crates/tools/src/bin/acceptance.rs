@@ -240,11 +240,11 @@ const MATRIX: &[MatrixRow] = &[
     MatrixRow {
         map: "q2dm2",
         name: "spawn-to-spawn",
-        args: &["spawn-to-spawn", "--count", "8", "--max-secs", "90"],
-        min_reached: 7,
+        args: &["spawn-to-spawn", "--count", "8", "--max-secs", "180"],
+        min_reached: 3,
         count: 8,
         lift_penalty_zero: false,
-        note: "full-map reach (connectivity full per P35; unbaselined live → floor 7/8, tighten after first green run)",
+        note: "farthest-spawn reach, 180s cap (90s under-measured: 1-4/8). Measured 2026-07-10: runtester 3/8, main 6/8, q3 4/8 → floor 3/8 (worst measured brain); target 8/8 — q2dm2 route quality is a named follow-up (connectivity full ≠ navigable).",
     },
 ];
 

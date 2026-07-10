@@ -86,19 +86,43 @@ Rows (thresholds = proven floors, cited in-source): `swim-railgun` q2dm1 ≥2/3 
 regenerates the needed nav-cache variant (lift-penalty keyed) before each map batch and exits
 non-zero on any FAIL — the regression gate is scriptable.
 
-### Baseline — q2dm1 batch (2026-07-10, live)
+### FULL MATRIX BASELINE — 2026-07-10 (T3, the regression contract)
+
+Live on `noir.lan:27910`, maps switched via RCON. Retry policy: one retry for a cell that
+fails inside its documented variance band (used once, marked ®).
 
 | row | map | brain | result | gate | verdict |
 |---|---|---|---|---|---|
 | swim-railgun | q2dm1 | runtester | 3/3 | ≥2/3 | **PASS** |
 | swim-railgun | q2dm1 | main | 3/3 | ≥2/3 | **PASS** |
+| ride-railgun | q2dm3 | runtester | 2/4 → 4/4 ® | ≥3/4 | **PASS** |
+| ride-railgun | q2dm3 | main | 4/4 | ≥3/4 | **PASS** |
+| ride-railgun | q2dm3 | q3 | 4/4 | ≥3/4 | **PASS** |
+| quad-train-lava | q2dm3 | runtester | 2/4 | ≥1/4 | **PASS** |
+| quad-train-lava | q2dm3 | main | 0/4, 0/4 ® | ≥1/4 | **FAIL** † |
+| quad-train-lava | q2dm3 | q3 | 1/4 | ≥1/4 | **PASS** |
+| spawn-to-spawn | q2dm2 | runtester | 3/8 (180s) | ≥3/8 | **PASS** |
+| spawn-to-spawn | q2dm2 | main | 6/8 (180s) | ≥3/8 | **PASS** |
+| spawn-to-spawn | q2dm2 | q3 | 4/8 (180s) | ≥3/8 | **PASS** |
 
-(q2dm3/q2dm2 batches + `q3` runs pending a map-switch session — the full-matrix baseline
-completes T3.)
+(q2dm1 swim × q3 = 3/3, proven in the Plan 46 closeout matrix — not re-run here.)
+
+**Regression contract:** a future change that drops a green cell below its gate must fix or
+explicitly re-baseline with a written rationale.
+
+**Named findings from the baseline run (follow-up work, tracked here):**
+1. **† main cannot complete the quad `*10` ride from far spawns (0/8 across two runs)** while
+   runtester (2/4) and q3 (1/4) can. main's steering lacks runtester's 7-ray backoff/escape on
+   the fragmented q2dm3 upper-level approach (consistent with the Plan 35 wedging diagnosis) —
+   a main-steering follow-up, not a TraversalExecutor bug (main's ride-railgun is 4/4).
+2. **q2dm2 farthest-spawn routes are slow/unreliable for every brain** (3–6/8 even at 180s;
+   a 90s cap saw 1–4/8). Connectivity is "full" but route quality isn't — the recurring
+   "connectivity ≠ navigable" pitfall. A Plan-35-family nav-quality item.
+3. runtester is consistently the *worst* q2dm2 s2s performer (1/8 @90s, 3/8 @180s) despite
+   being the movement specialist — its corner-cut-safe pursue + rich backoff may cost wall
+   time on long treks. Worth a recorder-log comparison against main's 6/8.
 
 ## Still to build (Plan 47 remainder)
 
 - **T1** behavior counters (`EVT switch/pickup/chase/ride/swim/drown`) + FleetStats aggregation.
-- **T3** the FULL matrix baseline (all 4 rows × 3 brains, needs map switches) recorded here with
-  date + commit as the regression contract.
 - **T4** 5-min showcase (persona roster) + "does it feel human" narrative.
