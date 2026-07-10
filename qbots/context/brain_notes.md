@@ -496,3 +496,22 @@ to the kill). Calibrated so NEUTRAL mood + default persona = (1.0, 1.0) → base
 untouched. Deterministic proof: extended the Plan 08 pipeline test — same bot, same 1-death
 kill-zone, hurt detours via D, healthy-hunter cuts through B. No live run needed (the mechanism is
 graph-deterministic, dodging the combat-noise problem).
+
+## 2026-07-10 — Plan 32 (underwater breath): bots breathe before they drown
+No air model existed — a loitering bot would sit at waterlevel 3 past Q2's 12s and eat escalating
+drown damage (view.c:763,863). Shipped:
+- `water::AirClock` — client-side mirror of the server's air clock (we compute waterlevel
+  ourselves, so counting continuous level-3 time tracks the server to a tick). 12s budget, 2s
+  safety margin; `must_surface(time_to_surface)`; `on_unexplained_damage` re-syncs when observed
+  drown damage says the server's clock ran ahead (main calls it on damage-while-swimming-no-enemy).
+- **Surface-seek override** in the shared TraversalExecutor: `gates()` (now takes `dt`) ticks the
+  clock every frame; when air is critical `apply_swim` abandons the swim path and drives straight
+  up (full up-thrust, −70° pitch) until one breathable frame resets the clock. Priority above
+  normal swim steering; `time_to_surface` = upward contents-scan / SWIM_UP_SPEED (60 u/s, pinned
+  from Plan 40's measured dive logs, conservative).
+- **Verification:** end-to-end unit test (submerged past budget with a DOWNWARD target → full-up;
+  one breath → the dive resumes) + live q2dm1 railgun swim regression **3/3, zero damage** (no
+  false surfacing on in-budget routes). The live forced-loiter can't run through the harness — the
+  scenario preflight rejects unreachable goals by design (a good guard, discovered here).
+- Deferred: T3 dive gating (needs Navigator path introspection; over-budget dives now self-correct
+  by bobbing up for air — which is also what a human does). All brains get this via the executor.
