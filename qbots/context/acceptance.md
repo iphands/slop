@@ -45,7 +45,26 @@ noise floor (control spread) = 1.74 K/D
 a clean measurement — the point here is the tool + the control-variance floor. A real measurement
 uses N runs of one code version.)
 
-## Baseline — main vs q3 combat, q2dm1 (N=5, 2026-07-10)
+## CURRENT combat baseline — main vs q3, q2dm1 (N=5, 2026-07-10, post-thrash-fix)
+
+Re-run after the weapon-switch-thrash fix (the counters' first catch — the pre-fix N=5 below
+was fire-suppressed):
+
+```
+group                mean_kd  [min..max]   spread  runs  Σkills  Σdeaths
+main_astar              1.00  [0.67..1.27]    0.61     5      55       54
+q3_astar                0.93  [0.50..1.50]    1.00     5      44       52
+noise floor (control spread) = 1.00 K/D
+  main_astar vs q3_astar: Δmean=0.07  → noise — inconclusive (= statistical PARITY)
+```
+
+**main has closed the historical combat gap** (Plan 45: 0.68 vs ~1.3; pre-fix today: 0.36 vs
+1.47 SIGNAL deficit) — the cumulative behavior plans (28/29/30/27/33) + the thrash fix bring it
+to parity, out-killing q3 in absolute terms (55 vs 44). **This table supersedes the one below as
+the regression contract**: a change that reopens a SIGNAL-level main deficit at N≥5 must be
+investigated.
+
+## Superseded: pre-fix baseline — main vs q3 combat, q2dm1 (N=5, 2026-07-10)
 
 First statistically-grounded competition baseline (commit at time: Plan-30 bounded main).
 `competition --count 3 --brains main,q3 --navmodes astar` × 5 runs, 305 s each, aggregated:

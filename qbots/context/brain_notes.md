@@ -532,3 +532,11 @@ Showcase behavior counters (5-min main-vs-q3, q2dm3): 44 traversal legs mid-comb
 `acceptance --control` (multi-run K/D) + EVT greps (behavior).
 LESSON (again): instrument first — the counters found in one run what weeks of scoreboard-watching
 missed. Optimistic client-side models MUST re-sync from the wire when it speaks.
+
+## 2026-07-10 — post-fix N=5 re-baseline: main reaches PARITY with q3
+Re-ran the N=5 main-vs-q3 q2dm1 baseline after the switch-thrash fix:
+**main 1.00 [0.67..1.27] (55 kills) vs q3 0.93 [0.50..1.50] (44 kills), Δ0.07 = statistical
+parity** (pre-fix: main 0.36 vs q3 1.47, a SIGNAL-level deficit; historical Plan 45: 0.68 vs
+~1.3). The per-engagement combat gap that survived Plan 45 is CLOSED by the cumulative behavior
+work (range bands, engage read, personas, item sense, mood routing) + the thrash fix. Recorded in
+acceptance.md as the superseding regression contract.
