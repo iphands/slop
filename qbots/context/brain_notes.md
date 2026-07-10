@@ -444,3 +444,20 @@ across three runs — far larger than any main-side Plan 30 effect (main 0.69/0.
 competitions.** Real behavior verification needs the Plan 47 multi-run acceptance harness
 (many runs / longer / more bots, averaged). Plan 30's behavior changes are kept because they are
 principled + north-star-aligned + conservatively bounded, NOT because a single run "proved" them.
+
+## 2026-07-10 — Plan 28 (weapon matchups): own-weapon range bands shipped; enemy read blocked
+- **Enemy-weapon inference is not possible on this server.** VWep verification (QBOTS_P28_DEBUG):
+  every player entity carries `modelindex2 = 255` (sentinel, empty CS slot) — the enemy's held
+  weapon is NOT on the wire (pitfalls.md). So T1's `from_wield_model`/`held_weapon` and T3's
+  `matchup_score` engage-bias ship **dormant** (correct + unit-tested; light up on a VWep-per-weapon
+  server). We did NOT wire a dormant enemy-weapon gate into main's hot path.
+- **T2 shipped active — per-weapon ideal-range positioning** (`weapons::ideal_range`→`RangeBand`)
+  replaces main's fixed `IDEAL_DIST=160`/`BACKUP_DIST=80`: shotguns hug (32/128), rail holds out
+  (300/700), splash stays outside its own min_safe (RL 160/500, BFG 560/900). Uses only OUR weapon
+  (known via gunindex). This is the enemy-independent, always-available half of "fight at the right
+  range for your weapon".
+- **Verification:** by mechanism (unit tests: band character, splash-safety, matchup ordering) +
+  no-regression (3-min q2dm1 comp: bots play, 0 panics/kicks). A clean combat-kd A/B is impractical
+  here: the N=5 noise floor (~0.6 K/D) dwarfs a positioning tweak, and q2dm1 6-bot short runs barely
+  generate encounters (this sanity run: 1 kill in 3 min). Resolving small tactical effects needs a
+  higher-encounter setup (more bots / longer runs / a tighter map) — a Plan 47 harness extension.
