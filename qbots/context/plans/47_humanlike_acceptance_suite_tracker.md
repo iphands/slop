@@ -27,7 +27,8 @@ The traversal matrix + showcase (original T2–T4) follow.
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
+| 2a | **Multi-run aggregator (the reordered core)** | `tools/src/bin/acceptance.rs` | **done** | parse N scoreboards → mean±spread + signal-vs-noise verdict (control spread = noise floor); 4 unit tests; demonstrated on real q2dm1 data (main 0.49 vs q3 1.49 → inconclusive, q3 spread 1.74) |
 | 1 | T1: EVT behavior counters + aggregation | `brain/*`, `qbots/*` | pending | greppable one-liners |
-| 2 | T2: acceptance driver | `justfile` / `tools/acceptance.rs` | pending | per-map batches |
-| 3 | T3: baseline recorded | `context/acceptance.md` | pending | date + commit hash |
+| 2 | T2: full acceptance driver (traversal matrix + comp) | `justfile` / `tools/acceptance.rs` | pending | per-map batches; build on the aggregator |
+| 3 | T3: baseline recorded | `context/acceptance.md` | partial | harness + variance demo recorded; matrix baseline pending |
 | 4 | T4: showcase run + narrative | `acceptance.md`, `brain_notes.md` | pending | q2dm3 roster match |
