@@ -176,8 +176,10 @@ mod tests {
         let p = Persona::from_bot_skill(&BotSkill::default());
         assert_eq!(p, Persona::default());
         // A camper skill carries the long dwell (the one pre-Plan-27 differentiator).
-        let mut s = BotSkill::default();
-        s.camper = true;
+        let s = BotSkill {
+            camper: true,
+            ..BotSkill::default()
+        };
         assert_eq!(Persona::from_bot_skill(&s).roam_dwell(), 250);
     }
 

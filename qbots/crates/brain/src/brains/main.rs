@@ -26,6 +26,7 @@ use crate::fsm::{BehaviorIntent, BehaviorState};
 use crate::move_ctrl::MovementIntent;
 use crate::nav::NavGoal;
 use crate::perception::EntityClass;
+use crate::persona::Persona;
 use crate::recover::{Recovery, RecoveryAction};
 use crate::skill::BotSkill;
 use crate::steer::{move_from_world_dir, Steering};
@@ -37,22 +38,16 @@ use crate::{items, los, weapons};
 // re-exported here for the convenience of code that reaches them via the `main` module.
 pub use crate::brains::core::{BrainConfig, BrainOutput};
 
-/// Health below which `main` hard-disengages (sprints to a resource, breaking the fight) —
-/// staying in a fight this hurt loses to a precise opponent (Plan 45). Above it, a hurt bot
-/// *kites* (keeps facing + firing while opening range) rather than turning its back.
-const FLEE_HEALTH: i32 = 30;
-
-/// Health below which `main` prefers to *kite* a fight (hold open range + keep firing) rather
-/// than press to melee distance. A *healthy* `main` fights flat-out — its aim is near-perfect,
-/// so kiting on a weak weapon (an earlier attempt) just threw away kills; only injury kites.
-const KITE_HEALTH: i32 = 50;
-
-/// While kiting, back away from the enemy until at least this range, then hold + strafe.
-const KITE_DIST: f32 = 450.0;
+// Flee/kite health thresholds + kite distance are now persona-driven (Plan 27):
+// `self.persona.flee_health()` (was 30), `.kite_health()` (was 50), `.kite_dist()` (was 450).
+// The default persona reproduces those exact values, so this is behavior-preserving.
 
 /// The `main` decision brain: owns combat/FSM/dodge/steering/recovery/skill/roam state.
 pub struct MainBrain {
     skill: BotSkill,
+    /// Per-bot personality (Plan 27) — the tactical thresholds (flee/kite health, kite distance,
+    /// roam dwell) read from here instead of global consts. Default reproduces them exactly.
+    persona: Persona,
     fsm: BehaviorState,
     combat: CombatDriver,
     danger: DangerDriver,
@@ -86,8 +81,10 @@ impl MainBrain {
     /// `bot_task` built its sub-drivers early and learned the nav graph at map load).
     pub fn new(skill: BotSkill, cfg: BrainConfig) -> Self {
         let steering = Steering::new(skill.combat());
+        let persona = Persona::from_bot_skill(&skill);
         Self {
             skill,
+            persona,
             fsm: BehaviorState::Roam,
             combat: CombatDriver::new(),
             danger: DangerDriver::new(),
@@ -303,11 +300,11 @@ impl crate::brains::core::Brain for MainBrain {
         );
         let flee_hard = self.cfg.combat_enabled
             && has_target
-            && (health < FLEE_HEALTH || (blaster_only && weapon_in_reach));
+            && (health < self.persona.flee_health() || (blaster_only && weapon_in_reach));
         let kite = self.cfg.combat_enabled
             && has_target
             && !flee_hard
-            && (health < KITE_HEALTH || blaster_only);
+            && (health < self.persona.kite_health() || blaster_only);
         let enemy_pos_now: Option<Vec3> = combat_dec.target_entity.and_then(|t| {
             view.entities()
                 .find(|e| e.entity_number == t)
@@ -407,7 +404,7 @@ impl crate::brains::core::Brain for MainBrain {
                 // Campers dwell ~5x longer per node (first-cut
                 // camping; a true camp-node picker with cover/LOS
                 // is a follow-up). Default roamer cycles every 5s.
-                let dwell = if self.skill.camper { 250 } else { 50 };
+                let dwell = self.persona.roam_dwell();
                 if ticks.is_multiple_of(dwell) {
                     self.roam_idx =
                         (self.roam_idx + self.roam_nodes.len() / 7 + 1) % self.roam_nodes.len();
@@ -531,10 +528,10 @@ impl crate::brains::core::Brain for MainBrain {
             } else if let Some((d, dir)) = enemy_dist_dir {
                 if kite {
                     // Kite (Plan 45): out-gunned but viable — keep facing + firing (aim/yaw
-                    // still lock the enemy) while opening range. Back away until `KITE_DIST`,
-                    // then hold and strafe. `face_then_go = false` so we backpedal facing them.
+                    // still lock the enemy) while opening range. Back away until the persona's kite
+                    // distance, then hold and strafe. `face_then_go = false` so we backpedal facing.
                     let tan = Vec3::new(-dir.y, dir.x, 0.0) * self.steering.strafe_tick(dt);
-                    if d < KITE_DIST {
+                    if d < self.persona.kite_dist() {
                         let away = Vec3::new(-dir.x, -dir.y, 0.0).normalize_or_zero();
                         ((away + tan * 0.6).normalize_or_zero(), false)
                     } else {
