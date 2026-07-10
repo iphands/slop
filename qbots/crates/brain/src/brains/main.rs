@@ -77,9 +77,6 @@ pub struct MainBrain {
     item_memory: items::ItemMemory,
     /// Monotonic seconds since connect (accumulated from `dt`) — the clock for `item_memory`.
     time: f32,
-    /// Cached nearest-reachable known-item roam target (Plan 30 T3), refreshed on the roam-dwell
-    /// cadence so the A* scoring cost is paid ~once per dwell, not every tick. `None` → roam nodes.
-    roam_item_goal: Option<Vec3>,
     cfg: BrainConfig,
 }
 
@@ -104,7 +101,6 @@ impl MainBrain {
             map_items: Vec::new(),
             item_memory: items::ItemMemory::new(),
             time: 0.0,
-            roam_item_goal: None,
             cfg,
         }
     }
@@ -197,15 +193,6 @@ impl MainBrain {
 /// Cap on how many map-item candidates get an A* path scored per tick (euclidean-nearest first),
 /// so the health-seek stays cheap on large graphs (Plan 30 T3 Risk #1).
 const ITEM_ASTAR_CANDIDATES: usize = 8;
-
-/// The pickup classes a roaming bot proactively patrols toward (Plan 30 T3) — everything a human
-/// collects. Health-when-hurt is handled separately (Flee); this keeps a healthy bot topping up.
-const PICKUP_CLASSES: [EntityClass; 4] = [
-    EntityClass::ItemPowerup,
-    EntityClass::ItemArmor,
-    EntityClass::ItemWeapon,
-    EntityClass::ItemHealth,
-];
 
 impl crate::brains::core::Brain for MainBrain {
     /// Supply the per-map roam goals + A* graph handle once the map has loaded.
@@ -412,26 +399,17 @@ impl crate::brains::core::Brain for MainBrain {
                 if ticks.is_multiple_of(dwell) {
                     self.roam_idx =
                         (self.roam_idx + self.roam_nodes.len() / 7 + 1) % self.roam_nodes.len();
-                    // Plan 30 T3: on the roam cadence, refresh the nearest reachable known-item
-                    // target so a roaming bot proactively collects map-known items (a human doesn't
-                    // wander empty corners — they patrol the item spawns). Cost is bounded to once
-                    // per dwell. `None` (nothing reachable/available) → fall back to roam nodes.
-                    self.roam_item_goal = self.nearest_reachable_item(view, &PICKUP_CLASSES);
                 }
-                if let Some(item) = self.roam_item_goal {
-                    NavGoal::Position(item)
-                } else {
-                    let node = self.roam_nodes[self.roam_idx];
-                    // The navmesh backend doesn't index the A* graph's nodes, so
-                    // express the roam target as a world position it can path to.
-                    if self.roam_as_position {
-                        match &self.nav_graph {
-                            Some(g) => NavGoal::Position(Vec3::from(g.node_pos(node))),
-                            None => NavGoal::Waypoint(node),
-                        }
-                    } else {
-                        NavGoal::Waypoint(node)
+                let node = self.roam_nodes[self.roam_idx];
+                // The navmesh backend doesn't index the A* graph's nodes, so
+                // express the roam target as a world position it can path to.
+                if self.roam_as_position {
+                    match &self.nav_graph {
+                        Some(g) => NavGoal::Position(Vec3::from(g.node_pos(node))),
+                        None => NavGoal::Waypoint(node),
                     }
+                } else {
+                    NavGoal::Waypoint(node)
                 }
             } else {
                 NavGoal::Position(pos)
