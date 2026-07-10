@@ -83,6 +83,45 @@ fn repeated_deaths_detour_around_killzone_then_decay_restores() {
     );
 }
 
+/// Plan 33: the SAME bot on the SAME danger field routes differently by MOOD — hurt it detours
+/// around the kill-zone; healthy-and-hunting it cuts straight through to press the kill.
+#[test]
+fn mood_changes_routing_hurt_detours_hunting_cuts_through() {
+    use brain::persona::{HeatmapMood, Persona};
+    let graph = diamond();
+    let mut obs = HeatmapObserver::new(Arc::clone(&graph), "me");
+    let mut nav = NavigationDriver::new(Arc::clone(&graph));
+    let (base_d, base_p) = BotSkill::new(5, Personality::Balanced).heatmap_weights();
+    let p = Persona::default();
+
+    // A moderate kill-zone at B (1 death — between "ignore" and "always detour").
+    obs.on_self_death(Vec3::new(0.0, 100.0, 0.0));
+
+    // Hurt (near death) → danger weight scaled UP → detour via D.
+    let hurt = p.heatmap_scale(HeatmapMood {
+        health_frac: 0.15,
+        engaged: false,
+        hunting: false,
+    });
+    assert_eq!(
+        plan_route(&obs, &mut nav, base_d * hurt.0, base_p * hurt.1),
+        Some(3),
+        "hurt bot detours via D around the kill-zone"
+    );
+
+    // Healthy + hunting → danger weight scaled DOWN → cut straight through B.
+    let hunting = p.heatmap_scale(HeatmapMood {
+        health_frac: 1.0,
+        engaged: false,
+        hunting: true,
+    });
+    assert_eq!(
+        plan_route(&obs, &mut nav, base_d * hunting.0, base_p * hunting.1),
+        Some(1),
+        "healthy hunter cuts through B to press the kill"
+    );
+}
+
 #[test]
 fn higher_skill_detours_more_readily() {
     // A single death at B should flip a high-skill (risk-averse) bot onto the
