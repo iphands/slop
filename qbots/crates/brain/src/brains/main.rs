@@ -31,7 +31,7 @@ use crate::skill::BotSkill;
 use crate::steer::{move_from_world_dir, Steering};
 use crate::traverse::{TraversalExecutor, TraversalFrame};
 use crate::weapons::Weapon;
-use crate::{items, los};
+use crate::{items, los, weapons};
 
 // `BrainConfig`/`BrainOutput` live in `brains::core` next to the `trait Brain` contract;
 // re-exported here for the convenience of code that reaches them via the `main` module.
@@ -433,9 +433,18 @@ impl crate::brains::core::Brain for MainBrain {
                 nav.smooth_with_cm(cm, pos);
             }
 
-            // Ideal-distance combat constants (Eraser BOT_IDEAL_DIST_FROM_ENEMY).
-            const IDEAL_DIST: f32 = 160.0;
-            const BACKUP_DIST: f32 = 80.0;
+            // Per-weapon ideal engagement band (Plan 28 T2): hold the range where OUR held weapon
+            // wins — a shotgunner rushes, a railgunner holds out, a rocketeer stays outside its
+            // splash. Replaces the old fixed `ideal_dist=160`/`backup_dist=80` for all weapons.
+            // Unknown weapon (early frames) → the historical default band so behavior is preserved.
+            let band = held
+                .map(weapons::ideal_range)
+                .unwrap_or(weapons::RangeBand {
+                    backup: 80.0,
+                    ideal: 160.0,
+                });
+            let ideal_dist = band.ideal;
+            let backup_dist = band.backup;
 
             // Resolve enemy position + distance (if we have a target in view). While
             // hard-fleeing (Plan 45) we treat the enemy as absent for the distance-band
@@ -459,7 +468,7 @@ impl crate::brains::core::Brain for MainBrain {
             let (ideal_yaw, ideal_pitch) = if combat_dec.should_fire {
                 (combat_dec.aim_yaw, combat_dec.aim_pitch)
             } else if let Some((d, dir)) = enemy_dist_dir {
-                if d < IDEAL_DIST {
+                if d < ideal_dist {
                     // Face enemy while in ideal-distance range.
                     let yaw = dir.y.atan2(dir.x).to_degrees();
                     (yaw, 0.0)
@@ -531,7 +540,7 @@ impl crate::brains::core::Brain for MainBrain {
                     } else {
                         (tan.normalize_or_zero() * 0.7, false)
                     }
-                } else if d < BACKUP_DIST {
+                } else if d < backup_dist {
                     // Back away from enemy while keeping aim on them.
                     let away = Vec3::new(-dir.x, -dir.y, 0.0).normalize_or_zero();
                     // Add tangential even while backing (keeps bot moving).
@@ -539,7 +548,7 @@ impl crate::brains::core::Brain for MainBrain {
                         * self.steering.strafe_tick(dt)
                         * strafe_weight;
                     ((away + tan).normalize_or_zero(), false)
-                } else if d < IDEAL_DIST {
+                } else if d < ideal_dist {
                     // Hold ideal distance — pure circle-strafe tangentially.
                     let tan = Vec3::new(-dir.y, dir.x, 0.0) * self.steering.strafe_tick(dt);
                     (tan.normalize_or_zero() * strafe_weight, false)

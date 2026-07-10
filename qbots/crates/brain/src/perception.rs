@@ -187,17 +187,14 @@ impl Worldview {
                 weapon: None, // TODO: extract from entity flags
                 // Enemy's held weapon from the VWep wield model (`modelindex2`), Plan 28. Only
                 // meaningful for players; a non-weapon `modelindex2` resolves to `None`.
-                held_weapon: matches!(
-                    class,
-                    EntityClass::EnemyPlayer | EntityClass::AllyPlayer
-                )
-                .then(|| {
-                    model_to_weapon
-                        .get(entity_state.modelindex2 as usize)
-                        .copied()
-                        .flatten()
-                })
-                .flatten(),
+                held_weapon: matches!(class, EntityClass::EnemyPlayer | EntityClass::AllyPlayer)
+                    .then(|| {
+                        model_to_weapon
+                            .get(entity_state.modelindex2 as usize)
+                            .copied()
+                            .flatten()
+                    })
+                    .flatten(),
                 last_seen_frame: frame.serverframe,
                 is_stale: false,
                 last_origin: Some(origin),

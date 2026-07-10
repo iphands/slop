@@ -242,6 +242,63 @@ impl Weapon {
     }
 }
 
+/// The distance band a bot should hold from its enemy given the weapon it is **holding** (Plan
+/// 28 T2). Replaces `main`'s one-size-fits-all `IDEAL_DIST`/`BACKUP_DIST`: a shotgunner rushes in,
+/// a railgunner holds way out, a rocketeer stays outside its own splash. Purely a function of OUR
+/// weapon (always known via `gunindex`) — no enemy-weapon read required (which the wire lacks here).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RangeBand {
+    /// Below this distance, back away (too close for this weapon, or inside splash-danger).
+    /// Always ≥ the weapon's `min_safe_distance` so we never retreat *into* our own blast.
+    pub backup: f32,
+    /// The top of the sweet spot: at/above `backup` and below `ideal`, hold + circle-strafe;
+    /// above `ideal`, close the distance.
+    pub ideal: f32,
+}
+
+/// The ideal engagement band for the weapon we are holding (Plan 28 T2). Tuned to each weapon's
+/// `effective_range`/`min_safe_distance`: shotguns hug, hitscan-rapid sit mid, splash holds outside
+/// its blast, rail/BFG hold long.
+pub fn ideal_range(weapon: Weapon) -> RangeBand {
+    match weapon {
+        // Shotguns: get in their face — power falls off hard past a couple hundred units.
+        Weapon::SuperShotgun | Weapon::Shotgun => RangeBand {
+            backup: 32.0,
+            ideal: 128.0,
+        },
+        // Rapid hitscan/rapid-projectile: mid-range trading.
+        Weapon::Machinegun | Weapon::Chaingun | Weapon::Hyperblaster => RangeBand {
+            backup: 96.0,
+            ideal: 320.0,
+        },
+        // Blaster: weak slow bolt — close enough to land it, but no melee hug.
+        Weapon::Blaster => RangeBand {
+            backup: 80.0,
+            ideal: 300.0,
+        },
+        // Splash: NEVER inside `min_safe_distance` (128) — hold mid-far.
+        Weapon::RocketLauncher => RangeBand {
+            backup: 160.0,
+            ideal: 500.0,
+        },
+        // Grenades arc + big self-blast (min_safe 200) — hold further.
+        Weapon::GrenadeLauncher => RangeBand {
+            backup: 220.0,
+            ideal: 450.0,
+        },
+        // BFG: huge blast (min_safe 512) — hold very long.
+        Weapon::Bfg10k => RangeBand {
+            backup: 560.0,
+            ideal: 900.0,
+        },
+        // Railgun: the longer the better — hold way out, retreat if they close.
+        Weapon::Railgun => RangeBand {
+            backup: 300.0,
+            ideal: 700.0,
+        },
+    }
+}
+
 /// Score a weapon for use against a target at `distance`. Higher is better.
 /// Returns 0 if unusable at this distance (e.g. splash weapon too close).
 pub fn score_weapon(weapon: Weapon, distance: f32) -> f32 {
@@ -440,20 +497,63 @@ mod tests {
     }
 
     #[test]
+    fn ideal_range_matches_weapon_character() {
+        // Shotgun rushes in; rail holds way out.
+        assert!(ideal_range(Weapon::SuperShotgun).ideal < ideal_range(Weapon::Railgun).ideal);
+        assert!(ideal_range(Weapon::Shotgun).backup < 64.0, "shotguns hug");
+        assert!(
+            ideal_range(Weapon::Railgun).backup > 200.0,
+            "rail keeps distance"
+        );
+        // A splash weapon must NEVER back up into its own blast: backup ≥ min_safe_distance.
+        for w in [
+            Weapon::RocketLauncher,
+            Weapon::GrenadeLauncher,
+            Weapon::Bfg10k,
+        ] {
+            assert!(
+                ideal_range(w).backup >= w.min_safe_distance(),
+                "{w:?}: backup {} must be ≥ min_safe {}",
+                ideal_range(w).backup,
+                w.min_safe_distance()
+            );
+        }
+        // Every band is coherent: backup < ideal.
+        for w in ALL_WEAPONS {
+            let b = ideal_range(w);
+            assert!(
+                b.backup < b.ideal,
+                "{w:?}: backup {} !< ideal {}",
+                b.backup,
+                b.ideal
+            );
+        }
+    }
+
+    #[test]
     fn from_wield_model_resolves_enemy_weapon() {
         // Exact VWep precache names (g_spawn.c:762-772).
-        assert_eq!(Weapon::from_wield_model("#w_railgun.md2"), Some(Weapon::Railgun));
+        assert_eq!(
+            Weapon::from_wield_model("#w_railgun.md2"),
+            Some(Weapon::Railgun)
+        );
         // The two ordering traps: sshotgun must beat shotgun; hyperblaster must beat blaster.
         assert_eq!(
             Weapon::from_wield_model("#w_sshotgun.md2"),
             Some(Weapon::SuperShotgun)
         );
-        assert_eq!(Weapon::from_wield_model("#w_shotgun.md2"), Some(Weapon::Shotgun));
+        assert_eq!(
+            Weapon::from_wield_model("#w_shotgun.md2"),
+            Some(Weapon::Shotgun)
+        );
         assert_eq!(
             Weapon::from_wield_model("#w_hyperblaster.md2"),
             Some(Weapon::Hyperblaster)
         );
-        assert_eq!(Weapon::from_wield_model("#w_blaster.md2"), Some(Weapon::Blaster));
+        assert_eq!(
+            Weapon::from_wield_model("#w_blaster.md2"),
+            Some(Weapon::Blaster)
+        );
         // The two launchers are distinct tokens.
         assert_eq!(
             Weapon::from_wield_model("#w_glauncher.md2"),
@@ -463,8 +563,14 @@ mod tests {
             Weapon::from_wield_model("#w_rlauncher.md2"),
             Some(Weapon::RocketLauncher)
         );
-        assert_eq!(Weapon::from_wield_model("#w_machinegun.md2"), Some(Weapon::Machinegun));
-        assert_eq!(Weapon::from_wield_model("#w_chaingun.md2"), Some(Weapon::Chaingun));
+        assert_eq!(
+            Weapon::from_wield_model("#w_machinegun.md2"),
+            Some(Weapon::Machinegun)
+        );
+        assert_eq!(
+            Weapon::from_wield_model("#w_chaingun.md2"),
+            Some(Weapon::Chaingun)
+        );
         assert_eq!(Weapon::from_wield_model("#w_bfg.md2"), Some(Weapon::Bfg10k));
         // Non-weapon / empty (VWep off, or nothing held) → None, never a guess.
         assert_eq!(Weapon::from_wield_model("players/male/tris.md2"), None);
