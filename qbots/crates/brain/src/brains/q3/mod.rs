@@ -639,7 +639,8 @@ impl Q3Brain {
         let dir = Vec3::new(to.x, to.y, 0.0).normalize_or_zero();
 
         // Weapon selection (optimistic; the server grants only owned weapons).
-        let desired = weapons::select_best_weapon(self.held_weapon, dist);
+        // q3 keeps its Plan-38 baseline weapon model — opt out of Plan 30 T4 ammo gating.
+        let desired = weapons::select_best_weapon(self.held_weapon, dist, i32::MAX);
         let weapon_request = if desired != self.held_weapon {
             self.held_weapon = desired;
             self.weapon_switch_time = self.time;

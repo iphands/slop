@@ -233,10 +233,22 @@ pub fn score_weapon(weapon: Weapon, distance: f32) -> f32 {
 /// over the wire, so this returns the *desired* weapon; the caller requests it
 /// via `use <name>` and the server grants it if owned. Falls back to Blaster
 /// (always owned, unlimited ammo) so the bot can always shoot.
-pub fn select_best_weapon(held: Weapon, distance: f32) -> Weapon {
+///
+/// `held_ammo` is the **held** weapon's ammo (`STAT_AMMO`, the only inventory on the wire, Plan 30
+/// T4): a dry held weapon (0 ammo, not the Blaster) is treated as **unusable** — it is excluded
+/// from the search and never "kept", so the bot stops clicking an empty gun and falls back to the
+/// best other weapon (ultimately the Blaster). Pass `i32::MAX` to opt out (no ammo gating).
+pub fn select_best_weapon(held: Weapon, distance: f32, held_ammo: i32) -> Weapon {
+    // A dry held weapon can't fire → fall back to the Blaster, the ONLY weapon guaranteed owned +
+    // loaded. We can't see other weapons' ammo on the wire, and `use <unowned/dry>` is a server
+    // no-op that would leave us clicking the empty gun — so the Blaster is the reliable fallback
+    // (the item-seeking layer, Plan 30 T3, re-arms us). Blaster itself is never "dry".
+    if held != Weapon::Blaster && held_ammo <= 0 {
+        return Weapon::Blaster;
+    }
+
     let mut best = Weapon::Blaster;
     let mut best_score = score_weapon(Weapon::Blaster, distance);
-
     for &w in &ALL_WEAPONS {
         let s = score_weapon(w, distance);
         if s > best_score {
@@ -305,13 +317,34 @@ mod tests {
     #[test]
     fn select_best_prefers_railgun_at_range() {
         // At long range the Railgun dominates; a Blaster-holder should switch.
-        assert_eq!(select_best_weapon(Weapon::Blaster, 2000.0), Weapon::Railgun);
+        assert_eq!(
+            select_best_weapon(Weapon::Blaster, 2000.0, 50),
+            Weapon::Railgun
+        );
     }
 
     #[test]
     fn select_best_keeps_held_when_near_best() {
-        // If we already hold the top weapon, no switch is requested.
-        assert_eq!(select_best_weapon(Weapon::Railgun, 2000.0), Weapon::Railgun);
+        // If we already hold the top weapon (with ammo), no switch is requested.
+        assert_eq!(
+            select_best_weapon(Weapon::Railgun, 2000.0, 50),
+            Weapon::Railgun
+        );
+    }
+
+    #[test]
+    fn dry_held_weapon_forces_switch_off() {
+        // A dry Railgun at range is unusable → don't keep clicking it; switch away (Plan 30 T4).
+        let picked = select_best_weapon(Weapon::Railgun, 2000.0, 0);
+        assert_ne!(picked, Weapon::Railgun, "dry railgun must not be kept");
+        // With no other ammo known, the guaranteed fallback is the Blaster.
+        assert_eq!(picked, Weapon::Blaster);
+        // The Blaster itself is never "dry" (unlimited) — ammo=0 must NOT change a Blaster-holder's
+        // pick (it still upgrades to the best weapon for the range, here the SSG up close).
+        assert_eq!(
+            select_best_weapon(Weapon::Blaster, 100.0, 0),
+            select_best_weapon(Weapon::Blaster, 100.0, 50),
+        );
     }
 
     #[test]

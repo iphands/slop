@@ -141,8 +141,9 @@ impl CombatDriver {
         let distance = (t.origin - view.self_state().origin).length();
 
         // Pick the best weapon for this distance; only request a switch if it
-        // differs from what we're holding.
-        let desired = weapons::select_best_weapon(self.held_weapon, distance);
+        // differs from what we're holding. A dry held weapon (0 ammo) forces a fallback (Plan 30 T4).
+        let desired =
+            weapons::select_best_weapon(self.held_weapon, distance, view.self_state().held_ammo());
         let weapon_request = (desired != self.held_weapon).then(|| {
             self.held_weapon = desired;
             WeaponRequest(desired)
