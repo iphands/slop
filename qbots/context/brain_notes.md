@@ -426,5 +426,6 @@ Key design calls:
   stateless. Lifting runtester's preserved its behavior and *upgraded* main/q3.
 - New recorder `L` flag (ladder) split from `P` (platform), derived in the scenario sampler from
   `nav.current_ride_info().ladder` (consistent with how `P` is derived from nav state, T4).
-**Batched for the q2dm1 pass:** the swim leg of the T2/T3/T4 live matrix (q2dm1 railgun swim per
-brain) — needs the server on q2dm1.
+**q2dm1 swim matrix (2026-07-09, closed):** `spawn-to-weapon railgun --count 3 astar` =
+runtester 3/3, main 3/3, **q3 3/3** (q3 had zero swim before). All brains swim via the shared
+executor. Plan 46 100% done, moved to completed/.
