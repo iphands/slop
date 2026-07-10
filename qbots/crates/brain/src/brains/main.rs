@@ -238,10 +238,19 @@ impl crate::brains::core::Brain for MainBrain {
         self.map_items = items;
     }
 
-    /// The danger/popularity heatmap cost weights for this bot's personality — the caller
-    /// feeds these into the nav risk overlay.
+    /// The danger/popularity heatmap cost weights for this bot — the caller feeds these into the
+    /// nav risk overlay. Plan 33: the skill-derived base is scaled by a live persona×**mood**
+    /// function (health + FSM state from the previous tick), so a hurt bot avoids hot lanes harder
+    /// and a healthy hunter cuts through them. Neutral mood + default persona → the base unchanged.
     fn heatmap_weights(&self) -> (f32, f32) {
-        self.skill.heatmap_weights()
+        let (base_d, base_p) = self.skill.heatmap_weights();
+        let mood = crate::persona::HeatmapMood {
+            health_frac: (self.last_health as f32 / 100.0).clamp(0.0, 1.0),
+            engaged: matches!(self.fsm, BehaviorState::Engage { .. }),
+            hunting: matches!(self.fsm, BehaviorState::Hunt { .. }),
+        };
+        let (ds, ps) = self.persona.heatmap_scale(mood);
+        (base_d * ds, base_p * ps)
     }
 
     /// Short FSM-derived status label (replaces the old typed `behavior()` in the periodic

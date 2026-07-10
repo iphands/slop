@@ -156,6 +156,57 @@ impl Persona {
     }
 }
 
+/// The bot's live combat mood, fed to [`Persona::heatmap_scale`] so nav-danger preference tracks
+/// state like a human's (Plan 33): hurt → avoid hot lanes harder; hunting/fighting → tolerate
+/// danger to get the kill. Built by `main` from its health + FSM each tick.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HeatmapMood {
+    /// Current health as a fraction of 100 (`[0,1]`; full health = 1.0).
+    pub health_frac: f32,
+    /// In an active fight (FSM Engage).
+    pub engaged: bool,
+    /// Pursuing a lost enemy for the kill (FSM Hunt).
+    pub hunting: bool,
+}
+
+impl HeatmapMood {
+    /// The neutral mood (full health, idle): the multipliers are exactly `(1.0, 1.0)`.
+    pub fn neutral() -> Self {
+        Self {
+            health_frac: 1.0,
+            engaged: false,
+            hunting: false,
+        }
+    }
+}
+
+impl Persona {
+    /// Multipliers `(danger_scale, pop_scale)` applied to the skill-derived base heatmap weights
+    /// (Plan 33). **Calibrated so the neutral mood + default persona returns `(1.0, 1.0)`** — the
+    /// base weights are unchanged, so this is behavior-preserving at full health/idle. Off neutral:
+    /// hurt → danger-scale up, pop-scale down (route around kill-zones, ignore crowds); hunting or
+    /// engaged → danger-scale down, pop-scale up (cut through to the kill); a risk-tolerant persona
+    /// (rusher) flattens danger aversion, a cautious one (sniper) sharpens it.
+    pub fn heatmap_scale(&self, mood: HeatmapMood) -> (f32, f32) {
+        let aggressive = mood.hunting || mood.engaged;
+        // Base danger aversion: 1.0 at full health, up to 2.0 near death; 0.7 when pressing a kill.
+        let d_base = if aggressive {
+            0.7
+        } else {
+            2.0 - mood.health_frac.clamp(0.0, 1.0)
+        };
+        // Persona risk tilt: 1.0 at the default 0.5; rusher (0.8) → 0.7, sniper (0.3) → 1.2.
+        let d = d_base * (1.5 - self.risk_tolerance);
+        // Crowd-seeking: falls when hurt (floor 0.3 so we don't fully ignore lanes), up when pressing.
+        let p = if aggressive {
+            1.3
+        } else {
+            mood.health_frac.clamp(0.3, 1.0)
+        };
+        (d, p)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,6 +247,50 @@ mod tests {
         // Weapon biases match character.
         assert_eq!(rusher.weapon_pref, Some(Weapon::SuperShotgun));
         assert_eq!(sniper.weapon_pref, Some(Weapon::Railgun));
+    }
+
+    #[test]
+    fn heatmap_scale_neutral_is_identity() {
+        // The load-bearing contract (Plan 33): default persona + neutral mood → (1.0, 1.0), so
+        // the skill-derived base weights are unchanged at full health/idle.
+        let (d, p) = Persona::default().heatmap_scale(HeatmapMood::neutral());
+        assert!((d - 1.0).abs() < 1e-6, "danger scale {d} != 1.0");
+        assert!((p - 1.0).abs() < 1e-6, "pop scale {p} != 1.0");
+    }
+
+    #[test]
+    fn heatmap_scale_hurt_avoids_hunting_seeks() {
+        let p = Persona::default();
+        let hurt = p.heatmap_scale(HeatmapMood {
+            health_frac: 0.2,
+            engaged: false,
+            hunting: false,
+        });
+        let hunting = p.heatmap_scale(HeatmapMood {
+            health_frac: 1.0,
+            engaged: false,
+            hunting: true,
+        });
+        // Hurt → MORE danger-averse than neutral; hunting → LESS.
+        assert!(
+            hurt.0 > 1.0,
+            "hurt danger scale {} should exceed neutral",
+            hurt.0
+        );
+        assert!(
+            hunting.0 < 1.0,
+            "hunting danger scale {} should be below neutral",
+            hunting.0
+        );
+        // Hurt → LESS crowd-seeking; hunting → more.
+        assert!(hurt.1 < 1.0 && hunting.1 > 1.0);
+    }
+
+    #[test]
+    fn heatmap_scale_persona_tilts_danger() {
+        let mood = HeatmapMood::neutral();
+        // A risk-tolerant rusher is less danger-averse than a cautious sniper at the same mood.
+        assert!(Persona::rusher().heatmap_scale(mood).0 < Persona::sniper().heatmap_scale(mood).0);
     }
 
     #[test]
