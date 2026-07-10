@@ -72,6 +72,12 @@ pub struct MainBrain {
     item_memory: items::ItemMemory,
     /// Monotonic seconds since connect (accumulated from `dt`) — the clock for `item_memory`.
     time: f32,
+    /// Winning/losing read for chase/disengage decisions (Plan 29). Reset on target change.
+    engage: crate::engage::EngageTracker,
+    /// Our health last tick — a drop this frame means we took damage (Plan 29 third-party read).
+    last_health: i32,
+    /// The combat target last tick — a change resets the engage estimator.
+    last_target: Option<i32>,
     cfg: BrainConfig,
 }
 
@@ -98,6 +104,9 @@ impl MainBrain {
             map_items: Vec::new(),
             item_memory: items::ItemMemory::new(),
             time: 0.0,
+            engage: crate::engage::EngageTracker::new(),
+            last_health: 100,
+            last_target: None,
             cfg,
         }
     }
@@ -299,6 +308,24 @@ impl crate::brains::core::Brain for MainBrain {
         let health = self_ss.health;
         let held = self_ss.held_weapon;
         let has_target = combat_dec.target_entity.is_some();
+
+        // ── Engagement read (Plan 29): update the winning/losing estimator this combat tick.
+        // `took_damage` (our health dropped) is the third-party signal; `should_fire` is our
+        // pressure proxy. Reset on target change so each fight is judged fresh.
+        let took_damage = self.cfg.combat_enabled && health < self.last_health && health > 0;
+        self.last_health = health;
+        if combat_dec.target_entity != self.last_target {
+            self.engage.reset();
+            self.last_target = combat_dec.target_entity;
+        }
+        let engage_read = if self.cfg.combat_enabled {
+            self.engage.update(combat_dec.should_fire, took_damage, dt)
+        } else {
+            crate::engage::EngageRead {
+                pressure: 0.0,
+                losing: false,
+            }
+        };
         // Stuck on the near-useless spawn Blaster? (No resolved weapon counts the same.)
         let blaster_only = matches!(held, None | Some(Weapon::Blaster));
         // A weapon pickup we could grab to escape the Blaster phase (weighted picker puts
@@ -366,9 +393,27 @@ impl crate::brains::core::Brain for MainBrain {
                     should_pickup: None,
                 }
             } else {
-                // Target exists (grace-period fire still possible) but
-                // no clear path → let FSM navigate (Hunt last-known pos).
-                self.fsm.tick(view, cm)
+                // Target exists (grace-period fire still possible) but no clear path → chase the
+                // last-known position (Hunt). Plan 29 T2/T3: BREAK OFF the chase if we're losing
+                // (sustained damage, no pressure) OR being third-partied — taking damage while our
+                // target is out of LOS means someone we can't even see is shooting us. Persona
+                // `chase_commit` scales tolerance: a dogged persona keeps chasing when merely losing.
+                let third_party = took_damage; // hit while the target is not visible → not from it
+                let quit_chase =
+                    third_party || (engage_read.losing && self.persona.chase_commit < 0.7);
+                if quit_chase {
+                    if third_party {
+                        tracing::debug!(?combat_dec.target_entity, "third-party break: hit while target out of LOS");
+                    } else {
+                        tracing::debug!("break off losing chase");
+                    }
+                    BehaviorIntent {
+                        nav_goal: Some(self.retreat_goal(view, enemy_pos_now)),
+                        should_pickup: None,
+                    }
+                } else {
+                    self.fsm.tick(view, cm) // chase the last-known pos
+                }
             }
         } else {
             self.fsm.tick(view, cm)
