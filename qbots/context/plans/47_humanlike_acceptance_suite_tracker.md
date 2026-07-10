@@ -1,10 +1,19 @@
 # Plan 47 — Human-like play acceptance suite — Tracker
 
 ## Overview
-- Status: 0% complete
-- Start date: —
+- Status: in-progress (started 2026-07-10, **reordered earlier** at user request)
+- Start date: 2026-07-10
 - Goal: one command runs the traversal matrix + behavior-counter competitions per brain;
   baseline recorded in `context/acceptance.md` as the series regression gate.
+
+## Reorder rationale (2026-07-10)
+Plan 30's live A/B was **inconclusive due to variance** — a q3 CONTROL group's K/D swung
+1.00→0.86→2.60 across three runs of *identical code*. Single-competition combat A/B is noise
+(see `pitfalls.md`). So the behavior plans 28/29/33 CANNOT be verified until a **multi-run,
+control-group measurement harness** exists. That harness is Plan 47's core, so 47 is pulled
+ahead of 28/29/33. **First deliverable: the multi-run competition aggregator** (parse N
+scoreboards → mean±spread per group + a signal-vs-noise verdict using the control's own spread).
+The traversal matrix + showcase (original T2–T4) follow.
 
 ## Resume Instructions
 1. Read `47_humanlike_acceptance_suite.md`. This is the capstone — sequence LAST (after
