@@ -97,6 +97,9 @@ pub struct TraversalExecutor {
     /// Client-side air clock (Plan 32): ticked every `gates()` call, drives the surface-seek
     /// override in the swim machine so the bot breathes before the server's 12s runs out.
     air: crate::water::AirClock,
+    /// The traversal flag applied last frame (`'S'`/`'P'`/`'L'`), for the falling-edge
+    /// `EVT traverse done` counter (Plan 47 T1): emitted when a traversal leg ends.
+    last_flag: Option<char>,
 }
 
 impl TraversalExecutor {
@@ -126,6 +129,18 @@ impl TraversalExecutor {
             self.ride_boarded = false;
             self.active_ride = None;
         }
+        // EVT counter (Plan 47 T1): a traversal leg just ended (falling edge of any traversal
+        // mode) — greppable proof of completed swims / rides / ladder climbs.
+        if !swimming && !ride_active {
+            if let Some(k) = self.last_flag.take() {
+                let kind = match k {
+                    'S' => "swim",
+                    'L' => "ladder",
+                    _ => "ride",
+                };
+                tracing::info!(kind, "EVT traverse done");
+            }
+        }
         TraversalGates {
             swimming,
             ride_active,
@@ -135,6 +150,7 @@ impl TraversalExecutor {
     /// The server dealt us damage underwater that combat can't explain — drown damage. Re-sync
     /// the air clock to "out of air" so the surface-seek engages immediately (Plan 32 Risk #1).
     pub fn on_underwater_damage(&mut self) {
+        tracing::info!("EVT drown"); // Plan 47 T1 counter: the acceptance gate wants this at ZERO
         self.air.on_unexplained_damage();
     }
 
@@ -155,13 +171,18 @@ impl TraversalExecutor {
         nav: &dyn Navigator,
         frame: &TraversalFrame,
     ) -> Option<TraversalApply> {
-        if gates.ride_active {
+        let result = if gates.ride_active {
             self.apply_ride(mv, nav, frame)
         } else if gates.swimming {
             Some(self.apply_swim(mv, nav, frame))
         } else {
             None
+        };
+        // Remember the active traversal kind for the falling-edge `EVT traverse done` counter.
+        if let Some(a) = &result {
+            self.last_flag = Some(a.flag);
         }
+        result
     }
 
     /// Swim toward the 3-D look-ahead (Plan 40 T2/T3), lifted verbatim from `RunTesterBrain`.

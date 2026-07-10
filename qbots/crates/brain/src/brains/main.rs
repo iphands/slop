@@ -78,6 +78,9 @@ pub struct MainBrain {
     last_health: i32,
     /// The combat target last tick — a change resets the engage estimator.
     last_target: Option<i32>,
+    /// True while pursuing a lost-LOS target (Plan 47 T1 edge state for `EVT chase
+    /// start/convert/abort` counters).
+    chasing: bool,
     cfg: BrainConfig,
 }
 
@@ -107,6 +110,7 @@ impl MainBrain {
             engage: crate::engage::EngageTracker::new(),
             last_health: 100,
             last_target: None,
+            chasing: false,
             cfg,
         }
     }
@@ -386,6 +390,12 @@ impl crate::brains::core::Brain for MainBrain {
                 .unwrap_or(true); // no cm yet → optimistic (old behavior)
 
             if has_los {
+                if self.chasing {
+                    // EVT counter (Plan 47 T1): we chased a lost target through the map and
+                    // re-acquired LOS — the "chased for the kill" conversion.
+                    tracing::info!(target, "EVT chase convert");
+                    self.chasing = false;
+                }
                 if !matches!(self.fsm, BehaviorState::Engage { .. }) {
                     tracing::debug!("forcing FSM into Engage (target={})", target);
                     self.fsm = BehaviorState::Engage {
@@ -411,20 +421,27 @@ impl crate::brains::core::Brain for MainBrain {
                 let quit_chase =
                     third_party || (engage_read.losing && self.persona.chase_commit < 0.7);
                 if quit_chase {
+                    // EVT counters (Plan 47 T1): chase abort, with the reason.
                     if third_party {
-                        tracing::debug!(?combat_dec.target_entity, "third-party break: hit while target out of LOS");
+                        tracing::info!(target = ?combat_dec.target_entity, "EVT chase abort reason=third_party");
                     } else {
-                        tracing::debug!("break off losing chase");
+                        tracing::info!("EVT chase abort reason=losing");
                     }
+                    self.chasing = false;
                     BehaviorIntent {
                         nav_goal: Some(self.retreat_goal(view, enemy_pos_now)),
                         should_pickup: None,
                     }
                 } else {
+                    if !self.chasing {
+                        tracing::info!(target = ?combat_dec.target_entity, "EVT chase start");
+                        self.chasing = true;
+                    }
                     self.fsm.tick(view, cm) // chase the last-known pos
                 }
             }
         } else {
+            self.chasing = false; // no target — any chase is over
             self.fsm.tick(view, cm)
         };
 
