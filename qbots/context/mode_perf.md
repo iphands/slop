@@ -228,3 +228,18 @@ routes remain **Plan 35**. Not a ride-behavior regression.
 hybrid-hier), plus hybrid-fallback until it degrades to navmesh. Only the pure-navmesh backend
 (navmesh, hybrid-segment's open segments) lacks ride edges — the same structural gap as water
 (Plan 40). Navmesh water/rides is a deferred follow-up, not a Plan 43 blocker.
+
+## zb2 brain debut (Plan 44, 2026-07-10) — q2dm3, single runs (noise caveat)
+
+| matchup (5 min, --count 3, astar) | kd | notes |
+|---|---|---|
+| **zb2 0.38 (8k/21d) vs q3 0.20 (9k/44d)** | zb2 wins on kd | zb2 died HALF as often — the committed-route "purposeful runner" avoids q2dm3's lava churn |
+| main 0.82 (14k/17d) vs zb2 0.24 (4k/17d) | main wins | post-thrash-fix main is strong; zb2 matches its death count but converts fewer kills |
+
+Traversal: q2dm1 swim-railgun **2/3**; q2dm3 ride-railgun **1/4** (one 29.4s reach through the
+loop trains + lift via the `Zb2Route` facade — the ride works; the far-spawn shortfall vs the
+peers' 3/4 is route-following quality: the plain node-by-node follower lacks `pursue`
+look-ahead/smoothing on the fragmented upper level — the named tuning follow-up). 28 traversal
+legs + 0 drownings + 0 panics across all runs. Single-run kd numbers are directional only
+(acceptance.md noise floor ~0.6-1.0); the deliverable is a *distinct, competent* third brain,
+which this is.

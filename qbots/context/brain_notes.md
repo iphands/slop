@@ -540,3 +540,20 @@ parity** (pre-fix: main 0.36 vs q3 1.47, a SIGNAL-level deficit; historical Plan
 ~1.3). The per-engagement combat gap that survived Plan 45 is CLOSED by the cumulative behavior
 work (range bands, engage read, personas, item sense, mood routing) + the thrash fix. Recorded in
 acceptance.md as the superseding regression contract.
+
+## 2026-07-10 — Plan 44 (zb2): the 3ZB2-derived brain lands
+Third full brain (`--brain zb2`), built in hours instead of the planned days because the seams
+were ready: `trait Brain` (P23), shared CombatDriver, shared TraversalExecutor (P46). The 3ZB2
+texture ported as designed: **committed sequential routes** (plan once on the A* graph, RUN the
+polyline; replan only on goal change/hard-stuck/death) via an internal `Zb2Route` Navigator
+facade — which is what lets the shared executor drive its ride/swim/ladder legs (GRS_ONPLAT/
+ONTRAIN semantics = route cursor frozen while carried) with ZERO duplicated mover code.
+`Search_NearlyPod` is a pure, unit-tested skip (furthest visible near-level node on the committed
+path, never across a non-Walk edge — LOS ≠ walkable). Run-and-gun: view locks the enemy while the
+legs keep the route (world-dir re-decomposed against the aim yaw).
+Debut numbers (single runs): beats q3 on kd on q2dm3 (0.38 vs 0.20 — half the deaths; the
+purposeful-runner feel is real), loses to post-fix main (0.82 vs 0.24); swims q2dm1 2/3; rides
+q2dm3 1/4 (one 29s reach — capability proven; follow-up: the node-by-node follower needs
+pursue-style look-ahead to match peers' 3/4 on the fragmented far-spawn approach).
+Deviation note: zb2 ignores `--navmode` (always A*-graph-routed) — authentic to 3ZB2's own chain
+files, documented in the module header.
