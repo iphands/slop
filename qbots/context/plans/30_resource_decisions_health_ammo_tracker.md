@@ -1,7 +1,7 @@
 # Plan 30 — Resource decisions: health & ammo — Tracker
 
 ## Overview
-- Status: 40% complete — T1 + T2 done (2026-07-09), committed & verified
+- Status: 80% complete — T1–T4 done (2026-07-09); T5 live verification in progress
 - Start date: 2026-07-09
 - Goal: map-known item table in `BrainMap`, per-bot taken/respawn memory, hurt→nearest
   reachable health (A*-distance), ammo-aware weapon scoring + re-arm goals.
@@ -20,6 +20,6 @@
 |---|------|---------------|--------|-------|
 | 1 | T1: `BrainMap.items` static table | `perception.rs`, `items.rs`, `core.rs`, `supervisor.rs`, wiring | done | `classify_item_classname` + `build_map_items`; `MapItem{class,origin,nav_node}`; MainBrain stores, q3 ignores. Live q2dm3: 52 spawns |
 | 2 | T2: `ItemMemory` + respawn model | `items.rs` | done | per-bot, PVS-honest (500u trust range); observe/available; g_items.c respawn times; 3 unit tests |
-| 3 | T3: known-item goals + Flee→health | `items.rs`, `brains/main.rs` | pending | A*-distance, cap 8 |
-| 4 | T4: ammo-aware scoring + re-arm | `weapons.rs`, `items.rs`, `main.rs` | pending | dry weapon scores 0 |
-| 5 | T5: live verification + notes | `brain_notes.md` | pending | deaths < 25/5min baseline |
+| 3 | T3: known-item goals + Flee→health | `brains/main.rs` | done | `nearest_reachable_item` (A*-dist, cap 8); Flee→known health/armor; roam patrols nearest known item (cadence-cached). 2 commits (Flee + roam, separable) |
+| 4 | T4: ammo-aware scoring + re-arm | `weapons.rs`, `combat.rs`, `q3` | done | dry held weapon (0 ammo) → Blaster fallback; q3 opts out (`i32::MAX`); re-arm via T3 roam patrol. +1 test |
+| 5 | T5: live verification + notes | `brain_notes.md` | in-progress | 5-min main-vs-q3 competition on q2dm3 (map-agnostic changes; q2dm1 Plan 45 baseline: main kd 0.68) |
