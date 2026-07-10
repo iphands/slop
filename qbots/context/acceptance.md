@@ -45,6 +45,30 @@ noise floor (control spread) = 1.74 K/D
 a clean measurement — the point here is the tool + the control-variance floor. A real measurement
 uses N runs of one code version.)
 
+## Baseline — main vs q3 combat, q2dm1 (N=5, 2026-07-10)
+
+First statistically-grounded competition baseline (commit at time: Plan-30 bounded main).
+`competition --count 3 --brains main,q3 --navmodes astar` × 5 runs, 305 s each, aggregated:
+
+```
+group                mean_kd  [min..max]   spread  runs  Σkills  Σdeaths
+main_astar              0.36  [0.00..0.67]    0.67     5      18       50
+q3_astar                1.47  [1.18..1.80]    0.62     5      48       34
+noise floor (control spread) = 0.62 K/D
+  main_astar vs q3_astar: Δmean=1.12  → SIGNAL
+```
+
+**Read:** at N=5 the q3 control spread tightened to 0.62 (was a noise-dominated 1.74 at N=3), so the
+1.12 main-vs-q3 gap is now real **SIGNAL** — `main` is reliably weaker than `q3`. This is the
+**per-engagement combat-quality gap** (aim/dodge/fire cadence), not a navigation or resource gap
+(Plan 30's resource work correctly didn't move it). **Regression contract:** a future change that
+drops `main`'s N=5 mean below ~0.30, or widens the gap, must be investigated. Plans 28/29 (weapon
+matchups, chase/disengage) target closing this gap — measure them against this baseline with N≥5.
+
+> Not yet isolated: whether Plan 30 itself nudged `main` up/down vs a pre-Plan-30 N=5 (would need
+> the pre-P30 binary re-run ×5). The gap is pre-existing (Plan 45: main 0.68 vs q3 1.3), so Plan
+> 30's resource changes are groundwork, not the combat-quality fix.
+
 ## Still to build (Plan 47 remainder)
 
 - **T1** behavior counters (`EVT switch/pickup/chase/ride/swim/drown`) + FleetStats aggregation.
