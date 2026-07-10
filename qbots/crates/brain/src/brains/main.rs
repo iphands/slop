@@ -25,6 +25,7 @@ use crate::danger::DangerDriver;
 use crate::fsm::{BehaviorIntent, BehaviorState};
 use crate::move_ctrl::MovementIntent;
 use crate::nav::NavGoal;
+use crate::perception::EntityClass;
 use crate::recover::{Recovery, RecoveryAction};
 use crate::skill::BotSkill;
 use crate::steer::{move_from_world_dir, Steering};
@@ -72,6 +73,10 @@ pub struct MainBrain {
     /// Static item spawns known from the map file (Plan 30) — for map-known resource seeking
     /// (health-when-hurt, ammo re-arm) beyond PVS. Populated at `set_map`.
     map_items: Vec<MapItem>,
+    /// Per-bot memory of which map items are currently taken (Plan 30 T2), PVS-honest.
+    item_memory: items::ItemMemory,
+    /// Monotonic seconds since connect (accumulated from `dt`) — the clock for `item_memory`.
+    time: f32,
     cfg: BrainConfig,
 }
 
@@ -94,6 +99,8 @@ impl MainBrain {
             nav_graph: None,
             roam_as_position: false,
             map_items: Vec::new(),
+            item_memory: items::ItemMemory::new(),
+            time: 0.0,
             cfg,
         }
     }
@@ -116,6 +123,18 @@ impl MainBrain {
         enemy_pos: Option<Vec3>,
     ) -> NavGoal {
         let ss = view.self_state();
+        // Hurt → head for the nearest *reachable* known health/armor (Plan 30 T3), even if it's
+        // outside PVS: the literal "collect health when hurt". A* path distance (not euclidean) so
+        // a pack 200u away through a wall doesn't count as "near".
+        if view.is_low_health() {
+            if let Some(p) = self
+                .nearest_reachable_item(view, &[EntityClass::ItemHealth, EntityClass::ItemArmor])
+            {
+                return NavGoal::Position(p);
+            }
+        }
+        // Else fall back to the PVS-visible loadout-aware picker (weapon when weak, health/armor
+        // when hurt but nothing map-known reachable).
         if let Some((p, _)) =
             items::best_item_goal_weighted(view, &self.skill, ss.held_weapon, ss.health, ss.armor)
         {
@@ -130,7 +149,50 @@ impl MainBrain {
             .unwrap_or(Vec3::X);
         NavGoal::Position(pos + away * 300.0)
     }
+
+    /// The world origin of the nearest **reachable** map-known item whose class is in `classes`
+    /// and which `item_memory` believes is available (Plan 30 T3). "Reachable/near" is measured by
+    /// **A\* path length** through the nav graph, not euclidean distance. Bounded per tick by an
+    /// euclidean prefilter to the closest [`ITEM_ASTAR_CANDIDATES`] candidates. `None` if the graph
+    /// isn't loaded or nothing reachable qualifies.
+    fn nearest_reachable_item(
+        &self,
+        view: &crate::perception::Worldview,
+        classes: &[EntityClass],
+    ) -> Option<Vec3> {
+        let graph = self.nav_graph.as_ref()?;
+        let pos = view.self_state().origin;
+        let from = graph.nearest(&[pos.x, pos.y, pos.z])?;
+
+        // Collect available candidates of the wanted classes, with a resolved nav node.
+        let mut cands: Vec<(f32, &MapItem, usize)> = self
+            .map_items
+            .iter()
+            .enumerate()
+            .filter(|(_, it)| classes.contains(&it.class))
+            .filter(|(i, it)| self.item_memory.available(*i, it.class, self.time))
+            .filter_map(|(_, it)| it.nav_node.map(|n| ((it.origin - pos).length(), it, n)))
+            .collect();
+        // Euclidean prefilter → cap the A* work.
+        cands.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        cands.truncate(ITEM_ASTAR_CANDIDATES);
+
+        // Pick the one with the shortest actual A* path.
+        cands
+            .iter()
+            .filter_map(|(_, it, node)| {
+                graph
+                    .path(from, *node)
+                    .map(|p| (graph.path_len(&p), it.origin))
+            })
+            .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(_, origin)| origin)
+    }
 }
+
+/// Cap on how many map-item candidates get an A* path scored per tick (euclidean-nearest first),
+/// so the health-seek stays cheap on large graphs (Plan 30 T3 Risk #1).
+const ITEM_ASTAR_CANDIDATES: usize = 8;
 
 impl crate::brains::core::Brain for MainBrain {
     /// Supply the per-map roam goals + A* graph handle once the map has loaded.
@@ -194,6 +256,10 @@ impl crate::brains::core::Brain for MainBrain {
             ticks,
             goal_override,
         } = ctx;
+        // Advance the item-memory clock and observe which map-item pads are stocked/empty this
+        // frame (Plan 30 T2/T3) — PVS-honest, per-bot.
+        self.time += dt;
+        self.item_memory.observe(&self.map_items, view, self.time);
         let jitter = (ticks as f32) * 0.1;
         let combat_dec = if self.cfg.combat_enabled {
             self.combat.evaluate(view, &self.skill, jitter, cm)
