@@ -494,9 +494,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     } else {
                         ""
                     };
-                    let mark = if hull == "BLOCKED" { "  <<<" } else { "" };
+                    // The edge kind decides whether a hull-`BLOCKED` span is a BUG (a `Walk`
+                    // edge the bot can't physically follow) or intended (a `Ride`/`Swim`/`Jump`
+                    // the bot traverses by riding/swimming/jumping, not walking).
+                    let kind = format!("{:?}", g.edge_kind(a, b));
+                    let kind = kind.split_whitespace().next().unwrap_or(&kind).to_string();
+                    // A blocked Walk edge is the real problem; a blocked Ride/Swim/Jump is fine.
+                    let mark = if hull == "BLOCKED" && kind == "Walk" {
+                        "  <<< BAD Walk"
+                    } else if hull == "BLOCKED" {
+                        "  (ride/swim/jump — ok)"
+                    } else {
+                        ""
+                    };
                     println!(
-                        "  {a} ({:.0},{:.0},{:.0}) -> {b} ({:.0},{:.0},{:.0}) dz={dz:+.0} hd={hd:.0} {hull}{stair}{mark}",
+                        "  {a} ({:.0},{:.0},{:.0}) -> {b} ({:.0},{:.0},{:.0}) dz={dz:+.0} hd={hd:.0} {kind} {hull}{stair}{mark}",
                         pa[0], pa[1], pa[2], pb[0], pb[1], pb[2]
                     );
                 }
