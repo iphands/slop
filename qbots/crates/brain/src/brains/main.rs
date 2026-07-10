@@ -127,9 +127,11 @@ impl MainBrain {
         // outside PVS: the literal "collect health when hurt". A* path distance (not euclidean) so
         // a pack 200u away through a wall doesn't count as "near".
         if view.is_low_health() {
-            if let Some(p) = self
-                .nearest_reachable_item(view, &[EntityClass::ItemHealth, EntityClass::ItemArmor])
-            {
+            if let Some(p) = self.nearest_reachable_item(
+                view,
+                &[EntityClass::ItemHealth, EntityClass::ItemArmor],
+                FLEE_HEALTH_MAX_ASTAR,
+            ) {
                 return NavGoal::Position(p);
             }
         }
@@ -152,13 +154,16 @@ impl MainBrain {
 
     /// The world origin of the nearest **reachable** map-known item whose class is in `classes`
     /// and which `item_memory` believes is available (Plan 30 T3). "Reachable/near" is measured by
-    /// **A\* path length** through the nav graph, not euclidean distance. Bounded per tick by an
-    /// euclidean prefilter to the closest [`ITEM_ASTAR_CANDIDATES`] candidates. `None` if the graph
-    /// isn't loaded or nothing reachable qualifies.
+    /// **A\* path length** through the nav graph, not euclidean distance, and is capped at
+    /// `max_astar` — a hurt bot grabs *nearby* health but must NOT sprint across the map mid-fight
+    /// (the unbounded version halved combat activity in the q2dm1 A/B, 2026-07-10). Bounded per tick
+    /// by an euclidean prefilter to the closest [`ITEM_ASTAR_CANDIDATES`] candidates. `None` if the
+    /// graph isn't loaded or nothing reachable within `max_astar` qualifies.
     fn nearest_reachable_item(
         &self,
         view: &crate::perception::Worldview,
         classes: &[EntityClass],
+        max_astar: f32,
     ) -> Option<Vec3> {
         let graph = self.nav_graph.as_ref()?;
         let pos = view.self_state().origin;
@@ -177,7 +182,8 @@ impl MainBrain {
         cands.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
         cands.truncate(ITEM_ASTAR_CANDIDATES);
 
-        // Pick the one with the shortest actual A* path.
+        // Pick the one with the shortest actual A* path — but only if it is within `max_astar`
+        // (don't abandon the fight to chase a pack on the far side of the map).
         cands
             .iter()
             .filter_map(|(_, it, node)| {
@@ -185,10 +191,16 @@ impl MainBrain {
                     .path(from, *node)
                     .map(|p| (graph.path_len(&p), it.origin))
             })
+            .filter(|(len, _)| *len <= max_astar)
             .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(_, origin)| origin)
     }
 }
+
+/// Max A* path length (units) a hurt `main` will divert to grab a known health/armor pack (Plan 30
+/// T3). Roughly a few seconds' run — beyond this the bot keeps fighting/kiting rather than sprint
+/// across the map (the unbounded seek halved combat activity in the 2026-07-10 q2dm1 A/B).
+const FLEE_HEALTH_MAX_ASTAR: f32 = 900.0;
 
 /// Cap on how many map-item candidates get an A* path scored per tick (euclidean-nearest first),
 /// so the health-seek stays cheap on large graphs (Plan 30 T3 Risk #1).
