@@ -9,6 +9,7 @@ pub mod main;
 pub mod q3;
 pub mod runtester;
 pub mod sentry;
+pub mod zb2;
 
 pub use core::{Brain, BrainConfig, BrainContext, BrainMap, BrainOutput};
 
@@ -16,6 +17,7 @@ use crate::brains::main::MainBrain;
 use crate::brains::q3::Q3Brain;
 use crate::brains::runtester::RunTesterBrain;
 use crate::brains::sentry::SentryBrain;
+use crate::brains::zb2::Zb2Brain;
 use crate::q3char::{CharPreset, Q3Character};
 use crate::skill::BotSkill;
 
@@ -37,6 +39,9 @@ pub enum BrainKind {
     /// The Quake 3-derived brain (node FSM + aggression-gated retreat/chase + Q3 aim/fire).
     #[value(name = "q3")]
     Quake3,
+    /// The 3ZB2-derived brain (committed routes + shortcut skips + run-and-gun; Plan 44).
+    #[value(name = "zb2")]
+    Zb2,
 }
 
 /// Short kebab-case tag for `kind` — for logging + competition bot naming (mirrors `mode_tag`).
@@ -46,6 +51,7 @@ pub fn brain_tag(kind: BrainKind) -> &'static str {
         BrainKind::Sentry => "sentry",
         BrainKind::RunTester => "runtester",
         BrainKind::Quake3 => "q3",
+        BrainKind::Zb2 => "zb2",
     }
 }
 
@@ -76,6 +82,9 @@ pub fn build_brain(
                 .unwrap_or_else(|| Q3Character::from_skill(skill.skill));
             Box::new(Q3Brain::new(ch))
         }
+        // Zb2 reuses the shared combat driver; `cfg.combat_enabled` gates it for scenarios.
+        // It ignores `char`/`persona` (its personality IS the committed-route texture).
+        BrainKind::Zb2 => Box::new(Zb2Brain::new(skill, cfg.combat_enabled)),
     }
 }
 
