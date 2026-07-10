@@ -460,9 +460,59 @@ fn classify_model(model_str: &str) -> Option<EntityClass> {
     }
 }
 
+/// Classify a **static BSP item entity** by its `classname` (Plan 30). Unlike
+/// [`classify_model`] (which reads a live entity's model string), this maps the map file's
+/// spawn-entity classnames (`item_*`/`weapon_*`/`ammo_*`, `g_items.c` `itemlist[]`) so the brain
+/// knows where resources live even when they are outside PVS. `ammo_*` maps to
+/// [`EntityClass::ItemWeapon`] for now (a "re-arm" resource — there is no wire-visible ammo class;
+/// Plan 30 T4 refines ammo handling). Returns `None` for non-item classnames (spawns, triggers…).
+pub fn classify_item_classname(classname: &str) -> Option<EntityClass> {
+    let s = classname.to_ascii_lowercase();
+    if s.starts_with("item_health") {
+        Some(EntityClass::ItemHealth)
+    } else if s.starts_with("item_armor") {
+        Some(EntityClass::ItemArmor)
+    } else if s.starts_with("weapon_") || s.starts_with("ammo_") {
+        Some(EntityClass::ItemWeapon)
+    } else if matches!(
+        s.as_str(),
+        "item_quad"
+            | "item_invulnerability"
+            | "item_silencer"
+            | "item_breather"
+            | "item_enviro"
+            | "item_adrenaline"
+            | "item_power_screen"
+            | "item_power_shield"
+            | "item_ancient_head"
+            | "item_bandolier"
+            | "item_pack"
+    ) {
+        Some(EntityClass::ItemPowerup)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_classify_item_classname() {
+        use EntityClass::*;
+        assert_eq!(
+            classify_item_classname("item_health_mega"),
+            Some(ItemHealth)
+        );
+        assert_eq!(classify_item_classname("item_armor_body"), Some(ItemArmor));
+        assert_eq!(classify_item_classname("weapon_railgun"), Some(ItemWeapon));
+        assert_eq!(classify_item_classname("ammo_slugs"), Some(ItemWeapon));
+        assert_eq!(classify_item_classname("item_quad"), Some(ItemPowerup));
+        // Non-items → None (spawn points, world, triggers).
+        assert_eq!(classify_item_classname("info_player_deathmatch"), None);
+        assert_eq!(classify_item_classname("func_train"), None);
+    }
 
     #[test]
     fn test_classify_model() {

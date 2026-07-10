@@ -13,11 +13,27 @@ use std::sync::Arc;
 
 use world::{CollisionModel, NavGraph};
 
+use glam::Vec3;
+
 use crate::move_ctrl::MovementIntent;
 use crate::nav::NavGoal;
 use crate::nav_mode::Navigator;
-use crate::perception::Worldview;
+use crate::perception::{EntityClass, Worldview};
 use crate::weapons::Weapon;
+
+/// A static item spawn known from the map file (Plan 30). Lets the brain seek resources by their
+/// *map-known* locations — health, armor, weapons, ammo, powerups — not just what is in PVS this
+/// frame (a human knows the mega is around the corner). Built once per map from the BSP entity
+/// lump; `nav_node` is the nearest A* graph node (for A*-distance scoring), `None` if off-graph.
+#[derive(Debug, Clone, Copy)]
+pub struct MapItem {
+    /// Resource category (health/armor/weapon/powerup), from `classify_item_classname`.
+    pub class: EntityClass,
+    /// World origin of the item's spawn pad.
+    pub origin: Vec3,
+    /// Nearest nav-graph node, resolved at build time (`None` if none within range).
+    pub nav_node: Option<usize>,
+}
 
 /// Per-tick inputs handed to a brain. Bundled into one struct so the downstream behavior plans
 /// (26–33) can add fields (observed enemy weapon, damage/sound events, water/air from the
@@ -48,6 +64,9 @@ pub struct BrainMap {
     pub nav_graph: Arc<NavGraph>,
     /// `true` for backends (navmesh) that path to world positions, not bare node indices.
     pub roam_as_position: bool,
+    /// Static item spawns known from the map file (Plan 30) — for map-known resource seeking
+    /// (health-when-hurt, ammo re-arm) beyond PVS. Empty until wired at a call site.
+    pub items: Vec<MapItem>,
 }
 
 /// Tunables that select a brain *flavor* without changing the decision code.

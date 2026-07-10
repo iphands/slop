@@ -789,6 +789,7 @@ impl Brain for Q3Brain {
             roam_nodes,
             nav_graph,
             roam_as_position,
+            items: _, // q3 uses its own neutral PVS item picker (Plan 30 keeps q3 baseline)
         } = map;
         self.roam_nodes = roam_nodes;
         self.nav_graph = Some(nav_graph);

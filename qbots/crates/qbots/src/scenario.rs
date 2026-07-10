@@ -379,6 +379,9 @@ pub async fn run_scenario(
         roam_nodes: Vec::new(),
         nav_graph: Arc::clone(&graph),
         roam_as_position: matches!(mode, crate::NavMode::Navmesh),
+        // Static item table (Plan 30) — populated for `--brain main` A/B runs; combat is off in
+        // scenarios so health-seek never fires, but keeping it consistent avoids a divergent path.
+        items: brain::items::build_map_items(&bsp, &graph),
     });
     let mut last_serverframe: Option<i32> = None;
     // Monotonic tick counter for `BrainContext` (drives jitter/roam in the `--brain main` A/B;

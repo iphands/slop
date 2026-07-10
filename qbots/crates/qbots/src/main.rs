@@ -944,6 +944,7 @@ pub(crate) async fn bot_task(
                                     roam_nodes: map_nav.roam_nodes.clone(),
                                     nav_graph: Arc::clone(&map_nav.graph),
                                     roam_as_position: matches!(mode, NavMode::Navmesh),
+                                    items: map_nav.items.clone(),
                                 });
                                 nav_driver = Some(build_navigator(
                                     mode,

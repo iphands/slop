@@ -32,6 +32,9 @@ pub struct MapNav {
     /// heightfield over this extent. Retained so a `--navmode navmesh` bot can build the
     /// mesh via [`get_or_build_navmesh`] without reparsing the BSP.
     pub bounds: ([f32; 3], [f32; 3]),
+    /// Static item table (Plan 30) — every `item_*`/`weapon_*`/`ammo_*` spawn from the BSP,
+    /// classified + nearest-node-resolved once per map and shared to every bot via `BrainMap`.
+    pub items: Vec<brain::brains::core::MapItem>,
 }
 
 /// Process-wide cache of nav graphs keyed by map name. The first bot to discover
@@ -113,11 +116,16 @@ fn build_map_nav(cfg: &Config, map: &str) -> Option<MapNav> {
     );
     let model = &built.bsp.models[0];
     let bounds = (model.mins, model.maxs);
+    // Static item table (Plan 30) — built here where the full BSP entity lump is still in scope,
+    // before `built.graph` is moved into the shared `Arc`.
+    let items = brain::items::build_map_items(&built.bsp, &built.graph);
+    tracing::info!(map, item_spawns = items.len(), "map item table built");
     Some(MapNav {
         graph: Arc::new(built.graph),
         cm: built.cm,
         roam_nodes: built.largest,
         bounds,
+        items,
     })
 }
 

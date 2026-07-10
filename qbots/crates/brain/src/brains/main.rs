@@ -19,7 +19,7 @@ use std::sync::Arc;
 use glam::Vec3;
 use world::NavGraph;
 
-use crate::brains::core::{BrainContext, BrainMap};
+use crate::brains::core::{BrainContext, BrainMap, MapItem};
 use crate::combat::{CombatDecision, CombatDriver};
 use crate::danger::DangerDriver;
 use crate::fsm::{BehaviorIntent, BehaviorState};
@@ -69,6 +69,9 @@ pub struct MainBrain {
     /// `true` when the active nav backend (navmesh) cannot path to a bare node index, so
     /// roam goals are expressed as world positions instead. Set at map load.
     roam_as_position: bool,
+    /// Static item spawns known from the map file (Plan 30) — for map-known resource seeking
+    /// (health-when-hurt, ammo re-arm) beyond PVS. Populated at `set_map`.
+    map_items: Vec<MapItem>,
     cfg: BrainConfig,
 }
 
@@ -90,6 +93,7 @@ impl MainBrain {
             roam_idx: 0,
             nav_graph: None,
             roam_as_position: false,
+            map_items: Vec::new(),
             cfg,
         }
     }
@@ -137,10 +141,12 @@ impl crate::brains::core::Brain for MainBrain {
             roam_nodes,
             nav_graph,
             roam_as_position,
+            items,
         } = map;
         self.roam_nodes = roam_nodes;
         self.nav_graph = Some(nav_graph);
         self.roam_as_position = roam_as_position;
+        self.map_items = items;
     }
 
     /// The danger/popularity heatmap cost weights for this bot's personality — the caller

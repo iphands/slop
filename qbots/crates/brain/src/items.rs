@@ -10,10 +10,31 @@
 //! game-changing, mega-health is a big swing, etc. The `quad_freak` personality
 //! doubles the Quad rating.
 
-use crate::perception::{EntityClass, Worldview};
+use crate::brains::core::MapItem;
+use crate::perception::{classify_item_classname, EntityClass, Worldview};
 use crate::skill::BotSkill;
 use crate::weapons::Weapon;
 use glam::Vec3;
+
+/// Build the static item table (Plan 30) from the map's BSP entity lump: every `item_*`/
+/// `weapon_*`/`ammo_*` spawn entity, classified to an [`EntityClass`] and resolved to its nearest
+/// nav-graph node (for A*-distance scoring). Built once per map, shared read-only via
+/// [`BrainMap::items`](crate::brains::core::BrainMap::items). Entities without a parseable origin
+/// or a non-item classname are skipped.
+pub fn build_map_items(bsp: &world::Bsp, graph: &world::NavGraph) -> Vec<MapItem> {
+    bsp.entities
+        .iter()
+        .filter_map(|e| {
+            let class = classify_item_classname(&e.classname)?;
+            let origin = e.origin()?;
+            Some(MapItem {
+                class,
+                origin: Vec3::from(origin),
+                nav_node: graph.nearest(&origin),
+            })
+        })
+        .collect()
+}
 
 /// Base desirability of an item class (higher = more worth detouring for).
 /// Loosely Eraser's `1 / dist_divide`: Quad/Invuln dominate, then mega/armor,
