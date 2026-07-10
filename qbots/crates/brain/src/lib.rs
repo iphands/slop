@@ -10,6 +10,7 @@ pub mod aim;
 pub mod brains;
 pub mod combat;
 pub mod danger;
+pub mod engage;
 pub mod fsm;
 pub mod heatmap;
 pub mod hybrid;
