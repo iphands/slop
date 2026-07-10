@@ -871,3 +871,18 @@ separate from `apply()` which overrides movement after. Confirm zero `R` (recove
 overlap `P`/`S`/`L` frames — that's the proof the gate holds.
 ## Sources
 - qbots: brain/src/traverse.rs (TraversalExecutor), brains/{runtester,main,q3}.rs (Plan 46)
+
+# Combat A/B on single competition runs is noise, not signal
+Tuning bot combat behavior by running ONE 5-min competition and reading the K/D scoreboard is a
+trap: the variance across runs dwarfs the effect you're measuring. Concrete evidence (Plan 30,
+q2dm1, 3v3 main-vs-q3, q3 as an UNCHANGED control): q3's K/D came out 1.00, then 0.86, then 2.60 on
+three consecutive runs of identical code. Any main-side change looked like a 0.69→0.50→0.28 "trend"
+that was pure sampling noise (spawn draws, encounter luck, who-got-the-quad). We nearly reverted a
+principled change based on one run.
+How to avoid: never conclude a behavior helps/hurts from a single competition. Either (a) run many
+samples and average (the Plan 47 acceptance harness is built for this), (b) use much longer runs /
+more bots to accumulate encounters, or (c) judge changes on PRINCIPLE + deterministic unit tests and
+only gate the *aggregate* behavior in a repeatable suite. Keep an unchanged control group in every
+run so the variance is visible — if the control swings wildly, discard the comparison.
+## Sources
+- qbots: brains/main.rs (Plan 30 resource decisions), context/mode_perf.md (variance note)

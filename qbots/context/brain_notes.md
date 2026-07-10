@@ -429,3 +429,18 @@ Key design calls:
 **q2dm1 swim matrix (2026-07-09, closed):** `spawn-to-weapon railgun --count 3 astar` =
 runtester 3/3, main 3/3, **q3 3/3** (q3 had zero swim before). All brains swim via the shared
 executor. Plan 46 100% done, moved to completed/.
+
+## 2026-07-10 — Plan 30 (resource decisions) closeout + a variance lesson
+Shipped: static map-item table (`BrainMap.items`, `classify_item_classname`+`build_map_items`,
+52/83 spawns on q2dm3/q2dm1), PVS-honest `ItemMemory` (respawn timers), **bounded** Flee→known-health
+seek (≤900u A*), and ammo-aware `select_best_weapon` (dry held weapon → Blaster fallback). q3 untouched.
+**Reverted:** the roam-item patrol (main constantly path-seeking items) — a clear regression on q2dm3
+(main kd 0.12 vs 0.19 without; bots stopped fighting to item-hunt across the lava).
+
+**Variance lesson (important):** single 5-min / 6-bot competition samples are TOO NOISY for combat
+A/B. q2dm1 head-to-head, q3 as control with **identical code**, swung q3 kd **1.00 → 0.86 → 2.60**
+across three runs — far larger than any main-side Plan 30 effect (main 0.69/0.50/0.28). So the
+"Plan 30 regressed main 0.69→0.50" read was itself noise. **Do not tune combat on one-off
+competitions.** Real behavior verification needs the Plan 47 multi-run acceptance harness
+(many runs / longer / more bots, averaged). Plan 30's behavior changes are kept because they are
+principled + north-star-aligned + conservatively bounded, NOT because a single run "proved" them.

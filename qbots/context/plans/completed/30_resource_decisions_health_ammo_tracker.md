@@ -1,7 +1,10 @@
 # Plan 30 — Resource decisions: health & ammo — Tracker
 
 ## Overview
-- Status: 80% complete — T1–T4 done (2026-07-09); T5 live verification in progress
+- Status: **DONE (2026-07-10)** — T1–T5 complete; roam patrol reverted (regression), Flee→health
+  bounded (≤900u A*). Live A/B **inconclusive due to variance** (q3 control kd swung 1.00→2.60 with
+  identical code across runs) — combat tuning deferred to the Plan 47 multi-run harness. Kept the
+  behavior because it's principled + north-star-aligned + conservatively bounded.
 - Start date: 2026-07-09
 - Goal: map-known item table in `BrainMap`, per-bot taken/respawn memory, hurt→nearest
   reachable health (A*-distance), ammo-aware weapon scoring + re-arm goals.
@@ -22,4 +25,4 @@
 | 2 | T2: `ItemMemory` + respawn model | `items.rs` | done | per-bot, PVS-honest (500u trust range); observe/available; g_items.c respawn times; 3 unit tests |
 | 3 | T3: known-item goals + Flee→health | `brains/main.rs` | done | `nearest_reachable_item` (A*-dist, cap 8); Flee→known health/armor; roam patrols nearest known item (cadence-cached). 2 commits (Flee + roam, separable) |
 | 4 | T4: ammo-aware scoring + re-arm | `weapons.rs`, `combat.rs`, `q3` | done | dry held weapon (0 ammo) → Blaster fallback; q3 opts out (`i32::MAX`); re-arm via T3 roam patrol. +1 test |
-| 5 | T5: live verification + notes | `brain_notes.md` | in-progress | 5-min main-vs-q3 competition on q2dm3 (map-agnostic changes; q2dm1 Plan 45 baseline: main kd 0.68) |
+| 5 | T5: live verification + notes | `brain_notes.md` | done | q2dm3 + q2dm1 A/B run; **inconclusive (variance)**: q3 control kd 1.00→0.86→2.60 same code. Patrol reverted (clear regression); Flee→health bounded. brain_notes + pitfalls appended. Rigorous measurement = Plan 47 harness |
