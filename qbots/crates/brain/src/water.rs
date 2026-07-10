@@ -49,6 +49,74 @@ pub fn is_swimming(level: u8) -> bool {
     level >= 2
 }
 
+/// Q2's air budget while fully submerged: `air_finished = level.time + 12` while
+/// `waterlevel < 3` (`vendor/yquake2/src/game/player/view.c:763`); past it at level 3 the
+/// server deals escalating drown damage (`view.c:863-866`).
+pub const AIR_BUDGET_SECS: f32 = 12.0;
+/// Safety margin (Plan 32): treat air as critical this many seconds before the server would —
+/// covers observation-start skew (we count from *observed* level 3) plus surfacing slop.
+pub const AIR_SAFETY_MARGIN_SECS: f32 = 2.0;
+
+/// Sustained vertical swim speed (u/s) for time-to-surface estimates. Measured from Plan 40's
+/// live logs: q2dm1 railgun dive, z 238→434 (196u) in ~46 frames ≈ 4.6s → ~43 u/s net vertical
+/// while also moving horizontally; pure up-thrust is faster, so 60 u/s is a conservative planning
+/// number that overestimates time-to-surface (errs toward surfacing early).
+pub const SWIM_UP_SPEED: f32 = 60.0;
+
+/// The air read the surface-seek gate consumes (Plan 32).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AirState {
+    /// Estimated seconds of air left (12 − time submerged; the full 12 when not submerged).
+    pub remaining_secs: f32,
+    /// Air is past the budget — the server is (or is about to start) dealing drown damage.
+    pub drowning: bool,
+}
+
+/// Client-side mirror of the server's air clock (Plan 32 T1). The wire doesn't carry
+/// `air_finished`, but we compute `water_level` ourselves each tick, so a clock keyed to our own
+/// level-3 observation tracks the server to within a tick. `on_unexplained_damage` re-syncs when
+/// the server's clock ran ahead of ours (we took drown damage we didn't predict).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AirClock {
+    /// Seconds spent continuously at `water_level == 3`; `None` while breathing is possible.
+    submerged_secs: Option<f32>,
+}
+
+impl AirClock {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Advance one tick. `eyes_under` = `water_level == 3` this frame; `dt` = seconds.
+    pub fn tick(&mut self, eyes_under: bool, dt: f32) -> AirState {
+        if eyes_under {
+            let t = self.submerged_secs.unwrap_or(0.0) + dt.clamp(0.0, 0.5);
+            self.submerged_secs = Some(t);
+        } else {
+            // Surfaced (even level 2 = mouth above water): the server resets air instantly.
+            self.submerged_secs = None;
+        }
+        let remaining = AIR_BUDGET_SECS - self.submerged_secs.unwrap_or(0.0);
+        AirState {
+            remaining_secs: remaining,
+            drowning: remaining <= 0.0,
+        }
+    }
+
+    /// The server says we're drowning (health dropped underwater with no other explanation) —
+    /// clamp our clock to "out of air" so the surface-seek engages immediately (Plan 32 Risk #1).
+    pub fn on_unexplained_damage(&mut self) {
+        self.submerged_secs = Some(self.submerged_secs.unwrap_or(0.0).max(AIR_BUDGET_SECS));
+    }
+
+    /// Air is critical: surface NOW. `time_to_surface` is the caller's estimate of seconds needed
+    /// to reach breathable water (vertical distance / [`SWIM_UP_SPEED`]).
+    pub fn must_surface(&self, time_to_surface: f32) -> bool {
+        let remaining = AIR_BUDGET_SECS - self.submerged_secs.unwrap_or(0.0);
+        self.submerged_secs.is_some() && remaining <= time_to_surface + AIR_SAFETY_MARGIN_SECS
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,5 +144,60 @@ mod tests {
         assert!(!is_swimming(1));
         assert!(is_swimming(2));
         assert!(is_swimming(3));
+    }
+
+    // ── AirClock (Plan 32 T1) ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn air_depletes_while_submerged_and_resets_on_surface() {
+        let mut c = AirClock::new();
+        // Dry: full budget, not drowning, no must_surface.
+        let s = c.tick(false, 0.1);
+        assert_eq!(s.remaining_secs, AIR_BUDGET_SECS);
+        assert!(!s.drowning);
+        assert!(!c.must_surface(10.0), "not submerged → never must-surface");
+        // Submerge for 5s → ~7s left.
+        for _ in 0..50 {
+            c.tick(true, 0.1);
+        }
+        let s = c.tick(true, 0.1);
+        assert!((s.remaining_secs - (AIR_BUDGET_SECS - 5.1)).abs() < 0.01);
+        assert!(!s.drowning);
+        // One frame at the surface (level 2 counts as breathing) → full reset.
+        let s = c.tick(false, 0.1);
+        assert_eq!(s.remaining_secs, AIR_BUDGET_SECS);
+    }
+
+    #[test]
+    fn drowning_past_budget() {
+        let mut c = AirClock::new();
+        for _ in 0..130 {
+            c.tick(true, 0.1); // 13s under
+        }
+        let s = c.tick(true, 0.1);
+        assert!(s.drowning);
+        assert!(s.remaining_secs <= 0.0);
+    }
+
+    #[test]
+    fn must_surface_accounts_for_travel_time_and_margin() {
+        let mut c = AirClock::new();
+        for _ in 0..50 {
+            c.tick(true, 0.1); // 5s under → 7s air left
+        }
+        // 7s left, 2s margin: a 4s swim-up still fits (7 > 4+2)…
+        assert!(!c.must_surface(4.0));
+        // …but a 6s swim-up doesn't (7 <= 6+2) → surface NOW.
+        assert!(c.must_surface(6.0));
+    }
+
+    #[test]
+    fn unexplained_damage_resyncs_to_drowning() {
+        let mut c = AirClock::new();
+        c.tick(true, 0.1); // just submerged — our clock thinks we have ~12s
+        c.on_unexplained_damage(); // server disagrees (we took drown damage)
+        let s = c.tick(true, 0.1);
+        assert!(s.drowning, "server-observed drown damage clamps the clock");
+        assert!(c.must_surface(0.0));
     }
 }
