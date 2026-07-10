@@ -21,6 +21,7 @@ pub mod nav_mode;
 pub mod navmesh_driver;
 pub mod observed;
 pub mod perception;
+pub mod persona;
 pub mod pursuit;
 pub mod q3char;
 pub mod recorder;
