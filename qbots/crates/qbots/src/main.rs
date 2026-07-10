@@ -144,6 +144,10 @@ enum Cmd {
         /// the skill-derived default character.
         #[arg(long, value_enum)]
         char: Option<brain::CharPreset>,
+        /// Persona (only for `--brain main`): `rusher`/`sniper`/`scavenger`/`guard`. Absent →
+        /// the behavior-preserving default persona.
+        #[arg(long)]
+        persona: Option<String>,
     },
     /// Launch the full bot fleet from the config's `[fleet]` roster.
     Run {
@@ -791,6 +795,7 @@ pub(crate) async fn bot_task(
     mode: NavMode,
     brain_kind: brain::BrainKind,
     char: Option<brain::CharPreset>,
+    persona: Option<brain::persona::Persona>,
 ) -> std::io::Result<()> {
     use brain::perception::Worldview;
     // `Brain` is the plugin trait (its methods resolve on the `Box<dyn Brain>` the factory
@@ -848,6 +853,7 @@ pub(crate) async fn bot_task(
         BotSkill::default(),
         BrainConfig::default(),
         char,
+        persona,
     );
     // Boxed behind the `Navigator` trait so the tick loop is backend-agnostic: `--navmode`
     // picks A* (waypoint graph) or navmesh (polygons + funnel) at map load. `+ Send`
@@ -1796,7 +1802,21 @@ async fn main() -> ExitCode {
             mode,
             brain,
             char,
+            persona,
         } => {
+            // Resolve the persona name (Plan 27) → a preset; unknown names are a hard error so a
+            // typo isn't silently ignored.
+            let persona = match persona.as_deref().map(brain::persona::Persona::preset) {
+                Some(Some(p)) => Some(p),
+                Some(None) => {
+                    tracing::error!(
+                        "unknown --persona (want one of: {})",
+                        brain::persona::Persona::PRESET_NAMES.join(", ")
+                    );
+                    return ExitCode::FAILURE;
+                }
+                None => None,
+            };
             let name = name.unwrap_or_else(|| "qbots".to_string());
             let qport = qport.unwrap_or_else(default_qport);
             let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
@@ -1822,7 +1842,8 @@ async fn main() -> ExitCode {
             }
             tracing::info!("connecting '{name}' to {addr} (qport {qport})…  Ctrl-C to stop.");
 
-            match supervisor::run_single(&cfg, addr, &name, qport, mode, brain, char).await {
+            match supervisor::run_single(&cfg, addr, &name, qport, mode, brain, char, persona).await
+            {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     tracing::error!("{e}");

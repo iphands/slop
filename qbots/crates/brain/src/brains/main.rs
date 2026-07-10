@@ -102,6 +102,15 @@ impl MainBrain {
         }
     }
 
+    /// Override the persona (Plan 27 `--persona`); `None` keeps the skill-derived default.
+    /// Builder-style so `build_brain` can apply a roster preset without a wider constructor.
+    pub fn with_persona(mut self, persona: Option<Persona>) -> Self {
+        if let Some(p) = persona {
+            self.persona = p;
+        }
+        self
+    }
+
     /// The current behavior state (typed). The public, FSM-agnostic label is the trait's
     /// [`status`](crate::brains::core::Brain::status); this stays only for the unit test that
     /// asserts the typed state.

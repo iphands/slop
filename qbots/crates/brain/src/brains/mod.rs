@@ -59,9 +59,10 @@ pub fn build_brain(
     skill: BotSkill,
     cfg: BrainConfig,
     char: Option<CharPreset>,
+    persona: Option<crate::persona::Persona>,
 ) -> Box<dyn Brain + Send> {
     match kind {
-        BrainKind::Main => Box::new(MainBrain::new(skill, cfg)),
+        BrainKind::Main => Box::new(MainBrain::new(skill, cfg).with_persona(persona)),
         // Sentry ignores `cfg` (no nav, no goal override) — it's a proof-of-pluggability.
         BrainKind::Sentry => Box::new(SentryBrain::new(skill)),
         // RunTester is combat-free and goal-driven per tick; it needs neither skill nor cfg.
@@ -89,6 +90,7 @@ mod tests {
             BotSkill::default(),
             BrainConfig::default(),
             None,
+            None,
         );
         assert_eq!(brain.status(), "roam");
     }
@@ -99,6 +101,7 @@ mod tests {
             BrainKind::Sentry,
             BotSkill::default(),
             BrainConfig::default(),
+            None,
             None,
         );
         assert_eq!(brain.status(), "sentry");
@@ -127,6 +130,7 @@ mod tests {
             BrainKind::Quake3,
             BotSkill::default(),
             BrainConfig::default(),
+            None,
             None,
         );
         assert_eq!(brain.status(), "seek-ltg");

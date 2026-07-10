@@ -615,6 +615,7 @@ async fn bot_supervisor_loop(
             mode,
             brain,
             char,
+            None, // TODO(P27): per-bot fleet persona from config
         )
         .await
         {
@@ -653,6 +654,7 @@ pub async fn run_single(
     mode: crate::NavMode,
     brain: brain::BrainKind,
     char: Option<brain::CharPreset>,
+    persona: Option<brain::persona::Persona>,
 ) -> std::io::Result<()> {
     let nav = NavCache::new();
     let shutdown = Shutdown::new();
@@ -661,7 +663,7 @@ pub async fn run_single(
     // A selected Q3 character wears its recognizable skin even as a single bot.
     let skin = char.map(|q| q.skin());
     let res = crate::bot_task(
-        addr, name, qport, skin, cfg, &nav, &shutdown, &stats, mode, brain, char,
+        addr, name, qport, skin, cfg, &nav, &shutdown, &stats, mode, brain, char, persona,
     )
     .await;
     // bot_task has disconnected (or errored) — emit the single-bot tally.

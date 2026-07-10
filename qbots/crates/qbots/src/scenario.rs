@@ -362,6 +362,7 @@ pub async fn run_scenario(
             combat_enabled: false,
         },
         None, // scenarios don't select a Q3 personality (no combat)
+        None, // ...nor a main persona (combat off)
     );
 
     // Drive through the `Navigator` trait so the tick loop is backend-agnostic. `+ Send`
