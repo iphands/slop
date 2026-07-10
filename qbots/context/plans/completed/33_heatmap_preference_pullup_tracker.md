@@ -1,5 +1,7 @@
 # Plan 33 — Heatmap preference pull-up — Tracker
 
+> **DONE 2026-07-10** — T1 (persona×mood weights, byte-preserving) + T2 (deterministic detour-by-mood test) shipped. q3 untouched.
+
 ## Overview
 - Status: 0% complete
 - Start date: —

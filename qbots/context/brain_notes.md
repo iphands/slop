@@ -486,3 +486,13 @@ This is the "pick and finish fights" disengage half. The velocity-extrapolated H
 velocity (state surgery); the existing Hunt-to-last-pos + this break-off gate cover the core.
 Verification: `EngageTracker` unit tests + no-regression sanity (q2dm1 comp: main engages, 3 kills,
 0 panics; kd within the established noise band). A clean kd A/B is noise-limited (harness lesson).
+
+## 2026-07-10 — Plan 33 (heatmap preference pull-up): danger weighting tracks mood
+main's `heatmap_weights()` now scales the skill-derived base by `persona::HeatmapMood` (health +
+FSM engaged/hunting, from the previous tick) × persona `risk_tolerance`. Hurt → danger weight up,
+crowd-seeking down (route around kill-zones); hunting/engaged → danger down, crowd up (cut through
+to the kill). Calibrated so NEUTRAL mood + default persona = (1.0, 1.0) → base unchanged
+(byte-preserving at full health/idle, unit-tested). q3/sentry/runtester use the (0,0) default,
+untouched. Deterministic proof: extended the Plan 08 pipeline test — same bot, same 1-death
+kill-zone, hurt detours via D, healthy-hunter cuts through B. No live run needed (the mechanism is
+graph-deterministic, dodging the combat-noise problem).
