@@ -59,6 +59,10 @@ pub struct PerceivedEntity {
     pub angles: Vec3,
     pub health: Option<i32>,
     pub weapon: Option<i32>,
+    /// The weapon this player is **holding**, inferred from its VWep wield model (`modelindex2`
+    /// → CS_MODELS, Plan 28). `None` for non-players, when VWep is off, or an unknown model — we
+    /// never guess. Lets `main` read the matchup (hold range vs a railgunner, rush a shotgunner).
+    pub held_weapon: Option<Weapon>,
     pub last_seen_frame: i32,
     pub is_stale: bool,
     /// Previous frame's origin for velocity calculation.
@@ -112,14 +116,19 @@ impl Worldview {
         // Build modelindex→class lookup. Entity modelindex is 1-based into CS_MODELS,
         // so configstring index CS_MODELS+modelindex maps to model_to_class[modelindex].
         let mut model_to_class = vec![EntityClass::Unknown; 256];
+        // Parallel lookup for the VWep wield model (`modelindex2`) → enemy's held weapon (Plan 28).
+        let mut model_to_weapon: Vec<Option<Weapon>> = vec![None; 256];
         for (i, model_str) in configstrings.iter() {
             if i < CS_MODELS {
                 continue;
             }
             let modelindex = i - CS_MODELS;
-            if let Some(class) = classify_model(model_str) {
-                if modelindex < model_to_class.len() {
+            if modelindex < model_to_class.len() {
+                if let Some(class) = classify_model(model_str) {
                     model_to_class[modelindex] = class;
+                }
+                if let Some(w) = Weapon::from_wield_model(model_str) {
+                    model_to_weapon[modelindex] = Some(w);
                 }
             }
         }
@@ -176,6 +185,19 @@ impl Worldview {
                     Some(self_state.health)
                 },
                 weapon: None, // TODO: extract from entity flags
+                // Enemy's held weapon from the VWep wield model (`modelindex2`), Plan 28. Only
+                // meaningful for players; a non-weapon `modelindex2` resolves to `None`.
+                held_weapon: matches!(
+                    class,
+                    EntityClass::EnemyPlayer | EntityClass::AllyPlayer
+                )
+                .then(|| {
+                    model_to_weapon
+                        .get(entity_state.modelindex2 as usize)
+                        .copied()
+                        .flatten()
+                })
+                .flatten(),
                 last_seen_frame: frame.serverframe,
                 is_stale: false,
                 last_origin: Some(origin),

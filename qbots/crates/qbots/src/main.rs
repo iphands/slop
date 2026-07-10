@@ -807,6 +807,11 @@ pub(crate) async fn bot_task(
 
     // T1 diagnostic toggle: log live brush-model (`*N`) entity origins each frame (read-only).
     let observe_movers = std::env::var("QBOTS_OBSERVE_MOVERS").is_ok();
+    // VWep inspection (Plan 28): with QBOTS_P28_DEBUG set, dump each player entity's VWep wield
+    // model (`modelindex2` → CS_MODELS) to verify whether the server sends the enemy's held weapon
+    // over the wire. Finding (2026-07-10, this yquake2 server): players carry `modelindex2 = 255`
+    // (a sentinel — CS slot 255 is empty), so enemy-weapon inference is NOT available here.
+    let p28_debug = std::env::var("QBOTS_P28_DEBUG").is_ok();
 
     // Attribute every event in this task to the bot name so fleet logs are
     // per-bot filterable (Plan 09 T3).
@@ -1004,6 +1009,25 @@ pub(crate) async fn bot_task(
                                     dorigin = ?[d[0] as i32, d[1] as i32, d[2] as i32],
                                     "MOVER"
                                 );
+                            }
+                        }
+
+                        if p28_debug && ticks.is_multiple_of(15) {
+                            const CS_MODELS: usize = 32;
+                            for e in &frame.entities {
+                                if e.modelindex == 255 {
+                                    let wield = if e.modelindex2 > 0 {
+                                        cs.get(CS_MODELS + e.modelindex2 as usize).unwrap_or("?")
+                                    } else {
+                                        "(modelindex2=0)"
+                                    };
+                                    tracing::info!(
+                                        ent = e.number,
+                                        mi2 = e.modelindex2,
+                                        wield,
+                                        "P28 PLAYER-ENT"
+                                    );
+                                }
                             }
                         }
 

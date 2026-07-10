@@ -187,6 +187,45 @@ impl Weapon {
         }
     }
 
+    /// Resolve a Q2 **VWep wield-model** path to the weapon an ENEMY player is holding (Plan 28).
+    /// With VWep (stock in Q2 3.20+, always on in yquake2), each player entity carries
+    /// `modelindex2` = the third-person wield model, precached in `SP_worldspawn` as `#w_*.md2`
+    /// (`vendor/yquake2/src/game/g_spawn.c:762-772`): `#w_blaster/#w_shotgun/#w_sshotgun/
+    /// #w_machinegun/#w_chaingun/#w_glauncher/#w_rlauncher/#w_hyperblaster/#w_railgun/#w_bfg`.
+    /// Resolving `modelindex2` through CS_MODELS gives us the enemy's weapon — the same trick as
+    /// our own `gunindex`→[`from_view_model`](Self::from_view_model). Returns `None` for a
+    /// non-weapon / empty model (VWep off, or the enemy holds nothing) — we NEVER guess.
+    ///
+    /// Note the wield-model names differ from the view models: super-shotgun is `sshotgun`
+    /// (checked before `shotgun`), hyperblaster is `hyperblaster` (before `blaster`), the
+    /// launchers are `glauncher`/`rlauncher`.
+    pub fn from_wield_model(model_str: &str) -> Option<Self> {
+        let s = model_str.to_ascii_lowercase();
+        if s.contains("sshotgun") {
+            Some(Self::SuperShotgun) // before "shotgun"
+        } else if s.contains("shotgun") {
+            Some(Self::Shotgun)
+        } else if s.contains("hyperblaster") {
+            Some(Self::Hyperblaster) // before "blaster"
+        } else if s.contains("blaster") {
+            Some(Self::Blaster)
+        } else if s.contains("machinegun") {
+            Some(Self::Machinegun)
+        } else if s.contains("chaingun") {
+            Some(Self::Chaingun)
+        } else if s.contains("glauncher") {
+            Some(Self::GrenadeLauncher)
+        } else if s.contains("rlauncher") {
+            Some(Self::RocketLauncher)
+        } else if s.contains("railgun") {
+            Some(Self::Railgun)
+        } else if s.contains("bfg") {
+            Some(Self::Bfg10k)
+        } else {
+            None
+        }
+    }
+
     /// Minimum seconds between shots (Eraser `fire_interval`, `bot_wpns.c`).
     /// `0.0` = every frame (chain-/machine-/hyper-blaster). Source: distilled
     /// `eraser.md` §5 fire-interval table.
@@ -398,5 +437,37 @@ mod tests {
         );
         assert_eq!(Weapon::from_view_model("players/male/tris.md2"), None);
         assert_eq!(Weapon::from_view_model(""), None);
+    }
+
+    #[test]
+    fn from_wield_model_resolves_enemy_weapon() {
+        // Exact VWep precache names (g_spawn.c:762-772).
+        assert_eq!(Weapon::from_wield_model("#w_railgun.md2"), Some(Weapon::Railgun));
+        // The two ordering traps: sshotgun must beat shotgun; hyperblaster must beat blaster.
+        assert_eq!(
+            Weapon::from_wield_model("#w_sshotgun.md2"),
+            Some(Weapon::SuperShotgun)
+        );
+        assert_eq!(Weapon::from_wield_model("#w_shotgun.md2"), Some(Weapon::Shotgun));
+        assert_eq!(
+            Weapon::from_wield_model("#w_hyperblaster.md2"),
+            Some(Weapon::Hyperblaster)
+        );
+        assert_eq!(Weapon::from_wield_model("#w_blaster.md2"), Some(Weapon::Blaster));
+        // The two launchers are distinct tokens.
+        assert_eq!(
+            Weapon::from_wield_model("#w_glauncher.md2"),
+            Some(Weapon::GrenadeLauncher)
+        );
+        assert_eq!(
+            Weapon::from_wield_model("#w_rlauncher.md2"),
+            Some(Weapon::RocketLauncher)
+        );
+        assert_eq!(Weapon::from_wield_model("#w_machinegun.md2"), Some(Weapon::Machinegun));
+        assert_eq!(Weapon::from_wield_model("#w_chaingun.md2"), Some(Weapon::Chaingun));
+        assert_eq!(Weapon::from_wield_model("#w_bfg.md2"), Some(Weapon::Bfg10k));
+        // Non-weapon / empty (VWep off, or nothing held) → None, never a guess.
+        assert_eq!(Weapon::from_wield_model("players/male/tris.md2"), None);
+        assert_eq!(Weapon::from_wield_model(""), None);
     }
 }

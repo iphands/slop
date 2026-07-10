@@ -886,3 +886,20 @@ only gate the *aggregate* behavior in a repeatable suite. Keep an unchanged cont
 run so the variance is visible — if the control swings wildly, discard the comparison.
 ## Sources
 - qbots: brains/main.rs (Plan 30 resource decisions), context/mode_perf.md (variance note)
+
+# Enemy weapon is NOT inferable from modelindex2 on stock yquake2 (VWep sentinel)
+Plan 28 planned to read an enemy's held weapon from the player entity's `modelindex2` (the VWep
+third-person wield model, resolvable via CS_MODELS like our own `gunindex`→view-model). Live
+verification (QBOTS_P28_DEBUG, 2026-07-10) killed that: EVERY player entity carries
+`modelindex2 = 255` — a sentinel (CS_MODELS slot 255 is empty), not a per-weapon index. yquake2's
+client resolves a player's weapon model from `ci->weaponmodel[]` (per-clientinfo, `cl_parse.c:1070`)
+indexed by modelindex2, and stock gamecode does not vary it per weapon over the wire here. So the
+enemy's weapon is simply not on the wire on this server.
+How to avoid: don't build combat behavior that REQUIRES the enemy's weapon — gate it on
+`Option<Weapon>` and fall back cleanly (Plan 28's `from_wield_model` + `PerceivedEntity.held_weapon`
+are correct + unit-tested and will light up on a VWep-per-weapon server, but stay `None` here).
+Positioning by YOUR OWN weapon's ideal range (known via `gunindex`) is the enemy-independent,
+always-available half — build that. Fallbacks if you truly need enemy weapon: infer from observed
+projectile entities (rocket/grenade models) or muzzle/fire sounds, never guess.
+## Sources
+- qbots: brain/src/{weapons.rs from_wield_model, perception.rs held_weapon}, qbots/src/main.rs (QBOTS_P28_DEBUG)
