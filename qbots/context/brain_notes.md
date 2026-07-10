@@ -515,3 +515,20 @@ drown damage (view.c:763,863). Shipped:
   scenario preflight rejects unreachable goals by design (a good guard, discovered here).
 - Deferred: T3 dive gating (needs Navigator path introspection; over-budget dives now self-correct
   by bobbing up for air — which is also what a human does). All brains get this via the executor.
+
+## 2026-07-10 — Plan 47 closed: the acceptance suite caught its first real bug
+Completed T1 (EVT counters) + T4 (showcase) and closed the capstone. The headline: the counters'
+FIRST run exposed **weapon-switch thrash** — 4179 `use` requests in one 5-min match (~14/s,
+Blaster↔Railgun). Cause: the Plan 30 dry-gate read `STAT_AMMO` (the ammo of the weapon the WIRE
+holds, via gunindex) but gated the *optimistic* held model in CombatDriver — on disagreement it
+flipped every tick, and each request reset the 0.2s fire lockout so a thrashing bot BARELY FIRED.
+This was live in every run since P30-T4, including the N=5 main baseline (main 0.36 is therefore
+suspect — re-baseline at N≥5). Fix: re-sync the optimistic model from gunindex each tick + a 1s
+switch-request cooldown. Post-fix showcase: switches 4179→493, total kills 16→24, and main matched
+q3 K/D (0.26 vs 0.25) for the first time (single-run caveat).
+Showcase behavior counters (5-min main-vs-q3, q2dm3): 44 traversal legs mid-combat (35 ladders,
+9 rides), 89 chase conversions, 10 third-party breaks, 0 drownings, 0 panics. The north-star
+"human-like play" is now a measured, repeatable run: `acceptance matrix` (traversal gates) +
+`acceptance --control` (multi-run K/D) + EVT greps (behavior).
+LESSON (again): instrument first — the counters found in one run what weeks of scoreboard-watching
+missed. Optimistic client-side models MUST re-sync from the wire when it speaks.

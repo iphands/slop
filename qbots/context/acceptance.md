@@ -122,7 +122,35 @@ explicitly re-baseline with a written rationale.
    being the movement specialist — its corner-cut-safe pursue + rich backoff may cost wall
    time on long treks. Worth a recorder-log comparison against main's 6/8.
 
-## Still to build (Plan 47 remainder)
+## Behavior counters (T1) — greppable `EVT` events
 
-- **T1** behavior counters (`EVT switch/pickup/chase/ride/swim/drown`) + FleetStats aggregation.
-- **T4** 5-min showcase (persona roster) + "does it feel human" narrative.
+`grep -c "EVT <name>"` over any competition/fleet log:
+`EVT switch weapon=<w> dist=<d>` · `EVT chase start|convert|abort reason=…` ·
+`EVT traverse done kind=swim|ride|ladder` · `EVT drown` (gate: zero).
+Pickup counters + FleetStats aggregation deferred (no direct wire signal for pickups).
+
+## Showcase (T4) — 5-min `main` vs `q3`, q2dm3, 2026-07-10
+
+**The counters earned their keep on their first run**: showcase #1 exposed **4179 weapon
+switches in 305 s** (~14/s Blaster↔Railgun thrash — the Plan 30 dry-gate read the WIRE-held
+weapon's `STAT_AMMO` but gated the *optimistic* held model; each request also reset the fire
+lockout, so a thrashing bot barely fired — present in every run since P30-T4, **including the
+N=5 main baseline, which should be re-run**). Fixed (wire re-sync + 1 s request cooldown) and
+re-run:
+
+| counter | showcase #1 (buggy) | showcase #2 (fixed) |
+|---|---|---|
+| EVT switch | 4179 | **493** (sane ranged Railgun requests) |
+| EVT chase start / convert / abort | 305 / 149 / 11 | 239 / **89** / 10 (all aborts = third-party) |
+| EVT traverse done | 24 (18 ladder, 6 ride) | **44** (35 ladder, 9 ride) |
+| EVT drown | **0** | **0** |
+| scoreboard | q3 0.28, main 0.22 | q3 14k/57d **0.25**, main 10k/39d **0.26** |
+
+**Does it feel human?** Six bots on q2dm3 fight a recognizably player-like match: they climb
+the ladders and ride the trains/lifts *mid-combat* (44 completed legs in 5 minutes), lose an
+enemy around a corner and **chase it down** (89 re-acquisitions), break off when a third party
+opens fire (all 10 aborts), switch to the railgun for long sightlines, and nobody ever drowns.
+Deaths are high for both groups (q2dm3's lava + crossfire) — aggression, not wandering. With
+the thrash fixed, `main` traded evenly with `q3` for the first time (single-run caveat: verify
+at N≥5 with the aggregator). *(Plan's persona-roster showcase substituted with main-vs-q3 —
+`competition --personas` isn't wired yet, a Plan 27 follow-on.)*

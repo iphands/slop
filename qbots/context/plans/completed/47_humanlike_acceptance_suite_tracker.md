@@ -1,7 +1,7 @@
 # Plan 47 — Human-like play acceptance suite — Tracker
 
 ## Overview
-- Status: in-progress (started 2026-07-10, **reordered earlier** at user request)
+- Status: **DONE (2026-07-10)** — aggregator + matrix driver + full baseline + counters + showcase all shipped; moved to completed/
 - Start date: 2026-07-10
 - Goal: one command runs the traversal matrix + behavior-counter competitions per brain;
   baseline recorded in `context/acceptance.md` as the series regression gate.
@@ -28,7 +28,7 @@ The traversal matrix + showcase (original T2–T4) follow.
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
 | 2a | **Multi-run aggregator (the reordered core)** | `tools/src/bin/acceptance.rs` | **done** | parse N scoreboards → mean±spread + signal-vs-noise verdict (control spread = noise floor); 4 unit tests; demonstrated on real q2dm1 data (main 0.49 vs q3 1.49 → inconclusive, q3 spread 1.74) |
-| 1 | T1: EVT behavior counters + aggregation | `brain/*`, `qbots/*` | pending | greppable one-liners |
+| 1 | T1: EVT behavior counters | `combat.rs`, `main.rs`, `traverse.rs` | done | switch/chase(start,convert,abort)/traverse-done/drown; edge-triggered; found the switch-thrash bug on run #1 (fixed: wire re-sync + 1s cooldown). Pickup + FleetStats agg deferred |
 | 2 | T2: acceptance driver (`acceptance matrix`) | `tools/acceptance.rs` | done | 4-row traversal matrix (q2dm1 swim, q2dm3 ride+quad, q2dm2 s2s) × `--brains`; per-map batches w/ operator prompts (`--yes` to skip — wrong map fails fast on scenario preflight); auto cache-regen per lift-penalty variant; pass/fail table + exit code; thresholds = proven floors w/ notes. 2 more unit tests |
 | 3 | T3: baseline recorded | `context/acceptance.md` | done | FULL matrix baseline (11 cells, 3 maps, RCON-switched) + regression contract + 3 named findings (main-quad 0/8, q2dm2 route quality, runtester s2s) |
-| 4 | T4: showcase run + narrative | `acceptance.md`, `brain_notes.md` | pending | q2dm3 roster match |
+| 4 | T4: showcase + narrative | `acceptance.md`, `brain_notes.md` | done | 5-min main-vs-q3 q2dm3 (persona roster subbed — --personas unwired); counters table + narrative recorded; post-fix main matched q3 kd |
