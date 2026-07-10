@@ -34,6 +34,12 @@ const TICK_HZ: f32 = 10.0;
 /// switch time; the server still ignores fire during the actual change.
 const SWITCH_LOCKOUT_SECS: f32 = 0.2;
 
+/// Minimum frames between `use <name>` switch REQUESTS (~1 s at 10 Hz). The server refuses some
+/// requests (dry weapon → "Not enough ammo" print we can't attribute); without a cooldown the
+/// driver re-requested every tick (Plan 47 T1 found 14 req/s of Blaster↔Railgun thrash, each
+/// resetting the fire lockout). One refused request per second is bounded and harmless.
+const SWITCH_REQUEST_COOLDOWN_FRAMES: u32 = 10;
+
 /// A requested weapon switch (`use <name>`). The connection layer converts this
 /// to a reliable stringcmd.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,10 +146,26 @@ impl CombatDriver {
 
         let distance = (t.origin - view.self_state().origin).length();
 
-        // Pick the best weapon for this distance; only request a switch if it
-        // differs from what we're holding. A dry held weapon (0 ammo) forces a fallback (Plan 30 T4).
-        let desired =
-            weapons::select_best_weapon(self.held_weapon, distance, view.self_state().held_ammo());
+        // Re-sync the optimistic held-weapon model from the wire (Plan 47 T1 finding): `gunindex`
+        // is authoritative once a switch completes; the optimistic value only covers the in-flight
+        // request window. Without this, `STAT_AMMO` (the ammo of the weapon the WIRE says we hold)
+        // was gating a *different* optimistic weapon, and the Plan 30 dry-gate flip-flopped
+        // Blaster↔Railgun every tick — 4179 `use` requests in one 5-min match, each resetting the
+        // fire lockout so the thrashing bot barely fired.
+        if let Some(w) = view.self_state().held_weapon {
+            self.held_weapon = w;
+        }
+
+        // Pick the best weapon for this distance; only request a switch if it differs from what
+        // we're holding AND the last request has had time to land (the server refuses e.g. a dry
+        // railgun with a print, which we can't attribute — the cooldown bounds re-request spam).
+        // A dry held weapon (0 ammo) forces a fallback (Plan 30 T4).
+        let can_request = self.frames_since_switch >= SWITCH_REQUEST_COOLDOWN_FRAMES;
+        let desired = if can_request {
+            weapons::select_best_weapon(self.held_weapon, distance, view.self_state().held_ammo())
+        } else {
+            self.held_weapon
+        };
         let weapon_request = (desired != self.held_weapon).then(|| {
             self.held_weapon = desired;
             // EVT counter (Plan 47 T1): weapon switch + the engagement range that drove it —
