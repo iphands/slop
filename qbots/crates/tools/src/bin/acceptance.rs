@@ -180,8 +180,224 @@ fn report(aggs: &[GroupAgg], control: Option<&str>) -> String {
     out
 }
 
+// ── Traversal-matrix driver (Plan 47 T2) ──────────────────────────────────────────────────
+//
+// `acceptance matrix --addr <host:port> [--bin qbots] [--brains a,b] [--maps m1,m2] [--rows sub]
+//  [--yes]` runs the proven traversal gates per brain and prints one pass/fail table. Rows are
+// grouped by map; the operator is prompted to switch the server between batches (`--yes` skips
+// prompts — a wrong-map row then fails fast on the scenario's own map preflight). The needed nav
+// cache variant is regenerated before each batch (cache keys include the lift penalty).
+
+/// One acceptance row: a scenario invocation + its pass threshold. Thresholds start at the floors
+/// proven in `context/mode_perf.md` / plan closeouts — see each row's `note`.
+struct MatrixRow {
+    map: &'static str,
+    name: &'static str,
+    /// `qbots` args (scenario + flags); `--addr`/`--brain` are appended per run.
+    args: &'static [&'static str],
+    /// Pass gate: at least this many of `count` bots reach.
+    min_reached: u32,
+    count: u32,
+    /// Rows carrying `--lift-penalty 0` need the matching cache variant.
+    lift_penalty_zero: bool,
+    note: &'static str,
+}
+
+const MATRIX: &[MatrixRow] = &[
+    MatrixRow {
+        map: "q2dm1",
+        name: "swim-railgun",
+        args: &["spawn-to-weapon", "railgun", "--count", "3", "--max-secs", "90"],
+        min_reached: 2,
+        count: 3,
+        lift_penalty_zero: false,
+        note: "water-room railgun via the swim tunnel (P40/P46: 3/3 proven; floor 2/3 for spawn variance)",
+    },
+    MatrixRow {
+        map: "q2dm3",
+        name: "ride-railgun",
+        args: &[
+            "spawn-to-weapon", "railgun", "--instance", "1",
+            "--count", "4", "--max-secs", "150", "--lift-penalty", "0",
+        ],
+        min_reached: 3,
+        count: 4,
+        lift_penalty_zero: true,
+        note: "loop-train + lift railgun (P43: 3/4-4/4 proven)",
+    },
+    MatrixRow {
+        map: "q2dm3",
+        name: "quad-train-lava",
+        args: &[
+            "spawn-to-item", "quaddamage",
+            "--count", "4", "--max-secs", "150", "--lift-penalty", "0",
+        ],
+        min_reached: 1,
+        count: 4,
+        lift_penalty_zero: true,
+        note: "ride *10 over the lava (P43: reliable from spawn3; far spawns ~1-2/4 → floor 1/4, target 3/4 pending P35)",
+    },
+    MatrixRow {
+        map: "q2dm2",
+        name: "spawn-to-spawn",
+        args: &["spawn-to-spawn", "--count", "8", "--max-secs", "90"],
+        min_reached: 7,
+        count: 8,
+        lift_penalty_zero: false,
+        note: "full-map reach (connectivity full per P35; unbaselined live → floor 7/8, tighten after first green run)",
+    },
+];
+
+/// Pull `--flag <value>` out of `args`, returning the value.
+fn take_flag(args: &mut Vec<String>, flag: &str) -> Option<String> {
+    let pos = args.iter().position(|a| a == flag)?;
+    let v = args.get(pos + 1).cloned();
+    args.drain(pos..=pos + 1);
+    v
+}
+
+fn run_matrix(mut args: Vec<String>) -> ExitCode {
+    let Some(addr) = take_flag(&mut args, "--addr") else {
+        eprintln!("matrix: --addr <host:port> is required");
+        return ExitCode::from(2);
+    };
+    let bin = take_flag(&mut args, "--bin").unwrap_or_else(|| "target/debug/qbots".into());
+    let brains: Vec<String> = take_flag(&mut args, "--brains")
+        .unwrap_or_else(|| "runtester".into())
+        .split(',')
+        .map(str::to_string)
+        .collect();
+    let maps_filter: Option<Vec<String>> =
+        take_flag(&mut args, "--maps").map(|m| m.split(',').map(str::to_string).collect());
+    let rows_filter = take_flag(&mut args, "--rows");
+    let skip_prompts = args.iter().any(|a| a == "--yes");
+
+    let rows: Vec<&MatrixRow> = MATRIX
+        .iter()
+        .filter(|r| {
+            maps_filter
+                .as_ref()
+                .is_none_or(|ms| ms.iter().any(|m| m == r.map))
+        })
+        .filter(|r| {
+            rows_filter
+                .as_ref()
+                .is_none_or(|f| r.name.contains(f.as_str()))
+        })
+        .collect();
+    if rows.is_empty() {
+        eprintln!("matrix: no rows match the filters");
+        return ExitCode::from(2);
+    }
+
+    // One executed run: (row, brain, outcome) — outcome = Some((reached, count)) or None
+    // (run/parse error).
+    type RunResult<'a> = (&'a MatrixRow, String, Option<(u32, u32)>);
+    let mut results: Vec<RunResult> = Vec::new();
+    let mut current_map = "";
+    for row in &rows {
+        if row.map != current_map {
+            current_map = row.map;
+            if !skip_prompts {
+                eprintln!("\n>>> Load `{current_map}` on the server, then press Enter…");
+                let mut line = String::new();
+                let _ = std::io::stdin().read_line(&mut line);
+            }
+            // Regenerate the cache variant(s) this map's rows need (keys include lift penalty).
+            for lp0 in [false, true] {
+                if rows
+                    .iter()
+                    .any(|r| r.map == current_map && r.lift_penalty_zero == lp0)
+                {
+                    let mut gen = std::process::Command::new(&bin);
+                    gen.args([
+                        "generate-map-cache",
+                        "--map",
+                        current_map,
+                        "--spacing",
+                        "24",
+                        "--allow-failures",
+                    ]);
+                    if lp0 {
+                        gen.args(["--lift-penalty", "0"]);
+                    }
+                    eprintln!(
+                        "[matrix] regenerating {current_map} cache (lift_penalty_zero={lp0})…"
+                    );
+                    let _ = gen.output();
+                }
+            }
+        }
+        for brain in &brains {
+            eprintln!("[matrix] {} / {} / --brain {brain} …", row.map, row.name);
+            let out = std::process::Command::new(&bin)
+                .args(row.args)
+                .args(["--addr", &addr, "--brain", brain])
+                .output();
+            let outcome = out.ok().and_then(|o| {
+                let text = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&o.stdout),
+                    String::from_utf8_lossy(&o.stderr)
+                );
+                parse_reached(&text)
+            });
+            match outcome {
+                Some((r, c)) => eprintln!("[matrix]   → {r}/{c} reached"),
+                None => eprintln!("[matrix]   → NO RESULT (run error / wrong map loaded?)"),
+            }
+            results.push((row, brain.clone(), outcome));
+        }
+    }
+
+    // Final table.
+    println!("\nrow                map        brain       result  gate   verdict");
+    let mut all_pass = true;
+    for (row, brain, outcome) in &results {
+        let (result, pass) = match outcome {
+            Some((r, c)) => (format!("{r}/{c}"), *r >= row.min_reached),
+            None => ("ERROR".into(), false),
+        };
+        all_pass &= pass;
+        println!(
+            "{:<18} {:<10} {:<10} {:>7}  ≥{}/{}  {}",
+            row.name,
+            row.map,
+            brain,
+            result,
+            row.min_reached,
+            row.count,
+            if pass { "PASS" } else { "FAIL" }
+        );
+    }
+    println!("\nnotes:");
+    for row in &rows {
+        println!("  {:<18} {}", row.name, row.note);
+    }
+    if all_pass {
+        println!("\nALL ROWS PASS");
+        ExitCode::SUCCESS
+    } else {
+        println!("\nFAILURES PRESENT (see table)");
+        ExitCode::from(2)
+    }
+}
+
+/// Parse the scenario aggregate line `X/N bots reached the goal` (last occurrence wins).
+fn parse_reached(text: &str) -> Option<(u32, u32)> {
+    text.lines().rev().find_map(|l| {
+        let idx = l.find(" bots reached the goal")?;
+        let frac = l[..idx].split_whitespace().last()?;
+        let (a, b) = frac.split_once('/')?;
+        Some((a.parse().ok()?, b.parse().ok()?))
+    })
+}
+
 fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("matrix") {
+        return run_matrix(args.split_off(1));
+    }
     let mut control: Option<String> = None;
     if let Some(pos) = args.iter().position(|a| a == "--control") {
         control = args.get(pos + 1).cloned();
@@ -189,8 +405,10 @@ fn main() -> ExitCode {
     }
     if args.is_empty() {
         eprintln!(
-            "usage: acceptance [--control <group>] <run1.log> <run2.log> ...\n\
-             aggregates N competition scoreboards into mean±spread K/D + a signal-vs-noise verdict."
+            "usage:\n  acceptance [--control <group>] <run1.log> <run2.log> ...\n\
+             \x20   aggregates N competition scoreboards into mean±spread K/D + a signal-vs-noise verdict.\n\
+             \x20 acceptance matrix --addr <host:port> [--bin qbots] [--brains a,b] [--maps m1,m2] [--rows sub] [--yes]\n\
+             \x20   runs the Plan 47 traversal matrix and prints a pass/fail table."
         );
         return ExitCode::from(2);
     }
@@ -257,6 +475,33 @@ mod tests {
         assert_eq!(board[1].name, "main_astar");
         assert_eq!(board[1].kills, 5);
         assert_eq!(board[1].deaths, 40);
+    }
+
+    #[test]
+    fn parse_reached_finds_the_last_aggregate_line() {
+        let log = "\
+0059.458 I scenario result bot=a reached=true
+0091.770 I 2/4 bots reached the goal
+0120.001 I 3/4 bots reached the goal
+0121.000 I done";
+        assert_eq!(parse_reached(log), Some((3, 4)));
+        assert_eq!(parse_reached("no aggregate here"), None);
+    }
+
+    #[test]
+    fn matrix_thresholds_are_coherent() {
+        for row in MATRIX {
+            assert!(
+                row.min_reached <= row.count,
+                "{}: gate {}/{} impossible",
+                row.name,
+                row.min_reached,
+                row.count
+            );
+            // The row's --count must match the threshold's denominator.
+            let idx = row.args.iter().position(|a| *a == "--count").unwrap();
+            assert_eq!(row.args[idx + 1], row.count.to_string(), "{}", row.name);
+        }
     }
 
     #[test]
