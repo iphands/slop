@@ -299,6 +299,16 @@ pub fn ideal_range(weapon: Weapon) -> RangeBand {
     }
 }
 
+/// Who wins a fair fight at `dist` if both aim well (Plan 28 T3): `> 0` favors **our** weapon,
+/// `< 0` favors **theirs**, `0` is even. A pure `score_weapon` difference — captures that a
+/// shotgun beats a railgun up close but loses at range, etc. A consumer must only call this with a
+/// KNOWN enemy weapon (`Option<Weapon>`); on a server without per-weapon VWep the enemy weapon
+/// isn't on the wire (see `pitfalls.md`), so `main` does not yet gate on this — the primitive is
+/// ready for when it is available.
+pub fn matchup_score(mine: Weapon, theirs: Weapon, dist: f32) -> f32 {
+    score_weapon(mine, dist) - score_weapon(theirs, dist)
+}
+
 /// Score a weapon for use against a target at `distance`. Higher is better.
 /// Returns 0 if unusable at this distance (e.g. splash weapon too close).
 pub fn score_weapon(weapon: Weapon, distance: f32) -> f32 {
@@ -528,6 +538,20 @@ mod tests {
                 b.ideal
             );
         }
+    }
+
+    #[test]
+    fn matchup_score_reads_the_range() {
+        // Blaster vs Railgun at long range: we lose badly.
+        assert!(matchup_score(Weapon::Blaster, Weapon::Railgun, 600.0) < 0.0);
+        // Super-shotgun vs Railgun up close: the shotgun's close bonus wins the trade.
+        assert!(matchup_score(Weapon::SuperShotgun, Weapon::Railgun, 100.0) > 0.0);
+        // Same weapon is always a wash.
+        assert_eq!(matchup_score(Weapon::Railgun, Weapon::Railgun, 500.0), 0.0);
+        // Antisymmetry: swapping sides negates the score.
+        let a = matchup_score(Weapon::RocketLauncher, Weapon::Machinegun, 400.0);
+        let b = matchup_score(Weapon::Machinegun, Weapon::RocketLauncher, 400.0);
+        assert!((a + b).abs() < 1e-3);
     }
 
     #[test]
