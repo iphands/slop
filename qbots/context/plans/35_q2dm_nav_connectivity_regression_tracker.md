@@ -42,14 +42,30 @@ vs OK ride/swim/jump. Ran q2dm3 all-spawns → quad:
 3. Diagnostics: `navinspect <map> compgaps|gpath`, `spawn-to-point <x> <y> <z>`,
    `QBOTS_NO_PRUNE=1`, `QBOTS_OBSERVE_MOVERS=1`.
 
+## Far-spawn quad verification (2026-07-09, live q2dm3 noir.lan) — MIXED CAUSE, deferred
+Ran the route-vs-ride isolation the user requested:
+- **QUAD (`spawn-to-item quaddamage --count 4` route+ride):** 1/4 settled; user observed ~2 bots
+  board the `*10` platform, 1 complete the dismount onto the quad. So ~1–2/4 far bots finish.
+- **BOARD (`spawn-to-point -- 191 -329 216 --count 4` route-only):** 0/4 — but **confounded**: the
+  board point is a tiny ledge over lava that also is a ride-transit point (can't *settle* there).
+  Zero lava deaths, but **729/672/857 hindered frames** (of ~3600) + 100–250 bumps → bots got
+  **wedged grinding through the fragmented upper-level geometry** on the final approach.
+- **Verdict:** the far-spawn quad limiter is **MIXED** — upper-level route/steering quality
+  (hindered navigation, possibly a Plan 12/13 steering issue as much as a nav-graph one) AND the
+  `*10` over-lava ride dismount (Plan 43 control-feasibility wall). NOT cleanly a nav-graph bug.
+- **Decision (2026-07-09):** DEFER T1/T2 far-spawn-quad work — hard, mixed-cause, modest payoff
+  (quad already reaches reliably from the near spawn3, ~1–2/4 from far). Plan 35's remaining *clean*
+  nav scope = **T3 (q2dm6 7/8→8/8, q2dm7 4/6→≥5/6)**. Revisit far-spawn quad only if the
+  behavior/steering plans don't incidentally improve the upper-level hindering.
+
 ## Progress
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
 | 0 | Connector mechanisms (ladders, rides, jump bridges) | `world/build.rs`, `navgraph.rs` | done | shipped 2026-06-19; q2dm3 3/7→7/7 |
-| 1 | T1: hull-validate bridge/seed edges + regression test | `navgraph.rs`, `world/tests/` | pending | |
-| 2 | T2: split long bridges / resample q2dm3 upper level | `navgraph.rs`, `build.rs` | pending | far-spawn quad ≥3/4 is the gate |
-| 3 | T3: q2dm6 (7/8) + q2dm7 (4/6) residuals | per diagnosis | pending | q2dm7 target ≥5/6 |
+| 1 | T1: hull-validate bridge/seed edges + regression test | `navgraph.rs`, `world/tests/` | deferred | naive fix (steps by max(dz,hd)) over-rejects legit step-over edges → broad disconnection. Needs careful lip-height geometry + per-edge live validation. Payoff modest (see verification above). |
+| 2 | T2: split long bridges / resample q2dm3 upper level | `navgraph.rs`, `build.rs` | deferred | far-spawn quad is MIXED cause (route+ride), not a clean nav bug — deferred per 2026-07-09 verification |
+| 3 | T3: q2dm6 (7/8) + q2dm7 (4/6) residuals | per diagnosis | pending | the remaining CLEAN nav scope; q2dm7 target ≥5/6 |
 | 4 | T4: regen all q2dm* + live spot-checks + notes | `mapcache.rs`, live | pending | VERSION bump |
 
 ## History
