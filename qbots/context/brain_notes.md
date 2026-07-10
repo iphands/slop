@@ -461,3 +461,15 @@ principled + north-star-aligned + conservatively bounded, NOT because a single r
   here: the N=5 noise floor (~0.6 K/D) dwarfs a positioning tweak, and q2dm1 6-bot short runs barely
   generate encounters (this sanity run: 1 kill in 3 min). Resolving small tactical effects needs a
   higher-encounter setup (more bots / longer runs / a tighter map) — a Plan 47 harness extension.
+
+## 2026-07-10 — Plan 27 (persona parameters): main gains a real personality
+Shipped `brain::persona::Persona` — [0,1] traits (aggression/risk_tolerance/weapon_pref/camper/
+chase_commit/item_greed) + tactical getters (flee_health/kite_health/kite_dist/roam_dwell). The
+LOAD-BEARING contract (Risk #2): `Persona::default()` reproduces main's pre-Plan-27 constants
+EXACTLY (30/50/450/50), unit-tested — so converting main's global consts to `self.persona.*()` is
+behavior-preserving for every current bot. 4 named presets (rusher fights hurt + closes; sniper
+holds range + bails early; scavenger hoards; guard camps) selectable via `connect-one --persona`.
+`chase_commit`/`item_greed` traits are placed for Plans 29/30 to consume. Competition-roster
+selection + a live spread table are a follow-on: they're a demo, and per the harness lesson a kd
+spread across 4 personas is noise-limited at feasible sample sizes — the persona *values* are the
+tested contract, not a single roster run.
