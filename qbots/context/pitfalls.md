@@ -1064,3 +1064,25 @@ destinations. Validate the start node with a hull+floor straight-line test
 ## Sources
 - qbots: crates/brain/src/recover.rs (StuckDetector), crates/brain/src/brains/zb2.rs
   (RouteProgress::stalled, reachable_start), context/plans/completed/51_*
+
+# Point-trace floor probes reject V-groove floors the player hull can stand on
+`floor_waypoints_multi` found floors with a POINT trace down the column, then validated
+with a stationary hull check at `point_floor + 24`. On any non-flat floor — a V-groove
+drainage duct, a sloped channel bed, angled trim — the point reaches the groove seam,
+deeper than the 32×32 hull can sit, so the stationary check is `startsolid` and the
+column emits NO node. base64's drain duct (the ONLY exit from its GL-room spawn) sampled
+zero nodes this way, and the connectivity gate blamed the spawn (45/46). A real player
+stands there fine: pmove rests the hull ON the slopes, higher than the seam. The failure
+is invisible in boundary-pair diagnostics — there is no near-miss edge to inspect,
+because the landing surface has no nodes at all. Cross-sectioning the BSP (point-contents
+x-z/y-z ASCII slices) is what exposed the un-sampled duct.
+Avoid: when a stationary hull check startsolids over a point-found floor, hull-TRACE down
+the column and accept the rest position if it lands within ~40 u of the flat-floor origin
+(`hull_rest_z`, cache v24). Also: a `spawns not all reachable (N/M)` message names no
+spawn — run `qbots nav-debug <map>` first; its spawn table prints exactly which spawn and
+component. And REBUILD `target/release` tools before trusting "no fresh cache" errors —
+a stale binary with an older cache VERSION rejects a perfectly good cache.
+## Sources
+- qbots: crates/world/src/navgraph.rs (`floor_waypoints_multi`, `hull_rest_z`)
+- qbots: crates/world/src/collision.rs (`v_groove_world` test world)
+- qbots: context/plans/completed/52_base64_stranded_spawn_teleporters.md

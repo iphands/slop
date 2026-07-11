@@ -262,3 +262,39 @@ Prints a per-mode K/D scoreboard every 30 s (live) and on Ctrl-C (FINAL), groupi
 `NavMode` (moved out of `FleetShared`). Per-mode qport blocks `base + mi*count + i` are disjoint.
 Total clamped by `[fleet].max_bots` (server maxclients headroom). In-process (no 6× nav rebuild,
 no shell-outs); a panicking bot task is isolated by tokio.
+
+## Custom-map connectivity + teleporters — Plan 52 (base64)
+
+**base64 GL-room geometry**: spawn[26] `(-720,824,-520)` sits in a room whose only exit is
+a drop shaft (x −750..−650, y≈1000) into a **V-groove drainage duct** (45° slopes, ~48u wide
+at the bottom, z≈−836) running west to the pit. Entry is a drop-in from the window ledges
+above. The room + duct is why base64 read 45/46: point-trace floor probing sampled zero duct
+nodes (see pitfalls: "Point-trace floor probes reject V-groove floors").
+
+**Diagnosis fast-path for "spawns not all reachable" on any map**:
+1. `qbots nav-debug <map>` — the spawn table names the stranded spawn + its component, and
+   the component bboxes localize the region.
+2. BSP point-contents cross-sections (node/leaf walk over lump 4/8/1; ~30 lines of python)
+   render x-z / y-z ASCII slices — the fastest way to see ducts, shafts, and water channels
+   the nav graph missed. Entity lump (lump 0) is plain text: grep spawns/teleporters/doors.
+3. Check the fix layer in order: floor sampling (nodes exist at all?) → edges (walk/stair)
+   → bridges (jump caps) → special movers (plat/train/ladder/teleporter).
+
+**Teleporters (cache v24)**: `misc_teleporter`(origin) / `trigger_teleport`(model bounds
+base-center) → `target` matches `targetname` of `misc_teleporter_dest`/`info_teleport_destination`
+(`g_misc.c` SP_misc_teleporter). One-way `EdgeKind::Teleport`, pad+dest ground-snapped and
+wired to nearby walk nodes, `TELEPORT_COST=32`. Added AFTER the prune (no walkable line to
+hull-check) + marked trustworthy in the classifier. Brain-side: the pad's server trigger is
+tiny (~16×16u, elevated 8–24u), SMALLER than waypoint reach/advance radii — both followers
+steer at the PAD CENTER while pad-side of a Teleport leg (`teleport_pad_target` in nav.rs,
+same guard in `Zb2Route::pursue_target`); the server snap lands the bot at the dest node and
+normal advance resumes (watchdogs read the jump as instant progress, not a stall).
+
+**Rescue pass**: `rescue_stranded_spawns` (RESCUE_MAX_FALL=384 vs the universal 256) links
+ONLY still-stranded spawn-bearing components to the play component, one shortest validated
+jump-down each — a no-op on all q2dm*. Dormant on base64 too (hull-rest sampling fixed it),
+kept as the safety net for the next custom map.
+
+**Live-run gotcha**: `spawn-to-point --map X` skips the server-map preflight match — if the
+server rotates mid-session the bot drives map-X routes on the wrong geometry and wedges at
+nonsense coordinates. Check `qbots status` before interpreting a bad run.
