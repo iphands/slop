@@ -61,13 +61,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 comp_of[n] = cid;
             }
         }
+        // Item pads are the playability tell: a big component with zero spawns AND zero items
+        // is roof/void junk (the gate metric then mismeasures); one WITH items is a real area
+        // needing a connector.
+        let item_origins: Vec<[f32; 3]> = bsp
+            .entities
+            .iter()
+            .filter(|e| {
+                e.classname.starts_with("item_")
+                    || e.classname.starts_with("weapon_")
+                    || e.classname.starts_with("ammo_")
+            })
+            .filter_map(|e| e.origin())
+            .collect();
         for &c in order.iter().take(4) {
             let spawn_count = spawns
                 .iter()
                 .filter(|s| g.nearest(s).is_some_and(|n| comp_of[n] == c))
                 .count();
+            let item_count = item_origins
+                .iter()
+                .filter(|p| g.nearest(p).is_some_and(|n| comp_of[n] == c))
+                .count();
             println!(
-                "component {c}: {} nodes, {spawn_count} spawns",
+                "component {c}: {} nodes, {spawn_count} spawns, {item_count} items",
                 comps[c].len()
             );
         }

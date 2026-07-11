@@ -657,6 +657,19 @@ impl NavGraph {
     /// WARNING: O(n + e) - expensive for large graphs. Cache the result if calling multiple times.
     pub fn components(&self) -> Vec<Vec<usize>> {
         let n = self.nodes.len();
+        // Group over the UNDIRECTED view of the adjacency (Plan 35 T3). Walk edges are stored
+        // bidirectionally, but jump-down bridges are ONE-WAY (`adj[hi] → lo` only) — a
+        // forward-only DFS made the grouping visit-order-dependent: if the lower floor was
+        // visited first, a hi→lo drop edge never merged the pair even though A* happily paths
+        // across it (q2dm7's play areas were split this way while a route existed). One-way
+        // drops COUNT as connectivity by design (the q2dm3 jump-bridge precedent); build the
+        // reverse adjacency so the DFS sees them from both sides.
+        let mut rev: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (u, nbs) in self.adj.iter().enumerate() {
+            for &(nb, _) in nbs {
+                rev[nb].push(u);
+            }
+        }
         let mut seen = vec![false; n];
         let mut comps = Vec::new();
         for start in 0..n {
@@ -669,6 +682,12 @@ impl NavGraph {
             while let Some(u) = stack.pop() {
                 comp.push(u);
                 for &(nb, _) in &self.adj[u] {
+                    if !seen[nb] {
+                        seen[nb] = true;
+                        stack.push(nb);
+                    }
+                }
+                for &nb in &rev[u] {
                     if !seen[nb] {
                         seen[nb] = true;
                         stack.push(nb);
