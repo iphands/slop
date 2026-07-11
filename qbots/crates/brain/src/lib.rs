@@ -30,6 +30,7 @@ pub mod recorder;
 pub mod recover;
 pub mod ride;
 pub mod skill;
+pub mod stall;
 pub mod steer;
 pub mod traverse;
 pub mod water;
@@ -58,6 +59,7 @@ pub use recorder::{
 };
 pub use recover::{Recovery, RecoveryAction, StuckDetector, StuckLevel};
 pub use skill::{BotSkill, Personality, SkillLevel, SkillRegistry};
+pub use stall::{StallEpisode, StallMonitor, StallSample};
 pub use weapons::Weapon;
 
 #[cfg(test)]

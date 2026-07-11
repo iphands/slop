@@ -842,6 +842,10 @@ pub(crate) async fn bot_task(
     let mut heatmap_obs: Option<brain::HeatmapObserver> = None;
     let mut last_alive_pos: Option<Vec3> = None;
 
+    // Plan 51: wall-press/stall episode detector — one `EVT wall_press` line per
+    // sustained intent-vs-motion mismatch (brain-agnostic, observational only).
+    let mut stall_mon = brain::StallMonitor::new();
+
     loop {
         if shutdown.requested() {
             if conn.state() == ConnState::Active {
@@ -875,6 +879,7 @@ pub(crate) async fn bot_task(
                 let playernum = conn.serverdata.as_ref().map(|sd| sd.playernum).unwrap_or(0);
 
                 // Track health across frames for damage detection
+                let mut dmg_this_tick: i32 = 0; // Plan 51: fed to the stall monitor below
                 if let Some(ref frame) = frame_opt {
                     let view = Worldview::from_frame(frame, &cs, playernum);
                     let current_health = view.self_state().health;
@@ -882,6 +887,7 @@ pub(crate) async fn bot_task(
                         if let Some(prev) = last_health {
                             if prev > 0 && current_health < prev {
                                 let damage = prev - current_health;
+                                dmg_this_tick = damage;
                                 tracing::info!(
                                     health_before = prev,
                                     health_after = current_health,
@@ -1126,6 +1132,53 @@ pub(crate) async fn bot_task(
                             // The live fleet brain drives its own FSM/item/roam goal ladder.
                             goal_override: None,
                         });
+
+                        // Plan 51: feed the wall-press/stall detector. The wall probe
+                        // only runs on hindered ticks (pushing but not moving).
+                        {
+                            let ss = view.self_state();
+                            let intent = &out.intent;
+                            let intent_mag =
+                                (intent.forward * intent.forward + intent.side * intent.side)
+                                    .sqrt();
+                            let speed_h = ss.velocity.truncate().length();
+                            let hindered = intent_mag > brain::stall::INTENT_MIN
+                                && speed_h < brain::stall::SPEED_STALL;
+                            let wall_blocked = hindered
+                                && collision.as_deref().is_some_and(|cmod| {
+                                    brain::stall::wish_blocked(
+                                        cmod,
+                                        ss.origin,
+                                        intent.yaw,
+                                        intent.forward,
+                                        intent.side,
+                                    )
+                                });
+                            if let Some(ep) = stall_mon.tick(brain::StallSample {
+                                pos: ss.origin,
+                                speed_h,
+                                intent_mag,
+                                attacking: intent.attack,
+                                wall_blocked,
+                                damage: dmg_this_tick,
+                                alive: ss.health > 0,
+                                dt,
+                            }) {
+                                tracing::info!(
+                                    secs = %format!("{:.1}", ep.secs),
+                                    speed = ep.mean_speed as i32,
+                                    ticks = ep.ticks,
+                                    atk = ep.attack_ticks,
+                                    wall = ep.wall_ticks,
+                                    dmg = ep.damage,
+                                    died = ep.died,
+                                    x = ep.start_pos.x as i32,
+                                    y = ep.start_pos.y as i32,
+                                    z = ep.start_pos.z as i32,
+                                    "EVT wall_press"
+                                );
+                            }
+                        }
 
                         // Request a weapon switch via `use <name>` stringcmd (Q2 ignores
                         // impulse). Queued as a reliable message; flushed on transmit.

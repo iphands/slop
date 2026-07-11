@@ -428,16 +428,21 @@ impl Brain for Zb2Brain {
             intent_forward = fwd * arrive;
 
             // ── 5. Recovery (suspended while traversing); escalation → replan ───────
+            // Plan 51 probe: remember what recovery asked for this tick so the combat
+            // block below can report when it overwrites those legs (observation only).
+            let mut recovery_label: Option<&'static str> = None;
             if !gates.any() {
                 let has_target = pursue.is_some();
-                match self.recovery.evaluate(
+                let action = self.recovery.evaluate(
                     pos,
                     dt,
                     cm,
                     view_yaw,
                     has_target,
                     combat_dec.should_fire,
-                ) {
+                );
+                recovery_label = action.label();
+                match action {
                     RecoveryAction::None => {}
                     RecoveryAction::Jump => mv.jump(),
                     RecoveryAction::Strafe { dir } => {
@@ -478,6 +483,14 @@ impl Brain for Zb2Brain {
                 traversing = true;
             }
             if combat_dec.should_fire && !traversing {
+                // Plan 51 probe: this block is about to re-set forward/side from the
+                // route's world_dir, discarding whatever recovery wrote above. Log it —
+                // if wall-press episodes correlate with these lines, the clobber is the
+                // combat-stall mechanism (Plan 51 suspect 1).
+                if let Some(action) = recovery_label {
+                    let wp_dist = pursue.map(|p| (p - pos).length() as i32).unwrap_or(-1);
+                    tracing::info!(action, wp_dist, "EVT zb2_combat_recovery_overwrite");
+                }
                 // Lock the view on the enemy but KEEP the legs on the route (3ZB2's run-and-gun):
                 // re-decompose the same world direction against the aim yaw (raw mode) so the
                 // world-space travel direction is preserved while facing the target.
