@@ -401,6 +401,11 @@ pub async fn run_scenario(
 
     let mut recorder: Option<MovementRecorder> = None;
     let mut buf = vec![0u8; 4096];
+    // Plan 57 opt-out: this movement harness deliberately keeps the free-running 100 ms
+    // send (no ack-on-frame re-phasing). The Plan 10–14 baselines in
+    // `10_movement_test_harness_tracker.md` were recorded against this exact cadence, so
+    // re-phasing the send here could shift mean_speed/elapsed and invalidate them. Ping
+    // is irrelevant to movement measurement; the fleet loop (`main.rs`) carries the fix.
     let mut ticker = tokio::time::interval(Duration::from_millis(100));
     let start = Instant::now();
     let mut goal_settle_start: Option<f32> = None;

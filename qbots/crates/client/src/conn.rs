@@ -340,20 +340,43 @@ pub async fn run(addr: SocketAddr, name: &str, qport: u16) -> std::io::Result<()
     let mut buf = vec![0u8; 4096];
     let mut ticker = time::interval(Duration::from_millis(100));
     let mut ticks = 0u32;
+    // Plan 57: ack the `clc_move` on frame arrival (mirrors the fleet loop in
+    // `qbots/src/main.rs`), so the server measures our reply ~1 RTT after it sent the
+    // frame instead of RTT + up-to-100 ms of free-running timer phase. The timer is
+    // demoted to a keepalive that only fires when frames stall (no send in ~90 ms).
+    const KEEPALIVE_GAP: Duration = Duration::from_millis(90);
+    let mut last_send = time::Instant::now();
     loop {
         tokio::select! {
             res = sock.recv(&mut buf) => {
                 let n = res?;
+                let prev_sf = conn.frame.as_ref().map(|f| f.serverframe);
                 if let Some(pkt) = conn.on_recv(&buf[..n]) {
                     let _ = sock.send(&pkt).await;
                 }
                 if conn.state() == ConnState::Disconnected {
                     break;
                 }
+                // A freshly-decoded frame → ack it immediately when Active.
+                if conn.state() == ConnState::Active
+                    && conn.frame.as_ref().map(|f| f.serverframe) != prev_sf
+                {
+                    if let Some(pkt) = conn.keepalive() {
+                        let _ = sock.send(&pkt).await;
+                        last_send = time::Instant::now();
+                    }
+                }
             }
             _ = ticker.tick() => {
-                if let Some(pkt) = conn.keepalive() {
-                    let _ = sock.send(&pkt).await;
+                // Keepalive fallback: only send here if no frame-triggered send happened
+                // in the last ~90 ms (frames stalled), so we don't double the send rate.
+                let keepalive_due = conn.state() != ConnState::Active
+                    || time::Instant::now().duration_since(last_send) >= KEEPALIVE_GAP;
+                if keepalive_due {
+                    if let Some(pkt) = conn.keepalive() {
+                        let _ = sock.send(&pkt).await;
+                        last_send = time::Instant::now();
+                    }
                 }
                 // ~1s heartbeat: state + latest frame's serverframe, entity count, origin.
                 ticks = ticks.wrapping_add(1);
