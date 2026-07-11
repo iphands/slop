@@ -75,6 +75,18 @@ pub struct TraversalFrame<'a> {
     /// The brain's horizontal steering forward/side (the swim machine reuses these).
     pub steer_fwd: f32,
     pub steer_side: f32,
+    /// Seconds this frame covers — drives the lift de-conflict timers (Plan 31).
+    pub dt: f32,
+}
+
+/// The vertical-lift de-conflict phase (Plan 31): wait clear of the shaft → enter → back off
+/// when yielded/pinned, with jittered retry.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+enum LiftPhase {
+    #[default]
+    WaitClear,
+    Enter,
+    BackOff,
 }
 
 /// Stateful traversal sequencer shared by every brain (Plan 46). Owns only the small amount of
@@ -100,6 +112,9 @@ pub struct TraversalExecutor {
     /// The traversal flag applied last frame (`'S'`/`'P'`/`'L'`), for the falling-edge
     /// `EVT traverse done` counter (Plan 47 T1): emitted when a traversal leg ends.
     last_flag: Option<char>,
+    /// Vertical-lift de-conflict phase + its timer (Plan 31).
+    lift_phase: LiftPhase,
+    lift_timer: f32,
 }
 
 impl TraversalExecutor {
@@ -354,14 +369,86 @@ impl TraversalExecutor {
             }
             self.ride_boarded = false;
         } else if info.vertical {
-            // Vertical lift: walk onto the pad / stand (target up → ~0 horizontal → ride). JUMP
-            // while approaching the pad (T7 — a human hops on); suppress once on the pad (a jump
-            // while rising would launch the bot off it).
+            // Vertical lift (Plan 31 de-conflict): a body ANYWHERE in the shaft re-arms Q2's
+            // `Touch_Plat_Center` go-down timer (`g_func.c`), so crowding the pad pins the lift
+            // and starves the queue — the classic multi-bot deadlock the old `ELEVATOR_PENALTY`
+            // hack dodged. The machine:
+            //   WaitClear — hold at a standoff OUTSIDE the shaft while it's occupied or the pad
+            //               is visibly away; a blind timeout (~4s) proceeds anyway (PVS may hide
+            //               both signals; entering is what summons a plat).
+            //   Enter     — walk onto the pad (hop like a human). If the pad hasn't lifted us
+            //               within ~5s (someone upstairs is pinning it), BACK OFF — leaving the
+            //               trigger is precisely what lets a pinned plat descend.
+            //   BackOff   — hold at the standoff for a jittered 2–4s (jitter breaks two bots'
+            //               yield-loop symmetry), then retry.
+            // Once rising (z well above the board), steer for the top center; the ride edge
+            // completes when the navigator advances at the top, and route continuation walks the
+            // bot OFF the pad promptly (no dwell — dwelling re-arms the stay-up timer).
             let board_horiz = (pos.truncate() - board.truncate()).length();
-            if board_horiz > 32.0 {
-                mv.jump();
+            let rising = pos.z > board.z + 32.0;
+            self.lift_timer += frame.dt;
+            if rising {
+                self.lift_phase = LiftPhase::WaitClear;
+                self.lift_timer = 0.0;
+                intent_forward = go(mv, dismount);
+            } else {
+                // Standoff: 64u back from the pad along OUR approach direction (each bot's own
+                // side — queued bots naturally spread instead of stacking).
+                let away = (pos - board).truncate();
+                let out = if away.length() > 1.0 {
+                    away.normalize() * 64.0
+                } else {
+                    glam::Vec2::new(64.0, 0.0)
+                };
+                let standoff = Vec3::new(board.x + out.x, board.y + out.y, pos.z);
+                let occupied = crate::ride::shaft_occupied(view, &info, pos);
+                let pad_down = crate::ride::plat_at_bottom(view, &info);
+                match self.lift_phase {
+                    LiftPhase::WaitClear => {
+                        if !occupied && (pad_down || self.lift_timer > 4.0) {
+                            self.lift_phase = LiftPhase::Enter;
+                            self.lift_timer = 0.0;
+                            intent_forward = go(mv, board);
+                        } else {
+                            intent_forward = go(mv, standoff); // hold clear of the trigger
+                            if self.lift_timer > 8.0 {
+                                self.lift_timer = 0.0; // periodic re-check keeps the timers sane
+                            }
+                        }
+                    }
+                    LiftPhase::Enter => {
+                        if occupied {
+                            // Someone claimed it while we approached — yield.
+                            tracing::info!("EVT lift_yield reason=occupied");
+                            self.lift_phase = LiftPhase::BackOff;
+                            self.lift_timer = 0.0;
+                            intent_forward = go(mv, standoff);
+                        } else if self.lift_timer > 5.0 {
+                            // The pad never lifted us — someone unseen is pinning it up. Leaving
+                            // the trigger volume is what allows it to come down.
+                            tracing::info!("EVT lift_yield reason=pinned");
+                            self.lift_phase = LiftPhase::BackOff;
+                            self.lift_timer = 0.0;
+                            intent_forward = go(mv, standoff);
+                        } else {
+                            if board_horiz > 32.0 {
+                                mv.jump(); // hop on like a human (Plan 43 T7)
+                            }
+                            intent_forward = go(mv, dismount);
+                        }
+                    }
+                    LiftPhase::BackOff => {
+                        // Jittered hold (2–4s): derive the jitter from our standoff spot so two
+                        // symmetric bots don't re-approach in lockstep.
+                        let jitter = ((pos.x + pos.y).abs() % 32.0) / 16.0; // [0,2)
+                        if self.lift_timer > 2.0 + jitter {
+                            self.lift_phase = LiftPhase::WaitClear;
+                            self.lift_timer = 0.0;
+                        }
+                        intent_forward = go(mv, standoff);
+                    }
+                }
             }
-            intent_forward = go(mv, dismount);
             self.ride_boarded = false;
         } else {
             let board_horiz = (pos.truncate() - board.truncate()).length();
@@ -560,6 +647,7 @@ mod tests {
             view_yaw: 0.0,
             steer_fwd: 0.0,
             steer_side: 0.0,
+            dt: 0.1,
         };
         assert!(ex.apply(&mut mv, gates, &nav, &frame).is_none());
     }
@@ -585,6 +673,7 @@ mod tests {
             view_yaw: 0.0,
             steer_fwd: 0.0,
             steer_side: 0.0,
+            dt: 0.1,
         };
         let out = ex.apply(&mut mv, gates, &nav, &frame).expect("swim active");
         assert_eq!(out.flag, 'S');
@@ -619,6 +708,7 @@ mod tests {
             view_yaw: 0.0,
             steer_fwd: 0.0,
             steer_side: 0.0,
+            dt: 0.1,
         };
         let out = ex.apply(&mut mv, gates, &nav, &frame).expect("swim active");
         assert_eq!(out.flag, 'S');
@@ -660,6 +750,7 @@ mod tests {
             view_yaw: 0.0,
             steer_fwd: 0.0,
             steer_side: 0.0,
+            dt: 0.1,
         };
         let out = ex
             .apply(&mut mv, gates, &nav, &frame)
@@ -689,6 +780,7 @@ mod tests {
             view_yaw: 0.0,
             steer_fwd: 0.0,
             steer_side: 0.0,
+            dt: 0.1,
         };
         ex.apply(&mut mv, gates, &nav, &frame);
         assert_eq!(mv.forward, 0.0, "no platform → wait, not board");
@@ -704,12 +796,90 @@ mod tests {
             view_yaw: 0.0,
             steer_fwd: 0.0,
             steer_side: 0.0,
+            dt: 0.1,
         };
         ex.apply(&mut mv2, gates2, &nav, &frame2);
         // Once boarded, the ride locks active even if the nav edge later clears.
         let nav_off = StubNav::default();
         let gates3 = ex.gates(&nav_off, Some(&cm), Vec3::new(100.0, 0.0, 50.0), 0.1);
         assert!(gates3.ride_active, "boarded → ride stays locked active");
+    }
+
+    /// Plan 31: at a vertical lift, an occupied shaft holds the bot at a standoff OUTSIDE the
+    /// trigger; a clear shaft with the pad visibly down enters. The bot sits at x=140 between
+    /// the pad (x=100) and its standoff (x≈164), so the steering sign distinguishes the two.
+    #[test]
+    fn lift_waits_clear_when_occupied_then_enters() {
+        let mut ex = TraversalExecutor::new();
+        let lift = RideInfo {
+            board: [100.0, 0.0, 24.0],
+            far: [100.0, 0.0, 224.0],
+            dismount: [100.0, 0.0, 224.0],
+            model_index: 5,
+            vertical: true,
+            board_ent: [100.0, 0.0, 24.0],
+            far_ent: [100.0, 0.0, 224.0],
+            ladder: false,
+            stand_offset: [0.0; 3],
+        };
+        let nav = StubNav {
+            ride: Some(lift),
+            ..Default::default()
+        };
+        let cm = empty_cm();
+        let pos = Vec3::new(140.0, 0.0, 24.0);
+
+        // A rider mid-shaft (player entity at the pad column, z=120) → WaitClear at standoff.
+        let mut occupied_frame = Frame::default();
+        occupied_frame.playerstate.pmove.origin = [140 * 8, 0, 24 * 8];
+        occupied_frame.entities.push(EntityState {
+            number: 7,
+            modelindex: 255, // player
+            origin: [100.0, 0.0, 120.0],
+            ..Default::default()
+        });
+        let view = Worldview::from_frame(&occupied_frame, &ConfigStrings::default(), 0);
+        let gates = ex.gates(&nav, Some(&cm), pos, 0.1);
+        let mut mv = MovementIntent::new();
+        let frame = TraversalFrame {
+            view: &view,
+            cm: Some(&cm),
+            pos,
+            view_yaw: 0.0,
+            steer_fwd: 0.0,
+            steer_side: 0.0,
+            dt: 0.1,
+        };
+        ex.apply(&mut mv, gates, &nav, &frame).expect("ride active");
+        assert!(
+            mv.forward > 0.1,
+            "occupied shaft → retreat to the standoff (+x), got forward {}",
+            mv.forward
+        );
+
+        // Shaft clear + pad visibly at the bottom (mover at wire origin z=-travel) → Enter.
+        // Face the pad (yaw 180 → -x): `face_then_go` steering only walks toward a target the
+        // view already faces, so forward>0 here proves the target flipped to the PAD direction
+        // (a standoff target at +x would decompose to ~0 at this facing).
+        let clear = view_at([140.0, 0.0, 24.0], true, &[[0.0, 4.0, -200.0]]);
+        let gates = ex.gates(&nav, Some(&cm), pos, 0.1);
+        let mut mv2 = MovementIntent::new();
+        let frame2 = TraversalFrame {
+            view: &clear,
+            cm: Some(&cm),
+            pos,
+            view_yaw: 180.0,
+            steer_fwd: 0.0,
+            steer_side: 0.0,
+            dt: 0.1,
+        };
+        ex.apply(&mut mv2, gates, &nav, &frame2)
+            .expect("ride active");
+        assert!(
+            mv2.forward > 0.1,
+            "clear shaft + pad down → enter toward the pad, got forward {}",
+            mv2.forward
+        );
     }
 
     #[test]

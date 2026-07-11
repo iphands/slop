@@ -324,6 +324,7 @@ impl Q3Brain {
             view_yaw,
             steer_fwd: fwd,
             steer_side: side,
+            dt,
         };
         self.traverse.apply(mv, gates, nav, &frame);
     }

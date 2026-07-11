@@ -202,6 +202,7 @@ impl Brain for RunTesterBrain {
             view_yaw,
             steer_fwd: fwd,
             steer_side: side,
+            dt,
         };
         if let Some(applied) = self.traverse.apply(&mut mv, gates, nav, &frame) {
             intent_forward = applied.intent_forward;

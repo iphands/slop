@@ -57,6 +57,49 @@ fn is_mover(e: &crate::perception::PerceivedEntity) -> bool {
     ) && e.origin.length() > 1.0
 }
 
+/// Horizontal radius (units) of a vertical lift's shaft column for the occupancy check —
+/// generous enough to cover the pad plus a body pressed against its edge.
+const SHAFT_RADIUS: f32 = 56.0;
+
+/// Is another PLAYER inside this vertical lift's shaft column (Plan 31 T1)? A body in the shaft
+/// re-arms Q2's `Touch_Plat_Center` go-down timer every tick (`g_func.c` — the deadlock
+/// mechanism), so an approaching bot must wait CLEAR until the shaft is free. `self_pos` excludes
+/// ourselves by position (the perception layer already classes us `SelfPlayer`, but be safe).
+/// PVS caveat: an occupant outside our PVS is invisible — occupancy is an optimization; the
+/// waiting bot's standoff position (not feeding the trigger) is the real deadlock guarantee.
+pub fn shaft_occupied(view: &Worldview, info: &RideInfo, self_pos: Vec3) -> bool {
+    let board = Vec3::from(info.board);
+    let far = Vec3::from(info.far);
+    let (z_lo, z_hi) = (board.z.min(far.z) - 32.0, board.z.max(far.z) + 32.0);
+    view.entities().any(|e| {
+        matches!(e.class, EntityClass::EnemyPlayer | EntityClass::AllyPlayer)
+            && !e.is_stale
+            && (e.origin - self_pos).length() > 1.0
+            && (e.origin.truncate() - board.truncate()).length() <= SHAFT_RADIUS
+            && e.origin.z >= z_lo
+            && e.origin.z <= z_hi
+    })
+}
+
+/// Is the lift's pad at (or near) the BOTTOM of its travel (Plan 31 T1)? A `func_plat` brush
+/// rests at the TOP in the BSP (wire origin `[0,0,0]` — indistinguishable from the null world
+/// entities), and its wire origin.z goes to `-(travel)` when lowered. We detect an entity whose
+/// origin z is within tolerance of the lowered offset `board.z - far.z` (a negative number) and
+/// near-zero horizontally. PVS/`[0,0,0]`-ambiguity caveat: when the pad is up or unseen this
+/// returns `false` — callers treat "not at bottom" as "wait clear", which is also the correct
+/// behavior when we simply can't see it (walking INTO the shaft is what summons a plat, so the
+/// waiting bot's own approach begins the cycle once the shaft is clear).
+pub fn plat_at_bottom(view: &Worldview, info: &RideInfo) -> bool {
+    let travel = Vec3::from(info.far).z - Vec3::from(info.board).z;
+    if travel <= 0.0 {
+        return false;
+    }
+    let expect_z = -travel;
+    view.entities().any(|e| {
+        is_mover(e) && e.origin.truncate().length() < 64.0 && (e.origin.z - expect_z).abs() <= 24.0
+    })
+}
+
 /// Max distance (units) from the board↔far path within which a non-actor entity is taken to be
 /// the train (for live-position tracking while carried).
 const TRAIN_TRACK_MAX: f32 = 256.0;
@@ -200,5 +243,76 @@ mod tests {
         let i = info();
         assert_eq!(ride_target(RidePhase::Approach, &i), Vec3::from(i.board));
         assert_eq!(ride_target(RidePhase::Cross, &i), Vec3::from(i.dismount));
+    }
+
+    // ── Plan 31 T1: lift occupancy + pad-at-bottom predicates ─────────────────────────────
+
+    /// A vertical lift: board (bottom pad node) z=24, far/dismount (top) z=224 → travel 200.
+    fn lift_info() -> RideInfo {
+        RideInfo {
+            board: [100.0, 0.0, 24.0],
+            far: [100.0, 0.0, 224.0],
+            dismount: [100.0, 0.0, 224.0],
+            model_index: 5,
+            vertical: true,
+            board_ent: [100.0, 0.0, 24.0],
+            far_ent: [100.0, 0.0, 224.0],
+            ladder: false,
+            stand_offset: [0.0; 3],
+        }
+    }
+
+    /// A worldview containing PLAYER entities (modelindex 255 → `EnemyPlayer`) at the given
+    /// origins, plus optional Unknown-class mover entities.
+    fn view_with_players(players: &[[f32; 3]], movers: &[[f32; 3]]) -> Worldview {
+        let mut frame = Frame::default();
+        for (i, o) in players.iter().enumerate() {
+            frame.entities.push(EntityState {
+                number: 10 + i as i32,
+                modelindex: 255,
+                origin: *o,
+                ..Default::default()
+            });
+        }
+        for (i, o) in movers.iter().enumerate() {
+            frame.entities.push(EntityState {
+                number: 50 + i as i32,
+                origin: *o,
+                ..Default::default()
+            });
+        }
+        Worldview::from_frame(&frame, &ConfigStrings::default(), 0)
+    }
+
+    #[test]
+    fn shaft_occupied_sees_a_player_in_the_column() {
+        let info = lift_info();
+        let me = Vec3::new(200.0, 0.0, 24.0); // approaching, outside the shaft
+                                              // A player mid-shaft (riding) → occupied.
+        let v = view_with_players(&[[110.0, 10.0, 120.0]], &[]);
+        assert!(shaft_occupied(&v, &info, me));
+        // A player far away → clear.
+        let v = view_with_players(&[[500.0, 0.0, 24.0]], &[]);
+        assert!(!shaft_occupied(&v, &info, me));
+        // A player at shaft x/y but far above the travel range → clear.
+        let v = view_with_players(&[[100.0, 0.0, 500.0]], &[]);
+        assert!(!shaft_occupied(&v, &info, me));
+        // Ourselves at the board → clear (self-position excluded).
+        let v = view_with_players(&[[100.0, 0.0, 24.0]], &[]);
+        assert!(!shaft_occupied(&v, &info, Vec3::new(100.0, 0.0, 24.0)));
+    }
+
+    #[test]
+    fn plat_at_bottom_matches_the_lowered_wire_origin() {
+        let info = lift_info(); // travel 200 → lowered wire origin z = -200
+                                // Pad down: a mover entity at (0, 0, -200) → at bottom.
+        let v = view_with_players(&[], &[[0.0, 4.0, -200.0]]);
+        assert!(plat_at_bottom(&v, &info));
+        // Pad up: wire origin (0,0,0) is filtered as a null entity → NOT at bottom (wait).
+        let v = view_with_players(&[], &[[0.0, 0.0, 0.0]]);
+        assert!(!plat_at_bottom(&v, &info));
+        // No entities visible (PVS) → NOT at bottom (wait-clear is the safe default).
+        let v = view_with_players(&[], &[]);
+        assert!(!plat_at_bottom(&v, &info));
     }
 }

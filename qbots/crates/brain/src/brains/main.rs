@@ -736,6 +736,7 @@ impl crate::brains::core::Brain for MainBrain {
                 view_yaw,
                 steer_fwd: fwd,
                 steer_side: side,
+                dt,
             };
             self.traverse.apply(&mut mv, gates, nav, &frame);
         } else if !combat_dec.should_fire {

@@ -398,6 +398,7 @@ impl Brain for Zb2Brain {
                 view_yaw,
                 steer_fwd: fwd,
                 steer_side: side,
+                dt,
             };
             if let Some(applied) = self.traverse.apply(&mut mv, gates, route, &frame) {
                 intent_forward = applied.intent_forward;
