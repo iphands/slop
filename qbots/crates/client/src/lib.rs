@@ -8,9 +8,11 @@
 pub mod conn;
 pub mod netchan;
 pub mod parse;
+pub mod send_timing;
 pub mod userinfo;
 
 pub use conn::{run, Conn, ConnState};
 pub use netchan::Netchan;
 pub use parse::{parse_message, ConfigStrings, ServerData, SvcEvent, MAX_CONFIGSTRINGS};
+pub use send_timing::{SendTiming, SendTimingStats};
 pub use userinfo::Userinfo;
