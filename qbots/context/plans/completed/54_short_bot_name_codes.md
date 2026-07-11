@@ -1,6 +1,6 @@
 # Plan 54 — Shorten competition bot names with brain/mode/char codes
 
-> **Status**: in-progress
+> **Status**: done
 > **Created**: 2026-07-11
 > **Depends on**: N/A (independent of Plan 53)
 > **Goal**: Competition bot names fit Q2's 15-char limit by using short brain (3),
@@ -88,9 +88,9 @@ move plan+tracker to `completed/`, mark SERIES.
    quick (P2, non-blocking).
 
 ## Verification Checklist
-- [ ] T1: `cargo build`/`clippy` clean; `group_tag` emits short codes.
-- [ ] T2: updated + new length-bound tests pass (`cargo test -p qbots`).
-- [ ] T3: `competition --help` shows short-code examples.
-- [ ] T4: launch/scoreboard prints a code legend (if included).
-- [ ] T5: live `status` shows names like `mai_as_1`/`q3_fb_maj_1`, none truncated; groups
-      still tally correctly; workspace fmt/clippy/test green.
+- [x] T1: `cargo build`/`clippy` clean; `group_tag` emits short codes.
+- [x] T2: updated + new length-bound tests pass (`cargo test -p qbots`).
+- [x] T3: `competition --help` shows short-code examples.
+- [x] T4: launch prints a code legend (`name-code legend — brain/mode/char`).
+- [x] T5: live `status` showed `q3_fb_maj_8`/`zb2_fb_1`/`mai_as_5` (longest 11, none
+      truncated); workspace fmt/clippy/test green (216 tests).

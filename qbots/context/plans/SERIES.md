@@ -126,6 +126,9 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 - After **53** (done): a fleet/competition bot that can't join (server full / connect
   timeout) fails the run loudly with the server's exact reason and a non-zero exit;
   `--loose-botcap` opts back into proceed-with-warnings. No more silent short-counts.
+- After **54** (done): competition bot names use short brain/mode/char codes
+  (`mai_as_1`, `q3_fb_maj_1`, `zb2_fb_1`) so every combo fits Q2's 15-char `netname` limit
+  and no name is server-truncated; a code→full-name legend is logged at launch.
 
 > **Brain-notes discipline (Plans 23–33, 36–38, 40, 43):** every brain plan appends a dated section to
 > `context/brain_notes.md` (running log, same shape as `map_errors.notes.log.md`). It is a
