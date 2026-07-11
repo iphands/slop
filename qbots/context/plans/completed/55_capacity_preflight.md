@@ -1,6 +1,6 @@
 # Plan 55 — Capacity preflight: refuse to spawn more bots than the server can hold
 
-> **Status**: in-progress
+> **Status**: done
 > **Created**: 2026-07-11
 > **Depends on**: Plan 53 (reuses `loose_botcap`; this is the *early* gate to 53's *join-time* gate)
 > **Goal**: Before spawning any bot, query the server's `maxclients` + current player count;
@@ -75,7 +75,8 @@ unchanged. Workspace fmt/clippy/test green. Move plan+tracker to `completed/`, m
    remains the authoritative backstop.
 
 ## Verification Checklist
-- [ ] T1: `fits_capacity` unit tests pass; `cargo build`/`clippy` clean.
-- [ ] T2: over-capacity strict run exits non-zero **before** spawning (no `competitor
-      entering` lines); `--loose-botcap` warns + proceeds; under-capacity run unchanged;
-      workspace fmt/clippy/test green.
+- [x] T1: `fits_capacity` unit tests pass; `cargo build`/`clippy` clean.
+- [x] T2: live-verified against a 55/64 server — strict `--count 4` (24 bots) exited 1 with
+      `server can't fit the roster … 9 free` and **0** `competitor entering`; `--loose-botcap`
+      warned "spawning anyway" + proceeded; under-capacity `--count 1` logged
+      `capacity preflight ok want=1 free=9` + proceeded; workspace fmt/clippy/test green.
