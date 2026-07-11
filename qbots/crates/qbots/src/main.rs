@@ -846,6 +846,13 @@ pub(crate) async fn bot_task(
     // sustained intent-vs-motion mismatch (brain-agnostic, observational only).
     let mut stall_mon = brain::StallMonitor::new();
 
+    // Plan 53: connect-phase deadline. A bot that never reaches `Active` within this
+    // window (e.g. a silently-dropped handshake the reject parse can't classify) fails
+    // its join instead of hanging forever. Per bot_task invocation, so it resets on each
+    // reconnect attempt.
+    let connect_deadline =
+        time::Instant::now() + Duration::from_millis(cfg.fleet.connect_timeout_ms);
+
     loop {
         if shutdown.requested() {
             if conn.state() == ConnState::Active {
@@ -869,10 +876,38 @@ pub(crate) async fn bot_task(
                     tracing::info!("disconnected");
                     return Ok(());
                 }
+                // Plan 53: the server refused our join (Server is full., Bad challenge., …).
+                // Surface it as a fatal, non-retryable error so the fleet can fail loudly.
+                if conn.state() == ConnState::Rejected {
+                    let reason = conn
+                        .reject_reason
+                        .clone()
+                        .unwrap_or_else(|| "connection refused".to_string());
+                    tracing::error!(%reason, "server rejected join");
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionRefused,
+                        format!("join rejected: {reason}"),
+                    ));
+                }
             }
 
             _ = ticker.tick() => {
                 ticks = ticks.wrapping_add(1);
+
+                // Plan 53: connect-phase timeout. Once Active this never trips; before
+                // that, a bot stuck in the handshake past the deadline fails its join so
+                // the supervisor can react instead of the task hanging silently forever.
+                if conn.state() != ConnState::Active && time::Instant::now() >= connect_deadline {
+                    tracing::error!(
+                        timeout_ms = cfg.fleet.connect_timeout_ms,
+                        state = ?conn.state(),
+                        "connect handshake timed out"
+                    );
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "connect handshake timed out",
+                    ));
+                }
 
                 let (frame_opt, cs) = (conn.frame.clone(), conn.configstrings().clone());
                 let state = conn.state();
