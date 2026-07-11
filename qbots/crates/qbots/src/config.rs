@@ -43,6 +43,10 @@ pub struct Fleet {
     /// Hard cap on bots spawned, regardless of `count`. Guards against exceeding
     /// the server's `maxclients` (leave headroom for humans). 0 = no cap.
     pub max_bots: usize,
+    /// Max time (ms) a bot may spend reaching `Active` before its join is treated as
+    /// failed. Backstops silent drops the reject-parse can't classify; a fleet-fatal
+    /// join failure aborts the run unless `--loose-botcap` is set. Default 10_000.
+    pub connect_timeout_ms: u64,
     /// Brain (decision plugin) for the fleet: `main` (default), `sentry`, `runtester`, or `q3`.
     /// `None`/absent → `main`. The CLI `--brain` overrides this. Independent of the nav backend
     /// (`--navmode`).
@@ -62,6 +66,7 @@ impl Default for Fleet {
             reconnect: true,
             max_reconnects: 0,
             max_bots: 0,
+            connect_timeout_ms: 10_000,
             brain: None,
             char: None,
         }
