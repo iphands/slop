@@ -50,6 +50,10 @@ const SHORTCUT_LOOKAHEAD: usize = 6;
 /// Max |dz| between us and a shortcut target — LOS ≠ walkable (the classic bot trap), so only
 /// skip to near-level nodes (a generous step/ramp band; jumps/drops keep their edges).
 const SHORTCUT_MAX_DZ: f32 = 32.0;
+/// How long a destination stays blocked after two consecutive hard-stuck replans against it
+/// (Plan 48 Z3). Committed routes have no waypoint blacklist, so replanning to the same goal
+/// recommits the identical polyline — blocking the goal is what breaks the wall-grind loop.
+const GOAL_BLOCK_SECS: f32 = 20.0;
 
 /// The committed route (3ZB2's memorized pod chain): an A* polyline + the follow cursor.
 /// Implements [`Navigator`] so the shared traversal executor (and recorder plumbing) can read
@@ -178,6 +182,11 @@ pub struct Zb2Brain {
     /// The committed route being run, if any.
     route: Option<Zb2Route>,
     combat_enabled: bool,
+    /// Consecutive hard-stuck (`BackOffThenRepath`) replans since the last clean plan (Z3).
+    hard_replans: u32,
+    /// A destination node blocked for a few seconds after repeated stuck replans, with its
+    /// remaining TTL — `goal_node` routes around it (Z3).
+    goal_block: Option<(usize, f32)>,
 }
 
 impl Zb2Brain {
@@ -194,7 +203,14 @@ impl Zb2Brain {
             nav_graph: None,
             route: None,
             combat_enabled,
+            hard_replans: 0,
+            goal_block: None,
         }
+    }
+
+    /// True while `n` is the temporarily-blocked destination (Z3).
+    fn is_blocked(&self, n: usize) -> bool {
+        self.goal_block.is_some_and(|(b, _)| b == n)
     }
 
     /// Advance the roam cursor to the next destination (stride mirrors `main`'s roam spread).
@@ -228,10 +244,20 @@ impl Zb2Brain {
                 ss.health,
                 ss.armor,
             ) {
-                return graph.nearest(&[p.x, p.y, p.z]);
+                if let Some(n) = graph.nearest(&[p.x, p.y, p.z]) {
+                    // A stuck-blocked weapon goal falls through to roaming (Z3).
+                    if !self.is_blocked(n) {
+                        return Some(n);
+                    }
+                }
             }
         }
-        self.roam_nodes.get(self.roam_idx).copied()
+        let roam = self.roam_nodes.get(self.roam_idx).copied();
+        if roam.is_some_and(|n| self.is_blocked(n)) {
+            self.next_roam_goal();
+            return self.roam_nodes.get(self.roam_idx).copied();
+        }
+        roam
     }
 }
 
@@ -260,6 +286,14 @@ impl Brain for Zb2Brain {
         let pos = view.self_state().origin;
         let mut mv = MovementIntent::new();
 
+        // Tick down the stuck-blocked destination (Z3).
+        if let Some((_, ttl)) = &mut self.goal_block {
+            *ttl -= dt;
+            if *ttl <= 0.0 {
+                self.goal_block = None;
+            }
+        }
+
         // ── 1. Combat read (shared driver; movement stays on the route) ─────────────
         let combat_dec = if self.combat_enabled {
             self.combat
@@ -287,28 +321,47 @@ impl Brain for Zb2Brain {
         };
         if needs_plan {
             let g = goal.expect("needs_plan implies goal");
-            let planned = graph
-                .nearest(&[pos.x, pos.y, pos.z])
-                .and_then(|from| graph.path(from, g));
-            match planned {
-                Some(path) => {
-                    self.route = Some(Zb2Route {
-                        graph: Arc::clone(&graph),
-                        path,
-                        idx: 0,
-                        goal_node: g,
-                        dirty: false,
-                    });
-                }
-                None => {
-                    // Unreachable destination: rotate the roam cursor and try again next tick.
-                    self.route = None;
-                    self.next_roam_goal();
+            // Z3: a hard-stuck replan (route.dirty) to the SAME destination recommits the
+            // identical polyline — Zb2Route has no waypoint blacklist, so the bot grinds
+            // the same wall forever. Two consecutive stuck replans block the destination
+            // for GOAL_BLOCK_SECS and re-goal next tick.
+            let stuck_replan = self.route.as_ref().is_some_and(|r| r.dirty);
+            if stuck_replan {
+                self.hard_replans += 1;
+            }
+            if stuck_replan && self.hard_replans >= 2 && goal_override.is_none() {
+                tracing::debug!(goal = g, "zb2 stuck-replan loop — blocking destination");
+                self.goal_block = Some((g, GOAL_BLOCK_SECS));
+                self.hard_replans = 0;
+                self.route = None;
+                self.next_roam_goal();
+            } else {
+                let planned = graph
+                    .nearest(&[pos.x, pos.y, pos.z])
+                    .and_then(|from| graph.path(from, g));
+                match planned {
+                    Some(path) => {
+                        if !stuck_replan {
+                            self.hard_replans = 0; // clean plan (goal change / finish)
+                        }
+                        self.route = Some(Zb2Route {
+                            graph: Arc::clone(&graph),
+                            path,
+                            idx: 0,
+                            goal_node: g,
+                            dirty: false,
+                        });
+                    }
+                    None => {
+                        // Unreachable destination: rotate the roam cursor and try again next tick.
+                        self.route = None;
+                        self.next_roam_goal();
+                    }
                 }
             }
         }
 
-        let mut intent_forward = 0.0;
+        let mut intent_forward;
         if let Some(route) = self.route.as_mut() {
             // ── 3. Run the route: advance, then traversal gates, then shortcut ──────
             route.update(pos, cm);
@@ -384,7 +437,10 @@ impl Brain for Zb2Brain {
                 ) {
                     RecoveryAction::None => {}
                     RecoveryAction::Jump => mv.jump(),
-                    RecoveryAction::Strafe { dir } => mv.move_side(dir),
+                    RecoveryAction::Strafe { dir } => {
+                        // Flip a stuck-strafe that would side-step into lava (Plan 48 L2).
+                        mv.move_side(crate::hazard::safe_strafe_dir(cm, pos, view_yaw, dir));
+                    }
                     RecoveryAction::BackOffThenRepath => {
                         mv.move_forward(-0.5);
                         route.dirty = true; // hard stuck — recommit a fresh route next tick
@@ -428,9 +484,39 @@ impl Brain for Zb2Brain {
                 mv.move_side(ss * arrive);
                 mv.attack();
             }
-        } else if !combat_dec.should_fire {
-            mv.move_forward(1.0); // no route yet — keep moving
-            intent_forward = 1.0;
+        } else {
+            // No committed route (plan failed — e.g. off-graph after a fall, or every roam
+            // goal is momentarily unpathable). The old code FROZE here when an enemy was
+            // visible and blind-ran `forward(1.0)` into walls otherwise (Plan 48 Z2). Steer
+            // via recovery's free-space heading (`find_best_direction` avoids walls, ledges
+            // AND lava) and keep fighting while we relocate.
+            let cur_yaw = self.steering.view_yaw();
+            let heading =
+                match self
+                    .recovery
+                    .evaluate(pos, dt, cm, cur_yaw, false, combat_dec.should_fire)
+                {
+                    RecoveryAction::UseHeading(yaw) => yaw,
+                    _ => cur_yaw, // no CM yet — walk the current facing
+                };
+            let view_yaw = self.steering.change_yaw(heading, dt);
+            let r = heading.to_radians();
+            let free = Vec3::new(r.cos(), r.sin(), 0.0);
+            if combat_dec.should_fire {
+                // Run-and-gun even without a route: view locks the enemy, legs keep moving.
+                mv.look_at(combat_dec.aim_yaw, combat_dec.aim_pitch);
+                let (ff, ss) = move_from_world_dir(free, combat_dec.aim_yaw, false);
+                mv.move_forward(ff);
+                mv.move_side(ss);
+                mv.attack();
+                intent_forward = ff;
+            } else {
+                mv.look_at(view_yaw, 0.0);
+                let (ff, ss) = move_from_world_dir(free, view_yaw, true);
+                mv.move_forward(ff);
+                mv.move_side(ss);
+                intent_forward = ff;
+            }
         }
 
         BrainOutput {
@@ -448,6 +534,8 @@ impl Brain for Zb2Brain {
         self.combat.on_respawn();
         self.skill.on_death();
         self.route = None; // we respawned elsewhere — the committed route is void
+        self.hard_replans = 0;
+        self.goal_block = None;
     }
 
     fn status(&self) -> &str {
