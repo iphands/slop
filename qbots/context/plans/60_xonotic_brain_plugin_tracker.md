@@ -1,0 +1,43 @@
+# Xonotic brain plugin (`xon`) — Tracker
+
+## Overview
+- Status: 0% complete
+- Start date: —
+- Deliverable: `--brain xon` — goal-stack strategy + XonAim + keyboard movement on shared locomotion/traversal, proven by spawn-to-* matrix + live competition.
+- Blocked by: Plan 58 and Plan 59 must be in `completed/` first.
+
+## Resume Instructions
+1. Read `context/plans/RULES.md`, Plan 60, and `context/distilled/xonotic.md` (§ cited per task).
+2. Mirror Plan 37/44's execution: T1 wires EVERYTHING first so each later task is live-testable.
+3. Scenario contract (do not break): honor `goal_override` (skip strategy layer), respect `combat_enabled=false`, populate `intent_forward`.
+4. Shared-infra rule: locomotion/traverse/hazard/recovery are DELEGATED, never copied. Promote (don't copy) q3's `would_self_splash`.
+5. Live tasks (T7/T8) need a q2 server (`noir40.lan` historically) running the matching map; mark `blocked` if unavailable — never claim live results without logs.
+6. Record every SUMMARY line and competition scoreboard in this tracker.
+
+## Progress
+
+| # | Task | File / Module | Status | Notes |
+|---|------|---------------|--------|-------|
+| 1 | T1: skeleton + wiring | `brains/xon/mod.rs`, mod.rs, main.rs, supervisor.rs | pending | walks before it fights |
+| 2 | T2: goal-stack strategy | `brains/xon/goals.rs` | pending | flood_costs sessions; stack = bookkeeping only |
+| 3 | T3: enemy + weapons | `brains/xon/combat.rs` | pending | Plan 49 widen; thrash guard |
+| 4 | T4: aim/fire | `brains/xon/mod.rs`, shared splash helper | pending | GL ballistic may defer — note here |
+| 5 | T5: combat move + dodge + keyboard | `brains/xon/{mod,dodge}.rs` | pending | dodge through safe_strafe_dir |
+| 6 | T6: deterministic tests | `brains/xon/*` | pending | seeded 2-run reproducibility |
+| 7 | T7: spawn-to-* matrix | — (verification) | pending | s2s q2dm1 / swim / q2dm3 ride+lift; parity vs runtester |
+| 8 | T8: live competition | `context/mode_perf.md` | pending | mean K/D w/ noise floor (Plan 47 aggregator) |
+| 9 | T9: docs + close | `context/brain_notes.md`, SERIES | pending | git mv to completed/ |
+
+## Verification
+
+- [ ] Unit suites green (goals/combat/aim/dodge/determinism)
+- [ ] spawn-to-* matrix: s2s exit 0; swim `S` + ride `P` scenarios reach (SUMMARYs recorded below)
+- [ ] Competition: ≥1 frag/30 s, K/D in q3's noise band, 0 panics/kicks/drownings
+- [ ] brain_notes dated entry; mode_perf.md updated
+- [ ] Zero warnings, clippy clean, fmt, tests green at every commit (Rule A/B)
+
+## Results (fill during T7/T8)
+
+| Scenario / Run | Map | Result | SUMMARY / K/D |
+|---|---|---|---|
+| | | | |
