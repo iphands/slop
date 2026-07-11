@@ -612,3 +612,31 @@ THROUGH the lift now.
 Watch item: 3 `EVT drown` resync events in the soak — these are unexplained-underwater-damage
 resyncs (likely unseen-attacker splash near water), each forcing an immediate surface (safe
 direction); rename to `EVT drown_resync` if it confuses the zero-drownings gate reading.
+
+## 2026-07-10 — Plan 48: q2dm3 lava deaths + zb2 wall-running (5 verified bugs, all fixed)
+Deep audit triggered by live q2dm3 symptoms (all brains dying in lava; zb2 grinding walls
+instead of fighting). Every finding verified against code before fixing; three were found
+manually beyond the initial fan-out search.
+- **L1 (world)**: `segment_has_floor` probed down with `MASK_SOLID` only → a shallow lava
+  pool's solid BED counted as floor; node sampling could also emit "dry" nodes over sub-24u
+  lava. Both now reject lava/slime-covered floors (`floor_is_deadly`). Cache v21.
+- **L2 (all brains)**: combat backpedal/kite/circle-strafe, the projectile dodge, and
+  stuck-recovery side-steps emitted world dirs with no ground check. New `brain::hazard`
+  (`dir_is_hazardous` / `safe_combat_dir` / `safe_strafe_dir`) gates all of them: mirror the
+  strafe component or stand and fight. q3's `attack_move` result mirrors across the enemy
+  axis and keeps the flipped strafe.dir so it doesn't re-pick the deadly side.
+- **L3 (main+q3)**: both steered at the RAW `pursue_target` look-ahead; `pursue_target_safe`
+  (hull + floor continuity — the guard L1 fixed) was only used by runtester. Both brains now
+  compute one safe pursuit point per tick.
+- **Z1 (zb2)**: `Search_NearlyPod` skipped to any eye-visible near-level route node — on
+  q2dm3 the far lava rim qualifies. Skips now require a hull-clear + `segment_has_floor`
+  straight line (its own doc said "LOS ≠ walkable" but only gated dz).
+- **Z2 (zb2)**: the no-route branch FROZE under a visible enemy (no aim/fire/move) and
+  blind-ran forward otherwise — the literal wall-running-instead-of-engaging symptom. Now
+  steers via `find_best_direction` and run-and-guns while relocating.
+- **Z3 (zb2)**: hard-stuck replans recommitted the identical polyline (no blacklist). Two
+  consecutive stuck replans block the destination node 20s and re-goal.
+Verification: pak-gated self-locating tests (`world/tests/lava_q2dm3.rs` — red pre-fix via
+stash, green post-fix; `brain/tests/hazard_q2dm3.rs` rim probe), 392 workspace tests green,
+clippy clean. Live q2dm3 soak (lava-death + EVT counts before/after) recommended as follow-up;
+watch: hazard probe's 128u blind-drop veto could suppress intentional combat ledge-drops.

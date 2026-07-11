@@ -1,6 +1,6 @@
 # Plan 48 — q2dm3 Lava Deaths + zb2 Wall-Running Fixes
 
-> **Status**: in-progress
+> **Status**: done
 > **Created**: 2026-07-10
 > **Depends on**: Plan 47
 > **Goal**: Bots stop steering themselves into q2dm3's lava, and the zb2 brain stops grinding walls instead of engaging.
@@ -207,9 +207,9 @@ Dated brain-notes section summarizing the five bugs + fixes. Move plan + tracker
 
 ## Verification Checklist
 
-- [ ] T1: pak-gated q2dm3 test proves `segment_has_floor` rejects lava crossings; `cargo test -p world` green; cache v21 regenerates
-- [ ] T2: hazard-probe unit/pak tests green; main brain builds with all strafe/dodge sites gated
-- [ ] T3: `nearly_pod_skip` tests cover the blocked-line case
-- [ ] T4: zb2 no-route branch aims/fires/steers; repeated hard-stuck rotates goal (unit-tested counter logic where practical)
-- [ ] T5: pitfalls + brain notes on disk; plan moved to `completed/`; SERIES updated
-- [ ] All: `cargo build` + `cargo clippy` zero warnings, `cargo fmt`, `cargo test` green before every commit
+- [x] T1: pak-gated q2dm3 test proves `segment_has_floor` rejects lava crossings (verified red pre-fix via stash); `cargo test -p world` green; cache v21
+- [x] T2: hazard-probe pak test green (self-locating rim); main + q3 strafe/dodge/stuck sites gated; L3 fixed (both use `pursue_target_safe`)
+- [x] T3: `nearly_pod_skip` walkable-gate unit test added (`shortcut_respects_the_walkable_gate`)
+- [x] T4: zb2 no-route branch aims/fires/steers via `find_best_direction`; 2 consecutive hard-stuck replans block the goal 20 s
+- [x] T5: pitfalls (3 entries) + brain notes on disk; plan moved to `completed/`; SERIES updated
+- [x] All: `cargo build` + `cargo clippy` zero warnings, `cargo fmt`, 392 workspace tests green at every commit

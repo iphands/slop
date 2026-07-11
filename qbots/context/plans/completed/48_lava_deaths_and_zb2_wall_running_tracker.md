@@ -1,7 +1,7 @@
 # q2dm3 Lava Deaths + zb2 Wall-Running Fixes — Tracker
 
 ## Overview
-- Status: 0% complete
+- Status: 100% complete (closed 2026-07-10)
 - Start date: 2026-07-10
 - Bugs: L1 (lava-blind floor probe), L2 (unguarded combat strafing), Z1 (LOS-only shortcut), Z2 (no-route freeze/blind-run), Z3 (identical-route replan loop)
 
@@ -18,4 +18,4 @@ Rule A/B: zero warnings, commit per task (`task(P48-TN): …`).
 | 2 | T2: ground-hazard probe gates combat/dodge/stuck strafing | `brain/hazard.rs`, `brains/main.rs`, `brains/q3/mod.rs` | done | + BUG L3 found & fixed: main/q3 steered off RAW `pursue_target`; both now use `pursue_target_safe`. q3 attack_move + both stuck-strafes gated too. zb2 strafe gate lands with T4. |
 | 3 | T3: zb2 shortcut skip walkability validation | `brains/zb2.rs` | done | `walkable` closure = hull trace + lava-aware `segment_has_floor`; new unit test for the floor-gap gate |
 | 4 | T4: zb2 no-route engage + hard-stuck goal rotation | `brains/zb2.rs` | done | no-route branch now steers via `find_best_direction` + fires; 2 consecutive stuck replans block the goal node 20 s (`goal_block`); stuck-strafe hazard-gated; state reset on death |
-| 5 | T5: pitfalls + brain notes; close plan | `context/pitfalls.md`, `context/brain_notes.md` | pending | |
+| 5 | T5: pitfalls + brain notes; close plan | `context/pitfalls.md`, `context/brain_notes.md` | done | 3 pitfall entries + dated brain-notes section; live q2dm3 soak recommended as follow-up |

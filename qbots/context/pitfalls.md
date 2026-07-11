@@ -923,3 +923,93 @@ null world entities) and (0,0,-travel) at BOTTOM — only the lowered state is d
 around "can't see it → wait clear, then timeout in".
 ## Sources
 - qbots: brain/src/{ride.rs shaft_occupied/plat_at_bottom, traverse.rs LiftPhase}, world/src/build.rs add_lift
+
+---
+
+# MASK_SOLID floor probes see a lava bed as walkable floor
+
+## Problem
+
+Every "is there ground here?" check that traces down with `MASK_SOLID` only
+(`segment_has_floor`, node sampling's floor probe) passes straight *through*
+liquids and stops on the solid brush underneath. A shallow lava pool therefore
+reads exactly like a walkable floor: the trace hits the lava **bed** within the
+probe depth, `fraction < 1.0`, "floor found". On q2dm3 this let the corner-cut
+guard (`pursue_target_safe`) approve straight-line shortcuts across the central
+lava, and let `floor_waypoints_multi` place "dry" nodes hovering over pools
+shallower than 24 u (the node's own water check samples 24 u up). Bots died in
+lava constantly and it looked like a steering bug, not a contents bug.
+
+## Fix
+
+After any down-trace floor hit, check `point_contents(endpos + 1u above)` for
+`CONTENTS_LAVA | CONTENTS_SLIME` — a deadly-covered floor is NOT support. Also
+reject path samples whose own contents are lava/slime (the line passes through
+the volume). Keep plain `CONTENTS_WATER` walkable — shallow water is legal.
+Regression tests self-locate lava by scanning contents columns (never hard-code
+coordinates; interior floors hide lava from a single top-down trace, so scan
+point contents, not traces). Plan 48; cache v21.
+
+## Sources
+
+- qbots: `world/src/navgraph.rs` (`segment_has_floor`, `floor_waypoints_multi`, `floor_is_deadly`)
+- qbots: `world/tests/lava_q2dm3.rs`
+
+---
+
+# Combat/dodge/recovery world-dirs bypass every nav-graph guarantee
+
+## Problem
+
+Path following is validated (graph edges, hull traces, floor probes) — but
+combat movement is not on the path. Circle-strafe, backpedal-from-enemy, kite,
+projectile dodge, and stuck-recovery side-steps all emit **enemy-relative or
+arbitrary world directions** that no walkability machinery ever sees. On q2dm3
+the standard death was backpedaling away from an enemy straight into the lava
+while aiming at them. Separately, `main`/`q3` steered at the RAW
+`pursue_target` look-ahead for months — `pursue_target_safe` existed (hull +
+floor validation) but only `runtester` called it, so even path following could
+cut a corner over a pool.
+
+## Fix
+
+One shared probe (`brain::hazard`): `dir_is_hazardous` samples 24/48 u ahead
+(lifted STEPSIZE), down-probes 128 u, and flags lava/slime floors and blind
+drops (walls are NOT hazards — they stop the bot). Every non-path world dir
+goes through it: keep the dir, mirror the strafe/tangential component, else
+stand and fight (standing beats swimming in lava). And every brain reads ONE
+`pursue_target_safe` point per tick for path steering. When adding a new
+movement source, ask: "did this direction come from the graph?" If not, gate it.
+
+## Sources
+
+- qbots: `brain/src/hazard.rs`
+- qbots: `brain/src/brains/main.rs`, `brain/src/brains/q3/mod.rs` (attack_move gate), `brain/src/brains/zb2.rs`
+
+---
+
+# A brain's fallback branch must still aim, fire, and steer
+
+## Problem
+
+zb2's no-route branch (route planning failed, e.g. off-graph after a fall) did
+NOTHING when an enemy was visible — no aim, no attack, no movement (a frozen
+target) — and blind-ran `move_forward(1.0)` with zero steering otherwise,
+grinding walls forever. Combined with its hard-stuck replan recommitting the
+IDENTICAL polyline (committed routes have no waypoint blacklist), this was the
+"zb2 runs into walls instead of engaging" symptom. Fallback/edge branches get
+no test coverage and quietly rot: every early-return or else-arm in a brain's
+tick is a full behavioral state and must handle look/fire/move like the happy
+path.
+
+## Fix
+
+No-route: steer via recovery's `find_best_direction` free-space heading (wall,
+ledge AND lava aware) and run-and-gun while relocating. Stuck-replan loop: two
+consecutive `BackOffThenRepath` escalations against the same destination block
+that goal node for 20 s (`goal_block`), forcing a different destination —
+that's what actually breaks the loop when there is no per-waypoint blacklist.
+
+## Sources
+
+- qbots: `brain/src/brains/zb2.rs` (tick else-branch, `goal_block`, `hard_replans`)
