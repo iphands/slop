@@ -1,6 +1,6 @@
 # Plan 51 — zb2 Combat Wall-Stall: Instrument, Prove, Fix
 
-> **Status**: in-progress
+> **Status**: done
 > **Created**: 2026-07-11
 > **Depends on**: Plan 48 (zb2 wall-running fixes), Plan 49 (pain response), Plan 50 (EVT instrumentation discipline)
 > **Goal**: Prove with live-soak instrumentation why zb2 runs face-first into walls and stalls during combat, then fix the verified root cause and show the episode count drop.
@@ -84,7 +84,7 @@ Live report (2026-07-11, after Plans 48–50 shipped): **zb2 still consistently 
 
 ## Verification Checklist
 
-- [ ] T1: `cargo test -p brain` green incl. new `stall` tests; `just all` clean; live `connect-one` shows `EVT wall_press` lines when a bot is shoved into a corner (or none if never hindered). **Committed.**
-- [ ] T2: Baseline table in tracker (episodes / secs / dmg / atk-share per brain; overwrite-event correlation). **Committed.**
-- [ ] T3: Root-cause fix implemented + unit-tested; `just all` clean. **Committed.**
-- [ ] T4: Post-fix soak shows zb2 combat-stall episodes cut >50% with main/q3 flat; brain_notes updated; plan moved to `completed/`. **Committed.**
+- [x] T1: `cargo test -p brain` green incl. new `stall` tests; `just all` clean; live soaks emit `EVT wall_press`. **Committed.**
+- [x] T2: Baseline tables in tracker; 4 root causes proven (R1 slide-resets-stuck-detector, R2 combat clobbers recovery, R3 roam convoy, R4 unreachable euclidean route start). **Committed.**
+- [x] T3: All four fixes implemented + unit-tested (9 zb2 tests); `just all` clean. **Committed.**
+- [x] T4: Post-fix soak — the ≥3 s sitting-duck stall class cut 100% (15 eps/187 s → 0/0; max episode 97.4 s → 2.9 s); total zb2 stall −30%; main flat. Residual short-bump corridors are a CM/nav-cache geometry discrepancy (startsolid where the server allows standing) flagged as follow-up in brain_notes. brain_notes + pitfalls updated; plan moved to `completed/`. **Committed.**

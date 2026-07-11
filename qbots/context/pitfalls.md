@@ -1043,3 +1043,24 @@ instrumentation — entry velocity classifies fall-in vs sprint-in vs knockback 
 
 - qbots: `world/src/navgraph.rs` (`landing_strip_deadly`, `detect_jump_edges`, `jump_down_link`)
 - qbots: `brain/src/brains/{main.rs,zb2.rs,q3/mod.rs}` (instrumented escape EVT)
+
+# Displacement-based stuck detectors are defeated by their own strafe recovery
+The Eraser-style StuckDetector samples origin displacement per second against a small
+deadband (16 u) and escalates Mild→Hard only while displacement stays under it. But its
+own Mild remedy — a recovery strafe — slides a wall-pressed bot ALONG the wall at
+30–100 u/s, well above the deadband, so every sample looks like "movement", stuck_secs
+resets, and the Hard escalation (backoff + replan) never fires. A bot with a committed
+route (zb2) then grinds the same wall indefinitely: Plan 51 soaks measured a 97.4 s
+full-push stall ending in death, with the bot pinned on one waypoint the whole time.
+The same blindness applies to bot-vs-bot hull blocks (player hulls aren't in the
+collision model, so wall probes and free-space fans see open air).
+Avoid: never measure "stuck" by raw displacement alone when the bot has a nav target —
+measure PROGRESS (best distance-to-waypoint must improve by an epsilon per window;
+Plan 51 uses 8 u per 2.5 s). Displacement can be gamed by sliding; progress cannot.
+Related: euclidean nearest-node route starts project across thin walls, making path[0]
+permanently unreachable — replans loop forever since goal-blocking only blocks
+destinations. Validate the start node with a hull+floor straight-line test
+(`reachable_start`, zb2.rs).
+## Sources
+- qbots: crates/brain/src/recover.rs (StuckDetector), crates/brain/src/brains/zb2.rs
+  (RouteProgress::stalled, reachable_start), context/plans/completed/51_*

@@ -668,3 +668,46 @@ engaging" — a soak-driven session (all soaks: noir.lan:27910 q2dm3, 305s,
   these too. Candidate next steps if it matters: per-tick ledge-lip probe on the walkway mesh,
   or biasing A* costs away from channel-adjacent nodes. NOT worth blind iteration — instrument
   first (the session's core lesson, see pitfalls "Jump-edge landings…").
+
+## 2026-07-11 — Plan 51: zb2 combat wall-stall — instrumented, proven, fixed
+
+Live report: zb2 "runs face-forward into walls and stalls in combat — a sitting duck".
+Session discipline per Plan 50's lesson: instrument FIRST (new always-on `EVT wall_press`
+stall-episode detector in the fleet tick: duration, mean speed, attack ticks, wall-probe
+hits, damage eaten, min-player-distance `pp`, died-in-episode), soak, and only fix what
+the data indicts. All soaks: noir.lan:27910 q2dm3, 305 s,
+`competition --count 3 --brains main,q3,zb2 --navmodes astar`.
+
+- **Scale of the problem**: zb2 stalled 38–50% of its total bot-time (350–460 s / 915)
+  vs main ~6%, q3 ~11%; worst single episode **97.4 s** at full push, eating 87 damage,
+  ending in death. ~1000 dmg absorbed while stalled per soak.
+- **Four proven root causes** (per-tick forensics from a 2-bot zb2 micro-soak with
+  `RUST_LOG=brain=debug` — two bots alone reproduced 113 episodes/150 s):
+  - **R1** — recovery's strafe slides the bot ALONG the wall at 30–100 u/s, above the
+    StuckDetector's 16 u deadband → `Hard`/`BackOffThenRepath` never fires → the
+    committed route NEVER replans (bots pinned on the same waypoint for tens of seconds).
+    Fix: waypoint-*progress* watchdog (best-distance-to-waypoint must improve 8 u per
+    2.5 s or the route is force-replanned; feeds the Plan 48 Z3 goal-block ladder).
+  - **R2** — the run-and-gun block rebuilt the legs from the route direction AFTER
+    recovery wrote its strafe/heading, discarding recovery entirely while firing (521 of
+    806 stalled-dmg points were in firing episodes). Fix: re-express the legs `mv`
+    already carries against the aim yaw — recovery survives combat, run-and-gun intact.
+  - **R3** — every zb2 shared the identical deterministic roam cursor → fleets convoyed
+    to the same destinations and deadlocked hull-to-hull (pp≈33 u = hulls in contact;
+    the 97 s freeze was two zb2s pushing each other; player hulls are invisible to our
+    CM so no wall probe fires). Fix: per-bot ordinal offsets the cursor one stride apart.
+  - **R4** — route starts came from euclidean `NavGraph::nearest`, which projects across
+    thin walls; every replan recommitted an unreachable `path[0]` (goal-block only blocks
+    destinations — a loop it can't break; post-R1 soak still had a 20.9 s death-grind).
+    Fix: `reachable_start` — nearest candidate with a hull-clear + floored straight line.
+- **Results** (zb2, per 305 s soak): max episode 97.4 → 20.9 → **2.9 s**; the ≥3 s
+  "sitting duck" class 15 eps/187 s (baseline) → **0/0** (final); died-in-episode 16 → 8/15
+  (noisy); total stall 460 → ~310 s. Round-1 scoreboard: zb2 kd 0.77, #1 in kills —
+  its best result to date.
+- **Remaining tail (follow-up candidate, NOT this plan)**: ~190 short (≤2.9 s,
+  watchdog-capped) bumps per soak concentrated in two corridors —
+  (192..256, −320..−448, z≈360) and (−192..−128, 64..192, z=−15). navinspect shows the
+  z=360 spot is **startsolid in our collision model where the server lets bots stand**:
+  a CM/nav-cache geometry discrepancy that keeps luring routes into wall contact. That
+  is a `world`/map-cache bug (Plan 35/48/50 family), not a brain bug — needs its own
+  instrumented plan.
