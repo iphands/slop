@@ -905,6 +905,20 @@ impl Brain for Q3Brain {
             mv.move_forward(1.0);
         }
 
+        // Survival override (Plan 50 E2): standing in lava/slime outranks combat, dodge,
+        // and route — face the nearest safe floor, sprint, and jump to clear the pool rim.
+        if let Some(c) = cm {
+            if let Some(esc) = crate::hazard::escape_from_lava(c, pos) {
+                let yaw = esc.y.atan2(esc.x).to_degrees();
+                self.steering.set_view_yaw(yaw);
+                mv.look_at(yaw, 0.0);
+                mv.forward = 1.0;
+                mv.side = 0.0;
+                mv.jump();
+                tracing::info!("EVT lava_escape");
+            }
+        }
+
         self.last_health = health;
 
         BrainOutput {

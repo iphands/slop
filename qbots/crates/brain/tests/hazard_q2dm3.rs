@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use brain::hazard::dir_is_hazardous;
+use brain::hazard::{dir_is_hazardous, escape_from_lava};
 use glam::Vec3;
 use world::{Bsp, CollisionModel, CONTENTS_LAVA, CONTENTS_SLIME, MASK_SOLID};
 
@@ -110,6 +110,52 @@ fn probe_flags_walking_into_lava() {
     assert!(
         checked > 0,
         "no lava-pool rim flagged hazardous across {} pools — probe is blind to lava",
+        surfaces.len()
+    );
+}
+
+/// Plan 50 E2: a bot standing in q2dm3 lava must get an escape direction toward safe
+/// floor, and a bot on a dry spawn must get `None` (the override must never hijack
+/// normal play).
+#[test]
+fn escape_from_lava_points_to_safe_floor() {
+    let Some(baseq2) = baseq2_dir() else {
+        eprintln!("[skip] q2dm3 pak not found (set QBOTS_BASEQ2 or populate vendor/baseq2)");
+        return;
+    };
+    let bsp = Bsp::load(&baseq2, "q2dm3").expect("load q2dm3");
+    let cm = CollisionModel::from_bsp(&bsp);
+    let model = bsp.models.first().expect("q2dm3 has a world model");
+
+    // Dry ground: never triggers.
+    for sp in bsp.spawn_points().iter().take(4) {
+        let pos = Vec3::from(sp.origin) + Vec3::new(0.0, 0.0, 8.0);
+        assert_eq!(
+            escape_from_lava(&cm, pos),
+            None,
+            "spawn {:?} is dry — no escape override",
+            sp.origin
+        );
+    }
+
+    // In lava: at least one open-air pool sample must yield an escape whose march
+    // actually reaches non-deadly standing room (crack-under-ledge samples may not).
+    let surfaces = find_lava_surfaces(&cm, model.mins, model.maxs);
+    assert!(!surfaces.is_empty(), "q2dm3 has lava");
+    let mut escaped = 0;
+    for surface in &surfaces {
+        let pos = *surface + Vec3::new(0.0, 0.0, 4.0); // bot origin wading in the pool
+        if let Some(dir) = escape_from_lava(&cm, pos) {
+            assert!(
+                (dir.length() - 1.0).abs() < 1e-3 && dir.z == 0.0,
+                "escape dir is a flat unit vector"
+            );
+            escaped += 1;
+        }
+    }
+    assert!(
+        escaped > 0,
+        "no escape found from any of {} lava samples",
         surfaces.len()
     );
 }

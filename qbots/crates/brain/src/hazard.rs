@@ -87,6 +87,58 @@ pub fn safe_combat_dir(
     None
 }
 
+/// Escape direction when the bot is STANDING IN lava/slime, or `None` when it isn't.
+///
+/// Everything else in this module keeps bots OUT of hazards; once a bot is in one
+/// (knockback, a fall, a fight gone wrong), those same gates freeze it — every direction
+/// reads hazardous, `find_best_direction` rejects all wet endpoints, and lava is not
+/// `CONTENTS_WATER` so no swim machinery runs. The Plan 48 soak showed bots burning
+/// 100→0 over 15 s without moving out (Plan 50 E2). This is the counterpart: fan 16
+/// yaws, march outward (32..192 u), and return the direction of the CLOSEST safe
+/// standable floor (within ±64 u of our height — pool rims sit above the surface).
+/// Callers must treat it as a survival override: face it, sprint, jump.
+pub fn escape_from_lava(cm: &CollisionModel, pos: Vec3) -> Option<Vec3> {
+    const DEADLY: i32 = CONTENTS_LAVA | CONTENTS_SLIME;
+    let feet = [pos.x, pos.y, pos.z - 20.0];
+    if cm.point_contents(&[pos.x, pos.y, pos.z]) & DEADLY == 0
+        && cm.point_contents(&feet) & DEADLY == 0
+    {
+        return None;
+    }
+    let zero = [0.0f32; 3];
+    let mut best: Option<(f32, Vec3)> = None;
+    for i in 0..16 {
+        let yaw = (i as f32) * (std::f32::consts::TAU / 16.0);
+        let dir = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
+        for dist in [32.0f32, 64.0, 96.0, 128.0, 160.0, 192.0] {
+            if best.is_some_and(|(bd, _)| dist >= bd) {
+                break; // can't beat the current best along this ray
+            }
+            let p = pos + dir * dist;
+            let top = [p.x, p.y, pos.z + 64.0];
+            if cm.point_contents(&top) & MASK_SOLID != 0 {
+                continue; // inside the pool wall at this range — try farther out
+            }
+            let bot = [p.x, p.y, pos.z - 64.0];
+            let t = cm.trace(&top, &bot, &zero, &zero, MASK_SOLID);
+            if t.startsolid || t.fraction >= 1.0 {
+                continue; // no floor in the band — still over the pool
+            }
+            let above = [t.endpos[0], t.endpos[1], t.endpos[2] + 1.0];
+            if cm.point_contents(&above) & DEADLY != 0 {
+                continue; // that floor is more lava
+            }
+            let origin = [t.endpos[0], t.endpos[1], t.endpos[2] + 24.0];
+            if cm.point_contents(&origin) != 0 {
+                continue; // no headroom for a standing bot
+            }
+            best = Some((dist, dir));
+            break;
+        }
+    }
+    best.map(|(_, d)| d)
+}
+
 /// Survivable variant of a view-relative side-step (`RecoveryAction::Strafe`): the
 /// requested `dir` (±1) if its world direction is safe, the flipped side if not, `0.0`
 /// when both sides are deadly.
