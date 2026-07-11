@@ -700,9 +700,12 @@ impl crate::brains::core::Brain for MainBrain {
                 .unwrap_or(1.0);
 
             // ── 5. Decompose into view-relative (forward, side) ───────────
+            // Creep on hazard-bordered stretches (lava walkways) so 10 Hz tracking
+            // error can't step us off the edge (Plan 50).
+            let creep = hazard::creep_scale(cm, pos, world_move_dir);
             let (fwd, side) = move_from_world_dir(world_move_dir, view_yaw, face_then_go);
-            mv.move_forward(fwd * arrive);
-            mv.move_side(side * arrive);
+            mv.move_forward(fwd * arrive * creep);
+            mv.move_side(side * arrive * creep);
 
             // Traversal gates (Plan 46): the shared TraversalExecutor tells us whether we're
             // swimming (Plan 40) or riding a platform/lift/ladder (Plan 43/35). Both SUSPEND stuck

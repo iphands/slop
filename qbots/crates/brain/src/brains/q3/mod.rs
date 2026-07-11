@@ -279,9 +279,12 @@ impl Q3Brain {
         let arrive = pursue_pt
             .map(|pt| Steering::arrive_scale((pt - pos).length()))
             .unwrap_or(1.0);
+        // Creep on hazard-bordered stretches (lava walkways) so 10 Hz tracking error
+        // can't step us off the edge (Plan 50).
+        let creep = crate::hazard::creep_scale(cm, pos, world_dir);
         let (fwd, side) = move_from_world_dir(world_dir, view_yaw, true);
-        mv.move_forward(fwd * arrive);
-        mv.move_side(side * arrive);
+        mv.move_forward(fwd * arrive * creep);
+        mv.move_side(side * arrive * creep);
 
         // Traversal gates (Plan 46): swim/ride/ladder suspend stuck recovery + jump-edge (a
         // surface bob or a stand-and-wait on a lift is not a wedge). This is where `q3` GAINS all

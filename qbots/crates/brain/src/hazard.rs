@@ -88,6 +88,23 @@ pub fn safe_combat_dir(
     None
 }
 
+/// Speed multiplier for walking a hazard-bordered stretch (creep, don't sprint).
+const CREEP: f32 = 0.35;
+
+/// Per-tick speed governor for path following near deadly ground (Plan 50). q2dm3's
+/// central maze is walkways at z≈−48 with lava 16 u below — a LEGAL step-down, so the
+/// nav polyline is valid, but at full sprint the 10 Hz control wobble (yaw rate limit,
+/// arrive overshoot, corner momentum) steps the bot off the edge. Humans slow down on
+/// lava walkways; so do we: when the move direction's short probe borders a hazard,
+/// return [`CREEP`], else 1.0. This never vetoes the move — the path is valid — it
+/// shrinks the tracking error until the stretch is past.
+pub fn creep_scale(cm: Option<&CollisionModel>, pos: Vec3, world_dir: Vec3) -> f32 {
+    match cm {
+        Some(c) if dir_is_hazardous(c, pos, world_dir) => CREEP,
+        _ => 1.0,
+    }
+}
+
 /// Last-resort combat move when BOTH strafe variants are deadly (fighting at a pool rim):
 /// the most open lava/ledge-free heading, as a world direction. A bot that stands still at
 /// a rim under rocket fire gets juggled straight into the pool (Plan 50 soak: lava entries

@@ -415,9 +415,12 @@ impl Brain for Zb2Brain {
                 _ => (self.steering.view_yaw(), Vec3::ZERO),
             };
             let view_yaw = self.steering.change_yaw(ideal_yaw, dt);
+            // Creep on hazard-bordered stretches (lava walkways) so 10 Hz tracking
+            // error can't step us off the edge (Plan 50).
             let arrive = pursue
                 .map(|pt| Steering::arrive_scale((pt - pos).length()))
-                .unwrap_or(1.0);
+                .unwrap_or(1.0)
+                * crate::hazard::creep_scale(cm, pos, world_dir);
             let (fwd, side) = move_from_world_dir(world_dir, view_yaw, true);
             mv.look_at(view_yaw, 0.0);
             mv.move_forward(fwd * arrive);
