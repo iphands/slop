@@ -1,0 +1,43 @@
+Fix server lockup on 'status' when a client name exceeds 16 chars.
+
+SV_Status_f declared the padding width 'l' as size_t. When a connected
+player's name is longer than 16 chars (or the address string longer than
+22), '16 - strlen(...)' underflows to a huge unsigned value, and the
+padding loop 'for (j = 0; j < l; j++)' (j promoted to size_t) runs ~2^64
+times -> the server main thread hangs, locking up the whole server. This
+is reachable via console or rcon 'status' and is a regression from vanilla
+Quake II, where 'l' was int (negative -> loop skipped).
+
+Make 'l' int again and cast strlen so the subtraction is signed.
+
+diff --git a/src/server/sv_cmd.c b/src/server/sv_cmd.c
+index 893ee10..ca41f40 100644
+--- a/src/server/sv_cmd.c
++++ b/src/server/sv_cmd.c
+@@ -394,7 +394,7 @@ static void
+ SV_Status_f(void)
+ {
+ 	int i, j;
+-	size_t l;
++	int l;
+ 	client_t *cl;
+ 	char *s;
+ 	int ping;
+@@ -435,7 +435,7 @@ SV_Status_f(void)
+ 		}
+ 
+ 		Com_Printf("%s", cl->name);
+-		l = 16 - strlen(cl->name);
++		l = 16 - (int)strlen(cl->name);
+ 
+ 		for (j = 0; j < l; j++)
+ 		{
+@@ -446,7 +446,7 @@ SV_Status_f(void)
+ 
+ 		s = NET_AdrToString(cl->netchan.remote_address);
+ 		Com_Printf("%s", s);
+-		l = 22 - strlen(s);
++		l = 22 - (int)strlen(s);
+ 
+ 		for (j = 0; j < l; j++)
+ 		{

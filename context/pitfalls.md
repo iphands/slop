@@ -320,3 +320,27 @@ There is no cvar for this; it's hardcoded.
 - qcontainer: vendor/q2repro/src/server/main.c (`q2repro_accepted_protocols`, `SVC_DirectConnect`)
 - qcontainer: vendor/q2repro/q2proto/inc/q2proto/q2proto_protocol.h (enum)
 - qcontainer: vendor/yquake2/src/common/header/common.h (`PROTOCOL_VERSION 34`)
+
+# yquake2 server lockup on "status" with long player names (unsigned underflow)
+In yquake2 `SV_Status_f` (src/server/sv_cmd.c), the column-padding width `l` is
+declared `size_t` (unsigned). For each connected client it computes
+`l = 16 - strlen(cl->name);` then `for (j = 0; j < l; j++) Com_Printf(" ");`
+(and `l = 22 - strlen(s);` for the address). If a player's name is longer than
+16 chars, the subtraction underflows to ~2^64; `j` (int) is promoted to size_t
+in the comparison, so the loop iterates astronomically -> the server's main
+thread hangs and the WHOLE server locks up (not a crash). Reachable via console
+or `rcon status`. It's a regression from vanilla id Quake II, where `l` was
+`int` (result goes negative, loop is skipped). Symptom looked player-count
+related ("~24 players") but the real trigger is ANY single name > 16 chars,
+which just becomes likely as the lobby fills.
+
+### How to avoid
+- Never subtract `strlen()` (size_t) into an unsigned and then loop `int < that`.
+  Keep padding widths signed: `int l = 16 - (int)strlen(name);` so a too-long
+  string yields a negative width and the loop is skipped. Watch for size_t vs
+  int mismatches in any `for (int j; j < unsigned; j++)` padding loop.
+- Fixed in qcontainer via patches/yquake/0001-fix-status-name-padding-underflow.patch
+  (applied at image build time), since the yquake flavor tracks upstream tags.
+
+### Sources
+- qcontainer: vendor/yquake2/src/server/sv_cmd.c (`SV_Status_f`)
