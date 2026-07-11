@@ -227,15 +227,22 @@ impl Default for Q3Character {
 /// A selectable named Q3 personality (Plan 38 roster). A clap `ValueEnum` so `--q3char <name>`
 /// picks one; each maps to a [`Q3Character`] preset and carries a stable [`tag`](Self::tag) for
 /// per-character bot names + scoreboard grouping.
+/// Each variant's canonical CLI token is its short code (`gru`, `maj`, …) — the same code the
+/// competition scoreboard/bot-names use — with the long name kept as an accepted alias, so
+/// both `--q3char gru` and `--q3char grunt` work. The `--help` line leads with the short code.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum CharPreset {
-    /// Low skill, high spray, weak aim ([`Q3Character::grunt`]).
+    /// grunt — Low skill, high spray, weak aim ([`Q3Character::grunt`]).
+    #[value(name = "gru", alias = "grunt")]
     Grunt,
-    /// High aim skill, precise, low firethrottle ([`Q3Character::major`]).
+    /// major — High aim skill, precise, low firethrottle ([`Q3Character::major`]).
+    #[value(name = "maj", alias = "major")]
     Major,
-    /// High aggression + jumper, mobile brawler ([`Q3Character::sarge`]).
+    /// sarge — High aggression + jumper, mobile brawler ([`Q3Character::sarge`]).
+    #[value(name = "sar", alias = "sarge")]
     Sarge,
-    /// High camper/alertness, low aggression ([`Q3Character::camper`]).
+    /// camper — High camper/alertness, low aggression ([`Q3Character::camper`]).
+    #[value(name = "cam", alias = "camper")]
     Camper,
 }
 
@@ -548,8 +555,13 @@ mod tests {
     #[test]
     fn presets_map_to_characters_and_tags() {
         use clap::ValueEnum;
+        // Long names (aliases) and short codes (canonical CLI tokens) both parse.
         assert_eq!(CharPreset::from_str("grunt", true), Ok(CharPreset::Grunt));
         assert_eq!(CharPreset::from_str("major", true), Ok(CharPreset::Major));
+        assert_eq!(CharPreset::from_str("gru", true), Ok(CharPreset::Grunt));
+        assert_eq!(CharPreset::from_str("maj", true), Ok(CharPreset::Major));
+        assert_eq!(CharPreset::from_str("sar", true), Ok(CharPreset::Sarge));
+        assert_eq!(CharPreset::from_str("cam", true), Ok(CharPreset::Camper));
         assert!(CharPreset::from_str("nope", true).is_err());
         assert_eq!(CharPreset::Sarge.character(), Q3Character::sarge());
         assert_eq!(CharPreset::Camper.tag(), "camper");

@@ -43,19 +43,29 @@ use glam::Vec3;
 
 /// Which navigation backend a movement scenario drives the bot with. Two co-maintained
 /// representations behind one flag (`--navmode`); the steering loop is identical for both.
+/// Each variant's canonical CLI token is its short code (`as`, `rc`, …) — the same code
+/// the competition scoreboard/bot-names use — with the long kebab name kept as an accepted
+/// alias, so both `--navmode rc` and `--navmode hybrid-race` work. The `--help` line leads
+/// with the short code and names the long form in its description.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum NavMode {
-    /// Waypoint-graph backend: A* over grid-sampled nodes (the default, proven backend).
+    /// astar — Waypoint-graph backend: A* over grid-sampled nodes (the default, proven backend).
+    #[value(name = "as", alias = "astar")]
     Astar,
-    /// Navmesh backend: A* over walkable polygons + funnel (Recast-style).
+    /// navmesh — Navmesh backend: A* over walkable polygons + funnel (Recast-style).
+    #[value(name = "nm", alias = "navmesh")]
     Navmesh,
-    /// Hybrid: A* primary, navmesh takes over the segment on a hard-stuck (Plan 20).
+    /// hybrid-fallback — Hybrid: A* primary, navmesh takes over the segment on a hard-stuck (Plan 20).
+    #[value(name = "fb", alias = "hybrid-fallback")]
     HybridFallback,
-    /// Hybrid: plan both backends per goal, run the cheaper-scoring one to completion.
+    /// hybrid-race — Hybrid: plan both backends per goal, run the cheaper-scoring one to completion.
+    #[value(name = "rc", alias = "hybrid-race")]
     HybridRace,
-    /// Hybrid: navmesh picks the corridor, A* executes a sliding local sub-goal.
+    /// hybrid-hier — Hybrid: navmesh picks the corridor, A* executes a sliding local sub-goal.
+    #[value(name = "hr", alias = "hybrid-hier")]
     HybridHier,
-    /// Hybrid: navmesh routes open space, A* owns jump-link segments only.
+    /// hybrid-segment — Hybrid: navmesh routes open space, A* owns jump-link segments only.
+    #[value(name = "sg", alias = "hybrid-segment")]
     HybridSegment,
 }
 
@@ -2542,6 +2552,26 @@ mod tests {
     use std::time::Duration;
 
     const FLUSH: Duration = Duration::from_secs(5);
+
+    #[test]
+    fn navmode_accepts_short_code_and_long_alias() {
+        use clap::ValueEnum;
+        // Canonical CLI token is the short code…
+        assert_eq!(NavMode::from_str("rc", true), Ok(NavMode::HybridRace));
+        assert_eq!(NavMode::from_str("as", true), Ok(NavMode::Astar));
+        assert_eq!(NavMode::from_str("sg", true), Ok(NavMode::HybridSegment));
+        // …and the long kebab name still parses as an alias.
+        assert_eq!(
+            NavMode::from_str("hybrid-race", true),
+            Ok(NavMode::HybridRace)
+        );
+        assert_eq!(NavMode::from_str("astar", true), Ok(NavMode::Astar));
+        assert_eq!(
+            NavMode::from_str("hybrid-segment", true),
+            Ok(NavMode::HybridSegment)
+        );
+        assert!(NavMode::from_str("nope", true).is_err());
+    }
 
     #[test]
     fn first_event_emits_no_coda() {

@@ -25,21 +25,24 @@ use crate::skill::BotSkill;
 /// `ValueEnum` derive + CLI flag land in Plan 25, more variants in Plan 24.
 /// Which brain implementation a bot runs. A clap `ValueEnum` so `--brain <kind>` selects it,
 /// mirroring `NavMode` for the nav backend; the two are independent per-bot axes.
+/// Each variant's canonical CLI token is its short code (`mai`, `q3`, …) — the same code the
+/// competition scoreboard/bot-names use — with the long name kept as an accepted alias, so
+/// both `--brain mai` and `--brain main` work. The `--help` line leads with the short code.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum BrainKind {
-    /// The full decision brain (combat + FSM + nav + recovery) — the live fleet bot.
+    /// main — The full decision brain (combat + FSM + nav + recovery) — the live fleet bot.
+    #[value(name = "mai", alias = "main")]
     Main,
-    /// A stationary combat-only reference brain that proves the seam runs with >1 impl.
+    /// sentry — A stationary combat-only reference brain that proves the seam runs with >1 impl.
+    #[value(name = "sen", alias = "sentry")]
     Sentry,
-    /// The combat-free movement-scenario brain (the `spawn-to-*` pathfinder).
-    // Pin the CLI/`brain_tag` token to lowercase `runtester` (clap would otherwise derive
-    // `run-tester` from the `RunTester` variant name).
-    #[value(name = "runtester")]
+    /// runtester — The combat-free movement-scenario brain (the `spawn-to-*` pathfinder).
+    #[value(name = "run", alias = "runtester")]
     RunTester,
-    /// The Quake 3-derived brain (node FSM + aggression-gated retreat/chase + Q3 aim/fire).
-    #[value(name = "q3")]
+    /// quake3 — The Quake 3-derived brain (node FSM + aggression-gated retreat/chase + Q3 aim/fire).
+    #[value(name = "q3", alias = "quake3")]
     Quake3,
-    /// The 3ZB2-derived brain (committed routes + shortcut skips + run-and-gun; Plan 44).
+    /// zb2 — The 3ZB2-derived brain (committed routes + shortcut skips + run-and-gun; Plan 44).
     #[value(name = "zb2")]
     Zb2,
 }
@@ -119,13 +122,20 @@ mod tests {
     #[test]
     fn brain_kind_value_enum_round_trip() {
         use clap::ValueEnum;
+        // Long names still parse (kept as aliases)…
         assert_eq!(BrainKind::from_str("main", true), Ok(BrainKind::Main));
         assert_eq!(BrainKind::from_str("sentry", true), Ok(BrainKind::Sentry));
         assert_eq!(
             BrainKind::from_str("runtester", true),
             Ok(BrainKind::RunTester)
         );
+        assert_eq!(BrainKind::from_str("quake3", true), Ok(BrainKind::Quake3));
+        // …and so do the short codes (now the canonical CLI tokens).
+        assert_eq!(BrainKind::from_str("mai", true), Ok(BrainKind::Main));
+        assert_eq!(BrainKind::from_str("sen", true), Ok(BrainKind::Sentry));
+        assert_eq!(BrainKind::from_str("run", true), Ok(BrainKind::RunTester));
         assert_eq!(BrainKind::from_str("q3", true), Ok(BrainKind::Quake3));
+        assert_eq!(BrainKind::from_str("zb2", true), Ok(BrainKind::Zb2));
         assert!(BrainKind::from_str("nope", true).is_err());
         assert_eq!(brain_tag(BrainKind::Main), "main");
         assert_eq!(brain_tag(BrainKind::Sentry), "sentry");
