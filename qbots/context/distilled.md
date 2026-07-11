@@ -64,6 +64,27 @@ Reaches "test connected" / "test entered the game" on a real yquake2 server:
 - Timing: 3 usercmds × `msec=33` ≈ 99 ms per 100 ms heartbeat ≈ realtime. Observed the bot
   walk at ~100 u/s with `forwardmove=400`; yaw 0 ⇒ forward ≈ −X here.
 
+## Ping = reply phase + RTT, not RTT (Plan 57, VERIFIED LIVE)
+The scoreboard ping is **not** network RTT. `SV_CalcPings` (`server/sv_main.c:131-164`)
+averages the last 16 frames' `frame_latency`, each sampled in `SV_ExecuteClientMessage`
+(`server/sv_user.c:686-696`) as `svs.realtime_when_our_clc_move_acking_frame_N_arrives −
+frame[N].senttime` (stamped at `server/sv_entities.c:531-533`). `LATENCY_COUNTS = 16`.
+- ⇒ the number **includes the client's own reply delay** — how long we sat on a frame
+  before our next outgoing packet. The server can't subtract it.
+- A **free-running 10 Hz sender that ignores frame arrival adds ~50 ms** (0–100 ms uniform)
+  of self-inflicted phase on top of true RTT. This — not the network, not the 10 Hz rate —
+  was our 50–80 ms.
+- Server accepts commands as fast as sent (no packet-rate cap; only the `commandMsec`
+  real-time movement budget, `sv_user.c:606-618`). Server emits frames at fixed 10 Hz
+  (`sv_main.c:343-344`), so **acking every frame is still ~10 sends/s** — re-phasing, not
+  speeding up. Real clients decouple render/decision fps from the packet frame and send per
+  packet-frame (`client/cl_input.c:732-833`, `cl_main.c:899-901`).
+- **Fix (Plan 57):** send the `clc_move` the instant a `svc_frame` decodes (ack-on-frame);
+  demote the 100 ms timer to a keepalive that fires only if no send in ~90 ms. Keep msec +
+  rate constant ⇒ movement byte-identical. **Live q2dm1:** scoreboard 50–80 ms → **16 ms**;
+  self-measured frame-arrival→ack phase (`client::SendTiming`, `EVT send_timing`)
+  **ema=0.0/max=0.0 ms**, sends ~10/s (no double-send).
+
 ## BSP / pak loading (VERIFIED LIVE)
 - Q2 BSP = IBSP magic + version **38** + 19 lumps (`dheader_t`, `files.h:294`). Lumps:
   `{i32 fileofs, i32 filelen}`.

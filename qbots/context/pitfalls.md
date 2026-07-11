@@ -1111,3 +1111,30 @@ Active) — strict → exit 1 with `fleet join failed`, loose → exit 0 with `d
 - qbots: crates/qbots/src/main.rs (`bot_task` reject/timeout returns)
 - qbots: crates/qbots/src/supervisor.rs (`bot_supervisor_loop`, `fleet_join_result`)
 - qbots: context/plans/completed/53_fail_hard_botcap.md
+
+# High bot ping is self-inflicted send phase — not the network, not the 10 Hz rate
+Our external bots showed 50–80 ms scoreboard ping while real players on the same LAN show
+~15 ms. The instinct is "we run at 10 Hz, real clients run at 60 — raise the rate." Wrong
+diagnosis. Q2's ping is **not** RTT: `SV_CalcPings` (`server/sv_main.c:131-164`) averages
+the last 16 `frame_latency` samples, each `= recv_time_of_the_clc_move_that_acks_frame_N −
+frame[N].senttime` (`server/sv_user.c:686-696`, senttime at `server/sv_entities.c:531-533`).
+So it **folds in the client's own reply delay**. Our send loop only transmitted on a
+free-running 100 ms timer and did nothing on frame arrival, so a freshly-arrived frame
+waited ~50 ms on average (0–100 ms uniform) for the next tick — that phase, added to true
+RTT, WAS the 50–80 ms.
+Fix: ack on frame arrival. In the recv arm, detect a newly-decoded `svc_frame` (compare
+`conn.frame.serverframe` before/after `on_recv`) and re-send the last timer-built cmd
+immediately; demote the 100 ms timer to a keepalive gated on "no send in ~90 ms". Do NOT
+just raise the timer rate: the server emits frames at fixed 10 Hz (`sv_main.c:343-344`), so
+acking every frame is already ~10 sends/s — re-phasing, not more packets. The dedupe is
+load-bearing: send on BOTH frame arrival and the timer and you double the send rate → 2× the
+per-packet `msec` integrated → the bot moves at ~2× speed. Keep msec + rate constant and
+movement is byte-identical; the only change is WHEN the packet leaves. Verify: `EVT
+send_timing` (self-measured frame-arrival→ack phase, `client::SendTiming`) should read
+ema≈0/max≈0 with `sends` climbing ~10/s (≈20/s means you double-send); scoreboard ping
+should collapse to true RTT. Live q2dm1: 50–80 ms → 16 ms, phase 0.0 ms.
+## Sources
+- qbots: crates/qbots/src/main.rs (`bot_task` recv-arm ack + timer keepalive dedupe)
+- qbots: crates/client/src/send_timing.rs (`SendTiming` phase-delay measurement)
+- qbots: crates/client/src/conn.rs (`run` reference loop, same re-phasing)
+- qbots: context/plans/completed/57_ack_on_frame_ping.md
