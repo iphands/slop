@@ -1,7 +1,7 @@
 # zb2 Combat Wall-Stall — Tracker
 
 ## Overview
-- Status: 0% complete
+- Status: 25% complete (T1 done, T2 baseline soak in flight)
 - Start date: 2026-07-11
 - Server: config default (noir.lan:27910), map q2dm3 (verified live via `status`)
 - Soak recipe: 305 s, `competition --count 3 --brains main,q3,zb2 --navmodes astar` (matches Plans 49/50 baselines)
@@ -15,7 +15,7 @@
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: StallMonitor + fleet wiring + zb2 probe | `brain/stall.rs`, `qbots/main.rs`, `brains/zb2.rs` | pending | |
+| 1 | T1: StallMonitor + fleet wiring + zb2 probe | `brain/stall.rs`, `qbots/main.rs`, `brains/zb2.rs` | done | 5 unit tests; `EVT wall_press` carries `bot=` for per-brain attribution (span fields are dropped by the abbreviated formatter) |
 | 2 | T2: baseline soak + analysis table | tracker | pending | |
 | 3 | T3: fix proven root cause | `brains/zb2.rs` (+`recover.rs`?) | pending | data-dependent |
 | 4 | T4: re-soak compare + notes + close | `context/brain_notes.md` | pending | |

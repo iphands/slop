@@ -1165,6 +1165,7 @@ pub(crate) async fn bot_task(
                                 dt,
                             }) {
                                 tracing::info!(
+                                    bot = name,
                                     secs = %format!("{:.1}", ep.secs),
                                     speed = ep.mean_speed as i32,
                                     ticks = ep.ticks,
