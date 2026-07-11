@@ -52,6 +52,14 @@ pool while aiming at them. `RecoveryAction::Strafe` (`recover.rs:279`) is equall
 The only existing lava awareness at runtime is `find_best_direction` (`recover.rs:158-162`),
 which never runs during normal steering or combat.
 
+**BUG L3 (found during T2) — main and q3 never use `pursue_target_safe`**
+(`brains/main.rs` — six raw `pursue_target` calls; `brains/q3/mod.rs:256/268/275/289`).
+The corner-cut-safe look-ahead (hull trace + floor-continuity — the exact guard T1 made
+lava-aware) existed but only `runtester` called it. main/q3 steered at the RAW interpolated
+look-ahead, which legally cuts inside corners and across lava pools. Fixed in T2: both brains
+compute one `pursue_pt` per tick via `pursue_target_safe` (falling back to raw only when no
+collision model is loaded) and every steering consumer reads it.
+
 **BUG Z1 — zb2 `nearly_pod_skip` skips on LOS + dz only** (`brain/src/brains/zb2.rs:137-159`).
 The doc comment even says "LOS ≠ walkable (the classic bot trap)" but only gates |dz| ≤ 32.
 On q2dm3, path polylines curve *around* the lava; a node further along the route on the far

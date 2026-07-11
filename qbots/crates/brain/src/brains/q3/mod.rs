@@ -251,9 +251,15 @@ impl Q3Brain {
             nav.smooth_with_cm(cm, pos);
         }
 
+        // Corner-cut-safe path look-ahead (Plan 48 L3): hull + lava-aware floor validation,
+        // same as MainBrain — the raw look-ahead can cut a corner or a lava pool.
+        let pursue_pt = match cm {
+            Some(c) => nav.pursue_target_safe(pos, c),
+            None => nav.pursue_target(pos),
+        };
+
         // View yaw: steer along the path look-ahead.
-        let ideal_yaw = nav
-            .pursue_target(pos)
+        let ideal_yaw = pursue_pt
             .filter(|pt| (pt - pos).length_squared() > 1.0)
             .map(|pt| {
                 let d = pt - pos;
@@ -264,15 +270,13 @@ impl Q3Brain {
         mv.look_at(view_yaw, 0.0);
 
         // World move direction from path look-ahead.
-        let world_dir = nav
-            .pursue_target(pos)
+        let world_dir = pursue_pt
             .map(|pt| {
                 let d = pt - pos;
                 Vec3::new(d.x, d.y, 0.0).normalize_or_zero()
             })
             .unwrap_or(Vec3::ZERO);
-        let arrive = nav
-            .pursue_target(pos)
+        let arrive = pursue_pt
             .map(|pt| Steering::arrive_scale((pt - pos).length()))
             .unwrap_or(1.0);
         let (fwd, side) = move_from_world_dir(world_dir, view_yaw, true);
@@ -286,7 +290,7 @@ impl Q3Brain {
 
         // Stuck recovery (shared with MainBrain; never "engaging" here — combat nodes set their
         // own gates in T5).
-        let has_nav_target = nav.pursue_target(pos).is_some();
+        let has_nav_target = pursue_pt.is_some();
         let rec = if gates.any() {
             RecoveryAction::None
         } else {
@@ -296,7 +300,10 @@ impl Q3Brain {
         match rec {
             RecoveryAction::None => {}
             RecoveryAction::Jump => mv.jump(),
-            RecoveryAction::Strafe { dir } => mv.move_side(dir),
+            RecoveryAction::Strafe { dir } => {
+                // Flip a stuck-strafe that would side-step into lava / off a drop (Plan 48 L2).
+                mv.move_side(crate::hazard::safe_strafe_dir(cm, pos, view_yaw, dir));
+            }
             RecoveryAction::BackOffThenRepath => {
                 mv.move_forward(-0.5);
                 nav.force_replan();
@@ -691,6 +698,21 @@ impl Q3Brain {
             r#move::attack_move(&self.ch, dist, dir, &mut self.strafe, dt, flip, backup);
         if retreat {
             world = (world - dir).normalize_or_zero();
+        }
+        // Never strafe/backpedal into lava or off a blind drop (Plan 48 L2): mirror the
+        // tangential component across the enemy axis, else stand and fight.
+        if let Some(c) = cm {
+            if crate::hazard::dir_is_hazardous(c, pos, world) {
+                let radial = dir * world.dot(dir);
+                let mirrored = (2.0 * radial - world).normalize_or_zero();
+                world = if !crate::hazard::dir_is_hazardous(c, pos, mirrored) {
+                    // Keep the flip for future ticks so we don't re-pick the deadly side.
+                    self.strafe.dir = -self.strafe.dir;
+                    mirrored
+                } else {
+                    Vec3::ZERO
+                };
+            }
         }
         let (fwd, side) = move_from_world_dir(world, aimres.yaw, false);
         mv.move_forward(fwd);

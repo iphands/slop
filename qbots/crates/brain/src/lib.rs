@@ -12,6 +12,7 @@ pub mod combat;
 pub mod danger;
 pub mod engage;
 pub mod fsm;
+pub mod hazard;
 pub mod heatmap;
 pub mod hybrid;
 pub mod items;

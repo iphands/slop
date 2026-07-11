@@ -32,7 +32,7 @@ use crate::skill::BotSkill;
 use crate::steer::{move_from_world_dir, Steering};
 use crate::traverse::{TraversalExecutor, TraversalFrame};
 use crate::weapons::Weapon;
-use crate::{items, los, weapons};
+use crate::{hazard, items, los, weapons};
 
 // `BrainConfig`/`BrainOutput` live in `brains::core` next to the `trait Brain` contract;
 // re-exported here for the convenience of code that reaches them via the `main` module.
@@ -523,6 +523,16 @@ impl crate::brains::core::Brain for MainBrain {
             let ideal_dist = band.ideal;
             let backup_dist = band.backup;
 
+            // Corner-cut-safe pursuit point (Plan 48 L3): the raw `pursue_target` look-ahead
+            // interpolates straight through the polyline and can cut an inside corner or a
+            // lava pool; `pursue_target_safe` hull-validates the line and (since Plan 48 T1)
+            // rejects lava-bed "floors". Computed once — every steering consumer this tick
+            // reads the same point.
+            let pursue_pt = match cm {
+                Some(c) => nav.pursue_target_safe(pos, c),
+                None => nav.pursue_target(pos),
+            };
+
             // Resolve enemy position + distance (if we have a target in view). While
             // hard-fleeing (Plan 45) we treat the enemy as absent for the distance-band
             // movement logic so the bot path-follows its escape route instead of holding
@@ -551,7 +561,7 @@ impl crate::brains::core::Brain for MainBrain {
                     (yaw, 0.0)
                 } else {
                     // Far from enemy — steer along the path toward them.
-                    nav.pursue_target(pos)
+                    pursue_pt
                         .filter(|pt| (pt - pos).length_squared() > 1.0)
                         .map(|pt| {
                             let d = pt - pos;
@@ -561,7 +571,7 @@ impl crate::brains::core::Brain for MainBrain {
                 }
             } else {
                 // No combat: steer along the path.
-                nav.pursue_target(pos)
+                pursue_pt
                     .filter(|pt| (pt - pos).length_squared() > 1.0)
                     .map(|pt| {
                         let d = pt - pos;
@@ -585,13 +595,17 @@ impl crate::brains::core::Brain for MainBrain {
                 0.0
             };
 
+            // Every `face_then_go = false` branch below emits a world direction that never
+            // came from the nav graph (backpedal/kite/strafe are enemy-relative), so each
+            // is filtered through `hazard::safe_combat_dir` (Plan 48 L2): keep it, mirror
+            // the strafe component, or stand and fight — never walk into lava or off a
+            // blind drop while aiming at someone.
             let (world_move_dir, face_then_go) = if flee_hard {
                 // Hard flee (Plan 45): move along the escape path (toward the resource /
                 // away node). If we're firing (view is locked on the enemy behind us) use
                 // raw decomposition (`face_then_go = false`) so `forward` can go negative
                 // and we backpedal while shooting; otherwise face the escape heading and run.
-                let escape = nav
-                    .pursue_target(pos)
+                let escape = pursue_pt
                     .map(|pt| {
                         let d = pt - pos;
                         Vec3::new(d.x, d.y, 0.0).normalize_or_zero()
@@ -604,6 +618,8 @@ impl crate::brains::core::Brain for MainBrain {
                             })
                             .unwrap_or(Vec3::ZERO)
                     });
+                let escape =
+                    hazard::safe_combat_dir(cm, pos, escape, Vec3::ZERO, 1.0).unwrap_or(Vec3::ZERO);
                 (escape, !combat_dec.should_fire)
             } else if let Some((d, dir)) = enemy_dist_dir {
                 if kite {
@@ -611,12 +627,13 @@ impl crate::brains::core::Brain for MainBrain {
                     // still lock the enemy) while opening range. Back away until the persona's kite
                     // distance, then hold and strafe. `face_then_go = false` so we backpedal facing.
                     let tan = Vec3::new(-dir.y, dir.x, 0.0) * self.steering.strafe_tick(dt);
-                    if d < self.persona.kite_dist() {
+                    let picked = if d < self.persona.kite_dist() {
                         let away = Vec3::new(-dir.x, -dir.y, 0.0).normalize_or_zero();
-                        ((away + tan * 0.6).normalize_or_zero(), false)
+                        hazard::safe_combat_dir(cm, pos, away, tan * 0.6, 1.0)
                     } else {
-                        (tan.normalize_or_zero() * 0.7, false)
-                    }
+                        hazard::safe_combat_dir(cm, pos, Vec3::ZERO, tan, 0.7)
+                    };
+                    (picked.unwrap_or(Vec3::ZERO), false)
                 } else if d < backup_dist {
                     // Back away from enemy while keeping aim on them.
                     let away = Vec3::new(-dir.x, -dir.y, 0.0).normalize_or_zero();
@@ -624,15 +641,21 @@ impl crate::brains::core::Brain for MainBrain {
                     let tan = Vec3::new(-dir.y, dir.x, 0.0)
                         * self.steering.strafe_tick(dt)
                         * strafe_weight;
-                    ((away + tan).normalize_or_zero(), false)
+                    (
+                        hazard::safe_combat_dir(cm, pos, away, tan, 1.0).unwrap_or(Vec3::ZERO),
+                        false,
+                    )
                 } else if d < ideal_dist {
                     // Hold ideal distance — pure circle-strafe tangentially.
                     let tan = Vec3::new(-dir.y, dir.x, 0.0) * self.steering.strafe_tick(dt);
-                    (tan.normalize_or_zero() * strafe_weight, false)
+                    (
+                        hazard::safe_combat_dir(cm, pos, Vec3::ZERO, tan, strafe_weight)
+                            .unwrap_or(Vec3::ZERO),
+                        false,
+                    )
                 } else {
                     // Chase via nav look-ahead + light tangential strafe.
-                    let nav_dir = nav
-                        .pursue_target(pos)
+                    let nav_dir = pursue_pt
                         .map(|pt| {
                             let d = pt - pos;
                             Vec3::new(d.x, d.y, 0.0).normalize_or_zero()
@@ -642,15 +665,18 @@ impl crate::brains::core::Brain for MainBrain {
                         let tan = Vec3::new(-dir.y, dir.x, 0.0)
                             * self.steering.strafe_tick(dt)
                             * strafe_weight;
-                        ((nav_dir + tan).normalize_or_zero(), false)
+                        match hazard::safe_combat_dir(cm, pos, nav_dir, tan, 1.0) {
+                            Some(d2) => (d2, false),
+                            // Strafing near a hazard edge: drop the strafe, stay on the path.
+                            None => (nav_dir, true),
+                        }
                     } else {
                         (nav_dir, true)
                     }
                 }
             } else {
                 // Roaming: follow path look-ahead.
-                let dir = nav
-                    .pursue_target(pos)
+                let dir = pursue_pt
                     .map(|pt| {
                         let d = pt - pos;
                         Vec3::new(d.x, d.y, 0.0).normalize_or_zero()
@@ -660,8 +686,7 @@ impl crate::brains::core::Brain for MainBrain {
             };
 
             // ── 4. Arrive throttle (slows near final goal) ────────────────
-            let arrive = nav
-                .pursue_target(pos)
+            let arrive = pursue_pt
                 .map(|pt| Steering::arrive_scale((pt - pos).length()))
                 .unwrap_or(1.0);
 
@@ -686,7 +711,7 @@ impl crate::brains::core::Brain for MainBrain {
             }
 
             // ── 6. Stuck recovery (Plan 13) ───────────────────────────────
-            let has_nav_target = nav.pursue_target(pos).is_some();
+            let has_nav_target = pursue_pt.is_some();
             let engaging = matches!(self.fsm, BehaviorState::Engage { .. });
             let rec_action = if gates.any() {
                 RecoveryAction::None
@@ -702,7 +727,9 @@ impl crate::brains::core::Brain for MainBrain {
                 }
                 RecoveryAction::Strafe { dir } => {
                     tracing::debug!(?pos, dir, "stuck — strafe");
-                    mv.move_side(dir);
+                    // A blind side-step at a lava edge is death — flip toward the safe
+                    // side (Plan 48 L2). Both sides deadly → don't strafe at all.
+                    mv.move_side(hazard::safe_strafe_dir(cm, pos, view_yaw, dir));
                 }
                 RecoveryAction::BackOffThenRepath => {
                     tracing::debug!(?pos, "stuck — back off + repath");
@@ -755,9 +782,21 @@ impl crate::brains::core::Brain for MainBrain {
         let dodge = self.danger.evaluate(view, self.skill.combat());
         if dodge.is_active() {
             tracing::debug!(?dodge.strafe_dir, jump = dodge.jump, "dodging projectile");
+            // Dodging a rocket into lava trades damage for certain death — mirror the
+            // dodge if its world direction is hazardous, cancel it if both sides are
+            // (Plan 48 L2; the jump still fires either way).
+            let mut strafe_dir = dodge.strafe_dir;
+            if let Some(c) = cm {
+                if hazard::dir_is_hazardous(c, pos, strafe_dir) {
+                    strafe_dir = -strafe_dir;
+                    if hazard::dir_is_hazardous(c, pos, strafe_dir) {
+                        strafe_dir = Vec3::ZERO;
+                    }
+                }
+            }
             let yaw_rad = mv.yaw.to_radians();
             let right = Vec3::new(yaw_rad.sin(), -yaw_rad.cos(), 0.0);
-            mv.side = dodge.strafe_dir.dot(right).clamp(-1.0, 1.0);
+            mv.side = strafe_dir.dot(right).clamp(-1.0, 1.0);
             mv.forward = 0.0;
             if dodge.jump {
                 mv.jump();
