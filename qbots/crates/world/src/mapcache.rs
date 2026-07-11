@@ -68,7 +68,10 @@ const MAGIC: &[u8; 7] = b"QBNAVC2";
 // `lift_penalty_bits` leaves the fingerprint (now 13 × u32 = 52 bytes). Older caches auto-rejected.
 // Version 21: lava/slime-covered floors no longer emit dry nodes (Plan 48 L1 — a shallow pool
 // previously placed a "dry" node hovering over lava). Node set changes → regen.
-const VERSION: u8 = 21;
+// Version 22: flat walk edges require continuous non-deadly floor (segment_has_floor) and
+// stair treads reject lava/slime beds (Plan 50 E1 — hull traces fly over narrow lava
+// trenches, so A* routed bots straight through them). Edge set changes → regen.
+const VERSION: u8 = 22;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]

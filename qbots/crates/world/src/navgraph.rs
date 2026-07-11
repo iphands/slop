@@ -299,9 +299,13 @@ impl NavGraph {
                                 // Fall back to the step-climb trace when the direct trace
                                 // fails — stair risers can clip the diagonal even for
                                 // small height deltas.
+                                // The hull trace flies at body height and clears freely
+                                // over a lava trench narrower than CONNECT_RADIUS between
+                                // two safe rim nodes — a passing trace must ALSO show
+                                // continuous non-deadly floor (Plan 50 E1, cache v22).
                                 let t = cm.trace(&a, &b, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
                                 if !t.startsolid && t.fraction >= 1.0 {
-                                    true
+                                    segment_has_floor(cm, a, b)
                                 } else if dz.abs() > 0.5 {
                                     let (lower, upper) = if dz > 0.0 { (a, b) } else { (b, a) };
                                     walkable_stair(cm, lower, upper)
@@ -1874,6 +1878,16 @@ pub fn walkable_stair(cm: &CollisionModel, lower: [f32; 3], upper: [f32; 3]) -> 
             // fraction=1.0: no floor within STEP*2 below — bot would be floating.
             return false;
         }
+        // The hull floor hit is MASK_SOLID-only — a "tread" that is really a lava/slime
+        // bed must not validate the stair (Plan 50 E1). Feet sit at endpos + mins.z.
+        let feet = [
+            floor_probe.endpos[0],
+            floor_probe.endpos[1],
+            floor_probe.endpos[2] + HULL_MINS[2] + 1.0,
+        ];
+        if cm.point_contents(&feet) & (CONTENTS_LAVA | CONTENTS_SLIME) != 0 {
+            return false;
+        }
         pos = forward;
     }
     true
@@ -1889,13 +1903,15 @@ fn walkable_stair_link_orig(cm: &CollisionModel, a: [f32; 3], b: [f32; 3]) -> bo
         return false;
     }
     if dz.abs() <= STEP {
+        // Same trench blindness as the generate()-phase flat edges (Plan 50 E1): a clear
+        // hull trace over a lava gap must not bridge components across it.
         let fwd = cm.trace(&a, &b, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
         if !fwd.startsolid && fwd.fraction >= 1.0 {
-            return true;
+            return segment_has_floor(cm, a, b);
         }
         let rev = cm.trace(&b, &a, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
         if !rev.startsolid && rev.fraction >= 1.0 {
-            return true;
+            return segment_has_floor(cm, a, b);
         }
         if dz.abs() <= 0.5 {
             return false;
