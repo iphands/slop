@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bounds = (model.mins, model.maxs);
 
     let g = if built_mode {
-        world::generate_map_nav(baseq2, map, world::ELEVATOR_PENALTY, spacing)?.graph
+        world::generate_map_nav(baseq2, map, spacing)?.graph
     } else {
         // generate-only (no seed/elevator/bridge/prune).
         NavGraph::generate(&cm, bounds, spacing)

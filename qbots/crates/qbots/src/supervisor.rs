@@ -82,19 +82,14 @@ const DEFAULT_CACHE_DIR: &str = "data/mapcache";
 fn build_map_nav(cfg: &Config, map: &str) -> Option<MapNav> {
     let t0 = std::time::Instant::now();
     let cache_dir = std::path::Path::new(DEFAULT_CACHE_DIR);
-    let built = match world::cached_map_nav(
-        &cfg.paths.baseq2,
-        map,
-        Some(cache_dir),
-        world::ELEVATOR_PENALTY,
-        world::GRID_SPACING,
-    ) {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::error!(map, "nav load failed: {e}");
-            crate::fatal!(map, "aborting: no usable nav data for the server's map");
-        }
-    };
+    let built =
+        match world::cached_map_nav(&cfg.paths.baseq2, map, Some(cache_dir), world::GRID_SPACING) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::error!(map, "nav load failed: {e}");
+                crate::fatal!(map, "aborting: no usable nav data for the server's map");
+            }
+        };
     // Hard abort: a broken nav graph means no bot on this map can navigate.
     // All Q2 dm maps guarantee full spawn reachability — failure is our bug.
     if let Err(diag) = world::check_spawn_connectivity(&built) {

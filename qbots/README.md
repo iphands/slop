@@ -160,9 +160,8 @@ qbots spawn-to-weapon rocketlauncher [--count 24] [--max-secs 60]
   nav graph and goal origins come from the BSP, so the loaded map must match the server's.
   Pass `--map <name>` only to override; a mismatch produces garbage navigation.
 
-> Note: `--lift-penalty` (A* cost on elevator ride edges) is a **temporary hack** dodging a
-> multi-bot `func_plat` deadlock until real wait/ride/step-off behaviour exists — see
-> `context/elevator_todo.md`.
+> Note: bots use lifts politely (wait clear of an occupied shaft, back off a pinned plat,
+> step off promptly) — the old `--lift-penalty` hack is gone (Plan 31).
 
 ---
 

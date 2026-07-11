@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use world::{generate_map_nav, ELEVATOR_PENALTY, GRID_SPACING};
+use world::{generate_map_nav, GRID_SPACING};
 
 /// q2dm3 `item_quad` entity origin (upper level, reached by riding `func_train *10`).
 const QUAD: [f32; 3] = [192.0, 320.0, 216.0];
@@ -67,9 +67,7 @@ fn q2dm3_quad_and_railgun_reachable_by_ride() {
 
     // Lift-penalty 0 so A* is free to route via the ride edges (the intended path), matching
     // the Plan 43 validation commands and the eventual Plan 31 penalty removal.
-    let built =
-        generate_map_nav(&baseq2, "q2dm3", 0.0, GRID_SPACING).expect("build q2dm3 nav graph");
-    let _ = ELEVATOR_PENALTY; // documents the penalty this test intentionally bypasses.
+    let built = generate_map_nav(&baseq2, "q2dm3", GRID_SPACING).expect("build q2dm3 nav graph");
 
     assert_reachable_via_ride(&built, &QUAD, "quad");
     assert_reachable_via_ride(&built, &RAILGUN_LOOP, "loop-train railgun");

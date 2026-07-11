@@ -46,9 +46,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let live = std::env::var("QBOTS_LIVE").is_ok_and(|v| v != "0" && !v.is_empty());
     let built = if live {
         eprintln!("[navinspect] QBOTS_LIVE set — building nav live (bypassing cache + gate)");
-        world::generate_map_nav(baseq2, map, world::ELEVATOR_PENALTY, spacing)?
+        world::generate_map_nav(baseq2, map, spacing)?
     } else {
-        cached_map_nav(baseq2, map, Some(cache), world::ELEVATOR_PENALTY, spacing)?
+        cached_map_nav(baseq2, map, Some(cache), spacing)?
     };
     let g = &built.graph;
     let cm = &built.cm;

@@ -94,10 +94,6 @@ pub async fn run_scenario(
     goal_kind: ScenarioGoal,
     max_secs: f32,
     qport: u16,
-    // TODO(elevator-hack): temporary `--lift-penalty` knob. Extra A* cost on elevator
-    // ride edges so bots route around lifts (dodges the func_plat deadlock). Remove once
-    // bots wait-clear/step-off lifts like a human. See context/elevator_todo.md.
-    lift_penalty: f32,
     // Grid spacing of the nav graph to load/build (`--spacing`); cached per-spacing.
     spacing: f32,
     // Navigation backend (`--navmode`): the `astar` waypoint graph or the `navmesh` polygon mesh.
@@ -115,14 +111,8 @@ pub async fn run_scenario(
 
     // 1. Load BSP + build collision model + nav graph (cache-first, then live).
     let cache_dir = std::path::Path::new("data/mapcache");
-    let built = world::cached_map_nav(
-        &cfg.paths.baseq2,
-        &map,
-        Some(cache_dir),
-        lift_penalty,
-        spacing,
-    )
-    .map_err(|e| io_err(format!("can't build nav for '{map}': {e}")))?;
+    let built = world::cached_map_nav(&cfg.paths.baseq2, &map, Some(cache_dir), spacing)
+        .map_err(|e| io_err(format!("can't build nav for '{map}': {e}")))?;
 
     // All Q2 dm maps guarantee full spawn reachability, so a fragmented graph is a nav bug.
     // For the *movement-test harness* this is a WARNING, not a fatal abort: a scenario only

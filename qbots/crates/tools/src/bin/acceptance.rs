@@ -185,8 +185,8 @@ fn report(aggs: &[GroupAgg], control: Option<&str>) -> String {
 // `acceptance matrix --addr <host:port> [--bin qbots] [--brains a,b] [--maps m1,m2] [--rows sub]
 //  [--yes]` runs the proven traversal gates per brain and prints one pass/fail table. Rows are
 // grouped by map; the operator is prompted to switch the server between batches (`--yes` skips
-// prompts — a wrong-map row then fails fast on the scenario's own map preflight). The needed nav
-// cache variant is regenerated before each batch (cache keys include the lift penalty).
+// prompts — a wrong-map row then fails fast on the scenario's own map preflight). The map's nav
+// cache is regenerated before each batch.
 
 /// One acceptance row: a scenario invocation + its pass threshold. Thresholds start at the floors
 /// proven in `context/mode_perf.md` / plan closeouts — see each row's `note`.
@@ -198,8 +198,6 @@ struct MatrixRow {
     /// Pass gate: at least this many of `count` bots reach.
     min_reached: u32,
     count: u32,
-    /// Rows carrying `--lift-penalty 0` need the matching cache variant.
-    lift_penalty_zero: bool,
     note: &'static str,
 }
 
@@ -210,7 +208,6 @@ const MATRIX: &[MatrixRow] = &[
         args: &["spawn-to-weapon", "railgun", "--count", "3", "--max-secs", "90"],
         min_reached: 2,
         count: 3,
-        lift_penalty_zero: false,
         note: "water-room railgun via the swim tunnel (P40/P46: 3/3 proven; floor 2/3 for spawn variance)",
     },
     MatrixRow {
@@ -218,11 +215,10 @@ const MATRIX: &[MatrixRow] = &[
         name: "ride-railgun",
         args: &[
             "spawn-to-weapon", "railgun", "--instance", "1",
-            "--count", "4", "--max-secs", "150", "--lift-penalty", "0",
+            "--count", "4", "--max-secs", "150",
         ],
         min_reached: 3,
         count: 4,
-        lift_penalty_zero: true,
         note: "loop-train + lift railgun (P43: 3/4-4/4 proven)",
     },
     MatrixRow {
@@ -230,11 +226,10 @@ const MATRIX: &[MatrixRow] = &[
         name: "quad-train-lava",
         args: &[
             "spawn-to-item", "quaddamage",
-            "--count", "4", "--max-secs", "150", "--lift-penalty", "0",
+            "--count", "4", "--max-secs", "150",
         ],
         min_reached: 1,
         count: 4,
-        lift_penalty_zero: true,
         note: "ride *10 over the lava (P43: reliable from spawn3; far spawns ~1-2/4 → floor 1/4, target 3/4 pending P35)",
     },
     MatrixRow {
@@ -243,7 +238,6 @@ const MATRIX: &[MatrixRow] = &[
         args: &["spawn-to-spawn", "--count", "8", "--max-secs", "180"],
         min_reached: 3,
         count: 8,
-        lift_penalty_zero: false,
         note: "farthest-spawn reach, 180s cap (90s under-measured: 1-4/8). Measured 2026-07-10: runtester 3/8, main 6/8, q3 4/8 → floor 3/8 (worst measured brain); target 8/8 — q2dm2 route quality is a named follow-up (connectivity full ≠ navigable).",
     },
 ];
@@ -303,30 +297,19 @@ fn run_matrix(mut args: Vec<String>) -> ExitCode {
                 let mut line = String::new();
                 let _ = std::io::stdin().read_line(&mut line);
             }
-            // Regenerate the cache variant(s) this map's rows need (keys include lift penalty).
-            for lp0 in [false, true] {
-                if rows
-                    .iter()
-                    .any(|r| r.map == current_map && r.lift_penalty_zero == lp0)
-                {
-                    let mut gen = std::process::Command::new(&bin);
-                    gen.args([
-                        "generate-map-cache",
-                        "--map",
-                        current_map,
-                        "--spacing",
-                        "24",
-                        "--allow-failures",
-                    ]);
-                    if lp0 {
-                        gen.args(["--lift-penalty", "0"]);
-                    }
-                    eprintln!(
-                        "[matrix] regenerating {current_map} cache (lift_penalty_zero={lp0})…"
-                    );
-                    let _ = gen.output();
-                }
-            }
+            // Regenerate the map's cache (one variant per map — the lift-penalty hack was
+            // deleted in Plan 31; lifts always carry their honest cost now).
+            eprintln!("[matrix] regenerating {current_map} cache…");
+            let _ = std::process::Command::new(&bin)
+                .args([
+                    "generate-map-cache",
+                    "--map",
+                    current_map,
+                    "--spacing",
+                    "24",
+                    "--allow-failures",
+                ])
+                .output();
         }
         for brain in &brains {
             eprintln!("[matrix] {} / {} / --brain {brain} …", row.map, row.name);

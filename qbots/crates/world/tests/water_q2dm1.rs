@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 
-use world::{generate_map_nav, ELEVATOR_PENALTY, GRID_SPACING};
+use world::{generate_map_nav, GRID_SPACING};
 
 /// q2dm1 `weapon_railgun` entity origin (from the BSP entity lump).
 const RAILGUN: [f32; 3] = [240.0, -384.0, 464.0];
@@ -32,8 +32,7 @@ fn q2dm1_railgun_reachable_by_swim() {
         return;
     };
 
-    let built = generate_map_nav(&baseq2, "q2dm1", ELEVATOR_PENALTY, GRID_SPACING)
-        .expect("build q2dm1 nav graph");
+    let built = generate_map_nav(&baseq2, "q2dm1", GRID_SPACING).expect("build q2dm1 nav graph");
     let g = &built.graph;
 
     let goal = g.nearest(&RAILGUN).expect("nearest node to railgun");

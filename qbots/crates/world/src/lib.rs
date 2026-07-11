@@ -19,7 +19,7 @@ pub use bsp::{
 };
 pub use build::{
     cached_map_nav, check_spawn_connectivity, generate_map_nav, spacing_subdir, MapNavBuild,
-    ELEVATOR_PENALTY, GRID_SPACING, JUMP_SPACING,
+    GRID_SPACING, JUMP_SPACING,
 };
 pub use collision::{
     water_channel_world, CollisionModel, Trace, CONTENTS_LAVA, CONTENTS_SLIME, CONTENTS_SOLID,

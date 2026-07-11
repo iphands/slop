@@ -261,11 +261,6 @@ enum Cmd {
         /// Hard wall-clock cap per bot in seconds (default 30).
         #[arg(long, default_value = "30.0")]
         max_secs: f32,
-        /// TODO(elevator-hack): extra A* cost on elevator ride edges so bots route
-        /// around lifts (dodges the func_plat multi-bot deadlock). 0 = use lifts
-        /// freely. Temporary until real wait/ride/step-off behaviour exists.
-        #[arg(long, default_value = "5000")]
-        lift_penalty: f32,
         /// Grid spacing (units) of the nav graph to use. Each spacing has its own cache
         /// dir (`data/mapcache/<spacing>/`); generate it first with `generate-map-cache
         /// --spacing <n>`. Default 24.
@@ -305,11 +300,6 @@ enum Cmd {
         /// Hard wall-clock cap per bot in seconds (default 30).
         #[arg(long, default_value = "30.0")]
         max_secs: f32,
-        /// TODO(elevator-hack): extra A* cost on elevator ride edges so bots route
-        /// around lifts (dodges the func_plat multi-bot deadlock). 0 = use lifts
-        /// freely. Temporary until real wait/ride/step-off behaviour exists.
-        #[arg(long, default_value = "5000")]
-        lift_penalty: f32,
         /// Grid spacing (units) of the nav graph to use. Each spacing has its own cache
         /// dir (`data/mapcache/<spacing>/`); generate it first with `generate-map-cache
         /// --spacing <n>`. Default 24.
@@ -350,11 +340,6 @@ enum Cmd {
         /// Hard wall-clock cap per bot in seconds (default 30).
         #[arg(long, default_value = "30.0")]
         max_secs: f32,
-        /// TODO(elevator-hack): extra A* cost on elevator ride edges so bots route
-        /// around lifts (dodges the func_plat multi-bot deadlock). 0 = use lifts
-        /// freely. Temporary until real wait/ride/step-off behaviour exists.
-        #[arg(long, default_value = "5000")]
-        lift_penalty: f32,
         /// Grid spacing (units) of the nav graph to use. Each spacing has its own cache
         /// dir (`data/mapcache/<spacing>/`); generate it first with `generate-map-cache
         /// --spacing <n>`. Default 24.
@@ -394,9 +379,6 @@ enum Cmd {
         /// Hard wall-clock cap per bot in seconds (default 30).
         #[arg(long, default_value = "30.0")]
         max_secs: f32,
-        /// Extra A* cost on elevator/ride edges (0 = use freely).
-        #[arg(long, default_value = "5000")]
-        lift_penalty: f32,
         /// Grid spacing (units) of the nav graph to use. Default 24.
         #[arg(long, default_value = "24")]
         spacing: f32,
@@ -443,11 +425,6 @@ enum Cmd {
         /// (e.g. q2dm3) is a known-broken exception. Without it, any failure exits non-zero.
         #[arg(long)]
         allow_failures: bool,
-        /// A* cost added to elevator/lift ride edges (must match the `--lift-penalty` the
-        /// scenario/fleet loads with — it's part of the cache fingerprint). 0 = lifts used
-        /// freely (now that lifts are rideable, Plan 43). Default keeps the legacy 5000 bias.
-        #[arg(long, default_value = "5000")]
-        lift_penalty: f32,
     },
 }
 
@@ -695,13 +672,12 @@ async fn query_status(addr: SocketAddr) -> std::io::Result<status::StatusReport>
 /// Returns the resolved map name on success, or `Err(ExitCode::FAILURE)` after logging
 /// the precise reason (no map in status reply, map mismatch, missing cache, or a nav
 /// connectivity bug). `map_override` is the optional `--map` flag (skips autodetection);
-/// `spacing`/`lift_penalty` must match what the bots will load with.
+/// `spacing` must match what the bots will load with.
 async fn preflight_map(
     cfg: &Config,
     addr: SocketAddr,
     map_override: Option<&str>,
     spacing: f32,
-    lift_penalty: f32,
     // When true (the movement-test harness), a not-fully-connected nav graph is a WARNING
     // rather than a fatal abort — a scenario only needs the bot's spawn to reach its pinned
     // goal (checked per-spawn in `run_scenario`). Lets us exercise q2dm3's quad/railgun while
@@ -737,17 +713,11 @@ async fn preflight_map(
     //    is immediate and once, not per-bot at +Ns. This loads the BSP, builds the CM,
     //    and loads the cached graph exactly as the bots will.
     let cache_dir = std::path::Path::new("data/mapcache");
-    let built = world::cached_map_nav(
-        &cfg.paths.baseq2,
-        &map,
-        Some(cache_dir),
-        lift_penalty,
-        spacing,
-    )
-    .map_err(|e| {
-        tracing::error!("{e}");
-        ExitCode::FAILURE
-    })?;
+    let built =
+        world::cached_map_nav(&cfg.paths.baseq2, &map, Some(cache_dir), spacing).map_err(|e| {
+            tracing::error!("{e}");
+            ExitCode::FAILURE
+        })?;
     if let Err(diag) = world::check_spawn_connectivity(&built) {
         if !allow_partial {
             tracing::error!("{diag}");
@@ -1210,7 +1180,6 @@ async fn run_scenario_cmd(
     goal: scenario::ScenarioGoal,
     count: u8,
     max_secs: f32,
-    lift_penalty: f32,
     spacing: f32,
     mode: NavMode,
     brain: brain::BrainKind,
@@ -1229,7 +1198,7 @@ async fn run_scenario_cmd(
     // bot is spawned. Without this, each of the N staggered bot tasks would discover a
     // missing cache independently, surfacing the error seconds into the run. `--map` is
     // only an override (a mismatch produces garbage navigation, per AGENTS.md).
-    let map = match preflight_map(cfg, addr, map.as_deref(), spacing, lift_penalty, true).await {
+    let map = match preflight_map(cfg, addr, map.as_deref(), spacing, true).await {
         Ok(m) => Some(m),
         Err(code) => return code,
     };
@@ -1269,7 +1238,6 @@ async fn run_scenario_cmd(
                 goal,
                 max_secs,
                 bot_qport,
-                lift_penalty,
                 spacing,
                 mode,
                 brain,
@@ -1368,12 +1336,7 @@ fn glob_matches(pattern: &str, name: &str) -> bool {
 fn nav_debug(cfg: &Config, map: &str, pairs: usize) -> ExitCode {
     use std::collections::HashSet;
 
-    let built = match world::generate_map_nav(
-        &cfg.paths.baseq2,
-        map,
-        world::ELEVATOR_PENALTY,
-        world::GRID_SPACING,
-    ) {
+    let built = match world::generate_map_nav(&cfg.paths.baseq2, map, world::GRID_SPACING) {
         Ok(b) => b,
         Err(e) => {
             tracing::error!("{e}");
@@ -1599,7 +1562,6 @@ fn generate_map_cache(
     out_dir: &str,
     spacing: f32,
     allow_failures: bool,
-    lift_penalty: f32,
 ) -> ExitCode {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
@@ -1673,8 +1635,7 @@ fn generate_map_cache(
                     let built = match world::generate_map_nav(
                         &baseq2,
                         map,
-                        lift_penalty,
-                        spacing,
+                                    spacing,
                     ) {
                         Ok(b) => b,
                         Err(e) => {
@@ -1710,7 +1671,7 @@ fn generate_map_cache(
                         );
                     }
                     let fp =
-                        world::Fingerprint::from_bsp(&built.bsp, lift_penalty, spacing);
+                        world::Fingerprint::from_bsp(&built.bsp, spacing);
                     let cache_path = out_path.join(format!("{map}.qnav"));
                     match world::save_mapcache(&cache_path, &built.graph, &fp) {
                         Ok(()) => {
@@ -1828,16 +1789,7 @@ async fn main() -> ExitCode {
                 }
             };
             // Detect + validate the server's map before connecting (fatal on miss).
-            if let Err(code) = preflight_map(
-                &cfg,
-                addr,
-                None,
-                world::GRID_SPACING,
-                world::ELEVATOR_PENALTY,
-                false,
-            )
-            .await
-            {
+            if let Err(code) = preflight_map(&cfg, addr, None, world::GRID_SPACING, false).await {
                 return code;
             }
             tracing::info!("connecting '{name}' to {addr} (qport {qport})…  Ctrl-C to stop.");
@@ -1903,16 +1855,7 @@ async fn main() -> ExitCode {
             };
             // Detect + validate the server's map before spawning the fleet (fatal on
             // miss) — one up-front gate instead of N bots each failing to build nav.
-            if let Err(code) = preflight_map(
-                &cfg,
-                addr,
-                None,
-                world::GRID_SPACING,
-                world::ELEVATOR_PENALTY,
-                false,
-            )
-            .await
-            {
+            if let Err(code) = preflight_map(&cfg, addr, None, world::GRID_SPACING, false).await {
                 return code;
             }
             match supervisor::run_fleet(
@@ -2037,16 +1980,7 @@ async fn main() -> ExitCode {
                 }
             };
             // Detect + validate the server's map before launching the competing fleets.
-            if let Err(code) = preflight_map(
-                &cfg,
-                addr,
-                None,
-                world::GRID_SPACING,
-                world::ELEVATOR_PENALTY,
-                false,
-            )
-            .await
-            {
+            if let Err(code) = preflight_map(&cfg, addr, None, world::GRID_SPACING, false).await {
                 return code;
             }
             match supervisor::run_competition(
@@ -2330,7 +2264,6 @@ async fn main() -> ExitCode {
             name,
             count,
             max_secs,
-            lift_penalty,
             spacing,
             mode,
             brain,
@@ -2343,7 +2276,6 @@ async fn main() -> ExitCode {
                 scenario::ScenarioGoal::FarthestSpawn,
                 count,
                 max_secs,
-                lift_penalty,
                 spacing,
                 mode,
                 brain,
@@ -2358,7 +2290,6 @@ async fn main() -> ExitCode {
             name,
             count,
             max_secs,
-            lift_penalty,
             spacing,
             mode,
             brain,
@@ -2374,7 +2305,6 @@ async fn main() -> ExitCode {
                 },
                 count,
                 max_secs,
-                lift_penalty,
                 spacing,
                 mode,
                 brain,
@@ -2389,7 +2319,6 @@ async fn main() -> ExitCode {
             name,
             count,
             max_secs,
-            lift_penalty,
             spacing,
             mode,
             brain,
@@ -2405,7 +2334,6 @@ async fn main() -> ExitCode {
                 },
                 count,
                 max_secs,
-                lift_penalty,
                 spacing,
                 mode,
                 brain,
@@ -2421,7 +2349,6 @@ async fn main() -> ExitCode {
             name,
             count,
             max_secs,
-            lift_penalty,
             spacing,
             mode,
             brain,
@@ -2434,7 +2361,6 @@ async fn main() -> ExitCode {
                 scenario::ScenarioGoal::Point { x, y, z },
                 count,
                 max_secs,
-                lift_penalty,
                 spacing,
                 mode,
                 brain,
@@ -2448,16 +2374,7 @@ async fn main() -> ExitCode {
             out_dir,
             spacing,
             allow_failures,
-            lift_penalty,
-        } => generate_map_cache(
-            &cfg,
-            &map,
-            jobs,
-            &out_dir,
-            spacing,
-            allow_failures,
-            lift_penalty,
-        ),
+        } => generate_map_cache(&cfg, &map, jobs, &out_dir, spacing, allow_failures),
         Cmd::BspInfo { map } => match world::Bsp::load(&cfg.paths.baseq2, &map) {
             Ok(bsp) => {
                 tracing::info!(

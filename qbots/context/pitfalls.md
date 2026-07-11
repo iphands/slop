@@ -903,3 +903,23 @@ always-available half — build that. Fallbacks if you truly need enemy weapon: 
 projectile entities (rocket/grenade models) or muzzle/fire sounds, never guess.
 ## Sources
 - qbots: brain/src/{weapons.rs from_wield_model, perception.rs held_weapon}, qbots/src/main.rs (QBOTS_P28_DEBUG)
+
+# func_plat elevator deadlock — CLOSED (Plan 31; history from elevator_todo.md)
+The debt item `context/elevator_todo.md` is retired. The bug it tracked: Q2's `Touch_Plat_Center`
+resets the plat's go-down timer EVERY tick a body is anywhere in the shaft trigger (`g_func.c`) —
+so bots crowding a lift (riders dwelling on top, queuers standing at the bottom trigger) pinned it
+and starved everyone. The interim hack was `ELEVATOR_PENALTY` (5000u A* cost on every lift edge,
+`--lift-penalty` knob) so A* avoided lifts whenever stairs existed.
+Resolution (Plan 31): the shared TraversalExecutor's vertical branch is a 3-phase machine —
+**WaitClear** at a standoff OUTSIDE the trigger while the shaft is occupied or the pad is visibly
+away (waiting bots no longer pin a raised plat; blind timeout ~4s because PVS can hide both
+signals), **Enter** (hop on; if the pad hasn't lifted us in ~5s someone unseen is pinning it →
+back off, which is exactly what lets it descend), **BackOff** (jittered 2–4s from the bot's own
+standoff spot — deterministic jitter breaks two-bot yield-loop symmetry). Route continuation walks
+riders off the pad at the top. The hack, its flag, and its cache-fingerprint field are deleted
+(cache v20); lift edges carry honest travel cost.
+Detection notes for future mover work: a func_plat's wire origin is [0,0,0] at TOP (ambiguous with
+null world entities) and (0,0,-travel) at BOTTOM — only the lowered state is detectable; design
+around "can't see it → wait clear, then timeout in".
+## Sources
+- qbots: brain/src/{ride.rs shaft_occupied/plat_at_bottom, traverse.rs LiftPhase}, world/src/build.rs add_lift

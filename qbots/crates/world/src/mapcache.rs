@@ -63,7 +63,10 @@ const MAGIC: &[u8; 7] = b"QBNAVC2";
 // Version 19: jump-down bridges retry the launch arc at hop height (+32u — ledge lips no longer
 // veto real drops) and `JUMP_BRIDGE_HDIST` 80→104 (Plan 35 T3, q2dm6/q2dm7 stacked-floor
 // junctions). Graph edges change → regen.
-const VERSION: u8 = 19;
+// Version 20: the `ELEVATOR_PENALTY`/`--lift-penalty` hack is DELETED (Plan 31 — the traversal
+// executor now de-conflicts lifts); lift ride edges carry their honest travel cost and
+// `lift_penalty_bits` leaves the fingerprint (now 13 × u32 = 52 bytes). Older caches auto-rejected.
+const VERSION: u8 = 20;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]
@@ -90,10 +93,6 @@ pub struct Fingerprint {
     /// `CONNECT_RADIUS` (f32 bits) — generate()'s world-unit connection radius (the
     /// changes which edges generate adds, so it must invalidate stale caches.
     connect_radius_bits: u32,
-    /// `lift_penalty` (f32 bits) — extra A* cost baked into elevator ride edges. A
-    /// runtime knob (`--lift-penalty`), so it must be part of the cache key.
-    /// TODO(elevator-hack): remove with the penalty once real lift behaviour exists.
-    lift_penalty_bits: u32,
     /// `SWIM_SPACING` (f32 bits) — submerged swim-node vertical spacing (Plan 39). Changing
     /// it alters which water nodes/edges are generated, so it must invalidate stale caches.
     swim_spacing_bits: u32,
@@ -104,9 +103,9 @@ pub struct Fingerprint {
 
 impl Fingerprint {
     /// Derive the fingerprint from a loaded BSP and the current generation constants.
-    /// `lift_penalty` and `spacing` are the runtime `--lift-penalty` / `--spacing` values
-    /// (part of the cache key, so different runtime params never share a cache file).
-    pub fn from_bsp(bsp: &Bsp, lift_penalty: f32, spacing: f32) -> Self {
+    /// `spacing` is the runtime `--spacing` value (part of the cache key, so different
+    /// runtime spacings never share a cache file).
+    pub fn from_bsp(bsp: &Bsp, spacing: f32) -> Self {
         // FNV-1a over the first min(256, plane_count) planes' normal+dist bytes
         // (16 bytes each). Any structural BSP change flips this.
         let sample_count = bsp.planes.len().min(256);
@@ -135,7 +134,6 @@ impl Fingerprint {
             bridge_hdist_bits: BRIDGE_HDIST.to_bits(),
             prune_max_hd_bits: PRUNE_MAX_HD.to_bits(),
             connect_radius_bits: CONNECT_RADIUS.to_bits(),
-            lift_penalty_bits: lift_penalty.to_bits(),
             swim_spacing_bits: SWIM_SPACING.to_bits(),
             swim_cost_factor_bits: SWIM_COST_FACTOR.to_bits(),
         }
@@ -154,7 +152,6 @@ impl Fingerprint {
             self.bridge_hdist_bits,
             self.prune_max_hd_bits,
             self.connect_radius_bits,
-            self.lift_penalty_bits,
             self.swim_spacing_bits,
             self.swim_cost_factor_bits,
         ] {
@@ -166,7 +163,7 @@ impl Fingerprint {
         if data.len() < FP_BYTES {
             return None;
         }
-        let mut fields = [0u32; 14];
+        let mut fields = [0u32; 13];
         for (i, f) in fields.iter_mut().enumerate() {
             *f = u32::from_le_bytes(data[i * 4..i * 4 + 4].try_into().ok()?);
         }
@@ -182,15 +179,14 @@ impl Fingerprint {
             bridge_hdist_bits: fields[8],
             prune_max_hd_bits: fields[9],
             connect_radius_bits: fields[10],
-            lift_penalty_bits: fields[11],
-            swim_spacing_bits: fields[12],
-            swim_cost_factor_bits: fields[13],
+            swim_spacing_bits: fields[11],
+            swim_cost_factor_bits: fields[12],
         })
     }
 }
 
-/// Fingerprint on-disk size in bytes (14 × u32).
-const FP_BYTES: usize = 56;
+/// Fingerprint on-disk size in bytes (13 × u32) — `lift_penalty_bits` removed in v20 (Plan 31).
+const FP_BYTES: usize = 52;
 
 /// Write a nav graph to `path`. Overwrites any existing file.
 pub fn save(path: &Path, graph: &NavGraph, fingerprint: &Fingerprint) -> io::Result<()> {
@@ -429,7 +425,6 @@ mod tests {
             bridge_hdist_bits: BRIDGE_HDIST.to_bits(),
             prune_max_hd_bits: PRUNE_MAX_HD.to_bits(),
             connect_radius_bits: CONNECT_RADIUS.to_bits(),
-            lift_penalty_bits: 5000.0_f32.to_bits(),
             swim_spacing_bits: SWIM_SPACING.to_bits(),
             swim_cost_factor_bits: SWIM_COST_FACTOR.to_bits(),
         }

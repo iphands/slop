@@ -33,15 +33,9 @@ pub const BRIDGE_HDIST: f32 = 256.0;
 /// cannot follow them with straight-line steering. 144u keeps real flights, drops the
 /// node-10300-style false hubs (hd 187-255). In the cache fingerprint.
 pub const PRUNE_MAX_HD: f32 = 144.0;
-/// Extra A* cost (units) added to a `func_plat`/lift's vertical ride edge. Riding a Q2
-/// elevator can't be modelled by straight-line steering — the bot must wait at the
-/// bottom for the plat, ride it, and step off promptly at the top, or it holds the
-/// shaft trigger and deadlocks everyone queued below (`g_func.c` Touch_Plat_Center:
-/// a player lingering at STATE_TOP resets the go-down timer indefinitely). Until that
-/// is modelled, penalise the ride so A* prefers ANY stair/ramp route; the lift is kept
-/// (finite cost) only as a last resort for genuinely lift-only spawns. In the cache
-/// fingerprint via VERSION bump.
-pub const ELEVATOR_PENALTY: f32 = 5000.0;
+// The old `ELEVATOR_PENALTY` (5000u A* cost on every lift edge) is DELETED (Plan 31): the
+// traversal executor now waits clear of an occupied shaft, backs off a pinned lift, and steps
+// off promptly — so lifts carry their honest travel cost and A* uses them like a human would.
 
 /// Everything a caller needs after building a map's nav graph: the parsed BSP
 /// (for spawn points / entity lookups), the collision model (for traces/LOS),
@@ -78,13 +72,12 @@ pub fn cached_map_nav(
     baseq2: &Path,
     map: &str,
     cache_dir: Option<&Path>,
-    lift_penalty: f32,
     spacing: f32,
 ) -> Result<MapNavBuild, String> {
     let bsp = Bsp::load(baseq2, map)?;
     let cm = Arc::new(CollisionModel::from_bsp(&bsp));
     let spawn_origins: Vec<[f32; 3]> = bsp.spawn_points().iter().map(|s| s.origin).collect();
-    let fp = Fingerprint::from_bsp(&bsp, lift_penalty, spacing);
+    let fp = Fingerprint::from_bsp(&bsp, spacing);
 
     // Try the disk cache if a directory was provided (per-spacing subdir).
     if let Some(dir) = cache_dir {
@@ -132,12 +125,7 @@ pub fn cached_map_nav(
 /// collision model, sample the nav graph, seed DM spawns as nodes, and detect
 /// ledge-drop jump edges. Returns `Err` only on load/parse failure or a BSP with
 /// no models — never partial output.
-pub fn generate_map_nav(
-    baseq2: &Path,
-    map: &str,
-    lift_penalty: f32,
-    spacing: f32,
-) -> Result<MapNavBuild, String> {
+pub fn generate_map_nav(baseq2: &Path, map: &str, spacing: f32) -> Result<MapNavBuild, String> {
     let bsp = Bsp::load(baseq2, map)?;
     let cm = Arc::new(CollisionModel::from_bsp(&bsp));
 
@@ -153,7 +141,7 @@ pub fn generate_map_nav(
 
     let mut graph = NavGraph::generate(&cm, bounds, spacing);
     let seeded = graph.seed_spawns(&cm, &spawn_origins);
-    add_elevator_edges(&mut graph, &cm, &bsp, lift_penalty);
+    add_elevator_edges(&mut graph, &cm, &bsp);
     add_train_edges(&mut graph, &cm, &bsp);
     let ladders = add_ladder_edges(&mut graph, &bsp);
     tracing::info!(map, ladders, "added ladder climb edges");
@@ -209,16 +197,11 @@ pub fn generate_map_nav(
 ///
 /// Returns the number of elevator edge-pairs added (each pair = 1 top↔bottom edge
 /// plus however many edges connected those nodes to their local nav graphs).
-pub fn add_elevator_edges(
-    graph: &mut NavGraph,
-    cm: &CollisionModel,
-    bsp: &Bsp,
-    lift_penalty: f32,
-) -> usize {
+pub fn add_elevator_edges(graph: &mut NavGraph, cm: &CollisionModel, bsp: &Bsp) -> usize {
     let mut added = 0;
     // `func_plat`: auto-lowering platform, rests at top, travels down.
     for entity in bsp.find_class("func_plat") {
-        if let Some(n) = try_add_plat(graph, cm, bsp, entity, lift_penalty) {
+        if let Some(n) = try_add_plat(graph, cm, bsp, entity) {
             added += n;
         }
     }
@@ -227,7 +210,7 @@ pub fn add_elevator_edges(
     // Horizontal doors are skipped — their doorway floor lives in world model 0 and
     // is already sampled, so they never fragment the graph.
     for entity in bsp.find_class("func_door") {
-        if let Some(n) = try_add_vertical_door(graph, cm, bsp, entity, lift_penalty) {
+        if let Some(n) = try_add_vertical_door(graph, cm, bsp, entity) {
             added += n;
         }
     }
@@ -587,7 +570,6 @@ fn add_lift(
     z_hi: f32,
     z_lo: f32,
     label: &str,
-    lift_penalty: f32,
 ) -> usize {
     let cx = (model.mins[0] + model.maxs[0]) / 2.0;
     let cy = (model.mins[1] + model.maxs[1]) / 2.0;
@@ -600,13 +582,13 @@ fn add_lift(
     let top_idx = graph.add_node(top_node);
     let bot_idx = graph.add_node(bot_node);
     // A vertical RIDE edge (Plan 43): the brain walks onto the pad and is carried, instead of
-    // trying to "walk" the impossible vertical edge. `lift_penalty` still biases A* toward any
-    // stair/ramp alternative (TODO(elevator-hack): remove with the multi-bot de-conflict in
-    // Plan 31 — see context/elevator_todo.md), but a lift-only route (q2dm3 railgun) still uses it.
+    // trying to "walk" the impossible vertical edge. Honest cost = travel distance — the old
+    // `ELEVATOR_PENALTY` deadlock-avoidance hack is GONE (Plan 31: the traversal executor now
+    // waits clear of an occupied shaft and backs off a pinned lift, so lifts are used politely).
     graph.add_ride_edge(
         bot_idx,
         top_idx,
-        (z_hi - z_lo).abs() + lift_penalty,
+        (z_hi - z_lo).abs(),
         crate::navgraph::RideInfo {
             board: bot_node,
             far: top_node,
@@ -633,7 +615,6 @@ fn try_add_plat(
     cm: &CollisionModel,
     bsp: &Bsp,
     entity: &BspEntity,
-    lift_penalty: f32,
 ) -> Option<usize> {
     let model = entity_model(bsp, entity)?;
 
@@ -665,7 +646,6 @@ fn try_add_plat(
         model.maxs[2],
         model.maxs[2] - travel,
         "func_plat elevator bridge",
-        lift_penalty,
     ))
 }
 
@@ -674,7 +654,6 @@ fn try_add_vertical_door(
     cm: &CollisionModel,
     bsp: &Bsp,
     entity: &BspEntity,
-    lift_penalty: f32,
 ) -> Option<usize> {
     // `angle` is the special move direction: -1 = up, -2 = down (`G_SetMovedir`,
     // g_utils.c:381). Anything else is a horizontal door — not a lift; skip it.
@@ -716,7 +695,6 @@ fn try_add_vertical_door(
         z_hi,
         z_lo,
         "func_door lift bridge",
-        lift_penalty,
     ))
 }
 
