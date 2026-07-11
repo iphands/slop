@@ -592,3 +592,23 @@ the map's ladders serve the slime pit, not lower→upper. Same follow-up class a
 route quality. Consider acceptance-matrix rows for q2dm6/q2dm7 s2s with today's floors.
 LESSON: two of the three Plan 35 bugs were in the MEASUREMENT (forward-only components, junk-blob
 largest), not the map or the graph — instrument identity before surgery.
+
+## 2026-07-10 — Plan 31 closed: lifts used politely, the ELEVATOR_PENALTY hack is DELETED
+The last tracked debt item is paid. The deadlock mechanism (a body ANYWHERE in the shaft re-arms
+`Touch_Plat_Center` every tick) is addressed at its root: the executor's vertical branch is a
+3-phase machine — WaitClear at a standoff OUTSIDE the trigger (waiting bots no longer pin a raised
+plat; ~4s blind timeout since PVS can hide both the pad and occupants), Enter (hop on; pad hasn't
+lifted us in ~5s → someone unseen is pinning it → back off, which is exactly what lets it
+descend), BackOff (jittered 2–4s from the bot's own standoff spot — breaks two-bot yield-loop
+symmetry). New predicates: `shaft_occupied` (player in the shaft column) and `plat_at_bottom`
+(lowered wire origin z = −travel; the at-top origin [0,0,0] is PVS-ambiguous by design).
+**The hack + `--lift-penalty` + `lift_penalty_bits` are deleted everywhere** (cache v20); lift
+edges carry honest travel cost, so A* now uses lifts like a human would.
+**T5 live proof:** 10-min 8-bot q2dm1 soak — frag flow rose continuously 36→73 (no deadlock/
+starvation), 9 rides + 124 swims completed, **1 `EVT lift_yield` fired and resolved**, 0 panics,
+kd 0.94. Flag-free q2dm3 ride gate: 2/4 then **4/4 ®** (documented variance band; retry policy) —
+and the fastest reach dropped to 11s (vs the historical 32s best): honest costs mean A* routes
+THROUGH the lift now.
+Watch item: 3 `EVT drown` resync events in the soak — these are unexplained-underwater-damage
+resyncs (likely unseen-attacker splash near water), each forcing an immediate surface (safe
+direction); rename to `EVT drown_resync` if it confuses the zero-drownings gate reading.
