@@ -159,6 +159,13 @@ pub fn generate_map_nav(baseq2: &Path, map: &str, spacing: f32) -> Result<MapNav
         graph.prune_long_blocked_edges(&cm, PRUNE_MAX_HD)
     };
     tracing::info!(map, pruned, "pruned long hull-blocked false edges");
+    // Teleporter edges AFTER the prune: a teleport is a server-side snap with no
+    // walkable line, so it must never face the hull-line prune (it is also marked
+    // trustworthy in the classifier as a second line of defense). Plan 52.
+    let teleporters = add_teleporter_edges(&mut graph, &cm, &bsp);
+    if teleporters > 0 {
+        tracing::info!(map, teleporters, "added teleporter edges");
+    }
     let added_jumps = graph.detect_jump_edges(&cm, JUMP_SPACING);
     // Fuse vertically-stacked floor components that connect only by a drop-off (q2dm3's
     // floors + the quad ledge) — a near-vertical jump-down detect_jump_edges' short probe
@@ -576,6 +583,98 @@ fn dist3(a: [f32; 3], b: [f32; 3]) -> f32 {
     (dx * dx + dy * dy + dz * dz).sqrt()
 }
 
+/// Fixed A* cost of a teleporter edge (Plan 52): the crossing itself is a near-instant
+/// server-side snap, but a small non-zero cost keeps route lengths honest. In the cache
+/// via VERSION.
+pub const TELEPORT_COST: f32 = 32.0;
+
+/// Parse teleporter pairs and add **one-way** [`crate::navgraph::EdgeKind::Teleport`]
+/// edges (Plan 52).
+///
+/// Sources: point `misc_teleporter` pads (entity origin) and brush `trigger_teleport`
+/// volumes (base-center of the inline model's bounds). Destinations:
+/// `misc_teleporter_dest` / `info_teleport_destination`, matched `target` →
+/// `targetname` (`g_misc.c` SP_misc_teleporter, `g_trigger.c` SP_trigger_teleport).
+/// Both endpoints are ground-snapped, added as nodes, wired to nearby walkable nodes,
+/// then linked pad → dest. Returns the number of teleporter edges added.
+pub fn add_teleporter_edges(graph: &mut NavGraph, cm: &CollisionModel, bsp: &Bsp) -> usize {
+    use std::collections::HashMap;
+    // Destination table: targetname → origin.
+    let mut dests: HashMap<&str, [f32; 3]> = HashMap::new();
+    for e in &bsp.entities {
+        if e.classname == "misc_teleporter_dest" || e.classname == "info_teleport_destination" {
+            if let (Some(tn), Some(org)) = (e.fields.get("targetname"), e.origin()) {
+                dests.insert(tn.as_str(), org);
+            }
+        }
+    }
+    if dests.is_empty() {
+        return 0;
+    }
+
+    // Collect (pad position, target name) for both source forms.
+    let mut sources: Vec<([f32; 3], &str)> = Vec::new();
+    for e in bsp.find_class("misc_teleporter") {
+        if let (Some(org), Some(t)) = (e.origin(), e.fields.get("target")) {
+            sources.push((org, t.as_str()));
+        }
+    }
+    for e in bsp.find_class("trigger_teleport") {
+        let Some(t) = e.fields.get("target") else {
+            continue;
+        };
+        let Some(model) = entity_model(bsp, e) else {
+            continue;
+        };
+        // Walk-in trigger volume: snap from the base of its bounds.
+        let base = [
+            (model.mins[0] + model.maxs[0]) / 2.0,
+            (model.mins[1] + model.maxs[1]) / 2.0,
+            model.mins[2],
+        ];
+        sources.push((base, t.as_str()));
+    }
+
+    let mut added = 0;
+    for (pad_org, target) in sources {
+        let Some(&dest_org) = dests.get(target) else {
+            tracing::warn!(target, "teleporter has no matching destination");
+            continue;
+        };
+        let (Some(pad_node), Some(dest_node)) =
+            (ground_node(cm, pad_org), ground_node(cm, dest_org))
+        else {
+            tracing::warn!(
+                ?pad_org,
+                ?dest_org,
+                "teleporter endpoint has no floor below"
+            );
+            continue;
+        };
+        let pad_idx = graph.add_node(pad_node);
+        let dest_idx = graph.add_node(dest_node);
+        graph.connect_node_to_nearby(cm, pad_idx, 128.0);
+        graph.connect_node_to_nearby(cm, dest_idx, 128.0);
+        graph.add_teleport_edge(pad_idx, dest_idx, TELEPORT_COST);
+        tracing::debug!(?pad_node, ?dest_node, target, "teleporter edge added");
+        added += 1;
+    }
+    added
+}
+
+/// Ground-snap `pos`: point-trace down and return the standing origin (floor + 24u),
+/// or `None` if there is no floor within 256u below or the start is inside solid.
+fn ground_node(cm: &CollisionModel, pos: [f32; 3]) -> Option<[f32; 3]> {
+    use crate::collision::MASK_SOLID;
+    let top = [pos[0], pos[1], pos[2] + 16.0];
+    let bot = [pos[0], pos[1], pos[2] - 256.0];
+    let tr = cm.trace(&top, &bot, &[0.0; 3], &[0.0; 3], MASK_SOLID);
+    if tr.startsolid || tr.fraction >= 1.0 {
+        return None;
+    }
+    Some([pos[0], pos[1], tr.endpos[2] + 24.0])
+}
+
 /// Add a two-level vertical lift between top-surface world z-values `z_hi` and `z_lo`
 /// at the brush's XY center: a nav node per level, an edge for the ride itself, and
 /// trace-checked edges from each node to nearby walkable floor nodes. Returns the
@@ -786,4 +885,85 @@ pub fn check_spawn_connectivity(built: &MapNavBuild) -> Result<(), String> {
     }
 
     Err(msg)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::collision::CollisionModel;
+    use std::collections::HashMap;
+
+    fn ent(class: &str, fields: &[(&str, &str)]) -> BspEntity {
+        let mut map: HashMap<String, String> = fields
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        map.insert("classname".into(), class.into());
+        BspEntity {
+            classname: class.into(),
+            fields: map,
+        }
+    }
+
+    fn bsp_with_entities(entities: Vec<BspEntity>) -> Bsp {
+        Bsp {
+            version: 38,
+            planes: vec![],
+            nodes: vec![],
+            leafs: vec![],
+            brushes: vec![],
+            brushsides: vec![],
+            leafbrushes: vec![],
+            models: vec![],
+            vis: vec![],
+            entities,
+        }
+    }
+
+    /// Plan 52: a `misc_teleporter` → `misc_teleporter_dest` pair becomes exactly one
+    /// DIRECTED Teleport edge: pad-side routes to the dest side, never back.
+    #[test]
+    fn teleporter_pair_adds_one_way_edge() {
+        let cm = CollisionModel::half_space([0.0, 0.0, 1.0], 0.0); // flat floor at z=0
+        let bsp = bsp_with_entities(vec![
+            ent("misc_teleporter", &[("origin", "0 0 8"), ("target", "t1")]),
+            ent(
+                "misc_teleporter_dest",
+                &[("origin", "1000 0 8"), ("targetname", "t1")],
+            ),
+        ]);
+        // Two pre-existing walk nodes, one near each endpoint (far apart →
+        // disconnected). z=25: comfortably above the floor-contact epsilon —
+        // ground-snapped nodes rest at ~24.03, and a node at exactly 24.0 sits ON
+        // the swept-hull clip plane, which the trace treats as touching.
+        let mut g = NavGraph::from_raw(
+            vec![[40.0, 0.0, 25.0], [1040.0, 0.0, 25.0]],
+            vec![vec![], vec![]],
+        );
+        let added = add_teleporter_edges(&mut g, &cm, &bsp);
+        assert_eq!(added, 1, "one teleporter pair → one edge");
+        // Nodes 2 (pad) and 3 (dest) were added, ground-snapped to z=24.
+        assert!(g.is_teleport_edge(2, 3), "pad → dest is a Teleport edge");
+        assert!(!g.is_teleport_edge(3, 2), "reverse is NOT a teleport");
+        assert!(
+            matches!(g.edge_kind(2, 3), crate::navgraph::EdgeKind::Teleport),
+            "edge_kind reports Teleport"
+        );
+        // A* crosses pad-side → dest-side, but never the reverse (one-way).
+        assert!(g.path(0, 1).is_some(), "route exists via the teleporter");
+        assert!(g.path(1, 0).is_none(), "teleporters are one-way");
+    }
+
+    /// Plan 52: a teleporter whose target has no destination entity adds nothing.
+    #[test]
+    fn teleporter_without_dest_is_ignored() {
+        let cm = CollisionModel::half_space([0.0, 0.0, 1.0], 0.0);
+        let bsp = bsp_with_entities(vec![ent(
+            "misc_teleporter",
+            &[("origin", "0 0 8"), ("target", "nowhere")],
+        )]);
+        let mut g = NavGraph::from_raw(vec![[40.0, 0.0, 24.0]], vec![vec![]]);
+        assert_eq!(add_teleporter_edges(&mut g, &cm, &bsp), 0);
+        assert_eq!(g.node_count(), 1, "no nodes added");
+    }
 }

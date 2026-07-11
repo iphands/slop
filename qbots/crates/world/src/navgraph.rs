@@ -97,6 +97,11 @@ pub enum EdgeKind {
     /// per-edge [`RideInfo`] (board / far / dismount positions) is fetched via
     /// [`NavGraph::ride_info`].
     Ride,
+    /// Teleporter edge (Plan 52): one-way pad → destination. The bot walks into the
+    /// pad (`misc_teleporter` / `trigger_teleport`); the **server** snaps it to the
+    /// destination (`g_misc.c` teleporter_touch), so traversal is just "walk to the
+    /// source node" and the leg completes at the destination node after the snap.
+    Teleport,
 }
 
 /// Per-edge data for an [`EdgeKind::Ride`] moving-platform edge (Plan 42). The brain reads
@@ -151,6 +156,9 @@ pub struct NavGraph {
     /// Per-ride-edge metadata (board/far/dismount positions + model index), keyed by the
     /// directed `(from, to)` pair (Plan 42).
     ride_info: HashMap<(usize, usize), RideInfo>,
+    /// Directed `(pad, dest)` teleporter edges (Plan 52). Always one-way — a return
+    /// trip needs its own teleporter (or a walk route).
+    teleport_edges: HashSet<(usize, usize)>,
 }
 
 impl NavGraph {
@@ -352,6 +360,7 @@ impl NavGraph {
             water_nodes,
             ride_edges: HashSet::new(),
             ride_info: HashMap::new(),
+            teleport_edges: HashSet::new(),
         }
     }
 
@@ -376,6 +385,7 @@ impl NavGraph {
         let adj = &self.adj;
         let swim = &self.swim_edges;
         let ride = &self.ride_edges;
+        let tele = &self.teleport_edges;
         (0..nodes.len())
             .into_par_iter()
             .flat_map_iter(|a| {
@@ -385,6 +395,11 @@ impl NavGraph {
                     // walk/stair line, so the prune's hull check would falsely flag them. Keep
                     // them as trustworthy (visited once per undirected pair, a < b).
                     if a < b && (swim.contains(&(a, b)) || ride.contains(&(a, b))) {
+                        return Some(EdgeClass::Trustworthy(a, b));
+                    }
+                    // Teleporter edges (Plan 52) are one-way server-side snaps — no walkable
+                    // line exists, so the hull check would always flag them. Trustworthy.
+                    if tele.contains(&(a, b)) {
                         return Some(EdgeClass::Trustworthy(a, b));
                     }
                     classify_prune_edge(nodes, cm, max_hd, a, b)
@@ -402,6 +417,10 @@ impl NavGraph {
             for &(b, _) in &self.adj[a] {
                 if a < b && (self.swim_edges.contains(&(a, b)) || self.ride_edges.contains(&(a, b)))
                 {
+                    v.push(EdgeClass::Trustworthy(a, b));
+                    continue;
+                }
+                if self.teleport_edges.contains(&(a, b)) {
                     v.push(EdgeClass::Trustworthy(a, b));
                     continue;
                 }
@@ -481,6 +500,8 @@ impl NavGraph {
             self.ride_edges.remove(&(b, a));
             self.ride_info.remove(&(a, b));
             self.ride_info.remove(&(b, a));
+            self.teleport_edges.remove(&(a, b));
+            self.teleport_edges.remove(&(b, a));
         }
         removed
     }
@@ -503,6 +524,7 @@ impl NavGraph {
             water_nodes: HashSet::new(),
             ride_edges: HashSet::new(),
             ride_info: HashMap::new(),
+            teleport_edges: HashSet::new(),
         }
     }
 
@@ -533,6 +555,7 @@ impl NavGraph {
             water_nodes: HashSet::new(),
             ride_edges: HashSet::new(),
             ride_info: HashMap::new(),
+            teleport_edges: HashSet::new(),
         }
     }
 
@@ -595,6 +618,34 @@ impl NavGraph {
     /// True if the directed edge `(a, b)` is a ride edge (Plan 42).
     pub fn is_ride_edge(&self, a: usize, b: usize) -> bool {
         self.ride_edges.contains(&(a, b))
+    }
+
+    /// Add a **one-way** teleporter edge `pad → dest` (Plan 52). The reverse direction
+    /// is never implied — Q2 teleporters are one-way.
+    pub fn add_teleport_edge(&mut self, pad: usize, dest: usize, cost: f32) {
+        if pad >= self.adj.len() || dest >= self.adj.len() {
+            return;
+        }
+        self.adj[pad].push((dest, cost));
+        self.teleport_edges.insert((pad, dest));
+    }
+
+    /// True if the directed edge `(a, b)` is a teleporter edge (Plan 52).
+    pub fn is_teleport_edge(&self, a: usize, b: usize) -> bool {
+        self.teleport_edges.contains(&(a, b))
+    }
+
+    /// Inject pre-serialized teleporter edges (mapcache deserialization, Plan 52).
+    pub fn set_teleports(&mut self, teleports: Vec<(usize, usize)>) {
+        self.teleport_edges = teleports.into_iter().collect();
+    }
+
+    /// Teleporter edges for serialization (Plan 52), sorted for determinism. Directed
+    /// `(pad, dest)` exactly as stored.
+    pub fn raw_teleports(&self) -> Vec<(usize, usize)> {
+        let mut t: Vec<(usize, usize)> = self.teleport_edges.iter().copied().collect();
+        t.sort_unstable();
+        t
     }
 
     /// The [`RideInfo`] for the directed ride edge `(from, to)`, if it is one (Plan 42).
@@ -1618,6 +1669,8 @@ impl NavGraph {
             EdgeKind::Swim
         } else if self.ride_edges.contains(&(from, to)) {
             EdgeKind::Ride
+        } else if self.teleport_edges.contains(&(from, to)) {
+            EdgeKind::Teleport
         } else {
             EdgeKind::Walk
         }

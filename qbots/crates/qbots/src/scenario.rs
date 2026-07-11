@@ -208,13 +208,15 @@ pub async fn run_scenario(
                     // Once, log the edge-kind composition of a winning path — tells us which
                     // special traversals (Ride/Jump/Swim) the brain must execute to arrive.
                     if let (false, Some(p)) = (logged_kinds, path) {
-                        let (mut walk, mut jump, mut swim, mut ride) = (0, 0, 0, 0);
+                        let (mut walk, mut jump, mut swim, mut ride, mut teleport) =
+                            (0, 0, 0, 0, 0);
                         for w in p.windows(2) {
                             match graph.edge_kind(w[0], w[1]) {
                                 world::EdgeKind::Walk => walk += 1,
                                 world::EdgeKind::Jump { .. } => jump += 1,
                                 world::EdgeKind::Swim => swim += 1,
                                 world::EdgeKind::Ride => ride += 1,
+                                world::EdgeKind::Teleport => teleport += 1,
                             }
                         }
                         tracing::info!(
@@ -224,6 +226,7 @@ pub async fn run_scenario(
                             jump,
                             swim,
                             ride,
+                            teleport,
                             "goal path edge-kind composition"
                         );
                         // Dump each ride edge's endpoints (board→dismount) so we can see the
