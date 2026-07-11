@@ -38,6 +38,9 @@ pub enum ConnState {
     Connected,
     /// Spawned into the level.
     Active,
+    /// The server refused the connect handshake (e.g. `Server is full.`,
+    /// `Bad challenge.`). Terminal — the reason is in [`Conn::reject_reason`].
+    Rejected,
 }
 
 /// A synchronous connection FSM. Methods return an optional datagram to send back.
@@ -58,6 +61,9 @@ pub struct Conn {
     /// Accumulated `svc_print` lines (obituaries, chat, MOTD) since the last
     /// [`Conn::drain_prints`]. Capped so a print burst can't grow unbounded.
     prints: Vec<String>,
+    /// Server's rejection message when [`ConnState::Rejected`] (e.g. `Server is full.`).
+    /// `None` until a pre-netchan OOB `print` classifies the handshake as refused.
+    pub reject_reason: Option<String>,
 }
 
 impl Conn {
@@ -76,6 +82,7 @@ impl Conn {
             frame: None,
             begin_queued: false,
             prints: Vec::new(),
+            reject_reason: None,
         }
     }
 
@@ -146,7 +153,16 @@ impl Conn {
             }
             Some("client_connect") => {}
             Some("print") => {
-                // `print\n<message>` — informational; not fatal.
+                // The server rejects at `SVC_DirectConnect` — before `client_connect`,
+                // i.e. before a netchan exists. So an OOB `print` received while we are
+                // still `Connecting` is a handshake rejection (`Server is full.`,
+                // `Bad challenge.`, `Connection refused.`, protocol/password), not chat.
+                // Once Active, chat/MOTD arrives in-band as `svc_print` (see `on_payload`).
+                if self.state == ConnState::Connecting {
+                    let reason = line.strip_prefix("print").unwrap_or(line).trim();
+                    self.reject_reason = Some(reason.to_string());
+                    self.state = ConnState::Rejected;
+                }
             }
             _ => {}
         }
@@ -452,6 +468,51 @@ mod tests {
         // 7. next keepalive → a frame carrying the reliable "begin".
         let frame2 = c.keepalive().expect("frame");
         assert!(frame2.len() >= 10);
+    }
+
+    #[test]
+    fn server_full_reject_is_classified() {
+        let mut c = Conn::new(addr(), "qbots", 1234);
+        c.start();
+        assert_eq!(c.state(), ConnState::Connecting);
+        // Server refuses the connect: OOB `print\nServer is full.\n` (pre-netchan).
+        let out = c.on_recv(&server_oob("print\nServer is full.\n"));
+        assert!(out.is_none(), "a reject emits no reply");
+        assert_eq!(c.state(), ConnState::Rejected);
+        assert_eq!(c.reject_reason.as_deref(), Some("Server is full."));
+    }
+
+    #[test]
+    fn other_reject_reasons_are_captured() {
+        for msg in [
+            "Bad challenge.",
+            "Connection refused.",
+            "Server is protocol version 34.",
+        ] {
+            let mut c = Conn::new(addr(), "qbots", 7);
+            c.start();
+            c.on_recv(&server_oob(&format!("print\n{msg}\n")));
+            assert_eq!(c.state(), ConnState::Rejected, "{msg} must reject");
+            assert_eq!(c.reject_reason.as_deref(), Some(msg));
+        }
+    }
+
+    #[test]
+    fn inband_print_after_active_is_not_a_reject() {
+        // An OOB print only rejects while Connecting. Once past the handshake, a stray
+        // OOB print must not flip us to Rejected (defensive — real chat is in-band).
+        let mut c = Conn::new(addr(), "qbots", 9);
+        c.start();
+        c.on_recv(&server_oob("challenge 999 p=34\n"));
+        c.on_recv(&server_oob("client_connect\n"));
+        assert_eq!(c.state(), ConnState::Connected);
+        c.on_recv(&server_oob("print\nhello\n"));
+        assert_eq!(
+            c.state(),
+            ConnState::Connected,
+            "print past Connecting is ignored"
+        );
+        assert!(c.reject_reason.is_none());
     }
 
     #[test]

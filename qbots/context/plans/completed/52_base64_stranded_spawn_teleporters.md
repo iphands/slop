@@ -1,6 +1,6 @@
 # Plan 52 — base64 Stranded Spawn: Rescue Jump Pass + Teleporter Edges
 
-> **Status**: in-progress
+> **Status**: done (closed 2026-07-11)
 > **Created**: 2026-07-11
 > **Depends on**: Plan 42 (jump-down component bridging), Plan 35 (traversal executor), Plan 51 (zb2 watchdogs)
 > **Goal**: `generate-map-cache --map base64` passes 46/46 spawns via a spawn-only rescue jump pass, and bots can traverse `misc_teleporter`/`trigger_teleport` pads as nav edges.
