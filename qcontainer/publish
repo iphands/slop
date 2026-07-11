@@ -1,0 +1,21 @@
+#!/bin/bash
+set -euo pipefail
+
+# Push the built image to its registry. THE HUMAN RUNS THIS.
+#
+# Prereqs:
+#   - ./build has been run
+#   - docker login   (has been done)
+#
+# Keep IMAGE / Q2REPRO_REF / TAG in sync with ./build (or export them once).
+
+cd "$(dirname "$0")"
+
+IMAGE="${IMAGE:-iphands/quake2}"
+Q2REPRO_REF="${Q2REPRO_REF:-rerelease-game}"
+TAG="${TAG:-$Q2REPRO_REF}"
+
+echo ">> pushing ${IMAGE}:${TAG} and ${IMAGE}:latest"
+
+docker push "${IMAGE}:${TAG}"
+docker push "${IMAGE}:latest"

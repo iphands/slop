@@ -1,0 +1,32 @@
+#!/bin/bash
+set -euo pipefail
+
+# Build the optimized Q2REPRO dedicated server image.
+#
+# Bump the game version by editing Q2REPRO_REF below (any git ref: branch, the
+# rolling "nightly" tag, or a commit sha), or override it inline:
+#
+#     Q2REPRO_REF=nightly ./build
+#     Q2REPRO_REF=1523f11 ./build
+#
+# ccache is persisted in a build cache mount, so a version bump only recompiles
+# the objects that actually changed -- rebuilds are fast.
+
+cd "$(dirname "$0")"
+
+IMAGE="${IMAGE:-iphands/quake2}"
+Q2REPRO_REF="${Q2REPRO_REF:-rerelease-game}"
+
+# Tag with the ref so multiple versions can coexist, plus :latest.
+TAG="${TAG:-$Q2REPRO_REF}"
+
+echo ">> building ${IMAGE}:${TAG} (q2repro ref: ${Q2REPRO_REF})"
+
+# BuildKit is required for the ccache cache mount (RUN --mount=type=cache).
+export DOCKER_BUILDKIT=1
+
+exec docker build \
+    --build-arg "Q2REPRO_REF=${Q2REPRO_REF}" \
+    -t "${IMAGE}:${TAG}" \
+    -t "${IMAGE}:latest" \
+    .
