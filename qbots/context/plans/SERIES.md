@@ -123,6 +123,9 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 - After **31–32**: lifts are used politely in crowds (penalty hack deleted) and nobody drowns.
 - After **47**: "human-like" is a *measured, repeatable acceptance run* with a recorded
   baseline — the series goal made testable.
+- After **53** (done): a fleet/competition bot that can't join (server full / connect
+  timeout) fails the run loudly with the server's exact reason and a non-zero exit;
+  `--loose-botcap` opts back into proceed-with-warnings. No more silent short-counts.
 
 > **Brain-notes discipline (Plans 23–33, 36–38, 40, 43):** every brain plan appends a dated section to
 > `context/brain_notes.md` (running log, same shape as `map_errors.notes.log.md`). It is a

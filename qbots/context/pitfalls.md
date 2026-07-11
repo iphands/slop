@@ -1086,3 +1086,28 @@ a stale binary with an older cache VERSION rejects a perfectly good cache.
 - qbots: crates/world/src/navgraph.rs (`floor_waypoints_multi`, `hull_rest_z`)
 - qbots: crates/world/src/collision.rs (`v_groove_world` test world)
 - qbots: context/plans/completed/52_base64_stranded_spawn_teleporters.md
+
+# Silent handshake rejection — a rejected bot hangs in Connecting forever
+The Q2 server refuses a `connect` at `SVC_DirectConnect` (BEFORE `client_connect`, so
+before any netchan) by sending a **connectionless** `print\n<reason>\n`
+(`sv_conless.c` — `Server is full.`, `Bad challenge.`, `Connection refused.`, protocol/
+password). The client FSM's OOB `print` arm was a no-op, so the reason was discarded and
+the bot sat in `ConnState::Connecting` forever: no log, no timeout, `bot_task` never
+returned, so the supervisor's reconnect/"giving up" logic never ran. Symptom: you ask for
+N bots, fewer appear, no error — looks like a qbots roster cap but isn't (qbots is
+uncapped; the wall is the server's `maxclients`).
+Fix: classify an OOB `print` received while `state == Connecting` as a rejection
+(`ConnState::Rejected` + `reject_reason`); `bot_task` returns `ConnectionRefused` on it and
+`TimedOut` if it never reaches `Active` within `[fleet].connect_timeout_ms`. The fleet
+supervisor treats both as non-retryable join failures: strict (default) records the reason,
+fires shutdown, and the run returns `Err` → non-zero exit; `--loose-botcap` downgrades to a
+per-bot warning. NOTE the live diagnosis flipped: the server was `maxclients=64` (not the
+assumed 18), so making the reason VISIBLE mattered more than the exact cap. Verify the
+fail-hard path live without a full server by pointing `--config` at a copy with
+`connect_timeout_ms: 0` against the REAL server (its map query passes, bots time out before
+Active) — strict → exit 1 with `fleet join failed`, loose → exit 0 with `dropping this bot`.
+## Sources
+- qbots: crates/client/src/conn.rs (`on_oob` print arm, `ConnState::Rejected`)
+- qbots: crates/qbots/src/main.rs (`bot_task` reject/timeout returns)
+- qbots: crates/qbots/src/supervisor.rs (`bot_supervisor_loop`, `fleet_join_result`)
+- qbots: context/plans/completed/53_fail_hard_botcap.md

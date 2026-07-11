@@ -1,6 +1,6 @@
 # Plan 53 — Fail hard when the bot roster can't fully join
 
-> **Status**: in-progress
+> **Status**: done
 > **Created**: 2026-07-11
 > **Depends on**: Plan 52 (base64 spawn/teleporter work; unrelated but latest in SERIES)
 > **Goal**: qbots exits non-zero with a clear error when any fleet/competition bot is
@@ -129,9 +129,12 @@ note. Move plan + tracker to `completed/`, mark SERIES done.
 
 ## Verification Checklist
 
-- [ ] T1: `cargo test -p client` — reject-classification tests pass (full/bad-challenge/refused).
-- [ ] T2: `cargo build` clean with the new config field defaulted.
-- [ ] T3: `bot_task` returns `ConnectionRefused`/`TimedOut` on reject/timeout (compile + logic review).
-- [ ] T4: strict run over a full server exits non-zero with a `fleet join failed` error.
-- [ ] T5: `--loose-botcap` run over a full server logs warns and keeps the joinable bots.
-- [ ] T6: `--count 2` (under cap) unchanged; `cargo fmt/clippy/test` all green; pitfalls note added.
+- [x] T1: `cargo test -p client` — reject-classification tests pass (full/bad-challenge/refused).
+- [x] T2: `cargo build` clean with the new config field defaulted.
+- [x] T3: `bot_task` returns `ConnectionRefused`/`TimedOut` on reject/timeout (compile + logic review).
+- [x] T4: strict run exits non-zero with a `fleet join failed` error (live-verified via
+      `connect_timeout_ms: 0` against the real server → `EXIT=1`).
+- [x] T5: `--loose-botcap` run logs warns + keeps going (live-verified → `EXIT=0`,
+      `dropping this bot`).
+- [x] T6: no-regression live run (24 bots joined & fought under `maxclients=64`);
+      `cargo fmt/clippy/test` all green (214+ tests); pitfalls note added.
