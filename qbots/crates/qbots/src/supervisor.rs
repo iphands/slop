@@ -275,6 +275,10 @@ pub async fn run_fleet(
         tracing::error!("fleet.count is 0 — nothing to run (use `connect-one` for a single bot)");
         return Ok(());
     }
+
+    // Plan 55: refuse to launch a fleet the server can't seat, before spawning any bot.
+    preflight_capacity(addr, count, loose_botcap).await?;
+
     let stagger = cfg.fleet.connect_stagger_ms;
     let reconnect = Reconnect {
         enabled: cfg.fleet.reconnect,
@@ -370,6 +374,65 @@ fn fleet_join_result(shared: &FleetShared) -> std::io::Result<()> {
         )));
     }
     Ok(())
+}
+
+/// Whether `total` bots fit the server: `total <= maxclients - players` (saturating, so an
+/// already-full or over-full server yields 0 free slots). Pure, for unit testing.
+fn fits_capacity(total: usize, maxclients: u32, players: usize) -> bool {
+    total <= (maxclients as usize).saturating_sub(players)
+}
+
+/// Capacity preflight (Plan 55): query the server's `status` **before** spawning and refuse
+/// to launch a roster that can't fit. This is the early gate to Plan 53's join-time gate —
+/// it exits immediately (non-zero, via the dispatch's `Err → ExitCode::FAILURE`) instead of
+/// spawning bots that get refused mid-handshake.
+///
+/// We only block when we *know* it won't fit: a failed status query or a server that reports
+/// no `maxclients` warns and proceeds (Plan 53 remains the backstop). `--loose-botcap`
+/// downgrades a known over-subscription to a warning too.
+async fn preflight_capacity(
+    addr: SocketAddr,
+    total: usize,
+    loose_botcap: bool,
+) -> std::io::Result<()> {
+    let report = match crate::query_status(addr).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(
+                "capacity preflight: status query failed ({e}); proceeding \
+                 (join-time checks still apply)"
+            );
+            return Ok(());
+        }
+    };
+    let Some(maxc) = report.maxclients else {
+        tracing::warn!("capacity preflight: server reported no maxclients; skipping");
+        return Ok(());
+    };
+    let players = report.player_count();
+    let free = (maxc as usize).saturating_sub(players);
+    if fits_capacity(total, maxc, players) {
+        tracing::info!(
+            want = total,
+            free,
+            players,
+            maxclients = maxc,
+            "capacity preflight ok"
+        );
+        return Ok(());
+    }
+    let msg = format!(
+        "server can't fit the roster: want {total} bots but only {free} free slot(s) \
+         ({players}/{maxc} in use)"
+    );
+    if loose_botcap {
+        tracing::warn!("{msg}; --loose-botcap set, spawning anyway (expect join failures)");
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!(
+            "{msg} — free up slots, lower the count, or pass --loose-botcap"
+        )))
+    }
 }
 
 /// Full, human-readable name for a nav backend — used in the competition legend
@@ -472,6 +535,10 @@ pub async fn run_competition(
         per_group_count = clamped;
     }
     let total = num_groups * per_group_count;
+
+    // Plan 55: bail out now if the server plainly can't seat this many bots, before we
+    // spawn any. Strict (default) exits non-zero; --loose-botcap warns and proceeds.
+    preflight_capacity(addr, total, loose_botcap).await?;
 
     let stagger = cfg.fleet.connect_stagger_ms;
     let reconnect = Reconnect {
@@ -837,6 +904,24 @@ mod tests {
         assert_eq!((board[2].kills, board[2].deaths, board[2].bots), (1, 0, 1));
         assert_eq!(board[3].tag, "navmesh");
         assert_eq!((board[3].kills, board[3].deaths, board[3].bots), (0, 0, 0));
+    }
+
+    #[test]
+    fn fits_capacity_respects_free_slots() {
+        // 55/64 in use → 9 free.
+        assert!(fits_capacity(9, 64, 55), "9 bots fit in 9 free slots");
+        assert!(!fits_capacity(10, 64, 55), "10 bots do not fit in 9 free");
+        // Exactly full.
+        assert!(fits_capacity(0, 64, 64), "0 bots always fit");
+        assert!(!fits_capacity(1, 64, 64), "no room when server is full");
+        // Over-full (saturating: never underflows to a huge free count).
+        assert!(!fits_capacity(1, 64, 70), "over-full server has 0 free");
+        // Empty server.
+        assert!(fits_capacity(64, 64, 0), "full roster fits an empty server");
+        assert!(
+            !fits_capacity(65, 64, 0),
+            "one past maxclients does not fit"
+        );
     }
 
     #[test]

@@ -654,7 +654,7 @@ where
 
 /// Send a connectionless `status` query and parse the reply (Plan 09). Times out
 /// after 2 s — a down server or a dropped packet must not hang the CLI.
-async fn query_status(addr: SocketAddr) -> std::io::Result<status::StatusReport> {
+pub(crate) async fn query_status(addr: SocketAddr) -> std::io::Result<status::StatusReport> {
     use tokio::net::UdpSocket;
     let sock = UdpSocket::bind("0.0.0.0:0").await?;
     sock.connect(addr).await?;
