@@ -372,8 +372,8 @@ fn fleet_join_result(shared: &FleetShared) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Short, stable tag for a nav backend — used as the competitor name prefix (`<tag>_<i>`) so the
-/// scoreboard can group bots by mode, and as the per-mode skin label.
+/// Full, human-readable name for a nav backend — used in the competition legend
+/// ([`log_competition_legend`]) to expand the short [`mode_code`] used in bot names.
 pub(crate) fn mode_tag(mode: crate::NavMode) -> &'static str {
     match mode {
         crate::NavMode::Astar => "astar",
@@ -385,10 +385,48 @@ pub(crate) fn mode_tag(mode: crate::NavMode) -> &'static str {
     }
 }
 
+/// 2-char code for a nav backend, used in competition bot names so `<brain>_<mode>[_<char>]_<i>`
+/// stays within Q2's 15-char `netname` limit (`game/player/client.c` `Q_strlcpy` into
+/// `netname[16]`). Names are the only consumer; the full name is [`mode_tag`].
+fn mode_code(mode: crate::NavMode) -> &'static str {
+    match mode {
+        crate::NavMode::Astar => "as",
+        crate::NavMode::Navmesh => "nm",
+        crate::NavMode::HybridFallback => "fb",
+        crate::NavMode::HybridRace => "rc",
+        crate::NavMode::HybridHier => "hr",
+        crate::NavMode::HybridSegment => "sg",
+    }
+}
+
+/// 3-char code for a brain, used in competition bot names (see [`mode_code`]). The full,
+/// log-facing name is [`brain::brain_tag`]. `q3`/`zb2` keep their already-short iconic forms.
+fn brain_code(brain: brain::BrainKind) -> &'static str {
+    match brain {
+        brain::BrainKind::Main => "mai",
+        brain::BrainKind::Sentry => "sen",
+        brain::BrainKind::RunTester => "run",
+        brain::BrainKind::Quake3 => "q3",
+        brain::BrainKind::Zb2 => "zb2",
+    }
+}
+
+/// 3-char code for a Q3 character (q3 brain only), used in competition bot names (see
+/// [`mode_code`]). The full, log-facing name is [`brain::CharPreset::tag`].
+fn char_code(char: brain::CharPreset) -> &'static str {
+    match char {
+        brain::CharPreset::Grunt => "gru",
+        brain::CharPreset::Major => "maj",
+        brain::CharPreset::Sarge => "sar",
+        brain::CharPreset::Camper => "cam",
+    }
+}
+
 /// Run a **competition**: spawn `per_group_count` bots for each `(mode, brain, char?)` group in
 /// a single process, all sharing one `NavCache` (built once, not once per mode), each group wearing
-/// a distinct skin. Bots are named `<brain>_<mode>[_<char>]_<i>` (e.g. `main_astar_1`, `q3_race_1`,
-/// `q3_astar_grunt_1`) so the per-group frag scoreboard can group them. Returns when all bots exit
+/// a distinct skin. Bots are named `<brain>_<mode>[_<char>]_<i>` with short codes (e.g. `mai_as_1`,
+/// `q3_rc_1`, `q3_rc_gru_1`) so the name fits Q2's 15-char limit and the per-group frag scoreboard
+/// can group them (a code→full-name legend is logged at launch). Returns when all bots exit
 /// (after shutdown). Reuses the fleet's per-bot supervisor loop (reconnect/backoff/graceful
 /// disconnect) with a **per-bot** `mode`/`brain`/`char`.
 #[allow(clippy::too_many_arguments)]
@@ -462,6 +500,9 @@ pub async fn run_competition(
         qport_base,
         "launching competition to {addr}"
     );
+    // Bot names use short codes to fit Q2's 15-char limit; print the legend so the
+    // scoreboard's `mai_as`-style tags are readable.
+    log_competition_legend(&modes, &brains, &chars);
 
     // Stable group ordering (mode-major, brain-minor) → contiguous, disjoint qport blocks.
     // `group_tags` is the scoreboard's grouping key list, in the same order.
@@ -523,18 +564,53 @@ pub async fn run_competition(
     fleet_join_result(&shared)
 }
 
-/// The scoreboard grouping tag for a `(mode, brain, char?)` group: brain first, then nav plan,
-/// then the optional character — underscore-joined → `<brain>_<mode>[_<char>]` (e.g. `main_astar`,
-/// `q3_race`, `q3_race_grunt`). Every token is separator-free, so the `<tag>_<i>` bot name still
-/// index-splits on its trailing `_` in [`mode_scoreboard`].
+/// Log a one-line-per-axis legend mapping the short codes used in bot names back to their full
+/// names, for the brains/modes/chars actually fielded this run. Keeps the short-code scoreboard
+/// readable without bloating the names themselves.
+fn log_competition_legend(
+    modes: &[crate::NavMode],
+    brains: &[brain::BrainKind],
+    chars: &[brain::CharPreset],
+) {
+    let join = |pairs: Vec<String>| pairs.join(", ");
+    let brain_leg = join(
+        brains
+            .iter()
+            .map(|&b| format!("{}={}", brain_code(b), brain::brain_tag(b)))
+            .collect(),
+    );
+    let mode_leg = join(
+        modes
+            .iter()
+            .map(|&m| format!("{}={}", mode_code(m), mode_tag(m)))
+            .collect(),
+    );
+    tracing::info!("name-code legend — brain: {brain_leg}");
+    tracing::info!("name-code legend — mode:  {mode_leg}");
+    if !chars.is_empty() {
+        let char_leg = join(
+            chars
+                .iter()
+                .map(|&c| format!("{}={}", char_code(c), c.tag()))
+                .collect(),
+        );
+        tracing::info!("name-code legend — char:  {char_leg}");
+    }
+}
+
+/// The scoreboard grouping tag for a `(mode, brain, char?)` group: short brain code first,
+/// then nav-plan code, then the optional character code — underscore-joined →
+/// `<brain>_<mode>[_<char>]` (e.g. `mai_as`, `q3_rc`, `q3_rc_gru`). Short codes keep the
+/// `<tag>_<i>` bot name inside Q2's 15-char `netname` limit. Every token is `_`-free, so the
+/// name still index-splits on its trailing `_` in [`mode_scoreboard`].
 fn group_tag(
     mode: crate::NavMode,
     brain: brain::BrainKind,
     char: Option<brain::CharPreset>,
 ) -> String {
     match char {
-        Some(c) => format!("{}_{}_{}", brain::brain_tag(brain), mode_tag(mode), c.tag()),
-        None => format!("{}_{}", brain::brain_tag(brain), mode_tag(mode)),
+        Some(c) => format!("{}_{}_{}", brain_code(brain), mode_code(mode), char_code(c)),
+        None => format!("{}_{}", brain_code(brain), mode_code(mode)),
     }
 }
 

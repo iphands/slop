@@ -84,20 +84,50 @@ impl RconClient {
 
         socket.send(&packet).await?;
 
+        // A large `status` reply does NOT arrive in one datagram. The server console
+        // redirect flushes output in fixed ~1.3KB chunks (SV_OUTPUTBUF_LENGTH), each
+        // sent as its own connectionless `\xff\xff\xff\xff` + "print\n<chunk>" packet.
+        // A single recv() would read only the first chunk and silently truncate the
+        // list (caps player lists at ~18). So loop, reassembling every datagram until
+        // the reply goes quiet. These OOB print packets carry no sequence numbers, so
+        // arrival order is the only order available (correct on a LAN, and how every
+        // real Q2 rcon client behaves).
+        const MAX_DATAGRAMS: usize = 64;
         let mut buf = [0u8; 4096];
-        let n = timeout(Duration::from_secs(5), async {
-            socket.recv(&mut buf).await
-        })
-        .await
-        .map_err(|_| RconError::Timeout)?
-        .map_err(|e| RconError::InvalidResponse(e.to_string()))?;
+        let mut response = String::new();
 
-        // Q2 connectionless packets are prefixed with 0xFFFFFFFF (4 bytes). Only decode
-        // the bytes actually received, not the whole zero-padded buffer.
-        let payload = buf.get(4..n).unwrap_or(&[]);
-        let response = String::from_utf8_lossy(payload).to_string();
-        // Strip leading "print\n" if present (added by SV_OobPrintf macro)
-        let response = response.strip_prefix("print\n").unwrap_or(&response);
+        for i in 0..MAX_DATAGRAMS {
+            // The first datagram gets the full timeout (server may take a moment).
+            // Subsequent reads use a short idle timeout: when it elapses with no more
+            // data, the reply is complete — that is normal end-of-reply, not an error.
+            let recv_timeout = if i == 0 {
+                Duration::from_secs(5)
+            } else {
+                Duration::from_millis(250)
+            };
+
+            let n = match timeout(recv_timeout, socket.recv(&mut buf)).await {
+                Ok(Ok(n)) => n,
+                Ok(Err(e)) => return Err(RconError::InvalidResponse(e.to_string())),
+                Err(_) => {
+                    // Timeout on the first datagram is a real failure; on later reads
+                    // it just means the multi-packet reply has ended.
+                    if i == 0 {
+                        return Err(RconError::Timeout);
+                    }
+                    break;
+                }
+            };
+
+            // Q2 connectionless packets are prefixed with 0xFFFFFFFF (4 bytes). Only
+            // decode the bytes actually received, not the whole zero-padded buffer.
+            let payload = buf.get(4..n).unwrap_or(&[]);
+            let chunk = String::from_utf8_lossy(payload);
+            // Each flushed packet carries its own leading "print\n" (SV_FlushRedirect).
+            let chunk = chunk.strip_prefix("print\n").unwrap_or(&chunk);
+            response.push_str(chunk);
+        }
+
         Ok(response.trim().to_string())
     }
 
@@ -109,15 +139,44 @@ impl RconClient {
         let rcon_command = format!("rcon \"{}\" {}\n", self.password, command);
         stream.write_all(rcon_command.as_bytes()).await?;
 
+        // TCP is a stream: a single read() may return only part of the reply. Loop
+        // until EOF (server closes) or the stream goes idle, so large `status` output
+        // is not truncated. First read gets the full timeout; later reads use a short
+        // idle timeout that simply ends the loop when no more data arrives.
+        const MAX_BYTES: usize = 256 * 1024;
         let mut buf = [0u8; 4096];
-        let len = timeout(Duration::from_secs(5), async {
-            stream.read(&mut buf).await
-        })
-        .await
-        .map_err(|_| RconError::Timeout)?
-        .map_err(|e| RconError::InvalidResponse(e.to_string()))?;
+        let mut bytes = Vec::new();
 
-        let response = String::from_utf8_lossy(&buf[..len]).to_string();
+        loop {
+            let read_timeout = if bytes.is_empty() {
+                Duration::from_secs(5)
+            } else {
+                Duration::from_millis(250)
+            };
+
+            let len = match timeout(read_timeout, stream.read(&mut buf)).await {
+                Ok(Ok(len)) => len,
+                Ok(Err(e)) => return Err(RconError::InvalidResponse(e.to_string())),
+                Err(_) => {
+                    if bytes.is_empty() {
+                        return Err(RconError::Timeout);
+                    }
+                    break;
+                }
+            };
+
+            // EOF: server closed the connection, reply is complete.
+            if len == 0 {
+                break;
+            }
+
+            bytes.extend_from_slice(&buf[..len]);
+            if bytes.len() >= MAX_BYTES {
+                break;
+            }
+        }
+
+        let response = String::from_utf8_lossy(&bytes).to_string();
         Ok(response.trim().to_string())
     }
 }
