@@ -27,7 +27,8 @@
 use std::sync::Arc;
 
 use glam::Vec3;
-use world::{CollisionModel, EdgeKind, NavGraph};
+use world::navgraph::segment_has_floor;
+use world::{CollisionModel, EdgeKind, NavGraph, HULL_MAXS, HULL_MINS, MASK_SOLID};
 
 use crate::brains::core::{Brain, BrainContext, BrainMap, BrainOutput};
 use crate::combat::{CombatDecision, CombatDriver};
@@ -133,7 +134,11 @@ impl Navigator for Zb2Route {
 /// `Search_NearlyPod` (pure, unit-tested): the furthest index in `(idx, idx+cap]` we may skip
 /// to — every hop crossed must be a plain Walk edge (a skipped jump/swim/ride edge would strand
 /// the movement machine), the target must be near-level (`|dz| <= SHORTCUT_MAX_DZ` of `pos`),
-/// and `visible(target)` must hold. Returns `idx` unchanged when no skip qualifies.
+/// `visible(target)` must hold, AND `walkable(target)` must hold. Visibility alone is the
+/// classic bot trap (Plan 48 Z1): on q2dm3 the committed polyline curves AROUND the lava, and
+/// a same-height node on the far side is eye-visible — the walkability check (hull trace +
+/// lava-aware floor continuity at the call site) is what keeps the skip on dry land.
+/// Returns `idx` unchanged when no skip qualifies.
 fn nearly_pod_skip(
     idx: usize,
     pos: Vec3,
@@ -141,6 +146,7 @@ fn nearly_pod_skip(
     path_len: usize,
     walk_edge_into: &dyn Fn(usize) -> bool, // is edge (path[j-1] → path[j]) a Walk edge?
     visible: &dyn Fn(Vec3) -> bool,
+    walkable: &dyn Fn(Vec3) -> bool, // is the straight line pos → target hull+floor valid?
 ) -> usize {
     let mut best = idx;
     let cap = (idx + SHORTCUT_LOOKAHEAD).min(path_len.saturating_sub(1));
@@ -150,7 +156,7 @@ fn nearly_pod_skip(
             break; // never skip across a jump/swim/ride edge
         }
         let p = node_pos(j);
-        if (p.z - pos.z).abs() <= SHORTCUT_MAX_DZ && visible(p) {
+        if (p.z - pos.z).abs() <= SHORTCUT_MAX_DZ && visible(p) && walkable(p) {
             best = j;
         }
         j += 1;
@@ -327,6 +333,14 @@ impl Brain for Zb2Brain {
                         path.len(),
                         &|j| matches!(g2.edge_kind(path[j - 1], path[j]), EdgeKind::Walk),
                         &|p| los::has_los_player(cmodel, eye, [p.x, p.y, p.z]),
+                        &|p| {
+                            // LOS ≠ walkable: the straight run to the skip target must be
+                            // hull-clear AND have continuous non-lava floor (Plan 48 Z1).
+                            let a = [pos.x, pos.y, pos.z];
+                            let b = [p.x, p.y, p.z];
+                            let t = cmodel.trace(&a, &b, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+                            !t.startsolid && t.fraction >= 1.0 && segment_has_floor(cmodel, a, b)
+                        },
                     );
                     if skipped > route.idx {
                         tracing::debug!(from = route.idx, to = skipped, "zb2 shortcut skip");
@@ -452,11 +466,27 @@ mod tests {
 
     #[test]
     fn shortcut_skips_to_furthest_visible_walk_node() {
-        // All walk edges, everything visible → skip the full lookahead cap.
-        let skipped = nearly_pod_skip(1, straight_pos(1), &straight_pos, 8, &|_| true, &|_| true);
+        // All walk edges, everything visible + walkable → skip the full lookahead cap.
+        let skipped = nearly_pod_skip(
+            1,
+            straight_pos(1),
+            &straight_pos,
+            8,
+            &|_| true,
+            &|_| true,
+            &|_| true,
+        );
         assert_eq!(skipped, 7, "cap = min(idx+6, len-1)");
         // Nothing visible → stay put.
-        let none = nearly_pod_skip(1, straight_pos(1), &straight_pos, 8, &|_| true, &|_| false);
+        let none = nearly_pod_skip(
+            1,
+            straight_pos(1),
+            &straight_pos,
+            8,
+            &|_| true,
+            &|_| false,
+            &|_| true,
+        );
         assert_eq!(none, 1);
     }
 
@@ -464,7 +494,15 @@ mod tests {
     fn shortcut_never_crosses_a_non_walk_edge() {
         // Edge into node 4 is a ride — the scan must stop at 3 even though 5+ are visible.
         let walk = |j: usize| j != 4;
-        let skipped = nearly_pod_skip(1, straight_pos(1), &straight_pos, 8, &walk, &|_| true);
+        let skipped = nearly_pod_skip(
+            1,
+            straight_pos(1),
+            &straight_pos,
+            8,
+            &walk,
+            &|_| true,
+            &|_| true,
+        );
         assert_eq!(skipped, 3, "stop before the ride edge");
     }
 
@@ -479,8 +517,29 @@ mod tests {
                 straight_pos(j)
             }
         };
-        let skipped = nearly_pod_skip(1, pos, &node, 4, &|_| true, &|_| true);
+        let skipped = nearly_pod_skip(1, pos, &node, 4, &|_| true, &|_| true, &|_| true);
         assert_eq!(skipped, 2, "the elevated node is not a valid skip target");
+    }
+
+    #[test]
+    fn shortcut_respects_the_walkable_gate() {
+        // Plan 48 Z1: nodes past x=300 are across a lava pool — visible and level, but the
+        // straight line to them has no continuous floor. The skip must stop at the last
+        // walkable node instead of steering across the pool.
+        let walkable = |p: Vec3| p.x <= 300.0;
+        let skipped = nearly_pod_skip(
+            1,
+            straight_pos(1),
+            &straight_pos,
+            8,
+            &|_| true,
+            &|_| true,
+            &walkable,
+        );
+        assert_eq!(
+            skipped, 3,
+            "never skip across a floor gap the eye sees over"
+        );
     }
 
     #[test]
