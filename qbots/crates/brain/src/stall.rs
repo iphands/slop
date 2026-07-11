@@ -73,6 +73,10 @@ pub struct StallSample {
     pub alive: bool,
     /// Measured frame delta in seconds.
     pub dt: f32,
+    /// Distance to the nearest other player in PVS (`f32::INFINITY` if none).
+    /// Two player hulls in contact sit ~33 u apart — a stall with
+    /// `min_player_dist` in that band is a bot-vs-bot block, not a wall.
+    pub nearest_player: f32,
 }
 
 /// Summary of one closed stall episode.
@@ -94,6 +98,8 @@ pub struct StallEpisode {
     pub damage: i32,
     /// The episode ended because the bot died in it.
     pub died: bool,
+    /// Minimum [`StallSample::nearest_player`] seen during the episode.
+    pub min_player_dist: f32,
 }
 
 /// Per-bot episode state machine. Feed [`tick`](Self::tick) once per frame.
@@ -119,6 +125,7 @@ struct Acc {
     attack_ticks: u32,
     wall_ticks: u32,
     damage: i32,
+    min_player_dist: f32,
 }
 
 impl Acc {
@@ -131,6 +138,7 @@ impl Acc {
             attack_ticks: 0,
             wall_ticks: 0,
             damage: 0,
+            min_player_dist: f32::INFINITY,
         }
     }
 
@@ -141,6 +149,7 @@ impl Acc {
         self.attack_ticks += u32::from(s.attacking);
         self.wall_ticks += u32::from(s.wall_blocked);
         self.damage += s.damage.max(0);
+        self.min_player_dist = self.min_player_dist.min(s.nearest_player);
     }
 
     fn finish(self, died: bool) -> StallEpisode {
@@ -153,6 +162,7 @@ impl Acc {
             wall_ticks: self.wall_ticks,
             damage: self.damage,
             died,
+            min_player_dist: self.min_player_dist,
         }
     }
 }
@@ -243,6 +253,7 @@ mod tests {
             damage: 0,
             alive: true,
             dt: 0.1,
+            nearest_player: f32::INFINITY,
         }
     }
 
@@ -300,6 +311,7 @@ mod tests {
         m.tick(StallSample {
             attacking: true,
             damage: 25,
+            nearest_player: 33.0,
             ..hindered()
         });
         let ep = m
@@ -311,6 +323,7 @@ mod tests {
         assert!(ep.died);
         assert_eq!(ep.damage, 25);
         assert_eq!(ep.attack_ticks, 1);
+        assert_eq!(ep.min_player_dist, 33.0, "tracks the closest blocker seen");
         // The dead sample itself is not accumulated.
         assert_eq!(ep.ticks, 6);
     }

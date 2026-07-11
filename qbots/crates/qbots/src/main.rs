@@ -1154,6 +1154,13 @@ pub(crate) async fn bot_task(
                                         intent.side,
                                     )
                                 });
+                            // Nearest other player in PVS — ~33 u = hulls in contact,
+                            // i.e. the stall is a bot-vs-bot block, not world geometry.
+                            let nearest_player = view
+                                .entities()
+                                .filter(|e| e.class == brain::EntityClass::EnemyPlayer)
+                                .map(|e| (e.origin - ss.origin).length())
+                                .fold(f32::INFINITY, f32::min);
                             if let Some(ep) = stall_mon.tick(brain::StallSample {
                                 pos: ss.origin,
                                 speed_h,
@@ -1163,7 +1170,13 @@ pub(crate) async fn bot_task(
                                 damage: dmg_this_tick,
                                 alive: ss.health > 0,
                                 dt,
+                                nearest_player,
                             }) {
+                                let pp = if ep.min_player_dist.is_finite() {
+                                    ep.min_player_dist as i32
+                                } else {
+                                    -1
+                                };
                                 tracing::info!(
                                     bot = name,
                                     secs = %format!("{:.1}", ep.secs),
@@ -1172,6 +1185,7 @@ pub(crate) async fn bot_task(
                                     atk = ep.attack_ticks,
                                     wall = ep.wall_ticks,
                                     dmg = ep.damage,
+                                    pp,
                                     died = ep.died,
                                     x = ep.start_pos.x as i32,
                                     y = ep.start_pos.y as i32,
