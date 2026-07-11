@@ -13,5 +13,5 @@ Read Plan 49 Context. T1 is self-contained in `combat.rs`. T2 needs the live ser
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: pain-widened acquisition + unit test | `brain/combat.rs` | pending | |
+| 1 | T1: pain-widened acquisition + unit test | `brain/combat.rs` | done | + `in_fov(≥180°)` = all directions (strict `dot > cos` excluded the exact-behind target) |
 | 2 | T2: live soak verification + docs; close plan | `context/brain_notes.md` | pending | |

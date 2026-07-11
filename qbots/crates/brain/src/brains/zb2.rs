@@ -520,17 +520,27 @@ impl Brain for Zb2Brain {
         }
 
         // Survival override (Plan 50 E2): standing in lava/slime outranks combat, dodge,
-        // and route — face the nearest safe floor, sprint, and jump to clear the pool rim.
+        // and route — face the nearest safe floor, sprint, swim up, and jump the pool rim.
+        // Health-gated: a sinking corpse still ticks — don't "escape" (or log) post-mortem.
         if let Some(c) = cm {
-            if let Some(esc) = crate::hazard::escape_from_lava(c, pos) {
+            if let Some(esc) = (view.self_state().health > 0)
+                .then(|| crate::hazard::escape_from_lava(c, pos))
+                .flatten()
+            {
                 let yaw = esc.y.atan2(esc.x).to_degrees();
                 self.steering.set_view_yaw(yaw);
                 mv.look_at(yaw, 0.0);
                 mv.forward = 1.0;
                 mv.side = 0.0;
                 mv.jump();
+                mv.up = 1.0;
                 intent_forward = 1.0;
-                tracing::info!("EVT lava_escape");
+                tracing::info!(
+                    x = pos.x as i32,
+                    y = pos.y as i32,
+                    z = pos.z as i32,
+                    "EVT lava_escape"
+                );
             }
         }
 

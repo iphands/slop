@@ -14,6 +14,6 @@ the plan.
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: floor-validate flat edges + stair deadly check, cache v22 | `world/navgraph.rs`, `world/mapcache.rs` | pending | |
-| 2 | T2: escape_from_lava override in all brains | `brain/hazard.rs`, `brains/*` | pending | |
+| 1 | T1: floor-validate flat edges + stair deadly check, cache v22 | `world/navgraph.rs`, `world/mapcache.rs` | done | all 8 q2dm caches regen clean; ride/water reachability green |
+| 2 | T2: escape_from_lava override in all brains | `brain/hazard.rs`, `brains/*` | done | `EVT lava_escape` counter; pak-gated escape test |
 | 3 | T3: post-fix soak comparison; close plan (+P49 T2) | `context/brain_notes.md` | pending | |
