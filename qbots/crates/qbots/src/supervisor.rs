@@ -840,17 +840,14 @@ mod tests {
     }
 
     #[test]
-    fn group_tag_is_brain_first_underscore_joined() {
+    fn group_tag_uses_short_codes_brain_first() {
         use crate::NavMode;
         use brain::{BrainKind, CharPreset};
-        // Brain first, then nav plan, then optional character; underscore-joined.
-        assert_eq!(
-            group_tag(NavMode::Astar, BrainKind::Main, None),
-            "main_astar"
-        );
+        // Brain code first, then nav-plan code, then optional character code; underscore-joined.
+        assert_eq!(group_tag(NavMode::Astar, BrainKind::Main, None), "mai_as");
         assert_eq!(
             group_tag(NavMode::HybridRace, BrainKind::Quake3, None),
-            "q3_race"
+            "q3_rc"
         );
         assert_eq!(
             group_tag(
@@ -858,11 +855,39 @@ mod tests {
                 BrainKind::Quake3,
                 Some(CharPreset::Grunt)
             ),
-            "q3_race_grunt"
+            "q3_rc_gru"
         );
         assert_eq!(
             group_tag(NavMode::Navmesh, BrainKind::Sentry, None),
-            "sentry_navmesh"
+            "sen_nm"
         );
+        assert_eq!(
+            group_tag(NavMode::HybridFallback, BrainKind::Zb2, None),
+            "zb2_fb"
+        );
+    }
+
+    /// Every brain × mode × {no char, each char} combo must fit Q2's 15-char `netname` limit,
+    /// even at a two-digit (or three-digit) bot index — the whole point of the short codes.
+    #[test]
+    fn every_competition_name_fits_15_chars() {
+        use brain::{BrainKind, CharPreset};
+        use clap::ValueEnum;
+        let chars: Vec<Option<CharPreset>> = std::iter::once(None)
+            .chain(CharPreset::value_variants().iter().map(|&c| Some(c)))
+            .collect();
+        for &mode in crate::NavMode::value_variants() {
+            for &brain in BrainKind::value_variants() {
+                for &char in &chars {
+                    let tag = group_tag(mode, brain, char);
+                    // Worst realistic index is 3 digits → `_999` (4 chars) appended.
+                    let name_len = tag.len() + "_999".len();
+                    assert!(
+                        name_len <= 15,
+                        "name `{tag}_999` is {name_len} chars (> 15): {brain:?}/{mode:?}/{char:?}"
+                    );
+                }
+            }
+        }
     }
 }

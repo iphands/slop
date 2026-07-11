@@ -344,3 +344,34 @@ which just becomes likely as the lobby fills.
 
 ### Sources
 - qcontainer: vendor/yquake2/src/server/sv_cmd.c (`SV_Status_f`)
+
+# Quake 2 rcon replies are multi-datagram — a single recv() truncates "status" (~18 players)
+A large `rcon status` response does NOT arrive in one UDP datagram. The server
+redirects console output through `Com_BeginRedirect`/`SV_FlushRedirect` into a
+fixed buffer `sv_outputbuf` sized `SV_OUTPUTBUF_LENGTH` (yquake2: `MAX_MSGLEN-16`
+= 1384 bytes; q2repro: `MAX_PACKETLEN_DEFAULT-16`). Whenever the next line would
+overflow that buffer, the current buffer is flushed as its OWN connectionless
+packet — `\xff\xff\xff\xff` + `print\n<chunk>` — and reset (clientserver.c:
+`if ((msgLen + strlen(rd_buffer)) > (rd_buffersize-1)) rd_flush(...)`). So the
+full reply is several separate datagrams, each with its own 0xFFFFFFFF prefix and
+leading `print\n`.
+
+A client that calls `recv()` exactly once reads only the FIRST datagram and
+silently drops the rest. The first ~1384 bytes = the header block + about the
+first 18 player rows (~65 bytes/row), which presents as a hard "only 18 players"
+ceiling even though the parser and UI are unbounded. The recv buffer size (e.g.
+4096) is irrelevant — a single UDP recv returns exactly one datagram regardless.
+
+### How to avoid
+- Read rcon replies in a LOOP: full timeout on the first datagram, then a short
+  idle timeout (~250ms) on subsequent ones; when the idle timeout elapses with no
+  data, the reply is complete (normal end, not an error). Strip the 4-byte OOB
+  prefix and a leading `print\n` from EACH packet, then concatenate. Cap the loop
+  (packet count / total bytes) as a backstop. These OOB print packets carry no
+  sequence numbers, so arrival order is all you get (fine on a LAN). TCP rcon is a
+  stream and needs the same loop-until-EOF/idle treatment.
+
+### Sources
+- qctrl: crates/rcon/src/lib.rs (`execute_udp`, `execute_tcp`)
+- qctrl: vendor/yquake2/src/common/clientserver.c (`Com_VPrintf` redirect flush)
+- qctrl: vendor/yquake2/src/server/sv_send.c (`SV_FlushRedirect`)
