@@ -573,3 +573,22 @@ the known farthest-spawn route-quality class.
 overhang), and its 3868-node largest component holds ZERO spawns — next step is identifying
 whether that component is playable (needs a real connector) or roof/out-of-map garbage (then the
 in-largest gate metric itself mismeasures; consider a spawns-mutually-reachable gate).
+
+## 2026-07-10 — Plan 35 closed: all 8 stock maps generate with zero connectivity warnings
+Two root causes fixed in one evening, both found with the new `compgaps --built` (final-graph
+components + spawn AND item counts — items are the playability tell):
+1. **q2dm6 (→8/8)**: `jump_down_link`'s launch arc ran at standing height, so ledge lips vetoed
+   real drops bots trivially hop. Fix: hop-height (+32u) retry + `JUMP_BRIDGE_HDIST` 80→104
+   (cache v19). Live: s2s 5/8 @180s — q2dm2's band; bridges physically followable.
+2. **q2dm7 (→6/6)**: `components()` was a FORWARD-only DFS — grouping was visit-order-dependent
+   across one-way jump edges. The comp1↔comp2 jump bridge EXISTED and A* pathed across it
+   (`gpath` proof), but the gate still saw a split. Fix: group over the undirected adjacency
+   (one-way drops count as connectivity — the q2dm3 precedent). q2dm7's "largest" component
+   (3868 nodes, 0 spawns, 0 items) is roof/void junk; the play component now holds all 6 spawns
+   + all 29 items. (The spawn-aware `largest_spawn_component` already kept roam correct.)
+**Residual (named follow-ups, route QUALITY not connectivity):** q2dm7 upward routes — the play
+areas connect downward-only via drops (live s2s 1/6; one 25.4s crossing proves followability);
+the map's ladders serve the slime pit, not lower→upper. Same follow-up class as q2dm2's 3-6/8
+route quality. Consider acceptance-matrix rows for q2dm6/q2dm7 s2s with today's floors.
+LESSON: two of the three Plan 35 bugs were in the MEASUREMENT (forward-only components, junk-blob
+largest), not the map or the graph — instrument identity before surgery.

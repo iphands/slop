@@ -1,7 +1,12 @@
 # q2dm nav connectivity: hull-valid routes + residual gaps — Tracker
 
 ## Overview
-- Status: ~55% complete — T1 root-caused 2026-07-09 (in progress)
+- Status: **DONE (2026-07-10, narrowed scope)** — T3/T4 complete: ALL 8 stock maps generate with
+  zero connectivity warnings (q2dm6 8/8 via hop-height jump-bridges + HDIST 104, cache v19;
+  q2dm7 6/6 via undirected `components()` — the bridge existed, the grouping was visit-order
+  buggy). Live: q2dm6 s2s 5/8; q2dm7 s2s 1/6 (downward-only asymmetry = named route-quality
+  follow-up, same class as q2dm2). T1/T2 remain deferred with rationale (2026-07-09 sections).
+  Moved to `completed/`.
 - Start date: 2026-06-18 (revised scope 2026-07-09)
 - Per-map now: q2dm1/2/4/5/8 full; q2dm3 7/7; q2dm6 7/8; q2dm7 4/6
 
@@ -65,8 +70,8 @@ Ran the route-vs-ride isolation the user requested:
 | 0 | Connector mechanisms (ladders, rides, jump bridges) | `world/build.rs`, `navgraph.rs` | done | shipped 2026-06-19; q2dm3 3/7→7/7 |
 | 1 | T1: hull-validate bridge/seed edges + regression test | `navgraph.rs`, `world/tests/` | deferred | naive fix (steps by max(dz,hd)) over-rejects legit step-over edges → broad disconnection. Needs careful lip-height geometry + per-edge live validation. Payoff modest (see verification above). |
 | 2 | T2: split long bridges / resample q2dm3 upper level | `navgraph.rs`, `build.rs` | deferred | far-spawn quad is MIXED cause (route+ride), not a clean nav bug — deferred per 2026-07-09 verification |
-| 3 | T3: q2dm6 (7/8) + q2dm7 (4/6) residuals | `navgraph.rs`, `build.rs`, `compgaps --built` | in-progress | **q2dm6 FIXED → 8/8, live-verified (s2s 5/8 @180s — q2dm2's band, bridges physically followable)** (2026-07-10, cache v19): `jump_down_link` retries the launch arc at hop height (+32u — ledge lips vetoed real drops the bots hop anyway) + `JUMP_BRIDGE_HDIST` 80→104 (the 96u spawn-floor↔pit junction). Zero regressions across all 8 maps (scratch-regen measured; q2dm3 ride test green). **q2dm7 still 4/6**: its nearest junctions are genuinely impassable (e.g. a 17u slot under an overhang at (1623,~180,120)) AND its largest component (3868 nodes) holds ZERO spawns — next step: identify whether comp0 is playable (upper walkways → needs a real connector) or garbage (roof/out-of-map → the gate metric mismeasures; consider spawns-mutually-reachable instead of in-largest). New tool: `compgaps --built` (final-graph components + spawn counts + nearest junctions). |
-| 4 | T4: regen all q2dm* + live spot-checks + notes | `mapcache.rs`, live | pending | VERSION bump |
+| 3 | T3 (DONE — see Overview): q2dm6 (7/8) + q2dm7 (4/6) residuals | `navgraph.rs`, `build.rs`, `compgaps --built` | in-progress | **q2dm6 FIXED → 8/8, live-verified (s2s 5/8 @180s — q2dm2's band, bridges physically followable)** (2026-07-10, cache v19): `jump_down_link` retries the launch arc at hop height (+32u — ledge lips vetoed real drops the bots hop anyway) + `JUMP_BRIDGE_HDIST` 80→104 (the 96u spawn-floor↔pit junction). Zero regressions across all 8 maps (scratch-regen measured; q2dm3 ride test green). **q2dm7 still 4/6**: its nearest junctions are genuinely impassable (e.g. a 17u slot under an overhang at (1623,~180,120)) AND its largest component (3868 nodes) holds ZERO spawns — next step: identify whether comp0 is playable (upper walkways → needs a real connector) or garbage (roof/out-of-map → the gate metric mismeasures; consider spawns-mutually-reachable instead of in-largest). New tool: `compgaps --built` (final-graph components + spawn counts + nearest junctions). |
+| 4 | T4: regen + live spot-checks + notes | `mapcache.rs`, live | done | VERSION 19; prod caches regen; q2dm6 s2s 5/8 + q2dm7 s2s 1/6 live; brain_notes appended |
 
 ## History
 - 2026-06-19: root cause = missing connectors, not `walkable_stair`. Ladder + ride + jump-down
