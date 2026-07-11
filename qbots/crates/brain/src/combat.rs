@@ -23,6 +23,18 @@ const TARGET_LOCK_FRAMES: u32 = 5;
 /// Plan 11 T3). 2 frames ≈ 0.2 s at 10 Hz — enough to not flicker on thin pillars.
 const SIGHT_GRACE_FRAMES: u32 = 2;
 
+/// Normal fresh-acquisition view cone (half-angle degrees): the front hemisphere.
+const ACQUIRE_FOV_DEG: f32 = 90.0;
+
+/// Frames of widened awareness after taking damage (~3 s at 10 Hz). Being shot from
+/// behind must let the bot acquire an attacker OUTSIDE the normal cone — the attacker is
+/// already in our PVS entity list (PVS is positional, not facing-based); the FOV gate was
+/// the only thing rejecting them (Plan 49; q3 does the same in its own `select_enemy`).
+const PAIN_AWARENESS_FRAMES: u32 = 30;
+
+/// Fresh-acquisition cone while in pain: 180° half-angle = the full sphere.
+const PAIN_FOV_DEG: f32 = 180.0;
+
 /// Brain tick rate (Hz). Eraser's calibrated timings are in seconds; we convert
 /// to frames at this cadence.
 const TICK_HZ: f32 = 10.0;
@@ -85,6 +97,10 @@ pub struct CombatDriver {
     /// Set to `SIGHT_GRACE_FRAMES` on fresh selection or while LOS holds;
     /// decremented each tick after LOS is lost; target is dropped when it reaches 0.
     sight_grace_remaining: u32,
+    /// Previous tick's health — the driver self-detects pain (Plan 49).
+    last_health: Option<i32>,
+    /// Frames of pain-widened acquisition remaining (Plan 49).
+    pain_frames: u32,
 }
 
 impl CombatDriver {
@@ -97,6 +113,8 @@ impl CombatDriver {
             frames_since_switch: u32::MAX,
             held_weapon: Weapon::Blaster,
             sight_grace_remaining: 0,
+            last_health: None,
+            pain_frames: 0,
         }
     }
 
@@ -109,6 +127,9 @@ impl CombatDriver {
     /// server forces us back to the spawn loadout).
     pub fn on_respawn(&mut self) {
         self.held_weapon = Weapon::Blaster;
+        // The health jump back to 100 is not pain; the death that preceded it is over.
+        self.last_health = None;
+        self.pain_frames = 0;
     }
 
     /// Evaluate combat state and produce a decision. `skill` drives aim jitter
@@ -123,6 +144,16 @@ impl CombatDriver {
         jitter_seed: f32,
         los: Option<&CollisionModel>,
     ) -> CombatDecision {
+        // Pain detection (Plan 49): a health drop widens fresh acquisition to the full
+        // sphere for PAIN_AWARENESS_FRAMES so an attacker behind us can be acquired.
+        let health = view.self_state().health;
+        if self.last_health.is_some_and(|prev| health < prev) && health > 0 {
+            self.pain_frames = PAIN_AWARENESS_FRAMES;
+        } else {
+            self.pain_frames = self.pain_frames.saturating_sub(1);
+        }
+        self.last_health = Some(health);
+
         let prev_target = self.current_target;
         let (target_num, fire_allowed) = self.select_target_entity(view, los);
 
@@ -274,9 +305,16 @@ impl CombatDriver {
         }
 
         // Fresh selection: trace-gated when geometry is available; else FOV-only.
+        // In pain, the cone widens to the full sphere (Plan 49) — being shot IS the
+        // sighting; a bot that keeps jogging away from its attacker reads as broken.
+        let fov = if self.pain_frames > 0 {
+            PAIN_FOV_DEG
+        } else {
+            ACQUIRE_FOV_DEG
+        };
         let nearest = match los {
-            Some(cm) => view.nearest_visible_enemy(cm, 90.0),
-            None => view.nearest_enemy(90.0),
+            Some(cm) => view.nearest_visible_enemy(cm, fov),
+            None => view.nearest_enemy(fov),
         };
         if let Some(t) = nearest {
             self.current_target = Some(t.entity_number);
@@ -390,6 +428,46 @@ mod tests {
         driver.held_weapon = Weapon::RocketLauncher;
         driver.on_respawn();
         assert_eq!(driver.held_weapon(), Weapon::Blaster);
+    }
+
+    /// Plan 49: an enemy directly BEHIND the bot is outside the 90° acquisition cone —
+    /// until the bot takes damage, which widens acquisition to the full sphere for
+    /// `PAIN_AWARENESS_FRAMES`. Without pain the enemy must stay unacquired.
+    #[test]
+    fn pain_widens_acquisition_to_attacker_behind() {
+        use q2proto::{EntityState, Frame};
+
+        // Self at origin facing +x (yaw 0); enemy player 200u directly behind (-x).
+        let mut frame = Frame::default();
+        frame.playerstate.viewangles = [0.0, 0.0, 0.0];
+        frame.playerstate.stats[1] = 100; // STAT_HEALTH
+        frame.entities = vec![EntityState {
+            number: 7,
+            origin: [-200.0, 0.0, 0.0],
+            modelindex: 255,
+            ..Default::default()
+        }];
+        let cs = ConfigStrings::default();
+        let mut driver = CombatDriver::new();
+        let skill = BotSkill::default();
+
+        // Healthy: the behind-enemy is outside the cone → no target.
+        let view = crate::perception::Worldview::from_frame(&frame, &cs, 0);
+        let dec = driver.evaluate(&view, &skill, 0.0, None);
+        assert!(
+            dec.target_entity.is_none(),
+            "no pain → behind-enemy must stay unacquired"
+        );
+
+        // Shot for 40: acquisition widens → the attacker behind is acquired.
+        frame.playerstate.stats[1] = 60;
+        let view = crate::perception::Worldview::from_frame(&frame, &cs, 0);
+        let dec = driver.evaluate(&view, &skill, 0.1, None);
+        assert_eq!(
+            dec.target_entity,
+            Some(7),
+            "pain must acquire the attacker behind us"
+        );
     }
 
     /// A driver with all timing gates satisfied, so `should_fire` depends only

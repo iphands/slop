@@ -304,15 +304,10 @@ impl Worldview {
 
     /// Find the nearest enemy within FOV.
     pub fn nearest_enemy(&self, fov_degrees: f32) -> Option<&PerceivedEntity> {
-        let fov_radians = fov_degrees.to_radians();
-        let forward = self.forward_vector();
         let origin = self.self_state.origin;
 
         self.enemies()
-            .filter(|e| {
-                let direction = (e.origin - origin).normalize();
-                forward.dot(direction) > fov_radians.cos()
-            })
+            .filter(|e| self.in_fov(e.origin, fov_degrees))
             .min_by(|a, b| {
                 let da = (a.origin - origin).length_squared();
                 let db = (b.origin - origin).length_squared();
@@ -341,7 +336,14 @@ impl Worldview {
     }
 
     /// Is `target` within the view FOV cone? (Factored out of `nearest_enemy`.)
+    ///
+    /// `fov_degrees` is a half-angle: 90° = the front hemisphere. Any value ≥ 180° means
+    /// "all directions" — the strict `dot > cos(180°) = -1` test would exclude a target at
+    /// EXACTLY 180° (dot = −1), so pain-widened acquisition (Plan 49) short-circuits it.
     fn in_fov(&self, target: Vec3, fov_degrees: f32) -> bool {
+        if fov_degrees >= 180.0 {
+            return true;
+        }
         let origin = self.self_state.origin;
         let dir = target - origin;
         if dir.length_squared() < 1e-6 {
