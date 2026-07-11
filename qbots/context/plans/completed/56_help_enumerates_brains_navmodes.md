@@ -1,6 +1,6 @@
 # Plan 56 — `--help` enumerates all brains and navmodes (competition value_enum lists)
 
-> **Status**: in-progress
+> **Status**: done
 > **Created**: 2026-07-11
 > **Depends on**: N/A
 > **Goal**: `qbots competition --help` lists every valid brain, navmode, and char (like
@@ -77,6 +77,8 @@ the full valid set. clap can do both the enumeration and the parsing if the args
    flag is present) — acceptable/clearer.
 
 ## Verification Checklist
-- [ ] T1: `cargo build`/`clippy` clean; help renders possible values for the three args.
-- [ ] T2: `--brains main,q3` / `--navmodes astar,navmesh` / `--chars grunt` parse; bad token
-      → clap error; `--brains runtester` → rejected; workspace fmt/clippy/test green.
+- [x] T1: `cargo build`/`clippy` clean; `competition --help` renders a `Possible values:`
+      block for `--navmodes` (6), `--brains` (5), `--chars` (4).
+- [x] T2: `--brains main,q3` / `--navmodes astar,navmesh` / `--chars grunt,major` parse;
+      `--brains nope` → clap error listing `[possible values: main, sentry, runtester, q3,
+      zb2]`; `--brains runtester` → runtime rejection; workspace fmt/clippy/test green.

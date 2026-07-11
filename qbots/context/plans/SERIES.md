@@ -132,6 +132,9 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 - After **55** (done): fleet/competition runs a capacity preflight — query `maxclients` +
   current players and exit immediately (non-zero) before spawning if the roster can't fit;
   `--loose-botcap` warns + proceeds. Early gate to Plan 53's join-time gate.
+- After **56** (done): `competition --help` enumerates every brain/navmode/char — the plural
+  `--brains`/`--navmodes`/`--chars` are clap `value_enum` lists (auto possible-values + token
+  validation), replacing the hand-rolled comma parsing.
 
 > **Brain-notes discipline (Plans 23–33, 36–38, 40, 43):** every brain plan appends a dated section to
 > `context/brain_notes.md` (running log, same shape as `map_errors.notes.log.md`). It is a
