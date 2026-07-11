@@ -863,6 +863,16 @@ pub(crate) async fn bot_task(
     let connect_deadline =
         time::Instant::now() + Duration::from_millis(cfg.fleet.connect_timeout_ms);
 
+    // Plan 57: ack-on-frame send re-phasing. The 10 Hz timer below no longer owns the
+    // send; it builds the decision and caches it in `last_cmd`, and the recv arm sends
+    // that cmd the instant a new server frame arrives (acking it). `last_send` gates the
+    // timer down to a keepalive that only fires when frames stall (no send in ~90 ms).
+    // `send_timing` measures the resulting frame-arrival→ack phase delay (`EVT send_timing`).
+    const KEEPALIVE_GAP: Duration = Duration::from_millis(90);
+    let mut last_cmd: Option<Usercmd> = None;
+    let mut last_send = Instant::now();
+    let mut send_timing = client::SendTiming::new();
+
     loop {
         if shutdown.requested() {
             if conn.state() == ConnState::Active {
@@ -879,6 +889,9 @@ pub(crate) async fn bot_task(
         tokio::select! {
             res = sock.recv(&mut buf) => {
                 let n = res?;
+                // Plan 57: remember which frame we held before parsing, so we can detect a
+                // freshly-decoded snapshot below and ack it on arrival.
+                let prev_sf = conn.frame.as_ref().map(|f| f.serverframe);
                 if let Some(pkt) = conn.on_recv(&buf[..n]) {
                     let _ = sock.send(&pkt).await;
                 }
@@ -898,6 +911,28 @@ pub(crate) async fn bot_task(
                         std::io::ErrorKind::ConnectionRefused,
                         format!("join rejected: {reason}"),
                     ));
+                }
+
+                // Plan 57: ack the just-arrived server frame immediately. The server
+                // measures ping as (recv of our clc_move acking frame N) − (senttime of
+                // frame N), so replying on arrival instead of on the free-running 100 ms
+                // timer collapses the reported ping to ≈ true RTT. We re-send the last
+                // timer-built cmd (same msec) — the server emits frames at 10 Hz, so this
+                // is still ~10 sends/sec: we re-phase the send, we do not speed it up.
+                if conn.state() == ConnState::Active {
+                    if let Some(sf) = conn.frame.as_ref().map(|f| f.serverframe) {
+                        if Some(sf) != prev_sf {
+                            let now = Instant::now();
+                            send_timing.on_frame(sf, now);
+                            if let Some(cmd) = last_cmd {
+                                if let Some(pkt) = conn.transmit_cmd(&cmd) {
+                                    let _ = sock.send(&pkt).await;
+                                    send_timing.on_ack_sent(sf, now);
+                                    last_send = now;
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1255,8 +1290,19 @@ pub(crate) async fn bot_task(
                     Usercmd::default()
                 };
 
-                if let Some(pkt) = conn.transmit_cmd(&cmd) {
-                    let _ = sock.send(&pkt).await;
+                // Plan 57: cache this decision so the recv arm can ack the next frame with
+                // it, and demote the timer to a keepalive. When Active we only transmit
+                // here if no frame-triggered send happened in the last ~90 ms (frames
+                // stalled); while handshaking we always send so queued reliables flush.
+                last_cmd = Some(cmd);
+                let now = Instant::now();
+                let keepalive_due = conn.state() != ConnState::Active
+                    || now.duration_since(last_send) >= KEEPALIVE_GAP;
+                if keepalive_due {
+                    if let Some(pkt) = conn.transmit_cmd(&cmd) {
+                        let _ = sock.send(&pkt).await;
+                        last_send = now;
+                    }
                 }
 
                 if ticks.is_multiple_of(10) {
@@ -1274,6 +1320,22 @@ pub(crate) async fn bot_task(
                             );
                         }
                         None => tracing::debug!(state = ?conn.state(), "(no frame yet)"),
+                    }
+
+                    // Plan 57: report the self-inflicted frame-arrival→ack phase delay.
+                    // Near-zero ema/max here means the ack-on-frame path is working; the
+                    // server's scoreboard ping should track ≈ true RTT. `late` counts acks
+                    // that slipped past ~40 ms (a starved loop / a stalled frame stream).
+                    let st = send_timing.snapshot();
+                    if st.sends > 0 {
+                        tracing::info!(
+                            bot = name,
+                            ema = %format!("{:.1}", st.ema_ms),
+                            max = %format!("{:.1}", st.max_ms),
+                            sends = st.sends,
+                            late = st.late,
+                            "EVT send_timing"
+                        );
                     }
                 }
             }
