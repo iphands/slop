@@ -155,8 +155,24 @@ impl Navigator for Zb2Route {
     }
     /// The brain owns goal selection; the facade never re-goals itself.
     fn set_goal(&mut self, _goal: NavGoal, _from: Vec3) {}
-    fn pursue_target(&self, _from: Vec3) -> Option<Vec3> {
-        (self.idx < self.path.len()).then(|| self.node_vec(self.idx))
+    fn pursue_target(&self, from: Vec3) -> Option<Vec3> {
+        if self.idx >= self.path.len() {
+            return None;
+        }
+        // Teleport legs steer INTO the pad until the server snaps us (Plan 52): the
+        // trigger volume is tiny (~16×16u), smaller than ADVANCE_RADIUS, so once the
+        // cursor advances past the pad node the raw target (the far destination)
+        // would walk the bot AWAY from the pad it hasn't touched yet.
+        if let Some((a, b)) = self.current_edge() {
+            if matches!(self.graph.edge_kind(a, b), EdgeKind::Teleport) {
+                let pad = Vec3::from(self.graph.node_pos(a));
+                let dest = Vec3::from(self.graph.node_pos(b));
+                if from.distance_squared(pad) < from.distance_squared(dest) {
+                    return Some(pad);
+                }
+            }
+        }
+        Some(self.node_vec(self.idx))
     }
     /// Committed nodes ARE graph nodes (never look-ahead cuts), so the raw target is hull-honest.
     fn pursue_target_safe(&self, from: Vec3, _cm: &CollisionModel) -> Option<Vec3> {

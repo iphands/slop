@@ -325,6 +325,40 @@ impl NavigationDriver {
         }
     }
 
+    /// True when the current path edge (prev_waypoint → current_waypoint) is a
+    /// teleporter link (Plan 52).
+    pub fn current_edge_is_teleport(&self) -> bool {
+        match (self.prev_waypoint, self.current_waypoint) {
+            (Some(from), Some(to)) => {
+                matches!(self.nav_graph.edge_kind(from, to), EdgeKind::Teleport)
+            }
+            _ => false,
+        }
+    }
+
+    /// When the current path edge is a TELEPORT (Plan 52), steering must push INTO the
+    /// pad center until the server snaps us: the trigger volume is tiny (~16×16u around
+    /// the pad origin, `g_misc.c` SP_misc_teleporter) — smaller than the waypoint-reach
+    /// radius — and the raw lookahead would otherwise project a point toward the far
+    /// destination the moment the pad waypoint is "reached". Returns the pad position
+    /// while the bot is still pad-side; after the snap the bot is beside the destination
+    /// node and normal waypoint advance takes over.
+    fn teleport_pad_target(&self, from: Vec3) -> Option<Vec3> {
+        let (Some(pad), Some(dest)) = (self.prev_waypoint, self.current_waypoint) else {
+            return None;
+        };
+        if !matches!(self.nav_graph.edge_kind(pad, dest), EdgeKind::Teleport) {
+            return None;
+        }
+        let pad_pos = Vec3::from(self.nav_graph.nodes[pad]);
+        let dest_pos = Vec3::from(self.nav_graph.nodes[dest]);
+        if from.distance_squared(pad_pos) < from.distance_squared(dest_pos) {
+            Some(pad_pos)
+        } else {
+            None
+        }
+    }
+
     pub fn next_waypoint_direction(&self, from_position: Vec3) -> Option<Vec3> {
         self.current_waypoint.and_then(|wp_idx| {
             let wp_pos = Vec3::from(self.nav_graph.nodes[wp_idx]);
@@ -396,6 +430,10 @@ impl NavigationDriver {
     /// the path is sampled at 24u or 12u — i.e. steering is density-independent (the fix for
     /// "more nodes → jaggier motion"). Falls back to the final node when the path is short.
     pub fn pursue_target(&self, from: Vec3) -> Option<Vec3> {
+        // Teleport legs steer INTO the pad, never along the pad→dest segment (Plan 52).
+        if let Some(pad) = self.teleport_pad_target(from) {
+            return Some(pad);
+        }
         let wp_idx = self.current_waypoint?;
         let n = self.current_path.len();
         if n == 0 {
@@ -934,5 +972,59 @@ mod tests {
             Some(1),
             "cleared overlay returns to B"
         );
+    }
+
+    /// Plan 52: on a Teleport leg the pursue target is the PAD until the server snap
+    /// lands the bot on the destination side — never a lookahead toward the (far)
+    /// destination the moment the pad waypoint is "reached".
+    #[test]
+    fn teleport_leg_steers_into_pad_until_snap() {
+        use std::sync::Arc;
+        // 0=start —walk→ 1=pad —TELEPORT→ 2=dest —walk→ 3=goal.
+        let mut g = NavGraph::from_raw(
+            vec![
+                [0.0, 0.0, 0.0],
+                [100.0, 0.0, 0.0],
+                [2000.0, 0.0, 0.0],
+                [2100.0, 0.0, 0.0],
+            ],
+            vec![
+                vec![(1, 100.0)],
+                vec![(0, 100.0)],
+                vec![(3, 100.0)],
+                vec![(2, 100.0)],
+            ],
+        );
+        g.add_teleport_edge(1, 2, 32.0);
+        let g = Arc::new(g);
+        let mut nav = NavigationDriver::new(Arc::clone(&g));
+        nav.set_goal(NavGoal::Waypoint(3), Vec3::new(0.0, 0.0, 0.0));
+        assert_eq!(nav.current_waypoint(), Some(1), "route heads to the pad");
+
+        // Arrive at the pad → waypoint advances to the destination (teleport leg).
+        nav.update(Vec3::new(98.0, 0.0, 0.0), None);
+        assert_eq!(nav.current_waypoint(), Some(2), "leg is now pad→dest");
+        assert!(nav.current_edge_is_teleport());
+
+        // Still pad-side: the pursue target is the PAD CENTER, not a dest lookahead.
+        let t = nav
+            .pursue_target(Vec3::new(98.0, 0.0, 0.0))
+            .expect("target");
+        assert!(
+            (t - Vec3::new(100.0, 0.0, 0.0)).length() < 1e-3,
+            "steers into the pad, got {t}"
+        );
+
+        // Server snap: the bot appears at the destination → normal advance resumes.
+        nav.update(Vec3::new(2001.0, 0.0, 0.0), None);
+        assert_eq!(
+            nav.current_waypoint(),
+            Some(3),
+            "post-snap leg is dest→goal"
+        );
+        let t = nav
+            .pursue_target(Vec3::new(2001.0, 0.0, 0.0))
+            .expect("target");
+        assert!(t.x > 2000.0, "target is forward along the path, got {t}");
     }
 }
