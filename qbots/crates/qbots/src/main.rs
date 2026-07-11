@@ -1971,6 +1971,7 @@ async fn main() -> ExitCode {
                 qport_base,
                 skin_sel,
                 char,
+                false, // --loose-botcap wired in T5
             )
             .await
             {
@@ -2095,6 +2096,7 @@ async fn main() -> ExitCode {
                 count,
                 qport_base,
                 skins_per_mode,
+                false, // --loose-botcap wired in T5
             )
             .await
             {

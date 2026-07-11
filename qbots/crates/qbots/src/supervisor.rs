@@ -229,6 +229,11 @@ struct FleetShared {
     nav: NavCache,
     shutdown: Shutdown,
     stats: FleetStats,
+    /// First fatal join failure (server full / connect timeout), if any. Set once by the
+    /// first bot that fails to join; the run returns an error unless `loose_botcap`.
+    join_failure: Arc<Mutex<Option<String>>>,
+    /// When true, a join failure only warns + drops that bot instead of failing the fleet.
+    loose_botcap: bool,
 }
 
 /// Run the full fleet from config: shared nav cache + shutdown, one task per bot,
@@ -252,6 +257,7 @@ pub async fn run_fleet(
     qport_base_override: Option<u16>,
     skin: crate::skins::SkinSelection,
     char: Option<brain::CharPreset>,
+    loose_botcap: bool,
 ) -> std::io::Result<()> {
     // Apply the maxclients guard: never spawn more than `max_bots` (leave slots
     // for humans). 0 = uncapped. `--count` overrides the config roster size first.
@@ -283,6 +289,8 @@ pub async fn run_fleet(
         nav: nav_cache,
         shutdown: shutdown.clone(),
         stats: stats.clone(),
+        join_failure: Arc::new(Mutex::new(None)),
+        loose_botcap,
     };
 
     // Per-process default so concurrent `run` fleets get disjoint qport ranges (the
@@ -349,6 +357,18 @@ pub async fn run_fleet(
     // exiting) — emit the final tally.
     log_final_stats(&stats);
     tracing::info!("fleet exited");
+    fleet_join_result(&shared)
+}
+
+/// Turn a recorded fatal join failure into a process-level error. `Ok(())` when every bot
+/// joined (or `--loose-botcap` downgraded the failures to warnings, leaving the slot unset).
+fn fleet_join_result(shared: &FleetShared) -> std::io::Result<()> {
+    if let Some(reason) = shared.join_failure.lock().unwrap().take() {
+        return Err(std::io::Error::other(format!(
+            "fleet join failed: {reason} — raise the server's maxclients or pass \
+             --loose-botcap to proceed with warnings"
+        )));
+    }
     Ok(())
 }
 
@@ -381,6 +401,7 @@ pub async fn run_competition(
     per_group_count: usize,
     qport_base_override: Option<u16>,
     skins_per_mode: Vec<Option<String>>,
+    loose_botcap: bool,
 ) -> std::io::Result<()> {
     if modes.is_empty() || brains.is_empty() || per_group_count == 0 {
         tracing::error!("competition needs at least one mode, one brain, and --count >= 1");
@@ -426,6 +447,8 @@ pub async fn run_competition(
         nav: NavCache::new(), // ONE shared cache across every mode (the in-process perf win)
         shutdown: shutdown.clone(),
         stats: stats.clone(),
+        join_failure: Arc::new(Mutex::new(None)),
+        loose_botcap,
     };
     // Contiguous per-mode qport blocks (`base + mi*count + i`) are disjoint, so the server's
     // (ip, qport) slot keys never collide across modes.
@@ -497,7 +520,7 @@ pub async fn run_competition(
     status.abort();
     log_competition_scoreboard(&stats, &group_tags, "FINAL");
     tracing::info!("competition exited");
-    Ok(())
+    fleet_join_result(&shared)
 }
 
 /// The scoreboard grouping tag for a `(mode, brain, char?)` group: brain first, then nav plan,
@@ -618,6 +641,26 @@ async fn bot_supervisor_loop(
                 tracing::info!(%name, "bot task exited");
             }
             Err(e) => {
+                // A join failure (server full / connect timeout) is never retryable —
+                // the slot won't open by trying again. In strict mode it fails the whole
+                // fleet; with --loose-botcap it just drops this one bot with a warning.
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::TimedOut
+                ) {
+                    if shared.loose_botcap {
+                        tracing::warn!(%name, "join failed ({e}); --loose-botcap set, dropping this bot");
+                    } else {
+                        tracing::error!(%name, "join failed ({e}); failing the fleet (pass --loose-botcap to proceed with warnings)");
+                        let mut slot = shared.join_failure.lock().unwrap();
+                        if slot.is_none() {
+                            *slot = Some(e.to_string());
+                        }
+                        drop(slot);
+                        shared.shutdown.fire();
+                    }
+                    return;
+                }
                 tracing::warn!(%name, "bot task error: {e}");
             }
         }
