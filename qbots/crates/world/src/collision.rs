@@ -738,6 +738,84 @@ pub fn water_channel_world() -> CollisionModel {
     }
 }
 
+/// A V-groove drainage-duct world (Plan 52): two 45° slopes meeting at the origin,
+/// running along the x axis — solid wherever `z < |y|`, air above. The POINT floor at
+/// `(x, y)` is `z = |y|`, but the 32×32 player hull bridges the slopes and rests with
+/// its **origin** at `z = 40 + |y|` (bottom corners contact at `z = 16 + |y|`, origin
+/// 24 above). Models base64's drain duct, where the floor probe's stationary hull check
+/// was `startsolid` and the whole duct sampled zero nodes. Test-support only.
+#[doc(hidden)]
+pub fn v_groove_world() -> CollisionModel {
+    let mk = |normal: [f32; 3], dist: f32, typ: i32| {
+        let sb = (0..3).fold(0u8, |b, j| if normal[j] < 0.0 { b | (1 << j) } else { b });
+        Plane {
+            normal,
+            dist,
+            typ,
+            signbits: sb,
+        }
+    };
+    const S: f32 = std::f32::consts::FRAC_1_SQRT_2;
+    // P0: slope z = -y (normal points up-and-north); P1: slope z = y.
+    let planes = vec![mk([0.0, S, S], 0.0, 5), mk([0.0, -S, S], 0.0, 5)];
+    // Leaf children encode as -(leaf+1): L0→-1, L1→-2, L2→-3.
+    // N0 P0: front(z≥-y)→N1, back(z<-y)→L1 solid (brush A).
+    // N1 P1: front(z≥y)→L0 air, back(z<y)→L2 solid (brush B).
+    let nodes = vec![
+        Node {
+            plane: 0,
+            children: [1, -2],
+        },
+        Node {
+            plane: 1,
+            children: [-1, -3],
+        },
+    ];
+    let leafs = vec![
+        Leaf {
+            contents: 0,
+            cluster: 0,
+            firstleafbrush: 0,
+            numleafbrushes: 0,
+        }, // L0 air
+        Leaf {
+            contents: CONTENTS_SOLID,
+            cluster: -1,
+            firstleafbrush: 0,
+            numleafbrushes: 1,
+        }, // L1 south slope
+        Leaf {
+            contents: CONTENTS_SOLID,
+            cluster: -1,
+            firstleafbrush: 1,
+            numleafbrushes: 1,
+        }, // L2 north slope
+    ];
+    let brushsides = vec![BrushSide { plane: 0 }, BrushSide { plane: 1 }];
+    let brushes = vec![
+        BrushCol {
+            firstside: 0,
+            numsides: 1,
+            contents: CONTENTS_SOLID,
+        },
+        BrushCol {
+            firstside: 1,
+            numsides: 1,
+            contents: CONTENTS_SOLID,
+        },
+    ];
+    let leafbrushes = vec![0u16, 1u16];
+    CollisionModel {
+        planes,
+        nodes,
+        leafs,
+        brushes,
+        brushsides,
+        leafbrushes,
+        headnode: 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

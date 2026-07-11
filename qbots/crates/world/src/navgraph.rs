@@ -1323,6 +1323,136 @@ impl NavGraph {
         total
     }
 
+    /// Rescue pass for **stranded spawn-bearing components** (Plan 52). After
+    /// [`Self::bridge_components_via_jump`], a component that still holds DM spawns but
+    /// is not the play component gets one more chance: the same jump-down candidate
+    /// search, but with a deeper `max_fall` and restricted to pairs linking the stranded
+    /// component to the play component — spawnless ceiling/wall-top networks are never
+    /// touched, so this cannot inflate the play area with junk surfaces.
+    ///
+    /// Motivation: base64's grenade-launcher room (spawn at `(-720,824,-520)`) exits via
+    /// a ~288u floor-shaft drop — survivable in Q2 (minor fall damage) but past the
+    /// universal `JUMP_BRIDGE_MAX_FALL` of 256 that q2dm* graphs are tuned to. Deep
+    /// drops stay opt-in: this pass adds **one** shortest validated edge per stranded
+    /// component (enough for the undirected connectivity gate and for A* to route the
+    /// drop) and is a no-op on maps whose spawns already connect.
+    pub fn rescue_stranded_spawns(
+        &mut self,
+        cm: &CollisionModel,
+        max_hdist: f32,
+        max_fall: f32,
+        spawns: &[[f32; 3]],
+    ) -> usize {
+        let comps = self.components();
+        if comps.len() <= 1 || spawns.is_empty() {
+            return 0;
+        }
+        let mut comp_id = vec![usize::MAX; self.nodes.len()];
+        for (ci, c) in comps.iter().enumerate() {
+            for &node in c {
+                comp_id[node] = ci;
+            }
+        }
+        // Spawn count per component — the same nearest-node mapping the connectivity
+        // gate uses, so "stranded" here is exactly what the gate would flag.
+        let mut spawn_count = vec![0usize; comps.len()];
+        for sp in spawns {
+            if let Some(nd) = self.nearest(sp) {
+                if comp_id[nd] != usize::MAX {
+                    spawn_count[comp_id[nd]] += 1;
+                }
+            }
+        }
+        let Some(play) = (0..comps.len()).max_by_key(|&ci| (spawn_count[ci], comps[ci].len()))
+        else {
+            return 0;
+        };
+        let stranded: Vec<usize> = (0..comps.len())
+            .filter(|&ci| ci != play && spawn_count[ci] > 0)
+            .collect();
+        if stranded.is_empty() {
+            return 0;
+        }
+        for &ci in &stranded {
+            tracing::debug!(
+                comp = ci,
+                nodes = comps[ci].len(),
+                spawns = spawn_count[ci],
+                "rescue: stranded spawn component"
+            );
+        }
+
+        // Stranded components are small (a room, a ledge); iterate their nodes and scan
+        // play-component nodes bucketed at `max_hdist` — cheaper than the full-graph
+        // bucketing of the normal pass.
+        let cell = max_hdist.max(1.0);
+        let key = |p: &[f32; 3]| ((p[0] / cell).floor() as i32, (p[1] / cell).floor() as i32);
+        let mut play_buckets: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+        for &i in &comps[play] {
+            play_buckets.entry(key(&self.nodes[i])).or_default().push(i);
+        }
+
+        let zero = [0.0f32; 3];
+        let max_h2 = max_hdist * max_hdist;
+        // (hi, lo, cost, yaw, stranded component)
+        let mut candidates: Vec<(usize, usize, f32, f32, usize)> = Vec::new();
+        let mut in_range = 0usize;
+        for &ci in &stranded {
+            for &i in &comps[ci] {
+                let a = self.nodes[i];
+                let (kx, ky) = key(&a);
+                for dx in -1..=1 {
+                    for dy in -1..=1 {
+                        let Some(cellnodes) = play_buckets.get(&(kx + dx, ky + dy)) else {
+                            continue;
+                        };
+                        for &j in cellnodes {
+                            let b = self.nodes[j];
+                            let h2 = (b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2);
+                            if h2 > max_h2 {
+                                continue;
+                            }
+                            let (hi, lo) = if a[2] >= b[2] { (i, j) } else { (j, i) };
+                            let drop = self.nodes[hi][2] - self.nodes[lo][2];
+                            if drop > STEP && drop <= max_fall {
+                                in_range += 1;
+                                tracing::trace!(
+                                    hi = ?self.nodes[hi],
+                                    lo = ?self.nodes[lo],
+                                    drop,
+                                    "rescue: geometric pair"
+                                );
+                            }
+                            if let Some((cost, yaw)) =
+                                jump_down_link(&self.nodes, cm, &zero, max_fall, hi, lo)
+                            {
+                                candidates.push((hi, lo, cost, yaw, ci));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        tracing::debug!(
+            in_range,
+            candidates = candidates.len(),
+            "rescue: validated jump-down candidates"
+        );
+        candidates.sort_by(|x, y| x.2.total_cmp(&y.2));
+        let mut rescued_comps: HashSet<usize> = HashSet::new();
+        let mut added = 0;
+        for (hi, lo, cost, yaw, ci) in candidates {
+            if !rescued_comps.insert(ci) {
+                continue; // this stranded component already got its (shortest) edge
+            }
+            self.adj[hi].push((lo, cost));
+            self.jump_edges.insert((hi, lo));
+            self.jump_yaws.insert((hi, lo), yaw);
+            added += 1;
+        }
+        added
+    }
+
     /// The **play component**: the connected component containing the most DM spawn
     /// points. This is the area the game actually happens in — and the right set for
     /// bots to roam. It is NOT necessarily the component with the most *nodes*: large
@@ -1606,6 +1736,14 @@ fn floor_waypoints_multi(
             let stand = cm.trace(&wp, &wp, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
             if !stand.startsolid {
                 results.push(wp);
+            } else if let Some(rest) = hull_rest_z(cm, x, y, floor_z) {
+                // Hull-rest fallback (Plan 52): on non-flat floors (V-grooves, 45°
+                // channel beds, sloped trim) the POINT trace reaches deeper than the
+                // 32×32 hull can — the hull straddles the slopes and comes to rest
+                // higher, exactly like pmove does for a real player. base64's drain
+                // duct (the only exit from its GL-room spawn) is such a groove and
+                // sampled ZERO nodes without this.
+                results.push([x, y, rest]);
             }
         }
 
@@ -1627,6 +1765,45 @@ fn floor_waypoints_multi(
     }
 
     results
+}
+
+/// Where the player hull actually comes to rest in column `(x, y)` above a point-floor
+/// at `floor_z` (Plan 52). Returns the standing **origin** z, or `None` if the hull
+/// cannot rest cleanly within `HULL_REST_MAX` above the point contact.
+///
+/// The floor probe's point trace finds the deepest solid contact, but on a non-flat
+/// floor (V-groove, sloped channel bed) the 32×32 hull bridges the slopes and rests
+/// higher — the stationary hull check at `point + 24` is `startsolid` even though a
+/// real player stands there fine (pmove resolves the same way this trace does).
+fn hull_rest_z(cm: &CollisionModel, x: f32, y: f32, floor_z: f32) -> Option<f32> {
+    // How far above the flat-floor origin (`floor_z + 24`) the hull may rest and still
+    // count as "standing on this floor". A 45° groove that fits the 32u hull rests at
+    // most ~16u higher than the groove bottom; 40 leaves margin without accepting a
+    // rest on some unrelated rim above.
+    const HULL_REST_MAX: f32 = 40.0;
+    let top = [x, y, floor_z + 24.0 + HULL_REST_MAX];
+    let bot = [x, y, floor_z + 24.0];
+    let down = cm.trace(&top, &bot, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+    if down.startsolid {
+        return None; // no clearance even at the top of the window
+    }
+    if down.fraction >= 1.0 {
+        return None; // hull never contacts — the startsolid came from something else
+    }
+    let rest = down.endpos[2];
+    // Confirm the rest position is genuinely clear (paranoia: zero-length hull check,
+    // same predicate the flat-floor path uses).
+    let stand = cm.trace(
+        &[x, y, rest],
+        &[x, y, rest],
+        &HULL_MINS,
+        &HULL_MAXS,
+        MASK_SOLID,
+    );
+    if stand.startsolid {
+        return None;
+    }
+    Some(rest)
 }
 
 /// Sample submerged + surface swim nodes in column `(x, y)` (Plan 39).
@@ -2405,6 +2582,84 @@ mod tests {
         // No symmetric walk edge should exist (only a one-way jump down).
         // Walk edge A→B: if present, would be walk. Jump edge is in jump_edges set.
         // We just verify edge_kind for the pair we added.
+    }
+
+    /// Plan 52: the floor probe samples a V-groove duct via the hull-rest fallback —
+    /// the point floor at the groove seam is too deep for the 32×32 hull (stationary
+    /// check startsolid), but the hull rests on the slopes 16u higher, like pmove.
+    #[test]
+    fn floor_probe_samples_v_groove_via_hull_rest() {
+        let cm = crate::collision::v_groove_world();
+        let bounds = ([-100.0, -100.0, -50.0], [100.0, 100.0, 200.0]);
+        // Groove seam column (y=0): point floor z=0, hull rests at origin z=40.
+        let seam = floor_waypoints_multi(&cm, 0.0, 0.0, bounds);
+        assert_eq!(seam.len(), 1, "seam column must yield exactly one node");
+        assert!(
+            (seam[0][2] - 40.0).abs() < 1.0,
+            "hull rests at origin z≈40, got {}",
+            seam[0][2]
+        );
+        // Off-seam column (y=5): point floor z=5, rest origin z=45.
+        let off = floor_waypoints_multi(&cm, 0.0, 5.0, bounds);
+        assert_eq!(off.len(), 1);
+        assert!(
+            (off[0][2] - 45.0).abs() < 1.0,
+            "hull rests at origin z≈45, got {}",
+            off[0][2]
+        );
+    }
+
+    /// Plan 52: a spawn-bearing ledge whose only exit is a drop deeper than the
+    /// universal jump-bridge cap (256) but within the rescue cap (384) gets one
+    /// jump-down edge to the play component, flipping the connectivity gate.
+    #[test]
+    fn rescue_bridges_stranded_spawn_ledge() {
+        // Floor surface at z=0 everywhere; ledge node A at z=324 (300u above the
+        // floor nodes at z=24 — past 256, within 384), 96u horizontal.
+        let cm = CollisionModel::half_space([0.0, 0.0, 1.0], 0.0);
+        let mut g = NavGraph::from_raw(
+            vec![
+                [0.0, 0.0, 324.0],  // 0: A — stranded ledge, has a spawn
+                [96.0, 0.0, 24.0],  // 1: B — floor (play component)
+                [144.0, 0.0, 24.0], // 2: C — floor, connected to B
+            ],
+            vec![vec![], vec![(2, 48.0)], vec![(1, 48.0)]],
+        );
+        let spawns = [[0.0, 0.0, 324.0], [96.0, 0.0, 24.0], [144.0, 0.0, 24.0]];
+        // Sanity: the normal cap can't bridge a 300u drop.
+        assert_eq!(g.bridge_components_via_jump(&cm, 104.0, 256.0, 6), 0);
+        assert_eq!(g.spawns_in_largest_component(&spawns), (2, 3));
+
+        let added = g.rescue_stranded_spawns(&cm, 104.0, 384.0, &spawns);
+        assert_eq!(added, 1, "one rescue edge for the one stranded component");
+        assert!(
+            matches!(g.edge_kind(0, 1), EdgeKind::Jump { .. }),
+            "A→B must be a Jump edge"
+        );
+        assert_eq!(
+            g.spawns_in_largest_component(&spawns),
+            (3, 3),
+            "gate flips to all-connected"
+        );
+    }
+
+    /// Plan 52: the rescue pass never links spawnless components — the same geometry
+    /// with no spawn on the ledge stays split.
+    #[test]
+    fn rescue_ignores_spawnless_components() {
+        let cm = CollisionModel::half_space([0.0, 0.0, 1.0], 0.0);
+        let mut g = NavGraph::from_raw(
+            vec![
+                [0.0, 0.0, 324.0],  // 0: spawnless ledge
+                [96.0, 0.0, 24.0],  // 1: floor
+                [144.0, 0.0, 24.0], // 2: floor
+            ],
+            vec![vec![], vec![(2, 48.0)], vec![(1, 48.0)]],
+        );
+        let spawns = [[96.0, 0.0, 24.0], [144.0, 0.0, 24.0]];
+        let added = g.rescue_stranded_spawns(&cm, 104.0, 384.0, &spawns);
+        assert_eq!(added, 0, "spawnless ledge must not be rescued");
+        assert_eq!(g.components().len(), 2, "components stay split");
     }
 
     /// Path of length ≤2 is returned unchanged.

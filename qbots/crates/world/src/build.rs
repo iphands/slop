@@ -170,6 +170,17 @@ pub fn generate_map_nav(baseq2: &Path, map: &str, spacing: f32) -> Result<MapNav
         jump_bridged,
         "bridged stacked floors via jump-down links"
     );
+    // Deep-drop rescue for spawn-bearing components the normal cap couldn't reach
+    // (Plan 52, base64). Self-gating: returns 0 when every spawn already connects.
+    let rescued =
+        graph.rescue_stranded_spawns(&cm, JUMP_BRIDGE_HDIST, RESCUE_MAX_FALL, &spawn_origins);
+    if rescued > 0 {
+        tracing::info!(
+            map,
+            rescued,
+            "rescued stranded spawn components via deep jump-down links"
+        );
+    }
     let (in_largest, total_spawns) = graph.spawns_in_largest_component(&spawn_origins);
     let largest = graph.largest_spawn_component(&spawn_origins);
 
@@ -255,6 +266,14 @@ pub const JUMP_BRIDGE_HDIST: f32 = 104.0;
 /// stacked-floor drop (mid floor → lower) is ~144; the quad ledge drop is larger. 256 covers
 /// them while staying within a survivable Q2 fall. In the cache via VERSION.
 pub const JUMP_BRIDGE_MAX_FALL: f32 = 256.0;
+/// Max fall height (units) for the **spawn-rescue** jump pass
+/// ([`NavGraph::rescue_stranded_spawns`], Plan 52). Deeper than [`JUMP_BRIDGE_MAX_FALL`]
+/// (minor fall damage), so it is used ONLY to link a spawn-bearing component that is still
+/// stranded after normal bridging to the play component — a no-op on maps whose spawns
+/// already connect (all q2dm*). base64's grenade-launcher room exits via a ~288u floor
+/// shaft; 384 covers it with margin while staying well within a survivable Q2 fall.
+/// In the cache via VERSION.
+pub const RESCUE_MAX_FALL: f32 = 384.0;
 
 /// Follow a `func_train`'s `path_corner` chain from its `target`, returning corner origins
 /// in path order. Stops when the chain loops back on itself or a corner is missing; caps
