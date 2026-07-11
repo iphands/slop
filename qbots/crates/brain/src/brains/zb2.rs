@@ -223,6 +223,52 @@ fn nearly_pod_skip(
     best
 }
 
+/// Straight-line walkability `a → b`: hull-clear AND continuous non-lava floor. Shared by
+/// the `Search_NearlyPod` shortcut gate and the reachable route start (Plan 51 R4).
+fn line_walkable(cm: &CollisionModel, a: Vec3, b: Vec3) -> bool {
+    let pa = [a.x, a.y, a.z];
+    let pb = [b.x, b.y, b.z];
+    let t = cm.trace(&pa, &pb, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
+    !t.startsolid && t.fraction >= 1.0 && segment_has_floor(cm, pa, pb)
+}
+
+/// Radius scanned for a hull-reachable route start (Plan 51 R4).
+const START_SCAN_RADIUS: f32 = 256.0;
+/// Nearest candidates given the full walkability test before falling back.
+const START_SCAN_K: usize = 12;
+
+/// The route START node (Plan 51 R4, pure): the nearest node whose straight line from
+/// `pos` passes `walkable`. `NavGraph::nearest` is euclidean and happily projects the
+/// start across a thin wall — every replan then recommits an unreachable first waypoint,
+/// a loop no destination goal-block can break (post-fix soak: a 20.9 s wall-press ending
+/// in death at (-212,232,-15)). Falls back to the plain euclidean nearest when no nearby
+/// candidate qualifies (off-graph after a fall, mid-air, etc. — pre-R4 behavior).
+fn reachable_start(
+    node_count: usize,
+    node_pos: &dyn Fn(usize) -> Vec3,
+    pos: Vec3,
+    walkable: &dyn Fn(Vec3) -> bool,
+) -> Option<usize> {
+    let mut cands: Vec<(f32, usize)> = (0..node_count)
+        .filter_map(|i| {
+            let d2 = (node_pos(i) - pos).length_squared();
+            (d2 <= START_SCAN_RADIUS * START_SCAN_RADIUS).then_some((d2, i))
+        })
+        .collect();
+    cands.sort_by(|a, b| a.0.total_cmp(&b.0));
+    if let Some(&(_, i)) = cands
+        .iter()
+        .take(START_SCAN_K)
+        .find(|&&(_, i)| walkable(node_pos(i)))
+    {
+        return Some(i);
+    }
+    (0..node_count)
+        .map(|i| ((node_pos(i) - pos).length_squared(), i))
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, i)| i)
+}
+
 /// The 3ZB2-derived decision brain: committed routes + shortcut skips + shared combat/traversal.
 pub struct Zb2Brain {
     skill: BotSkill,
@@ -403,9 +449,18 @@ impl Brain for Zb2Brain {
                 self.route = None;
                 self.next_roam_goal();
             } else {
-                let planned = graph
-                    .nearest(&[pos.x, pos.y, pos.z])
-                    .and_then(|from| graph.path(from, g));
+                // R4: plan from a start node we can actually WALK to — the euclidean
+                // nearest may sit across a thin wall, making path[0] a permanent grind.
+                let start = match cm {
+                    Some(cmodel) => reachable_start(
+                        graph.node_count(),
+                        &|i| Vec3::from(graph.node_pos(i)),
+                        pos,
+                        &|p| line_walkable(cmodel, pos, p),
+                    ),
+                    None => graph.nearest(&[pos.x, pos.y, pos.z]),
+                };
+                let planned = start.and_then(|from| graph.path(from, g));
                 match planned {
                     Some(path) => {
                         if !stuck_replan {
@@ -453,14 +508,9 @@ impl Brain for Zb2Brain {
                         path.len(),
                         &|j| matches!(g2.edge_kind(path[j - 1], path[j]), EdgeKind::Walk),
                         &|p| los::has_los_player(cmodel, eye, [p.x, p.y, p.z]),
-                        &|p| {
-                            // LOS ≠ walkable: the straight run to the skip target must be
-                            // hull-clear AND have continuous non-lava floor (Plan 48 Z1).
-                            let a = [pos.x, pos.y, pos.z];
-                            let b = [p.x, p.y, p.z];
-                            let t = cmodel.trace(&a, &b, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
-                            !t.startsolid && t.fraction >= 1.0 && segment_has_floor(cmodel, a, b)
-                        },
+                        // LOS ≠ walkable: the straight run to the skip target must be
+                        // hull-clear AND have continuous non-lava floor (Plan 48 Z1).
+                        &|p| line_walkable(cmodel, pos, p),
                     );
                     if skipped > route.idx {
                         tracing::debug!(from = route.idx, to = skipped, "zb2 shortcut skip");
@@ -786,6 +836,28 @@ mod tests {
             skipped, 3,
             "never skip across a floor gap the eye sees over"
         );
+    }
+
+    /// Plan 51 R4: the start node must be the nearest WALKABLE candidate, not the raw
+    /// euclidean nearest (which can sit across a thin wall); with no walkable candidate
+    /// it falls back to the euclidean nearest (pre-R4 behavior).
+    #[test]
+    fn reachable_start_skips_unwalkable_euclid_nearest() {
+        // Bot at x=10; node 0 at x=-50 (nearer, behind a wall at x=0), node 1 at x=100.
+        let nodes = [Vec3::new(-50.0, 0.0, 0.0), Vec3::new(100.0, 0.0, 0.0)];
+        let pos = Vec3::new(10.0, 0.0, 0.0);
+        let wall_at_x0 = |p: Vec3| p.x > 0.0;
+        assert_eq!(
+            reachable_start(2, &|i| nodes[i], pos, &wall_at_x0),
+            Some(1),
+            "nearest walkable beats nearer-but-walled"
+        );
+        assert_eq!(
+            reachable_start(2, &|i| nodes[i], pos, &|_| false),
+            Some(0),
+            "no walkable candidate → euclidean fallback"
+        );
+        assert_eq!(reachable_start(0, &|_| Vec3::ZERO, pos, &|_| true), None);
     }
 
     /// Plan 51 R1: the watchdog must ignore genuine approach, catch wall-slide
