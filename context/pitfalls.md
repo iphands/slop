@@ -290,3 +290,33 @@ Additionally, `rfind()` returns a byte offset; using `i + 1` to advance past the
 
 ### Sources
 - llama-proxy: `src/proxy/synthesis.rs` (`chunk_text` function)
+
+# q2repro server rejects yquake2 clients: "Unsupported protocol 2"
+q2repro (Paril's Q2PRO/re-release fork) uses the `q2proto` library, which
+abstracts multiple wire protocols behind an enum: `Q2P_PROTOCOL_VANILLA=2`
+(wire protocol 34, what yquake2/original Q2 speak), `R1Q2=3`, `Q2PRO=4`,
+`Q2REPRO=8`, `KEX=10`. The server has a COMPILE-TIME allow-list in
+`src/server/main.c`:
+`static const q2proto_protocol_t q2repro_accepted_protocols[] = {Q2P_PROTOCOL_Q2REPRO};`
+It accepts ONLY its own Q2REPRO protocol. A yquake2 client connects with
+vanilla (34), `q2proto_parse_connect()` returns `Q2P_ERR_PROTOCOL_NOT_SUPPORTED`,
+and the server prints `Unsupported protocol %d.` where `%d` is the q2proto ENUM
+value (2 = VANILLA), NOT the wire number 34 — which is why the message says "2".
+There is no cvar for this; it's hardcoded.
+
+### How to avoid / fix
+- To serve vanilla clients (yquake2, original Q2, most source ports), either run
+  a yquake2/vanilla server, OR patch the allow-list to add the protocols you
+  want, e.g. `{Q2P_PROTOCOL_Q2REPRO, Q2P_PROTOCOL_Q2PRO, Q2P_PROTOCOL_R1Q2,
+  Q2P_PROTOCOL_VANILLA}`. q2proto ships full SERVER-side impls for all of these
+  (`q2proto_proto_vanilla.c`, `_r1q2.c`, `_q2pro.c`), so widening works — but the
+  re-release game's extended content (big maps, extended indices) may not fully
+  represent over vanilla. The same list also feeds the challenge advertisement
+  (`q2proto_get_challenge_extras`, main.c ~619), so widening it is consistent.
+- Remember q2proto's "protocol N" in errors is the enum ordinal, not the wire
+  protocol version.
+
+### Sources
+- qcontainer: vendor/q2repro/src/server/main.c (`q2repro_accepted_protocols`, `SVC_DirectConnect`)
+- qcontainer: vendor/q2repro/q2proto/inc/q2proto/q2proto_protocol.h (enum)
+- qcontainer: vendor/yquake2/src/common/header/common.h (`PROTOCOL_VERSION 34`)

@@ -52,6 +52,16 @@ RUN git clone --recurse-submodules https://github.com/Paril/q2repro . \
     && git submodule update --init --recursive \
     && git rev-parse HEAD > /src/BUILT_FROM
 
+# Apply local patches (patches/q2repro/*.patch), in sorted order. Kept in its
+# own layer after the clone so editing a patch does not force a re-clone.
+# e.g. 0001-accept-legacy-protocols.patch lets vanilla/yquake2 clients connect.
+COPY patches/q2repro/ /patches/
+RUN set -e; \
+    for p in $(ls /patches/*.patch 2>/dev/null | sort); do \
+        echo ">> applying $(basename "$p")"; \
+        git apply --verbose "$p"; \
+    done
+
 # Configure a server-only, system-wide build (prefix=/usr). buildtype=plain
 # means our CFLAGS/CXXFLAGS are the only optimization flags. Client video/audio
 # backends are disabled so no SDL/GL/X11/etc. is needed.
@@ -90,7 +100,7 @@ RUN dnf -y install --setopt=install_weak_deps=False \
 # game-lib search path correct without hardcoding lib vs lib64.
 COPY --from=build /stage/                 /
 COPY --from=build /src/BUILT_FROM          /opt/q2repro/BUILT_FROM
-COPY entrypoint.sh                         /usr/local/bin/entrypoint.sh
+COPY entrypoint.q2repro.sh                 /usr/local/bin/entrypoint.sh
 
 RUN mkdir -p /usr/share/games/quake2/baseq2 \
     && chmod +x /usr/local/bin/entrypoint.sh \

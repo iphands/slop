@@ -1,0 +1,98 @@
+# syntax=docker/dockerfile:1.7
+#
+# Optimized Yamagi Quake II dedicated server, built on Fedora 44.
+#
+# Only the dedicated server (q2ded) + the baseq2 game library are built --
+# a client/renderer is not needed for a headless server. yquake2 speaks the
+# vanilla protocol (34), so it is the natural choice for vanilla clients
+# (yquake2, original Quake II, most source ports).
+#
+# Layer caching strategy mirrors the q2repro Dockerfile: deps layer, then a
+# clone layer keyed on YQUAKE2_REF, then patches, then a ccache-cached build.
+
+ARG FEDORA_VERSION=44
+
+########################################
+# Build stage
+########################################
+FROM fedora:${FEDORA_VERSION} AS build
+
+# Bump this (or pass --build-arg YQUAKE2_REF=...) to change the yquake2 version.
+# Any git ref works: a tag (QUAKE2_8_70), a branch (master), or a commit sha.
+ARG YQUAKE2_REF=QUAKE2_8_70
+
+# Requested optimization flags.
+#
+# NOTE: the yquake2 Makefile appends its own flags after ours
+# (-fno-strict-aliasing -fwrapv -fvisibility=hidden). Every perf flag below
+# takes effect; -fvisibility is intentionally omitted since the Makefile forces
+# hidden anyway, which is correct (the game lib exports GetGameAPI explicitly).
+ARG QUAKE2_CFLAGS="-O3 -march=sandybridge -mtune=sandybridge -O3 -pipe -falign-functions=32 -fomit-frame-pointer"
+
+RUN dnf -y install --setopt=install_weak_deps=False \
+        gcc make git ccache SDL3-devel pkgconf-pkg-config \
+    && dnf clean all
+
+ENV CCACHE_DIR=/ccache
+
+# Clone at the requested ref in its own layer so the version bump is isolated.
+WORKDIR /src
+RUN git clone https://github.com/yquake2/yquake2 . \
+    && git checkout --detach "${YQUAKE2_REF}" \
+    && git rev-parse HEAD > /src/BUILT_FROM
+
+# Apply local patches (patches/yquake/*.patch), in sorted order. Kept in its own
+# layer after the clone so editing a patch does not force a re-clone.
+COPY patches/yquake/ /patches/
+RUN set -e; \
+    for p in $(ls /patches/*.patch 2>/dev/null | sort); do \
+        echo ">> applying $(basename "$p")"; \
+        git apply --verbose "$p"; \
+    done
+
+# Build server + game with our CFLAGS through ccache.
+#   WITH_SYSTEMWIDE + WITH_SYSTEMDIR make the server also search
+#   /usr/share/games/quake2/baseq2 (where the read-only data mount lands).
+RUN --mount=type=cache,target=/ccache \
+    make -j"$(nproc)" server game \
+        CC="ccache gcc" \
+        CFLAGS="${QUAKE2_CFLAGS}" \
+        WITH_SYSTEMWIDE=yes \
+        WITH_SYSTEMDIR=/usr/share/games/quake2 \
+    && ccache -s
+
+########################################
+# Runtime stage
+########################################
+FROM fedora:${FEDORA_VERSION} AS runtime
+
+LABEL org.opencontainers.image.title="yquake2-server" \
+      org.opencontainers.image.description="Optimized Yamagi Quake II dedicated server (Fedora 44, -march=sandybridge)" \
+      org.opencontainers.image.source="https://github.com/yquake2/yquake2"
+
+# q2ded is a plain glibc binary -- no SDL/GL runtime needed for a server.
+# Create an unprivileged user with a writable home for yquake2's write dir.
+RUN useradd --system --create-home --home-dir /opt/yquake2 quake2
+
+# The binary and game.so live under the binary dir (/opt/yquake2). yquake2
+# searches <binarydir>/baseq2 for game.so, so it is NOT shadowed when the
+# retail data is bind-mounted read-only at /usr/share/games/quake2/baseq2.
+COPY --from=build /src/release/q2ded            /opt/yquake2/q2ded
+COPY --from=build /src/release/baseq2/game.so   /opt/yquake2/baseq2/game.so
+COPY --from=build /src/BUILT_FROM               /opt/yquake2/BUILT_FROM
+COPY entrypoint.yquake.sh                       /usr/local/bin/entrypoint.sh
+
+# yquake2's Sys_Mkdir is NON-recursive, so it can only create the final
+# write-dir component -- its parent must already exist. Pre-create
+# $XDG_DATA_HOME so the server can make its <XDG_DATA_HOME>/YamagiQ2 writedir.
+RUN mkdir -p /usr/share/games/quake2/baseq2 /opt/yquake2/.local/share \
+    && chmod +x /usr/local/bin/entrypoint.sh /opt/yquake2/q2ded \
+    && chown -R quake2:quake2 /opt/yquake2
+
+ENV HOME=/opt/yquake2 \
+    XDG_DATA_HOME=/opt/yquake2/.local/share
+USER quake2
+WORKDIR /opt/yquake2
+
+EXPOSE 27910/udp
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

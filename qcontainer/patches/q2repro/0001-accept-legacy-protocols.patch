@@ -1,0 +1,27 @@
+Accept legacy client protocols (vanilla/R1Q2/Q2PRO) in addition to Q2REPRO.
+
+Upstream q2repro only accepts its own Q2P_PROTOCOL_Q2REPRO, so vanilla
+clients (yquake2, original Q2 = wire protocol 34 = q2proto enum VANILLA)
+are rejected with \"Unsupported protocol 2.\" q2proto ships full server-side
+implementations for these protocols, so widening the accept-list lets them
+connect. Note: the re-release game's extended content may not fully
+represent over the vanilla protocol.
+
+diff --git a/src/server/main.c b/src/server/main.c
+index e2a730a..b1860e8 100644
+--- a/src/server/main.c
++++ b/src/server/main.c
+@@ -116,7 +116,12 @@ cvar_t  *g_features;
+ 
+ static bool     sv_registered;
+ 
+-static const q2proto_protocol_t q2repro_accepted_protocols[] = {Q2P_PROTOCOL_Q2REPRO};
++static const q2proto_protocol_t q2repro_accepted_protocols[] = {
++    Q2P_PROTOCOL_Q2REPRO,
++    Q2P_PROTOCOL_Q2PRO,
++    Q2P_PROTOCOL_R1Q2,
++    Q2P_PROTOCOL_VANILLA,
++};
+ 
+ //============================================================================
+ 

@@ -1,0 +1,8 @@
+# Keep the build context tiny. Only the Dockerfiles, entrypoints, and
+# patches/ are needed; sources are cloned inside the build.
+*
+!Dockerfile
+!Dockerfile.yquake
+!entrypoint.q2repro.sh
+!entrypoint.yquake.sh
+!patches/

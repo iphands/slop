@@ -1,32 +1,52 @@
 #!/bin/bash
 set -euo pipefail
 
-# Build the optimized Q2REPRO dedicated server image.
+# Build an optimized Quake II dedicated server image, in one of two flavors:
 #
-# Bump the game version by editing Q2REPRO_REF below (any git ref: branch, the
-# rolling "nightly" tag, or a commit sha), or override it inline:
+#     ./build q2repro    # Paril's Q2PRO / re-release fork (patched to also
+#                        # accept vanilla/R1Q2/Q2PRO clients, e.g. yquake2)
+#     ./build yquake     # Yamagi Quake II (native vanilla-protocol server)
 #
-#     Q2REPRO_REF=nightly ./build
-#     Q2REPRO_REF=1523f11 ./build
+# Each flavor is tagged  iphands/quake2:<flavor>  and  iphands/quake2:<flavor>-<ref>
+# so both can coexist and be published independently. Then run ./publish.
+#
+# Bump the game version per flavor via env:
+#     Q2REPRO_REF=nightly     ./build q2repro
+#     YQUAKE2_REF=QUAKE2_8_60  ./build yquake
 #
 # ccache is persisted in a build cache mount, so a version bump only recompiles
-# the objects that actually changed -- rebuilds are fast.
+# what actually changed. Patches live in patches/<flavor>/*.patch.
 
 cd "$(dirname "$0")"
 
+FLAVOR="${1:-}"
 IMAGE="${IMAGE:-iphands/quake2}"
-Q2REPRO_REF="${Q2REPRO_REF:-rerelease-game}"
+export DOCKER_BUILDKIT=1   # required for the ccache cache mount
 
-# Tag with the ref so multiple versions can coexist, plus :latest.
-TAG="${TAG:-$Q2REPRO_REF}"
+case "$FLAVOR" in
+    q2repro)
+        DOCKERFILE="Dockerfile"
+        REF="${Q2REPRO_REF:-rerelease-game}"
+        BUILD_ARG="Q2REPRO_REF=${REF}"
+        ;;
+    yquake)
+        DOCKERFILE="Dockerfile.yquake"
+        REF="${YQUAKE2_REF:-QUAKE2_8_70}"
+        BUILD_ARG="YQUAKE2_REF=${REF}"
+        ;;
+    *)
+        echo "usage: ./build <q2repro|yquake>" >&2
+        exit 2
+        ;;
+esac
 
-echo ">> building ${IMAGE}:${TAG} (q2repro ref: ${Q2REPRO_REF})"
+# Sanitize the ref for use in a docker tag (branch refs may contain '/').
+REFTAG="${REF//[^A-Za-z0-9_.-]/-}"
 
-# BuildKit is required for the ccache cache mount (RUN --mount=type=cache).
-export DOCKER_BUILDKIT=1
+echo ">> building ${IMAGE}:${FLAVOR} (flavor=${FLAVOR}, ref=${REF})"
 
-exec docker build \
-    --build-arg "Q2REPRO_REF=${Q2REPRO_REF}" \
-    -t "${IMAGE}:${TAG}" \
-    -t "${IMAGE}:latest" \
+exec docker build -f "${DOCKERFILE}" \
+    --build-arg "${BUILD_ARG}" \
+    -t "${IMAGE}:${FLAVOR}" \
+    -t "${IMAGE}:${FLAVOR}-${REFTAG}" \
     .

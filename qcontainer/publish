@@ -1,21 +1,51 @@
 #!/bin/bash
 set -euo pipefail
 
-# Push the built image to its registry. THE HUMAN RUNS THIS.
+# Push built server images to the registry. THE HUMAN RUNS THIS.
 #
-# Prereqs:
-#   - ./build has been run
-#   - docker login   (has been done)
+#     ./publish              # publish every flavor that has been built locally
+#     ./publish q2repro      # publish only the named flavor(s)
+#     ./publish yquake q2repro
 #
-# Keep IMAGE / Q2REPRO_REF / TAG in sync with ./build (or export them once).
+# For each flavor it pushes the moving tag (iphands/quake2:<flavor>) plus any
+# immutable per-ref tags (iphands/quake2:<flavor>-<ref>) that exist locally.
+#
+# Prereqs: ./build <flavor> has been run, and `docker login` is done.
 
 cd "$(dirname "$0")"
 
 IMAGE="${IMAGE:-iphands/quake2}"
-Q2REPRO_REF="${Q2REPRO_REF:-rerelease-game}"
-TAG="${TAG:-$Q2REPRO_REF}"
+ALL_FLAVORS=(q2repro yquake)
 
-echo ">> pushing ${IMAGE}:${TAG} and ${IMAGE}:latest"
+# Determine which flavors to publish.
+if [ "$#" -gt 0 ]; then
+    FLAVORS=("$@")
+else
+    FLAVORS=()
+    for f in "${ALL_FLAVORS[@]}"; do
+        if docker image inspect "${IMAGE}:${f}" >/dev/null 2>&1; then
+            FLAVORS+=("$f")
+        fi
+    done
+fi
 
-docker push "${IMAGE}:${TAG}"
-docker push "${IMAGE}:latest"
+if [ "${#FLAVORS[@]}" -eq 0 ]; then
+    echo "nothing built to publish -- run ./build <q2repro|yquake> first" >&2
+    exit 1
+fi
+
+for f in "${FLAVORS[@]}"; do
+    if ! docker image inspect "${IMAGE}:${f}" >/dev/null 2>&1; then
+        echo "!! ${IMAGE}:${f} not built locally, skipping" >&2
+        continue
+    fi
+    echo ">> pushing ${IMAGE}:${f} and any ${IMAGE}:${f}-<ref> tags"
+    # All local tags for this flavor: the moving one and every per-ref one.
+    docker images --format '{{.Repository}}:{{.Tag}}' "${IMAGE}" \
+        | grep -E "^${IMAGE}:${f}(-|$)" \
+        | sort -u \
+        | while read -r t; do
+            echo "   push ${t}"
+            docker push "${t}"
+        done
+done
