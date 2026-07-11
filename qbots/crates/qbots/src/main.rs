@@ -193,6 +193,11 @@ enum Cmd {
         /// the character's. Absent → the skill-derived default character.
         #[arg(long, value_enum)]
         char: Option<brain::CharPreset>,
+        /// Proceed with warnings instead of failing when a bot can't join (e.g. the
+        /// server's `maxclients` is full). Default: any join failure aborts the fleet
+        /// with a non-zero exit.
+        #[arg(long)]
+        loose_botcap: bool,
     },
     /// Spawn N bots for EACH `--navmode` × `--brains` group at once in one process (shared nav
     /// cache), each group wearing a distinct skin, and print a per-group frag scoreboard. Bots are
@@ -224,6 +229,11 @@ enum Cmd {
         /// group = a (mode,brain[,char]) tuple). Per-process default if omitted.
         #[arg(long)]
         qport_base: Option<u16>,
+        /// Proceed with warnings instead of failing when a bot can't join (e.g. the
+        /// server's `maxclients` is full). Default: any join failure aborts the
+        /// competition with a non-zero exit.
+        #[arg(long)]
+        loose_botcap: bool,
     },
     /// Print the loaded config (server + paths + fleet) and exit.
     Config,
@@ -1917,6 +1927,7 @@ async fn main() -> ExitCode {
             skin_random_male,
             skin_random_female,
             char,
+            loose_botcap,
         } => {
             // `--count` can enable a fleet even when the config roster is empty (and a
             // `--count 0` disables one the config would otherwise enable).
@@ -1971,7 +1982,7 @@ async fn main() -> ExitCode {
                 qport_base,
                 skin_sel,
                 char,
-                false, // --loose-botcap wired in T5
+                loose_botcap,
             )
             .await
             {
@@ -1989,6 +2000,7 @@ async fn main() -> ExitCode {
             brains,
             chars,
             qport_base,
+            loose_botcap,
         } => {
             if count == 0 {
                 tracing::error!("--count must be >= 1");
@@ -2096,7 +2108,7 @@ async fn main() -> ExitCode {
                 count,
                 qport_base,
                 skins_per_mode,
-                false, // --loose-botcap wired in T5
+                loose_botcap,
             )
             .await
             {
