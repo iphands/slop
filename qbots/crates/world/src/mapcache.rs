@@ -60,7 +60,10 @@ const MAGIC: &[u8; 7] = b"QBNAVC2";
 // too; one more byte per ride edge. Older caches auto-rejected.
 // Version 18: RideInfo gains `stand_offset` (Plan 43) — wire-origin→platform-top offset so the
 // brain tracks a moving train's top; three more floats per ride edge. Older caches auto-rejected.
-const VERSION: u8 = 18;
+// Version 19: jump-down bridges retry the launch arc at hop height (+32u — ledge lips no longer
+// veto real drops) and `JUMP_BRIDGE_HDIST` 80→104 (Plan 35 T3, q2dm6/q2dm7 stacked-floor
+// junctions). Graph edges change → regen.
+const VERSION: u8 = 19;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]

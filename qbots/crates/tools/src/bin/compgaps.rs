@@ -25,19 +25,87 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let spacing: f32 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(24.0);
     let radius: f32 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(96.0);
 
+    // `--built` (Plan 35 T3): analyze the FULLY BUILT graph (seeds + connectors + bridges +
+    // prune) instead of the raw generate-only one — the question becomes "what still separates
+    // the FINAL components", answered as the nearest cross-component node pairs regardless of
+    // walkability (so a structural gap needing a NEW mechanism is visible too).
+    let built_mode = args.iter().any(|a| a == "--built");
+
     let bsp = Bsp::load(baseq2, map)?;
     let cm = CollisionModel::from_bsp(&bsp);
     let model = bsp.models.first().ok_or("BSP has no models")?;
     let bounds = (model.mins, model.maxs);
 
-    // generate-only (no seed/elevator/bridge/prune).
-    let g = NavGraph::generate(&cm, bounds, spacing);
+    let g = if built_mode {
+        world::generate_map_nav(baseq2, map, world::ELEVATOR_PENALTY, spacing)?.graph
+    } else {
+        // generate-only (no seed/elevator/bridge/prune).
+        NavGraph::generate(&cm, bounds, spacing)
+    };
     let comps = g.components();
     println!(
-        "map={map} spacing={spacing} nodes={} components={} radius={radius}\n",
+        "map={map} spacing={spacing} built={built_mode} nodes={} components={} radius={radius}\n",
         g.node_count(),
         comps.len()
     );
+
+    if built_mode {
+        // Top components (node count + how many DM spawns resolve into each) + the nearest node
+        // pair between each of the biggest few — the concrete junctions Plan 35 T3 must connect.
+        let mut order: Vec<usize> = (0..comps.len()).collect();
+        order.sort_by_key(|&c| std::cmp::Reverse(comps[c].len()));
+        let spawns: Vec<[f32; 3]> = bsp.spawn_points().iter().map(|s| s.origin).collect();
+        let mut comp_of = vec![usize::MAX; g.node_count()];
+        for (cid, c) in comps.iter().enumerate() {
+            for &n in c {
+                comp_of[n] = cid;
+            }
+        }
+        for &c in order.iter().take(4) {
+            let spawn_count = spawns
+                .iter()
+                .filter(|s| g.nearest(s).is_some_and(|n| comp_of[n] == c))
+                .count();
+            println!(
+                "component {c}: {} nodes, {spawn_count} spawns",
+                comps[c].len()
+            );
+        }
+        println!();
+        for a_i in 0..order.len().min(4) {
+            for b_i in (a_i + 1)..order.len().min(4) {
+                let (ca, cb) = (order[a_i], order[b_i]);
+                let mut best: Option<(f32, usize, usize)> = None;
+                for &i in &comps[ca] {
+                    for &j in &comps[cb] {
+                        let (p, q) = (g.nodes[i], g.nodes[j]);
+                        let d =
+                            ((q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2) + (q[2] - p[2]).powi(2))
+                                .sqrt();
+                        if best.is_none_or(|(bd, _, _)| d < bd) {
+                            best = Some((d, i, j));
+                        }
+                    }
+                }
+                if let Some((d, i, j)) = best {
+                    let (p, q) = (g.nodes[i], g.nodes[j]);
+                    println!(
+                        "comp {ca}({}) <-> comp {cb}({}): nearest {d:.0}u  ({:.0},{:.0},{:.0}) -- ({:.0},{:.0},{:.0}) dz={:.0}",
+                        comps[ca].len(),
+                        comps[cb].len(),
+                        p[0],
+                        p[1],
+                        p[2],
+                        q[0],
+                        q[1],
+                        q[2],
+                        q[2] - p[2]
+                    );
+                }
+            }
+        }
+        return Ok(());
+    }
 
     // node -> component id
     let mut comp_of = vec![usize::MAX; g.node_count()];

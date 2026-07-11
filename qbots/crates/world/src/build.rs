@@ -265,7 +265,9 @@ pub const TRAIN_SURFACE_DZ: f32 = 48.0;
 /// Max horizontal offset (units) for a vertical jump-down floor bridge
 /// ([`NavGraph::bridge_components_via_jump`], Plan 42). Tight — only near-vertical drops
 /// between stacked floors link, never a horizontal false bridge. In the cache via VERSION.
-pub const JUMP_BRIDGE_HDIST: f32 = 80.0;
+/// 80 → 104 (Plan 35 T3): q2dm6's spawn-floor ↔ pit junction sits at 96u horizontal; the
+/// launch/fall traces (now hop-height-aware) still validate every candidate.
+pub const JUMP_BRIDGE_HDIST: f32 = 104.0;
 /// Max fall height (units) for a vertical jump-down floor bridge (Plan 42). q2dm3's largest
 /// stacked-floor drop (mid floor → lower) is ~144; the quad ledge drop is larger. 256 covers
 /// them while staying within a survivable Q2 fall. In the cache via VERSION.

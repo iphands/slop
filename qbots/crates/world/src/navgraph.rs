@@ -1892,19 +1892,35 @@ fn jump_down_link(
     if drop <= STEP || drop > max_fall {
         return None;
     }
-    // Horizontal launch over the gap, at the launch height, to directly above the landing.
-    let over = [lp[0], lp[1], hp[2]];
-    let t1 = cm.trace(&hp, &over, zero, zero, MASK_SOLID);
-    if t1.startsolid || t1.fraction < 0.95 {
-        return None; // wall between the ledge and the drop point
+    // Launch over the gap to directly above the landing, then fall. Tried at TWO launch
+    // heights (Plan 35 T3): standing height first, then hop height (+32u — well under the
+    // 45u jump apex). Real ledges often have a lip/curb at the edge that blocks the flat
+    // standing-height sweep even though a bot trivially hops it — q2dm6/q2dm7's stacked-floor
+    // junctions were all rejected this way (the brains DO jump on jump edges, so the hop is
+    // faithful to how the edge is actually traversed).
+    for launch_dz in [0.0, 32.0] {
+        let start = [hp[0], hp[1], hp[2] + launch_dz];
+        let over = [lp[0], lp[1], hp[2] + launch_dz];
+        // The hop itself must be clear (only matters for the raised launch).
+        if launch_dz > 0.0 {
+            let up = cm.trace(&hp, &start, zero, zero, MASK_SOLID);
+            if up.startsolid || up.fraction < 1.0 {
+                continue;
+            }
+        }
+        let t1 = cm.trace(&start, &over, zero, zero, MASK_SOLID);
+        if t1.startsolid || t1.fraction < 0.95 {
+            continue; // wall between the ledge and the drop point at this height
+        }
+        // Fall straight down onto the landing node.
+        let t2 = cm.trace(&over, &lp, zero, zero, MASK_SOLID);
+        if t2.startsolid || t2.fraction < 0.95 {
+            continue; // overhang / ceiling blocks the fall
+        }
+        let yaw = (lp[1] - hp[1]).atan2(lp[0] - hp[0]).to_degrees();
+        return Some((dist(&hp, &lp), yaw));
     }
-    // Fall straight down onto the landing node.
-    let t2 = cm.trace(&over, &lp, zero, zero, MASK_SOLID);
-    if t2.startsolid || t2.fraction < 0.95 {
-        return None; // overhang / ceiling blocks the fall
-    }
-    let yaw = (lp[1] - hp[1]).atan2(lp[0] - hp[0]).to_degrees();
-    Some((dist(&hp, &lp), yaw))
+    None
 }
 
 fn dist(a: &[f32; 3], b: &[f32; 3]) -> f32 {
