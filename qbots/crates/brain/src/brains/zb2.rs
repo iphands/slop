@@ -442,6 +442,18 @@ impl Brain for Zb2Brain {
                     combat_dec.should_fire,
                 );
                 recovery_label = action.label();
+                if let Some(label) = recovery_label {
+                    // Plan 51: per-tick recovery visibility for stall forensics
+                    // (debug level — soaks run at info; enable with RUST_LOG=brain=debug).
+                    tracing::debug!(
+                        action = label,
+                        x = pos.x as i32,
+                        y = pos.y as i32,
+                        z = pos.z as i32,
+                        wp = ?route.current_waypoint(),
+                        "zb2 recovery"
+                    );
+                }
                 match action {
                     RecoveryAction::None => {}
                     RecoveryAction::Jump => mv.jump(),
