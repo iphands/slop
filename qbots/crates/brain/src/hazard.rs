@@ -14,6 +14,7 @@
 use glam::Vec3;
 use world::{CollisionModel, CONTENTS_LAVA, CONTENTS_SLIME, MASK_SOLID};
 
+use crate::recover::find_best_direction;
 use crate::steer::view_right;
 
 /// Q2 pmove auto-step height (`pmove.c` STEPSIZE) — samples are lifted by this so a
@@ -85,6 +86,17 @@ pub fn safe_combat_dir(
         return Some(mirrored * scale);
     }
     None
+}
+
+/// Last-resort combat move when BOTH strafe variants are deadly (fighting at a pool rim):
+/// the most open lava/ledge-free heading, as a world direction. A bot that stands still at
+/// a rim under rocket fire gets juggled straight into the pool (Plan 50 soak: lava entries
+/// ROSE after the stand-and-fight fallback shipped) — retreating from the rim while the
+/// view stays locked on the enemy is strictly safer. `None` when every direction is bad.
+pub fn rim_retreat_dir(cm: &CollisionModel, pos: Vec3, view_yaw: f32) -> Option<Vec3> {
+    let (yaw, _) = find_best_direction(cm, pos, view_yaw)?;
+    let r = yaw.to_radians();
+    Some(Vec3::new(r.cos(), r.sin(), 0.0))
 }
 
 /// Escape direction when the bot is STANDING IN lava/slime, or `None` when it isn't.

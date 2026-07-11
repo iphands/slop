@@ -618,8 +618,9 @@ impl crate::brains::core::Brain for MainBrain {
                             })
                             .unwrap_or(Vec3::ZERO)
                     });
-                let escape =
-                    hazard::safe_combat_dir(cm, pos, escape, Vec3::ZERO, 1.0).unwrap_or(Vec3::ZERO);
+                let escape = hazard::safe_combat_dir(cm, pos, escape, Vec3::ZERO, 1.0)
+                    .or_else(|| cm.and_then(|c| hazard::rim_retreat_dir(c, pos, view_yaw)))
+                    .unwrap_or(Vec3::ZERO);
                 (escape, !combat_dec.should_fire)
             } else if let Some((d, dir)) = enemy_dist_dir {
                 if kite {
@@ -633,7 +634,12 @@ impl crate::brains::core::Brain for MainBrain {
                     } else {
                         hazard::safe_combat_dir(cm, pos, Vec3::ZERO, tan, 0.7)
                     };
-                    (picked.unwrap_or(Vec3::ZERO), false)
+                    (
+                        picked
+                            .or_else(|| cm.and_then(|c| hazard::rim_retreat_dir(c, pos, view_yaw)))
+                            .unwrap_or(Vec3::ZERO),
+                        false,
+                    )
                 } else if d < backup_dist {
                     // Back away from enemy while keeping aim on them.
                     let away = Vec3::new(-dir.x, -dir.y, 0.0).normalize_or_zero();
@@ -642,7 +648,9 @@ impl crate::brains::core::Brain for MainBrain {
                         * self.steering.strafe_tick(dt)
                         * strafe_weight;
                     (
-                        hazard::safe_combat_dir(cm, pos, away, tan, 1.0).unwrap_or(Vec3::ZERO),
+                        hazard::safe_combat_dir(cm, pos, away, tan, 1.0)
+                            .or_else(|| cm.and_then(|c| hazard::rim_retreat_dir(c, pos, view_yaw)))
+                            .unwrap_or(Vec3::ZERO),
                         false,
                     )
                 } else if d < ideal_dist {
@@ -650,6 +658,7 @@ impl crate::brains::core::Brain for MainBrain {
                     let tan = Vec3::new(-dir.y, dir.x, 0.0) * self.steering.strafe_tick(dt);
                     (
                         hazard::safe_combat_dir(cm, pos, Vec3::ZERO, tan, strafe_weight)
+                            .or_else(|| cm.and_then(|c| hazard::rim_retreat_dir(c, pos, view_yaw)))
                             .unwrap_or(Vec3::ZERO),
                         false,
                     )

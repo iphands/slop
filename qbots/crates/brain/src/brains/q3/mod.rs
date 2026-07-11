@@ -710,7 +710,9 @@ impl Q3Brain {
                     self.strafe.dir = -self.strafe.dir;
                     mirrored
                 } else {
-                    Vec3::ZERO
+                    // Both strafe sides deadly (pool rim): retreat from the rim while the
+                    // aim stays locked — standing still gets juggled in (Plan 50).
+                    crate::hazard::rim_retreat_dir(c, pos, aimres.yaw).unwrap_or(Vec3::ZERO)
                 };
             }
         }
