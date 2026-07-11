@@ -1,7 +1,8 @@
 # Plan 57 — Ack-on-frame send re-phasing (drop bot ping to ≈RTT)
 
-> **Status**: in-progress
+> **Status**: done
 > **Created**: 2026-07-11
+> **Closed**: 2026-07-11
 > **Depends on**: Plan 09 (fleet) | Plan 22 (Brain seam) | Plan 51 (`EVT` instrumentation pattern)
 > **Goal**: Send each `clc_move` the instant a `svc_frame` arrives (acking it), with the 10 Hz timer demoted to a keepalive fallback, so the server-measured ping collapses from ~50–80 ms to ≈ true RTT — without changing send rate or movement speed.
 > **Agent**: sub-agent (interactive)

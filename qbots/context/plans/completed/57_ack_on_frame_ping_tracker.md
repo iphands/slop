@@ -1,8 +1,9 @@
 # Ack-on-frame Ping Re-phasing — Tracker
 
 ## Overview
-- Status: 0% complete
+- Status: 100% complete
 - Start date: 2026-07-11
+- Completed: 2026-07-11
 - Scope: Re-phase `clc_move` from a free-running 10 Hz timer to frame arrival so the
   server-measured ping drops to ≈RTT. Send rate + movement speed unchanged (dedupe +
   cached msec).
@@ -21,8 +22,8 @@ byte-identical (guardrail against 2× speed).
 |---|------|---------------|--------|-------|
 | 1 | T1: `SendTiming` primitive | `client/src/send_timing.rs`, `lib.rs` | done | pure, 6 unit tests |
 | 2 | T2: hybrid ack-on-frame send | `qbots/src/main.rs` | done | **LIVE q2dm1: ping 16ms (was 50–80); `EVT send_timing ema=0.0 max=0.0`; sends ~10/s (no double-send); 30s run, 0 errors/kicks** |
-| 3 | T3: reference loop parity | `client/src/conn.rs`, `qbots/src/scenario.rs` | pending | scenario opted out (baseline) |
-| 4 | T4: distill + close | `context/distilled.md`, `pitfalls.md`, `SERIES.md` | pending | move to completed/ |
+| 3 | T3: reference loop parity | `client/src/conn.rs`, `qbots/src/scenario.rs` | done | conn.rs re-phased; scenario opt-out comment |
+| 4 | T4: distill + close | `context/distilled.md`, `pitfalls.md`, `SERIES.md` | done | notes on disk; SERIES row + milestone; moved to completed/ |
 
 ## Live verification (T2, 2026-07-11, q2dm1 @ noir.lan)
 - `connect-one --name pingtest0`, 30 s. `qbots status` → `0  16ms  pingtest0`.
