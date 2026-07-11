@@ -9,7 +9,9 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use rayon::prelude::*;
 
-use crate::collision::{CollisionModel, CONTENTS_WATER, MASK_SOLID, MASK_WATER};
+use crate::collision::{
+    CollisionModel, CONTENTS_LAVA, CONTENTS_SLIME, CONTENTS_WATER, MASK_SOLID, MASK_WATER,
+};
 
 /// Q2 standing player hull (`VEC_HULL_MIN/MAX`): the bbox traces use.
 pub const HULL_MINS: [f32; 3] = [-16.0, -16.0, -24.0];
@@ -1587,7 +1589,10 @@ fn floor_waypoints_multi(
         // bot origin stands 24 u above the floor (hull mins.z = -24)
         let wp = [x, y, floor_z + 24.0];
 
-        if cm.point_contents(&wp) & MASK_WATER == 0 {
+        // A lava/slime-covered floor is never a node: the `wp` water check below only
+        // rejects liquid deeper than 24 u, so a SHALLOW pool would otherwise place a
+        // "dry" node hovering over lava (Plan 48 L1).
+        if !floor_is_deadly(cm, &down.endpos) && cm.point_contents(&wp) & MASK_WATER == 0 {
             let stand = cm.trace(&wp, &wp, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
             if !stand.startsolid {
                 results.push(wp);
@@ -1752,14 +1757,31 @@ pub fn segment_has_floor(cm: &CollisionModel, a: [f32; 3], b: [f32; 3]) -> bool 
     for i in 1..samples {
         let f = i as f32 / samples as f32;
         let p = [a[0] + dx * f, a[1] + dy * f, a[2] + (b[2] - a[2]) * f];
+        // The path itself passes through a deadly volume → not a walkable shortcut.
+        if cm.point_contents(&p) & (CONTENTS_LAVA | CONTENTS_SLIME) != 0 {
+            return false;
+        }
         let down = [p[0], p[1], p[2] - FLOOR_PROBE];
         let t = cm.trace(&p, &down, &zero, &zero, MASK_SOLID);
         // No floor within FLOOR_PROBE (fraction == 1.0) → gap under the shortcut.
         if t.fraction >= 1.0 && !t.startsolid {
             return false;
         }
+        // MASK_SOLID sees through liquids: a shallow lava/slime pool's solid BED
+        // registers as "floor" even though crossing it kills the bot. Only a floor
+        // whose surface is breathable/walkable (or safe water) counts.
+        if !t.startsolid && floor_is_deadly(cm, &t.endpos) {
+            return false;
+        }
     }
     true
+}
+
+/// True when the solid floor at `endpos` (a down-trace hit point) lies under lava or
+/// slime — standing there is death, so callers must not treat it as walkable support.
+fn floor_is_deadly(cm: &CollisionModel, endpos: &[f32; 3]) -> bool {
+    let above = [endpos[0], endpos[1], endpos[2] + 1.0];
+    cm.point_contents(&above) & (CONTENTS_LAVA | CONTENTS_SLIME) != 0
 }
 
 /// block the path. Stair risers don't block the upward vertical traces, and the

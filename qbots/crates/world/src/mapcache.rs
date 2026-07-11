@@ -66,7 +66,9 @@ const MAGIC: &[u8; 7] = b"QBNAVC2";
 // Version 20: the `ELEVATOR_PENALTY`/`--lift-penalty` hack is DELETED (Plan 31 — the traversal
 // executor now de-conflicts lifts); lift ride edges carry their honest travel cost and
 // `lift_penalty_bits` leaves the fingerprint (now 13 × u32 = 52 bytes). Older caches auto-rejected.
-const VERSION: u8 = 20;
+// Version 21: lava/slime-covered floors no longer emit dry nodes (Plan 48 L1 — a shallow pool
+// previously placed a "dry" node hovering over lava). Node set changes → regen.
+const VERSION: u8 = 21;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]

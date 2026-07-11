@@ -14,7 +14,7 @@ Rule A/B: zero warnings, commit per task (`task(P48-TN): …`).
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: lava-aware segment_has_floor + node sampling, cache v21 | `world/navgraph.rs`, `world/mapcache.rs` | pending | |
+| 1 | T1: lava-aware segment_has_floor + node sampling, cache v21 | `world/navgraph.rs`, `world/mapcache.rs` | done | `tests/lava_q2dm3.rs` self-locates lava; verified red pre-fix / green post-fix via stash |
 | 2 | T2: ground-hazard probe gates combat/dodge/stuck strafing | `brain/hazard.rs`, `brains/main.rs`, `brains/zb2.rs` | pending | |
 | 3 | T3: zb2 shortcut skip walkability validation | `brains/zb2.rs` | pending | |
 | 4 | T4: zb2 no-route engage + hard-stuck goal rotation | `brains/zb2.rs` | pending | |
