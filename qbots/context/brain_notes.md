@@ -557,3 +557,19 @@ q2dm3 1/4 (one 29s reach — capability proven; follow-up: the node-by-node foll
 pursue-style look-ahead to match peers' 3/4 on the fragmented far-spawn approach).
 Deviation note: zb2 ignores `--navmode` (always A*-graph-routed) — authentic to 3ZB2's own chain
 files, documented in the module header.
+
+## 2026-07-10 — Plan 35 T3: q2dm6 connected (8/8) via hop-height jump-bridges
+Diagnosis with the new `compgaps --built` (final-graph components + spawn counts + nearest
+junctions): q2dm6's spawn floor and its stacked neighbors were separated by 64-80u DROPS over
+72-96u horizontal — jump-bridge territory — yet `jump_down_link` rejected them all. Root cause:
+the launch-arc trace ran purely horizontally at STANDING height, so any ledge lip/curb vetoed the
+drop even though bots hop off ledges (and the brains DO jump on jump edges). Fix (cache v19):
+retry the launch at hop height (+32u, under the 45u jump apex) + `JUMP_BRIDGE_HDIST` 80→104 (the
+96u pit junction). **q2dm6 partial → FULL 8/8**; zero regressions across all 8 maps (scratch-regen
+measured; q2dm3 ride test green). LIVE: q2dm6 `spawn-to-spawn --count 8` = **5/8 @180s** on the
+first run — in q2dm2's band (3-6/8), i.e. the bridges are physically followable and the misses are
+the known farthest-spawn route-quality class.
+**q2dm7 (4/6) remains**: its nearest junctions are genuinely impassable (a 17u slot under an
+overhang), and its 3868-node largest component holds ZERO spawns — next step is identifying
+whether that component is playable (needs a real connector) or roof/out-of-map garbage (then the
+in-largest gate metric itself mismeasures; consider a spawns-mutually-reachable gate).
