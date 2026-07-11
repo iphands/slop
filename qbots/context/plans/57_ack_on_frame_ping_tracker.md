@@ -19,7 +19,13 @@ byte-identical (guardrail against 2× speed).
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: `SendTiming` primitive | `client/src/send_timing.rs`, `lib.rs` | pending | pure, unit-tested |
-| 2 | T2: hybrid ack-on-frame send | `qbots/src/main.rs` | pending | recv-arm send + timer dedupe + `EVT send_timing` |
+| 1 | T1: `SendTiming` primitive | `client/src/send_timing.rs`, `lib.rs` | done | pure, 6 unit tests |
+| 2 | T2: hybrid ack-on-frame send | `qbots/src/main.rs` | done | **LIVE q2dm1: ping 16ms (was 50–80); `EVT send_timing ema=0.0 max=0.0`; sends ~10/s (no double-send); 30s run, 0 errors/kicks** |
 | 3 | T3: reference loop parity | `client/src/conn.rs`, `qbots/src/scenario.rs` | pending | scenario opted out (baseline) |
 | 4 | T4: distill + close | `context/distilled.md`, `pitfalls.md`, `SERIES.md` | pending | move to completed/ |
+
+## Live verification (T2, 2026-07-11, q2dm1 @ noir.lan)
+- `connect-one --name pingtest0`, 30 s. `qbots status` → `0  16ms  pingtest0`.
+- `EVT send_timing ema=0.0 max=0.0 sends=10,20,30… late=0` — self-inflicted phase = 0,
+  send cadence exactly ~10/s (one ack per 10 Hz server frame → msec/movement unchanged).
+- Full brain pipeline ran (weapon requests, targeting, shooting); 0 errors, 0 kicks.
