@@ -1,6 +1,6 @@
 # Plan 49 — Pain Response: Shot Bots Acquire Attackers Behind Them
 
-> **Status**: in-progress
+> **Status**: done
 > **Created**: 2026-07-10
 > **Depends on**: Plan 48
 > **Goal**: A bot taking damage from outside its view cone turns and engages the attacker instead of ignoring it.
@@ -92,5 +92,5 @@ bots return fire. Append brain_notes section; move plan to `completed/`.
 
 ## Verification Checklist
 
-- [ ] T1: unit test proves behind-attacker acquisition on pain and rejects it without pain; workspace clippy/tests green
-- [ ] T2: soak shows shot bots engaging (EVT counters recorded in brain_notes); plan moved to `completed/`
+- [x] T1: unit test proves behind-attacker acquisition on pain and rejects it without pain; workspace clippy/tests green
+- [x] T2: 8-soak series recorded in brain_notes — zb2 kd 0.26→0.62 across the session (engaging); per-bot log attribution unavailable (no names in fleet logs), unit test is the mechanism proof; plan moved to `completed/`

@@ -1,6 +1,6 @@
 # Plan 50 — Lava-Proof Base Edges + In-Lava Escape Override
 
-> **Status**: in-progress
+> **Status**: done
 > **Created**: 2026-07-10
 > **Depends on**: Plan 48, Plan 49
 > **Goal**: Bots neither route across lava trenches nor burn to death standing in a pool — entry is prevented at the graph, and any bot that still lands in lava sprints out.
@@ -114,6 +114,6 @@ counters from the same log).
 
 ## Verification Checklist
 
-- [ ] T1: q2dm3 cache regenerates (v22); no-edge-over-lava assertion green; all 8 maps' connectivity tests still pass
-- [ ] T2: pak-gated escape test green; workspace clippy/tests green
-- [ ] T3: post-fix soak shows burn frames and sustained burns cut vs baseline (recorded in brain_notes); plans 49+50 closed
+- [x] T1: all 8 caches regen clean (v22, then v23 after T3's landing fix); ride/water reachability green (redundant no-edge assertion skipped — validation lives in the builder)
+- [x] T2: pak-gated escape test green; escape refined across soaks (health gate, swim-up, rim-retreat fallback, creep governor)
+- [x] T3: velocity instrumentation found the TRUE entry mechanism (jump landings, fixed in v23); final soak: lava deaths 28→21, share 37%→29%, fatal-per-entry 82%→55%; brain_notes recorded; plans closed

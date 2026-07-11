@@ -1013,3 +1013,33 @@ that's what actually breaks the loop when there is no per-waypoint blacklist.
 ## Sources
 
 - qbots: `brain/src/brains/zb2.rs` (tick else-branch, `goal_block`, `hard_replans`)
+
+---
+
+# Jump-edge landings validated the arc, never the ground (and momentum overshoots)
+
+## Problem
+
+`detect_jump_edges` and `bridge_components_via_jump` validated a ledge-drop by tracing
+the launch arc and the fall — never what the bot lands ON or skids ACROSS.
+Two compounding holes: (1) the landing down-probe is `MASK_SOLID`-only, so a lava BED
+under a channel reads as a landing floor (the nearest dry node still passes the distance
+gate, and `launch_yaw` aims at the deadly probe point); (2) a bot lands with horizontal
+momentum under 10 Hz control and skids 16–48 u past the landing node — a dry node beside
+a lava channel is still a death trap. On q2dm3, a velocity-instrumented soak proved
+EVERY lava entry was a fall (vz −240..−690) clustered on these landings — while three
+plausible-sounding theories (combat strafing, walkway corner overshoot, rim knockback)
+each failed to move the entry count when "fixed". Instrument before theorizing: one
+`EVT` with position+velocity settled in one 3-minute soak what six blind soaks couldn't.
+
+## Fix
+
+`landing_strip_deadly(base, travel_dir)`: sample the 0/16/32/48 u overshoot strip at the
+landing — in-lava contents OR a floor whose surface is lava/slime → reject the edge.
+Applied in both jump paths (cache v23). Keep the `EVT lava_escape x= y= z= vz= hs=`
+instrumentation — entry velocity classifies fall-in vs sprint-in vs knockback for free.
+
+## Sources
+
+- qbots: `world/src/navgraph.rs` (`landing_strip_deadly`, `detect_jump_edges`, `jump_down_link`)
+- qbots: `brain/src/brains/{main.rs,zb2.rs,q3/mod.rs}` (instrumented escape EVT)

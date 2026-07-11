@@ -640,3 +640,31 @@ Verification: pak-gated self-locating tests (`world/tests/lava_q2dm3.rs` — red
 stash, green post-fix; `brain/tests/hazard_q2dm3.rs` rim probe), 392 workspace tests green,
 clippy clean. Live q2dm3 soak (lava-death + EVT counts before/after) recommended as follow-up;
 watch: hazard probe's 128u blind-drop veto could suppress intentional combat ledge-drops.
+
+## 2026-07-11 — Plans 49+50: pain response + the q2dm3 lava-death hunt (8 live soaks)
+Follow-up to Plan 48 after live reports of bots "running into walls when shot and never
+engaging" — a soak-driven session (all soaks: noir.lan:27910 q2dm3, 305s,
+`competition --count 3 --brains main,q3,zb2 --navmodes astar`).
+- **Plan 49 (pain response)**: the shared CombatDriver's fresh acquisition was 90°-FOV-gated
+  with NO damage response — main/zb2 shot from behind never acquired the attacker (the entity
+  IS in PVS; the cone was the only gate; q3 was immune via its own `took_damage` widen). A
+  health drop now widens acquisition to the full sphere for ~3s; `in_fov(≥180°)` = all
+  directions (the strict `dot > cos(180°)` test excluded a target at exactly 180°).
+- **Plan 50 (lava)**: the Plan 48 baseline soak showed ~37% of ALL deaths were lava burns.
+  Fixes that DIDN'T move entries (kept for their own merit, documented honestly): flat-edge
+  floor validation v22, in-lava escape override, rim-retreat fallback, creep governor.
+  The breakthrough was **instrumentation**: `EVT lava_escape` with position+velocity proved
+  every entry was a FALL (vz −240..−690, zero sprint-ins, 85% with no preceding weapon hit),
+  clustered on jump-edge landings. **Root cause: both jump-edge builders validated the arc
+  but never the landing** — `detect_jump_edges`' MASK_SOLID probe even accepts a lava bed as
+  the landing floor, and momentum skids the bot 16–48u past the node. `landing_strip_deadly`
+  (cache v23) rejects deadly overshoot strips in both paths.
+- **Numbers (per 305s soak)**: baseline → final: lava deaths 28 → 21, lava share of deaths
+  37% → 29%, fatal-per-entry 82% → 55% (the escape override saves the rest). zb2 kd
+  0.26 → 0.62 (engaging now); scoreboard main 0.75 / q3 0.62 / zb2 0.62 — tightest spread yet.
+  Single-run K/D variance still applies (Plan 47 noise floor) — treat kd trends as directional.
+- **Remaining tail**: ~15 entries/5min are short walk-off falls (vz≈−240, 30–60u) scattered
+  around the central basin walkways — normal 10Hz movement noise in a lava maze; humans clip
+  these too. Candidate next steps if it matters: per-tick ledge-lip probe on the walkway mesh,
+  or biasing A* costs away from channel-adjacent nodes. NOT worth blind iteration — instrument
+  first (the session's core lesson, see pitfalls "Jump-edge landings…").
