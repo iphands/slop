@@ -201,9 +201,9 @@ enum Cmd {
     },
     /// Spawn N bots for EACH `--navmode` × `--brains` group at once in one process (shared nav
     /// cache), each group wearing a distinct skin, and print a per-group frag scoreboard. Bots are
-    /// named `<brain>_<navmode>[_<char>]_<i>` (e.g. `main_astar_1`, `q3_race_1`,
-    /// `q3_astar_grunt_1`). `runtester` (non-combat) is rejected. Ctrl-C ends the competition and
-    /// prints the final board.
+    /// named `<brain>_<navmode>[_<char>]_<i>` using short codes so the name fits Q2's 15-char limit
+    /// (e.g. `mai_as_1`, `q3_rc_1`, `q3_rc_gru_1`; a code→full-name legend is logged at launch).
+    /// `runtester` (non-combat) is rejected. Ctrl-C ends the competition and prints the final board.
     Competition {
         /// Server address (defaults to config's server).
         #[arg(long)]
