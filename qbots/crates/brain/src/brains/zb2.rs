@@ -24,6 +24,7 @@
 //! followed its own chain files. We do NOT port `G_FindRouteLink` — our graph's
 //! Walk/Jump/Swim/Ride edges are strictly richer than 3ZB2's `linkpod[6]`.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use glam::Vec3;
@@ -38,7 +39,7 @@ use crate::nav_mode::Navigator;
 use crate::perception::EntityClass;
 use crate::recover::{Recovery, RecoveryAction};
 use crate::skill::BotSkill;
-use crate::steer::{move_from_world_dir, Steering};
+use crate::steer::{move_from_world_dir, view_forward, view_right, Steering};
 use crate::traverse::{TraversalExecutor, TraversalFrame};
 use crate::weapons::Weapon;
 use crate::{items, los};
@@ -54,6 +55,60 @@ const SHORTCUT_MAX_DZ: f32 = 32.0;
 /// (Plan 48 Z3). Committed routes have no waypoint blacklist, so replanning to the same goal
 /// recommits the identical polyline — blocking the goal is what breaks the wall-grind loop.
 const GOAL_BLOCK_SECS: f32 = 20.0;
+/// Waypoint-progress watchdog (Plan 51 R1): if the best distance to the current waypoint
+/// hasn't improved by [`PROGRESS_EPS`] for this long, the route is unrunnable from here —
+/// force a replan. The displacement-based `StuckDetector` cannot catch this: its recovery
+/// strafe slides the bot ALONG a wall at 30–100 u/s (above its 16 u deadband), so it
+/// resets forever and `BackOffThenRepath` never fires (proved in the Plan 51 micro-soak).
+const PROGRESS_STALL_SECS: f32 = 2.5;
+/// Minimum improvement (u) of the best waypoint distance that counts as progress.
+const PROGRESS_EPS: f32 = 8.0;
+
+/// Process-wide zb2 ordinal (Plan 51 R3): every zb2 bot used to start its roam cursor at
+/// the SAME index with the same stride, so entire fleets convoyed to identical
+/// destinations and deadlocked hull-to-hull. Each brain takes the next ordinal and offsets
+/// its cursor one roam-stride apart.
+static BOT_ORDINAL: AtomicUsize = AtomicUsize::new(0);
+
+/// Waypoint-progress watchdog state (Plan 51 R1).
+#[derive(Debug, Clone, Copy, Default)]
+struct RouteProgress {
+    /// The waypoint being measured (watchdog resets when it changes).
+    wp: Option<usize>,
+    /// Best (smallest) distance to that waypoint seen so far.
+    best_dist: f32,
+    /// Seconds since `best_dist` last improved by [`PROGRESS_EPS`].
+    secs_no_gain: f32,
+}
+
+impl RouteProgress {
+    /// Feed one tick of (current waypoint, distance to it). Returns `true` when the bot
+    /// has made no progress toward the waypoint for [`PROGRESS_STALL_SECS`] — the caller
+    /// should force a replan. Self-resets after firing.
+    fn stalled(&mut self, wp: Option<usize>, dist: f32, dt: f32) -> bool {
+        if wp != self.wp {
+            self.wp = wp;
+            self.best_dist = dist;
+            self.secs_no_gain = 0.0;
+            return false;
+        }
+        if dist < self.best_dist - PROGRESS_EPS {
+            self.best_dist = dist;
+            self.secs_no_gain = 0.0;
+            return false;
+        }
+        self.secs_no_gain += dt;
+        if self.secs_no_gain >= PROGRESS_STALL_SECS {
+            *self = Self::default();
+            return true;
+        }
+        false
+    }
+
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
 
 /// The committed route (3ZB2's memorized pod chain): an A* polyline + the follow cursor.
 /// Implements [`Navigator`] so the shared traversal executor (and recorder plumbing) can read
@@ -187,6 +242,10 @@ pub struct Zb2Brain {
     /// A destination node blocked for a few seconds after repeated stuck replans, with its
     /// remaining TTL — `goal_node` routes around it (Z3).
     goal_block: Option<(usize, f32)>,
+    /// Waypoint-progress watchdog (Plan 51 R1) — replans routes the bot can't run.
+    progress: RouteProgress,
+    /// This bot's process-wide zb2 ordinal (Plan 51 R3) — desyncs the roam cursor.
+    ordinal: usize,
 }
 
 impl Zb2Brain {
@@ -205,6 +264,8 @@ impl Zb2Brain {
             combat_enabled,
             hard_replans: 0,
             goal_block: None,
+            progress: RouteProgress::default(),
+            ordinal: BOT_ORDINAL.fetch_add(1, Ordering::Relaxed),
         }
     }
 
@@ -270,6 +331,12 @@ impl Brain for Zb2Brain {
             items: _,            // v1 uses the PVS item picker, not the static table
         } = map;
         self.roam_nodes = roam_nodes;
+        // R3: start each bot one roam-stride apart so a fleet of zb2s doesn't convoy to
+        // the same destination sequence and deadlock hull-to-hull (Plan 51).
+        if !self.roam_nodes.is_empty() {
+            let stride = self.roam_nodes.len() / 7 + 1;
+            self.roam_idx = (self.ordinal * stride) % self.roam_nodes.len();
+        }
         self.nav_graph = Some(nav_graph);
         self.route = None;
     }
@@ -476,6 +543,36 @@ impl Brain for Zb2Brain {
                 if route.current_edge_is_jump() {
                     mv.jump();
                 }
+
+                // R1: waypoint-progress watchdog (Plan 51). The committed route only
+                // replans on Hard stuck, but recovery's own strafe slides the bot along
+                // walls fast enough to reset the displacement-based detector forever.
+                // Distance-to-waypoint can't be gamed by sliding: no gain for
+                // PROGRESS_STALL_SECS → the route is unrunnable from here → replan
+                // (feeds the Z3 goal-block ladder on repeat, exactly like Hard stuck).
+                match pursue {
+                    Some(pt) => {
+                        if self
+                            .progress
+                            .stalled(route.current_waypoint(), (pt - pos).length(), dt)
+                        {
+                            tracing::info!(
+                                wp = ?route.current_waypoint(),
+                                x = pos.x as i32,
+                                y = pos.y as i32,
+                                z = pos.z as i32,
+                                "EVT zb2_progress_replan"
+                            );
+                            mv.move_forward(-0.5);
+                            route.dirty = true;
+                        }
+                    }
+                    None => self.progress.reset(),
+                }
+            } else {
+                // Mover legs (ride/swim/ladder) hold position legitimately — don't let
+                // the watchdog count a platform wait as a stall.
+                self.progress.reset();
             }
 
             // ── 6. Fight on the run (only outside traversal legs — the executor owns
@@ -495,21 +592,25 @@ impl Brain for Zb2Brain {
                 traversing = true;
             }
             if combat_dec.should_fire && !traversing {
-                // Plan 51 probe: this block is about to re-set forward/side from the
-                // route's world_dir, discarding whatever recovery wrote above. Log it —
-                // if wall-press episodes correlate with these lines, the clobber is the
-                // combat-stall mechanism (Plan 51 suspect 1).
+                // R2 (Plan 51): this block used to re-derive the legs from the route's
+                // `world_dir`, silently DISCARDING whatever recovery wrote above — while
+                // firing, a wall-pressed bot lost even its strafe and stood grinding
+                // (521 of 806 stalled-damage points came from firing episodes). Instead,
+                // re-express the legs `mv` already carries (route steering + arrive +
+                // recovery + hazard flips, all view_yaw-relative) against the aim yaw:
+                // the world-space travel direction is preserved exactly, the view locks
+                // onto the enemy, and recovery keeps working mid-fight (3ZB2's
+                // run-and-gun character is unchanged when recovery is idle).
                 if let Some(action) = recovery_label {
                     let wp_dist = pursue.map(|p| (p - pos).length() as i32).unwrap_or(-1);
-                    tracing::info!(action, wp_dist, "EVT zb2_combat_recovery_overwrite");
+                    tracing::debug!(action, wp_dist, "zb2 combat keeps recovery legs");
                 }
-                // Lock the view on the enemy but KEEP the legs on the route (3ZB2's run-and-gun):
-                // re-decompose the same world direction against the aim yaw (raw mode) so the
-                // world-space travel direction is preserved while facing the target.
+                let legs_world =
+                    view_forward(view_yaw) * mv.forward + view_right(view_yaw) * mv.side;
                 mv.look_at(combat_dec.aim_yaw, combat_dec.aim_pitch);
-                let (ff, ss) = move_from_world_dir(world_dir, combat_dec.aim_yaw, false);
-                mv.move_forward(ff * arrive);
-                mv.move_side(ss * arrive);
+                let (ff, ss) = move_from_world_dir(legs_world, combat_dec.aim_yaw, false);
+                mv.move_forward(ff);
+                mv.move_side(ss);
                 mv.attack();
             }
         } else {
@@ -592,6 +693,7 @@ impl Brain for Zb2Brain {
         self.route = None; // we respawned elsewhere — the committed route is void
         self.hard_replans = 0;
         self.goal_block = None;
+        self.progress.reset();
     }
 
     fn status(&self) -> &str {
@@ -684,6 +786,76 @@ mod tests {
             skipped, 3,
             "never skip across a floor gap the eye sees over"
         );
+    }
+
+    /// Plan 51 R1: the watchdog must ignore genuine approach, catch wall-slide
+    /// oscillation (distance never improving past the epsilon), and self-reset.
+    #[test]
+    fn progress_watchdog_fires_only_without_gain() {
+        let mut p = RouteProgress::default();
+        // Approaching at 20 u/s: distance keeps improving — never fires.
+        let mut d = 500.0;
+        for _ in 0..50 {
+            assert!(!p.stalled(Some(7), d, 0.1));
+            d -= 2.0;
+        }
+        // Wall-slide: distance oscillates ±4 u (the exact micro-soak signature —
+        // fast displacement, zero waypoint progress) — fires within ~2.5 s.
+        let mut fired = false;
+        for i in 0..30 {
+            let dist = 400.0 + if i % 2 == 0 { 4.0 } else { -4.0 };
+            if p.stalled(Some(7), dist, 0.1) {
+                fired = true;
+                break;
+            }
+        }
+        assert!(
+            fired,
+            "no waypoint progress for 2.5 s must trigger a replan"
+        );
+        // Self-reset after firing: the next tick starts a fresh measurement.
+        assert!(!p.stalled(Some(7), 400.0, 0.1));
+    }
+
+    #[test]
+    fn progress_watchdog_resets_on_waypoint_change() {
+        let mut p = RouteProgress::default();
+        for _ in 0..20 {
+            assert!(!p.stalled(Some(1), 100.0, 0.1)); // 2.0 s — below threshold
+        }
+        assert!(
+            !p.stalled(Some(2), 100.0, 0.1),
+            "advancing to a new waypoint restarts the clock"
+        );
+        for _ in 0..20 {
+            assert!(!p.stalled(Some(2), 100.0, 0.1), "still under 2.5 s");
+        }
+        // Fires within the next few ticks (~2.5 s; exact tick depends on f32 accumulation).
+        let fired = (0..6).any(|_| p.stalled(Some(2), 100.0, 0.1));
+        assert!(fired, "~2.5 s on the new waypoint must fire");
+    }
+
+    /// Plan 51 R3: fleet zb2 bots must not start their roam cursors in lockstep.
+    #[test]
+    fn roam_cursor_desyncs_across_bots() {
+        let graph = Arc::new(NavGraph::from_raw(
+            vec![[0.0, 0.0, 0.0]; 20],
+            vec![Vec::new(); 20],
+        ));
+        let map = || BrainMap {
+            roam_nodes: (0..20).collect(),
+            nav_graph: Arc::clone(&graph),
+            roam_as_position: false,
+            items: Vec::new(),
+        };
+        let mut a = Zb2Brain::new(BotSkill::default(), false);
+        let mut b = Zb2Brain::new(BotSkill::default(), false);
+        a.set_map(map());
+        b.set_map(map());
+        let stride = 20 / 7 + 1; // 3
+        assert_ne!(a.ordinal, b.ordinal, "each brain takes a unique ordinal");
+        assert_eq!(a.roam_idx, (a.ordinal * stride) % 20);
+        assert_eq!(b.roam_idx, (b.ordinal * stride) % 20);
     }
 
     #[test]
