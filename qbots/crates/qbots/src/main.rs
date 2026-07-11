@@ -212,19 +212,19 @@ enum Cmd {
         /// navmodes × brains × count, clamped by `[fleet].max_bots` (server maxclients headroom).
         #[arg(long, default_value = "8")]
         count: usize,
-        /// Comma-separated nav backends to include (default: all). e.g.
-        /// `--navmodes astar,navmesh,hybrid-race`.
-        #[arg(long = "navmodes")]
-        modes: Option<String>,
-        /// Comma-separated brains to include (default: `main`). Spawns the full
-        /// `{modes} × {brains}` cross product. e.g. `--brains main,q3`.
-        #[arg(long)]
-        brains: Option<String>,
-        /// Comma-separated Q3 personalities to field for the `q3` brain (e.g.
+        /// Nav backends to include, comma-separated (default: all). See possible values below.
+        /// e.g. `--navmodes astar,navmesh,hybrid-race`.
+        #[arg(long = "navmodes", value_enum, value_delimiter = ',')]
+        modes: Vec<NavMode>,
+        /// Brains to include, comma-separated (default: `main`; `runtester` is rejected).
+        /// Spawns the full `{modes} × {brains}` cross product. e.g. `--brains main,q3`.
+        #[arg(long = "brains", value_enum, value_delimiter = ',')]
+        brains: Vec<brain::BrainKind>,
+        /// Q3 personalities to field for the `q3` brain, comma-separated (e.g.
         /// `--chars grunt,major,sarge,camper`). Each becomes its own group/skin. Ignored by
         /// non-`q3` brains. Absent → one default-character `q3` group.
-        #[arg(long = "chars")]
-        chars: Option<String>,
+        #[arg(long = "chars", value_enum, value_delimiter = ',')]
+        chars: Vec<brain::CharPreset>,
         /// Base qport; group `g` bot `i` uses `base + g*count + i` (disjoint per-group blocks,
         /// group = a (mode,brain[,char]) tuple). Per-process default if omitted.
         #[arg(long)]
@@ -2006,80 +2006,28 @@ async fn main() -> ExitCode {
                 tracing::error!("--count must be >= 1");
                 return ExitCode::FAILURE;
             }
-            // Default to all modes; else parse the comma list via the same names `--navmode` accepts.
-            let modes: Vec<NavMode> = match modes {
-                None => NavMode::value_variants().to_vec(),
-                Some(list) => {
-                    let mut out = Vec::new();
-                    for tok in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-                        match <NavMode as ValueEnum>::from_str(tok, true) {
-                            Ok(m) => out.push(m),
-                            Err(_) => {
-                                tracing::error!(
-                                    "unknown mode '{tok}' (valid: astar, navmesh, \
-                                     hybrid-fallback, hybrid-race, hybrid-hier, hybrid-segment)"
-                                );
-                                return ExitCode::FAILURE;
-                            }
-                        }
-                    }
-                    if out.is_empty() {
-                        tracing::error!("--navmodes was empty");
-                        return ExitCode::FAILURE;
-                    }
-                    out
-                }
+            // clap already validated each token against the enums and rendered the possible
+            // values in `--help`; here we only apply the empty-list defaults and reject the
+            // one brain that can't compete.
+            let modes: Vec<NavMode> = if modes.is_empty() {
+                NavMode::value_variants().to_vec()
+            } else {
+                modes
             };
-            // Default to `main`; else parse the comma list of brain kinds.
-            let brains: Vec<brain::BrainKind> = match brains {
-                None => vec![brain::BrainKind::Main],
-                Some(list) => {
-                    let mut out = Vec::new();
-                    for tok in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-                        match <brain::BrainKind as ValueEnum>::from_str(tok, true) {
-                            // `runtester` is the combat-free movement-scenario brain — it never
-                            // fires or frags, so it's meaningless on a frag scoreboard.
-                            Ok(brain::BrainKind::RunTester) => {
-                                tracing::error!(
-                                    "'runtester' is a non-combat brain and cannot compete \
-                                     (valid: main, sentry, q3)"
-                                );
-                                return ExitCode::FAILURE;
-                            }
-                            Ok(b) => out.push(b),
-                            Err(_) => {
-                                tracing::error!("unknown brain '{tok}' (valid: main, sentry, q3)");
-                                return ExitCode::FAILURE;
-                            }
-                        }
-                    }
-                    if out.is_empty() {
-                        tracing::error!("--brains was empty");
-                        return ExitCode::FAILURE;
-                    }
-                    out
+            let brains: Vec<brain::BrainKind> = if brains.is_empty() {
+                vec![brain::BrainKind::Main]
+            } else {
+                // `runtester` is the combat-free movement-scenario brain — it never fires or
+                // frags, so it's meaningless on a frag scoreboard.
+                if brains.contains(&brain::BrainKind::RunTester) {
+                    tracing::error!(
+                        "'runtester' is a non-combat brain and cannot compete (drop it from --brains)"
+                    );
+                    return ExitCode::FAILURE;
                 }
+                brains
             };
-            // Optional Q3 personality roster (only fields the `q3` brain). Empty → one
-            // default-character group.
-            let chars: Vec<brain::CharPreset> = match chars {
-                None => Vec::new(),
-                Some(list) => {
-                    let mut out = Vec::new();
-                    for tok in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-                        match <brain::CharPreset as ValueEnum>::from_str(tok, true) {
-                            Ok(c) => out.push(c),
-                            Err(_) => {
-                                tracing::error!(
-                                    "unknown char '{tok}' (valid: grunt, major, sarge, camper)"
-                                );
-                                return ExitCode::FAILURE;
-                            }
-                        }
-                    }
-                    out
-                }
-            };
+            // Q3 personality roster (only fields the `q3` brain). Empty → one default-character group.
             // One distinct skin per mode so the fleets are tellable apart on sight.
             let mut rng = skins::Rng::new();
             let skins_per_mode: Vec<Option<String>> =
