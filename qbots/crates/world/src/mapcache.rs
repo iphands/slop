@@ -19,6 +19,8 @@
 //! for each water node: index u32
 //! [cont.]  ride_count  u32        (Plan 42)
 //! for each ride edge: from u32, to u32, board[3] f32, far[3] f32, dismount[3] f32, model_index u32
+//! [cont.]  teleport_count u32     (Plan 52)
+//! for each teleport edge: from u32, to u32
 //! ```
 //!
 //! A fingerprint mismatch on load returns `None` — never an error — so callers
@@ -74,7 +76,11 @@ const MAGIC: &[u8; 7] = b"QBNAVC2";
 // Version 23: jump edges + jump-down bridges reject landings whose 0-48u overshoot strip
 // touches lava/slime (Plan 50 E3 — velocity-instrumented soak proved every q2dm3 lava
 // entry was a FALL onto these landings). Edge set changes → regen.
-const VERSION: u8 = 23;
+// Version 24: (Plan 52) hull-rest floor sampling (V-groove/sloped-channel floors now emit
+// nodes — base64's drain duct), spawn-rescue jump pass (`RESCUE_MAX_FALL`), and teleporter
+// edges (`EdgeKind::Teleport`, serialized after the ride edges). Node + edge sets change
+// and the format grows a teleport section → regen.
+const VERSION: u8 = 24;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]
@@ -272,6 +278,14 @@ pub fn save(path: &Path, graph: &NavGraph, fingerprint: &Fingerprint) -> io::Res
         buf.push(info.ladder as u8);
     }
 
+    // Teleporter edges (Plan 52): directed (pad, dest).
+    let teleports = graph.raw_teleports();
+    buf.extend_from_slice(&(teleports.len() as u32).to_le_bytes());
+    for (from, to) in &teleports {
+        buf.extend_from_slice(&(*from as u32).to_le_bytes());
+        buf.extend_from_slice(&(*to as u32).to_le_bytes());
+    }
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -386,9 +400,19 @@ fn parse(data: &[u8], expected: &Fingerprint) -> Option<NavGraph> {
         ));
     }
 
+    // Teleporter edges (Plan 52).
+    let tc = read_u32(data, &mut pos)? as usize;
+    let mut teleports = Vec::with_capacity(tc);
+    for _ in 0..tc {
+        let from = read_u32(data, &mut pos)? as usize;
+        let to = read_u32(data, &mut pos)? as usize;
+        teleports.push((from, to));
+    }
+
     let mut graph = NavGraph::from_raw_with_jumps(nodes, adj, jump_triples);
     graph.set_swim_and_water(swim, water);
     graph.set_rides(rides);
+    graph.set_teleports(teleports);
     Some(graph)
 }
 
@@ -417,6 +441,8 @@ mod tests {
         );
         // Swim edge 1↔2 (both directions) + node 2 tagged as water (Plan 39).
         g.set_swim_and_water(vec![(1, 2), (2, 1)], vec![2]);
+        // One-way teleporter edge 2→0 (Plan 52).
+        g.add_teleport_edge(2, 0, 32.0);
         g
     }
 
@@ -450,7 +476,7 @@ mod tests {
 
         let loaded = load(&path, &fp).expect("load returned None");
         assert_eq!(loaded.node_count(), 3);
-        assert_eq!(loaded.edge_count(), 4); // 1+2+1 directed edges
+        assert_eq!(loaded.edge_count(), 5); // 1+2+1 walk/jump + 1 teleport directed edges
 
         // Jump edge survives the round-trip.
         assert!(matches!(
@@ -468,6 +494,14 @@ mod tests {
         ));
         assert!(loaded.is_water_node(2));
         assert!(!loaded.is_water_node(0));
+
+        // Teleporter edge survives the round-trip, one-way (Plan 52).
+        assert!(loaded.is_teleport_edge(2, 0));
+        assert!(!loaded.is_teleport_edge(0, 2));
+        assert!(matches!(
+            loaded.edge_kind(2, 0),
+            crate::navgraph::EdgeKind::Teleport
+        ));
     }
 
     #[test]
