@@ -830,10 +830,13 @@ impl crate::brains::core::Brain for MainBrain {
                 mv.side = 0.0;
                 mv.jump();
                 mv.up = 1.0;
+                let vel = view.self_state().velocity;
                 tracing::info!(
                     x = pos.x as i32,
                     y = pos.y as i32,
                     z = pos.z as i32,
+                    vz = vel.z as i32,
+                    hs = vel.truncate().length() as i32,
                     "EVT lava_escape"
                 );
             }

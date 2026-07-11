@@ -538,10 +538,13 @@ impl Brain for Zb2Brain {
                 mv.jump();
                 mv.up = 1.0;
                 intent_forward = 1.0;
+                let vel = view.self_state().velocity;
                 tracing::info!(
                     x = pos.x as i32,
                     y = pos.y as i32,
                     z = pos.z as i32,
+                    vz = vel.z as i32,
+                    hs = vel.truncate().length() as i32,
                     "EVT lava_escape"
                 );
             }
