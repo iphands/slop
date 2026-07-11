@@ -71,7 +71,10 @@ const MAGIC: &[u8; 7] = b"QBNAVC2";
 // Version 22: flat walk edges require continuous non-deadly floor (segment_has_floor) and
 // stair treads reject lava/slime beds (Plan 50 E1 — hull traces fly over narrow lava
 // trenches, so A* routed bots straight through them). Edge set changes → regen.
-const VERSION: u8 = 22;
+// Version 23: jump edges + jump-down bridges reject landings whose 0-48u overshoot strip
+// touches lava/slime (Plan 50 E3 — velocity-instrumented soak proved every q2dm3 lava
+// entry was a FALL onto these landings). Edge set changes → regen.
+const VERSION: u8 = 23;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]

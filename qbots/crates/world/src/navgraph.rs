@@ -1428,6 +1428,12 @@ impl NavGraph {
                     if !(STEP..=MAX_FALL).contains(&drop) {
                         continue; // not a meaningful downward ledge
                     }
+                    // The probe's MASK_SOLID floor may be a lava BED, and the bot lands
+                    // at the probe point (launch_yaw aims there) skidding onward — reject
+                    // ledge drops whose landing strip is deadly (Plan 50 E3).
+                    if landing_strip_deadly(cm, [px, py, floor_z + 24.0], [dx, dy]) {
+                        continue;
+                    }
                     let landing = [px, py, floor_z + 24.0];
                     let Some(b) = graph.nearest(&landing) else {
                         continue;
@@ -1788,6 +1794,28 @@ fn floor_is_deadly(cm: &CollisionModel, endpos: &[f32; 3]) -> bool {
     cm.point_contents(&above) & (CONTENTS_LAVA | CONTENTS_SLIME) != 0
 }
 
+/// True if a jump/fall LANDING at `base` (foot/origin level) with horizontal travel
+/// direction `dir` touches lava/slime anywhere on the 0–48 u overshoot strip (Plan 50 E3).
+/// A bot arrives with momentum under 10 Hz control — it does not stop dead on the landing
+/// point; if the strip it skids across hangs over a lava channel, the edge is a death trap.
+/// Every soak-verified q2dm3 lava entry was a FALL (vz −240..−690) clustered on such
+/// landings.
+fn landing_strip_deadly(cm: &CollisionModel, base: [f32; 3], dir: [f32; 2]) -> bool {
+    let zero = [0.0f32; 3];
+    for d in [0.0f32, 16.0, 32.0, 48.0] {
+        let p = [base[0] + dir[0] * d, base[1] + dir[1] * d, base[2] + 8.0];
+        if cm.point_contents(&p) & (CONTENTS_LAVA | CONTENTS_SLIME) != 0 {
+            return true;
+        }
+        let down = [p[0], p[1], p[2] - 72.0];
+        let t = cm.trace(&p, &down, &zero, &zero, MASK_SOLID);
+        if !t.startsolid && t.fraction < 1.0 && floor_is_deadly(cm, &t.endpos) {
+            return true;
+        }
+    }
+    false
+}
+
 /// block the path. Stair risers don't block the upward vertical traces, and the
 /// horizontal traces at each stepped height clear any risers below that level.
 ///
@@ -1973,6 +2001,21 @@ fn jump_down_link(
         let t2 = cm.trace(&over, &lp, zero, zero, MASK_SOLID);
         if t2.startsolid || t2.fraction < 0.95 {
             continue; // overhang / ceiling blocks the fall
+        }
+        // Landing-overshoot check (Plan 50 E3): reject bridges whose landing strip
+        // touches lava/slime — the bot arrives with momentum and skids past the node.
+        let travel = {
+            let dx = lp[0] - hp[0];
+            let dy = lp[1] - hp[1];
+            let h = (dx * dx + dy * dy).sqrt();
+            if h < 1.0 {
+                [0.0, 0.0]
+            } else {
+                [dx / h, dy / h]
+            }
+        };
+        if landing_strip_deadly(cm, lp, travel) {
+            return None; // the landing strip is the same for both launch heights
         }
         let yaw = (lp[1] - hp[1]).atan2(lp[0] - hp[0]).to_degrees();
         return Some((dist(&hp, &lp), yaw));
