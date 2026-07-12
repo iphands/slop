@@ -36,6 +36,7 @@ pub mod traverse;
 pub mod water;
 pub mod weapons;
 pub mod xonchar;
+pub mod xoncore;
 
 // The brain plugin contract + bundled I/O (Plan 23). The root `Brain` is the **trait** (the
 // binary drives a `Box<dyn Brain>` via `build_brain`); the concrete `main` impl is `MainBrain`
