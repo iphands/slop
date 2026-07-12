@@ -40,7 +40,9 @@ use crate::traverse::{TraversalExecutor, TraversalFrame};
 use crate::xonchar::XonSkill;
 use crate::xoncore::Lcg;
 
+mod combat;
 mod goals;
+use combat::{EnemyTracker, WeaponChooser};
 use goals::{RatingCtx, XonGoals};
 
 /// Process-wide xon ordinal — staggers each bot's first rating session so a fleet doesn't
@@ -69,6 +71,12 @@ pub struct XonBrain {
     item_memory: ItemMemory,
     /// The goal-stack strategy layer (T2).
     goals: XonGoals,
+    /// Sticky enemy selection (T3).
+    enemy: EnemyTracker,
+    /// Priority-list weapon choice + probe-and-learn inventory (T3).
+    weapon: WeaponChooser,
+    /// When we last pulled the trigger (drives the combo check; set by T4's fire).
+    fired_at: Option<f32>,
     /// Wall-clock seconds since connect (accumulated from `dt`).
     time: f32,
     /// Status label reflecting the committed goal kind (`xon-item`/`xon-enemy`/`xon-wander`).
@@ -101,6 +109,9 @@ impl XonBrain {
             map_items: Vec::new(),
             item_memory: ItemMemory::new(),
             goals: XonGoals::new(ordinal as f32 * 0.35),
+            enemy: EnemyTracker::new(),
+            weapon: WeaponChooser::new(),
+            fired_at: None,
             time: 0.0,
             status: "xon",
             steering,
@@ -310,6 +321,24 @@ impl Brain for XonBrain {
         // PVS-honest item memory (evidence for goal expiry + candidate availability).
         self.item_memory.observe(&self.map_items, view, self.time);
 
+        // ── Combat perception (T3): sticky enemy + weapon choice. Firing = T4. ─────────
+        let mut weapon_request = None;
+        if self.cfg.combat_enabled {
+            let enemy = self.enemy.tick(view, cm, self.time);
+            if let Some(e) = enemy {
+                let ss = view.self_state();
+                let dist = (e.pos - pos).length();
+                weapon_request = self.weapon.tick(
+                    &self.sk,
+                    dist,
+                    ss.held_weapon.unwrap_or(crate::weapons::Weapon::Blaster),
+                    ss.held_ammo(),
+                    self.fired_at,
+                    self.time,
+                );
+            }
+        }
+
         let mut mv = MovementIntent::new();
         if let Some(nav) = nav {
             // Scenario / pinned-goal override always path-follows (the spawn-to-* contract);
@@ -361,14 +390,17 @@ impl Brain for XonBrain {
 
         BrainOutput {
             intent: mv,
-            weapon_request: None,
+            weapon_request,
             intent_forward: mv.forward,
         }
     }
 
     fn on_death(&mut self) {
-        // Respawned elsewhere — steering/recovery state is stale; traversal resets via gates.
+        // Respawned elsewhere — steering/recovery state is stale; loadout back to Blaster.
         self.recovery.reset();
+        self.enemy.reset();
+        self.weapon.reset();
+        self.fired_at = None;
     }
 }
 
