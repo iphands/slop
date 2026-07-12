@@ -46,7 +46,7 @@
 
 ### Item values (`items.qc:885-979` — `bot_pickupevalfunc`)
 - Weapons: 0 if owned & no ammo need; else `basevalue * (1 − 0.5*bound(0, arsenal_value/20000, 1))` (rich bots want new guns less). Base: vortex/devastator 8000, mortar 7000, … 0–10000.
-- Ammo: `value * min(2, have/need)`. Health/armor: `basevalue * min(2, item_amount/current)`; base 5000, ammo 1000–2000.
+- Ammo (`items.qc:909-955`, corrected 2026-07-11 during the Plan 59 port): `rating = ammo_base * min(2, gives / max(0.5, have)) [+ weapon_base*0.1 when the pickup is an owned weapon]` — worth MORE the emptier you are (`noammorating = 0.5`). Health/armor (`items.qc:957-979`): `basevalue * min(2, amount/current)` (armor denominator `armor*2/3 + health*1/3`); base 5000, ammo 1000–2000.
 - **item_group multiplier** `min(4, group_count)`: clustered small pickups rate as a bundle; on arrival sweep the group (`havocbot_select_an_item_of_group`, `havocbot.qc:370,858-869`). `[PORT]`
 - Enemy-player rating (`roles.qc:176-213`): `t = bound(0, 1 + (my_hp+armor − their_hp+armor)/150, 3)`, `+ max(0,8−skill)*0.05` ("less skilled bots attack more mindlessly"), final `= ratingscale*0.0001 * t * BOT_RATING_ENEMY(2500)`. `[ADAPT]` — enemy health isn't on the Q2 wire; default their hp+armor to a constant (100) or estimate from damage dealt.
 - Item timing (`roles.qc:118-137`): taken items still rated if respawn within `bound(0,skill/10,1)*6` s (powerups; 4 s at skill≥9); bot pre-moves and camps (`bot_pickup_respawning`, `havocbot.qc:755-772`). `[ADAPT]` — we already infer respawn timers client-side (`brain::items::ItemMemory`, Plan 30).

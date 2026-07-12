@@ -711,3 +711,31 @@ the data indicts. All soaks: noir.lan:27910 q2dm3, 305 s,
   a CM/nav-cache geometry discrepancy that keeps luring routes into wall contact. That
   is a `world`/map-cache bug (Plan 35/48/50 family), not a brain bug — needs its own
   instrumented plan.
+
+## 2026-07-11 — Plan 59: Xonotic character + core primitives (`xonchar`, `xoncore`)
+
+- **What shipped** (pure, additive-only — no existing brain touched): `xonchar::XonSkill`
+  (Xonotic's 12 additive per-behavior skill offsets, `bot.qc:275-290`; `rangepref` is the
+  one axis used standalone, `havocbot.qc:1564`) + 4 `XonCharPreset`s (rus/shp/trt/nob);
+  `xoncore::rating` (routerating `value*rb/(rb+cost)` over travel-time, Q2-adapted
+  pickupeval family, enemy `t*2500`, wander annulus); `xoncore::aim::XonAim` (the full
+  `bot_aimdir`/`bot_aim` dynamical system: bad-aim offset, 5-stage anticipation cascade,
+  mouse-think, turn-rate law, fire cone `1000/(dist−9)−0.35` + burst timer, shot lead);
+  `xoncore::keyboard::KeyboardEmu` (threshold-0.57 quantizer, skill-gated key vocabulary,
+  dist/250 analog blend); `world::NavGraph::flood_costs(_weighted)` (single-source Dijkstra,
+  the one-flood-per-rating-session primitive; no mapcache change). 27 new unit tests, all
+  seeded/deterministic (`xoncore::Lcg`).
+- **Deliberate adaptations** (consumers: Plan 60 brain, Plan 61 navmode):
+  - Enemy hp+armor isn't on the Q2 wire → `enemy_rating` takes an estimate (default 100);
+    powerup adjustments dropped.
+  - Vendor `aim.qc:197` has an upstream regression (`int f` truncation zeroes the bad-aim
+    offset at any skill > 0 under gmqcc) — we port the intended float semantics.
+  - SUPERBOT paths, bunnyhop cost variant (needs Q2 physics recalibration), and the
+    `findtrajectorywithleading` ballistic search (needs a CM gravity trace → Plan 60 T4)
+    are not in the core.
+  - Distillation fix: the ammo pickupeval is `gives/max(0.5, have)` (emptier = more
+    valuable), not the "have/need" the research doc originally said — corrected in
+    `context/distilled/xonotic.md` §2.
+- **Aim stability note**: the filter cascade + turn law are stable at our dt=0.1 (10k-step
+  test, circling target); vendor runs at 0.05 s thinks. If live aim ever oscillates,
+  halve the aim tick before touching the poles.

@@ -1,6 +1,6 @@
 # Plan 59 — Xonotic character + core primitives (`xonchar`, `xoncore`)
 
-> **Status**: pending
+> **Status**: done (2026-07-11)
 > **Created**: 2026-07-11
 > **Depends on**: Plan 23 (brain plugin core); Plan 05 (world/NavGraph, for the flood-cost API)
 > **Goal**: Port Xonotic havocbot's pure decision primitives — 12-axis additive skill personality, the goal-rating formula + item eval, the aim dynamical system, and keyboard-emulation quantization — as unit-tested modules with NO brain, NO CLI, NO behavior change to existing brains; plus a single-source Dijkstra flood API on `NavGraph`.
