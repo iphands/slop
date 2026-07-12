@@ -38,7 +38,9 @@ use crate::skill::BotSkill;
 use crate::steer::{move_from_world_dir, Steering};
 use crate::traverse::{TraversalExecutor, TraversalFrame};
 use crate::xonchar::XonSkill;
+use crate::xoncore::aim::{AimInputs, Angles, XonAim};
 use crate::xoncore::Lcg;
+use crate::{aim as shared_aim, los};
 
 mod combat;
 mod goals;
@@ -77,6 +79,10 @@ pub struct XonBrain {
     weapon: WeaponChooser,
     /// When we last pulled the trigger (drives the combo check; set by T4's fire).
     fired_at: Option<f32>,
+    /// The aim dynamical system (T4) — owns combat view angles + the fire timer.
+    aim: XonAim,
+    /// Current view pitch (yaw lives in `steering`); XonAim integrates from here.
+    view_pitch: f32,
     /// Wall-clock seconds since connect (accumulated from `dt`).
     time: f32,
     /// Status label reflecting the committed goal kind (`xon-item`/`xon-enemy`/`xon-wander`).
@@ -112,6 +118,8 @@ impl XonBrain {
             enemy: EnemyTracker::new(),
             weapon: WeaponChooser::new(),
             fired_at: None,
+            aim: XonAim::new(),
+            view_pitch: 0.0,
             time: 0.0,
             status: "xon",
             steering,
@@ -198,7 +206,7 @@ impl XonBrain {
         dt: f32,
         view: &crate::perception::Worldview,
         mv: &mut MovementIntent,
-    ) {
+    ) -> bool {
         nav.update(pos, None);
         nav.set_goal(goal, pos);
         if let Some(cm) = cm {
@@ -281,7 +289,7 @@ impl XonBrain {
             steer_side: side,
             dt,
         };
-        self.traverse.apply(mv, gates, nav, &frame);
+        self.traverse.apply(mv, gates, nav, &frame).is_some()
     }
 }
 
@@ -321,22 +329,27 @@ impl Brain for XonBrain {
         // PVS-honest item memory (evidence for goal expiry + candidate availability).
         self.item_memory.observe(&self.map_items, view, self.time);
 
-        // ── Combat perception (T3): sticky enemy + weapon choice. Firing = T4. ─────────
+        // ── Combat perception (T3): sticky enemy + weapon choice ───────────────────────
         let mut weapon_request = None;
-        if self.cfg.combat_enabled {
-            let enemy = self.enemy.tick(view, cm, self.time);
-            if let Some(e) = enemy {
-                let ss = view.self_state();
-                let dist = (e.pos - pos).length();
-                weapon_request = self.weapon.tick(
-                    &self.sk,
-                    dist,
-                    ss.held_weapon.unwrap_or(crate::weapons::Weapon::Blaster),
-                    ss.held_ammo(),
-                    self.fired_at,
-                    self.time,
-                );
-            }
+        let enemy = if self.cfg.combat_enabled {
+            self.enemy.tick(view, cm, self.time)
+        } else {
+            None
+        };
+        let held = view
+            .self_state()
+            .held_weapon
+            .unwrap_or(crate::weapons::Weapon::Blaster);
+        if let Some(e) = enemy {
+            let dist = (e.pos - pos).length();
+            weapon_request = self.weapon.tick(
+                &self.sk,
+                dist,
+                held,
+                view.self_state().held_ammo(),
+                self.fired_at,
+                self.time,
+            );
         }
 
         let mut mv = MovementIntent::new();
@@ -356,7 +369,79 @@ impl Brain for XonBrain {
                     None => self.roam_goal(view, ticks, pos),
                 },
             };
-            self.locomote(nav, cm, pos, goal, dt, view, &mut mv);
+            let traversing = self.locomote(nav, cm, pos, goal, dt, view, &mut mv);
+
+            // ── Aim & fire (T4): the XonAim dynamical system owns the view while an enemy
+            // is engaged — EXCEPT during traversal legs (the executor owns the view). Legs
+            // are re-expressed against the aim yaw (the zb2 R2 lesson: never discard
+            // recovery/steering legs while firing). ──────────────────────────────────────
+            if let Some(e) = enemy {
+                if !traversing {
+                    let eye = los::eye_origin(pos.into());
+                    let eye_v = Vec3::from(eye);
+                    // Sight distance along the CURRENT view (one tick stale vs the vendor's
+                    // post-turn trace — acceptable at 10 Hz).
+                    let old_yaw = self.steering.view_yaw();
+                    let sight_dist = cm
+                        .map(|c| {
+                            let f = crate::steer::view_forward(old_yaw);
+                            let end = eye_v + f * 1000.0;
+                            let t = c.trace(
+                                &[eye_v.x, eye_v.y, eye_v.z],
+                                &[end.x, end.y, end.z],
+                                &[0.0; 3],
+                                &[0.0; 3],
+                                world::MASK_SOLID,
+                            );
+                            t.fraction * 1000.0
+                        })
+                        .unwrap_or(f32::INFINITY);
+                    let inputs = AimInputs {
+                        eye: eye_v,
+                        target_pos: e.pos,
+                        target_vel: e.vel.unwrap_or(Vec3::ZERO),
+                        shot_speed: held.projectile_speed().unwrap_or(1_000_000.0),
+                        // Fixed latency estimate (real RTT plumbing is a follow-up; since
+                        // Plan 57 our real ping ≈ 16 ms + interp).
+                        latency: 0.05,
+                        fighting: true,
+                        accurate: held.is_hitscan(),
+                        sight_dist,
+                    };
+                    let current = Angles {
+                        pitch: self.view_pitch,
+                        yaw: old_yaw,
+                    };
+                    let cmd = self.aim.step(&mut self.rng, &self.sk, current, &inputs, dt);
+
+                    // Re-express the locomotion legs against the aim yaw.
+                    let legs_world = crate::steer::view_forward(old_yaw) * mv.forward
+                        + crate::steer::view_right(old_yaw) * mv.side;
+                    let (ff, ss) = move_from_world_dir(legs_world, cmd.angles.yaw, false);
+                    mv.look_at(cmd.angles.yaw, cmd.angles.pitch);
+                    mv.move_forward(ff);
+                    mv.move_side(ss);
+                    self.steering.set_view_yaw(cmd.angles.yaw);
+                    self.view_pitch = cmd.angles.pitch;
+
+                    // Fire: cone-armed AND actually hittable (LOS) AND no self-splash.
+                    if cmd.fire {
+                        let los_ok = cm
+                            .map(|c| los::has_los_player(c, eye, e.pos.into()))
+                            .unwrap_or(true);
+                        let splash = cm.is_some_and(|c| {
+                            shared_aim::would_self_splash(c, eye_v, pos, e.pos, held)
+                        });
+                        if los_ok && !splash {
+                            mv.attack();
+                            self.fired_at = Some(self.time);
+                        }
+                    }
+                }
+            } else {
+                // No enemy: pitch relaxes to level (locomote already looks flat).
+                self.view_pitch = 0.0;
+            }
         } else {
             // No nav graph yet — walk forward so the bot isn't a statue.
             mv.move_forward(1.0);
@@ -456,6 +541,29 @@ mod tests {
             Some(goal),
             "scenario contract: honor the override"
         );
+    }
+
+    #[test]
+    fn never_attacks_without_an_enemy() {
+        // Empty PVS: the aim/fire stage must stay silent (no attack, level pitch).
+        let mut b = XonBrain::new(XonSkill::default(), BrainConfig::default());
+        let view = view0();
+        let mut nav = StubNav {
+            pursue: Some(Vec3::new(100.0, 0.0, 0.0)),
+            ..Default::default()
+        };
+        for _ in 0..20 {
+            let out = b.tick(BrainContext {
+                view: &view,
+                nav: Some(&mut nav),
+                cm: None,
+                dt: 0.1,
+                ticks: 1,
+                goal_override: None,
+            });
+            assert!(!out.intent.attack);
+            assert_eq!(out.intent.pitch, 0.0);
+        }
     }
 
     #[test]

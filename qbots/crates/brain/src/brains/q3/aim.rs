@@ -21,6 +21,8 @@ use crate::weapons::Weapon;
 /// Enemy velocity memory for the direction-change accuracy penalty (`enemyposition_time`,
 /// sampled every 0.5 s). When the enemy reverses direction between samples, a sub-0.9-skill bot
 /// gets faked out (`accuracy *= 0.7`).
+pub use crate::aim::would_self_splash;
+
 #[derive(Debug, Clone, Copy)]
 pub struct AimState {
     sample_time: f32,
@@ -177,30 +179,6 @@ fn trace_floor(cm: &CollisionModel, origin: Vec3) -> Option<Vec3> {
     } else {
         None
     }
-}
-
-/// Would firing a **splash** weapon at `aim_target` splash *us*? Traces eye→aim_target; if the
-/// world is hit short of the target and the impact is within the weapon's blast radius of our
-/// own feet, a self-preservation-minded bot holds fire (`BotCheckAttack` radial check, §6).
-/// Non-splash weapons never self-abort.
-pub fn would_self_splash(
-    cm: &CollisionModel,
-    shooter_eye: Vec3,
-    self_origin: Vec3,
-    aim_target: Vec3,
-    weapon: Weapon,
-) -> bool {
-    if !weapon.self_dangerous() {
-        return false;
-    }
-    let start = [shooter_eye.x, shooter_eye.y, shooter_eye.z];
-    let end = [aim_target.x, aim_target.y, aim_target.z];
-    let t = cm.trace(&start, &end, &[0.0; 3], &[0.0; 3], MASK_SOLID);
-    if t.fraction >= 1.0 {
-        return false; // nothing in the way — shot reaches the target
-    }
-    let impact = Vec3::from(t.endpos);
-    (impact - self_origin).length() < weapon.min_safe_distance()
 }
 
 #[cfg(test)]

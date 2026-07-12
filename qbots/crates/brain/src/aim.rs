@@ -12,6 +12,7 @@
 
 use crate::weapons::Weapon;
 use glam::Vec3;
+use world::{CollisionModel, MASK_SOLID};
 
 /// Bots never aim steeply up/down — Eraser clamps pitch to ±15° (`bot_wpns.c:368`).
 /// Notable GL/RL-lob limit. We clamp the *aim* pitch; the bot can still look
@@ -172,6 +173,30 @@ impl AimRng for JitterRng {
         let u01 = (self.state >> 8) as f32 / ((1u32 << 24) as f32);
         u01 * 2.0 - 1.0
     }
+}
+
+/// Would firing a **splash** weapon at `aim_target` splash *us*? Traces eye→aim_target; if the
+/// world is hit short of the target and the impact is within the weapon's blast radius of our
+/// own feet, a self-preservation-minded bot holds fire (Q3 `BotCheckAttack` radial check; promoted from `brains/q3/aim.rs` for the xon brain, Plan 60 T4).
+/// Non-splash weapons never self-abort.
+pub fn would_self_splash(
+    cm: &CollisionModel,
+    shooter_eye: Vec3,
+    self_origin: Vec3,
+    aim_target: Vec3,
+    weapon: Weapon,
+) -> bool {
+    if !weapon.self_dangerous() {
+        return false;
+    }
+    let start = [shooter_eye.x, shooter_eye.y, shooter_eye.z];
+    let end = [aim_target.x, aim_target.y, aim_target.z];
+    let t = cm.trace(&start, &end, &[0.0; 3], &[0.0; 3], MASK_SOLID);
+    if t.fraction >= 1.0 {
+        return false; // nothing in the way — shot reaches the target
+    }
+    let impact = Vec3::from(t.endpos);
+    (impact - self_origin).length() < weapon.min_safe_distance()
 }
 
 #[cfg(test)]
