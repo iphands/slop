@@ -114,6 +114,80 @@ fn is_name_char(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
+/// Environmental self-death cause, classified from a Q2 obituary print.
+/// Variants mirror the attacker-less `meansOfDeath` arms of `ClientObituary`
+/// (`vendor/yquake2/src/game/player/client.c:391`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnvDeath {
+    /// `MOD_LAVA` — "does a back flip into the lava".
+    Lava,
+    /// `MOD_SLIME` (acid) — "melted".
+    Slime,
+    /// `MOD_WATER` (drowned / out of breath) — "sank like a rock".
+    Drown,
+    /// `MOD_CRUSH` (mover squish) — "was squished".
+    Squish,
+    /// `MOD_FALLING` — "cratered".
+    Falling,
+    /// `MOD_TRIGGER_HURT` / `MOD_SPLASH` / `MOD_BOMB` — "was in the wrong place".
+    TriggerHurt,
+}
+
+impl EnvDeath {
+    /// Every variant, in [`EnvDeath::index`] order (for tally arrays/reports).
+    pub const ALL: [EnvDeath; 6] = [
+        EnvDeath::Lava,
+        EnvDeath::Slime,
+        EnvDeath::Drown,
+        EnvDeath::Squish,
+        EnvDeath::Falling,
+        EnvDeath::TriggerHurt,
+    ];
+
+    /// Stable dense index for tally arrays.
+    pub fn index(self) -> usize {
+        match self {
+            EnvDeath::Lava => 0,
+            EnvDeath::Slime => 1,
+            EnvDeath::Drown => 2,
+            EnvDeath::Squish => 3,
+            EnvDeath::Falling => 4,
+            EnvDeath::TriggerHurt => 5,
+        }
+    }
+
+    /// Short greppable tag for logs and reports.
+    pub fn name(self) -> &'static str {
+        match self {
+            EnvDeath::Lava => "lava",
+            EnvDeath::Slime => "slime",
+            EnvDeath::Drown => "drown",
+            EnvDeath::Squish => "squish",
+            EnvDeath::Falling => "falling",
+            EnvDeath::TriggerHurt => "trigger_hurt",
+        }
+    }
+}
+
+/// Classify a `svc_print` line as an environmental self-death of `name`.
+///
+/// The server broadcasts these as `"<victim> <message>\n"` with **no attacker**
+/// (`ClientObituary`, client.c:391), so an exact whole-line match on
+/// `"<name> <message>"` cannot collide with attacker obituaries — e.g. slime's
+/// "melted" never matches the hyperblaster's "was melted by <attacker>".
+pub fn classify_env_death(text: &str, name: &str) -> Option<EnvDeath> {
+    let rest = text.trim_end().strip_prefix(name)?.strip_prefix(' ')?;
+    match rest {
+        "does a back flip into the lava" => Some(EnvDeath::Lava),
+        "melted" => Some(EnvDeath::Slime),
+        "sank like a rock" => Some(EnvDeath::Drown),
+        "was squished" => Some(EnvDeath::Squish),
+        "cratered" => Some(EnvDeath::Falling),
+        "was in the wrong place" => Some(EnvDeath::TriggerHurt),
+        _ => None,
+    }
+}
+
 /// Per-bot heatmap ingestion driver: feeds a [`Heatmap`] from observed events
 /// and exposes the risk-weighted A\* cost overlay. Construct one per bot after
 /// its nav graph loads.
@@ -282,6 +356,44 @@ mod tests {
         let obit = parse_obituary("bot10 was railed by bot1", &["bot1", "bot10"]).unwrap();
         assert_eq!(obit.victim, "bot10");
         assert_eq!(obit.killer.as_deref(), Some("bot1"));
+    }
+
+    // ---- classify_env_death (pure) ----
+
+    #[test]
+    fn env_death_classifies_each_kind() {
+        let cases = [
+            ("qb1 does a back flip into the lava", EnvDeath::Lava),
+            ("qb1 melted", EnvDeath::Slime),
+            ("qb1 sank like a rock", EnvDeath::Drown),
+            ("qb1 was squished", EnvDeath::Squish),
+            ("qb1 cratered", EnvDeath::Falling),
+            ("qb1 was in the wrong place", EnvDeath::TriggerHurt),
+        ];
+        for (text, want) in cases {
+            assert_eq!(classify_env_death(text, "qb1"), Some(want), "{text}");
+            // Trailing newline (as delivered over the wire) must not break it.
+            assert_eq!(classify_env_death(&format!("{text}\n"), "qb1"), Some(want));
+        }
+    }
+
+    #[test]
+    fn env_death_ignores_attacker_obits_and_other_victims() {
+        // Slime's "melted" must not match the hyperblaster attacker message.
+        assert!(classify_env_death("qb1 was melted by qb2's hyperblaster", "qb1").is_none());
+        // Someone else's environmental death is not ours.
+        assert!(classify_env_death("qb2 does a back flip into the lava", "qb1").is_none());
+        // Chat/other prints don't classify.
+        assert!(classify_env_death("qb1 entered the game", "qb1").is_none());
+        // "qb1" must not match inside "qb10".
+        assert!(classify_env_death("qb10 melted", "qb1").is_none());
+    }
+
+    #[test]
+    fn env_death_index_matches_all_order() {
+        for (i, kind) in EnvDeath::ALL.into_iter().enumerate() {
+            assert_eq!(kind.index(), i);
+        }
     }
 
     // ---- HeatmapObserver (integration over a tiny nav graph + worldview) ----

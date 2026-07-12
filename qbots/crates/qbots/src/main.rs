@@ -1207,6 +1207,18 @@ pub(crate) async fn bot_task(
                             }
                         }
 
+                        // Drain server prints once per frame. First classify our own
+                        // environmental suicides (lava/slime/drown/squish/…) from the
+                        // obituary — the wire carries no means-of-death, only the print —
+                        // then hand the same lines to the heatmap observer below.
+                        let prints = conn.drain_prints();
+                        for text in &prints {
+                            if let Some(kind) = brain::classify_env_death(text, name) {
+                                tracing::warn!(kind = kind.name(), "EVT env_suicide");
+                                stats.record_env_suicide(name, kind);
+                            }
+                        }
+
                         // Plan 08 heatmap: observe this frame (presence + obituary
                         // prints), advance decay, and refresh the risk overlay the
                         // nav driver consumes when it next plans a goal. This is the
@@ -1216,8 +1228,8 @@ pub(crate) async fn bot_task(
                             const HEATMAP_DT: f32 = 0.1; // 10 Hz client tick
                             obs.tick(HEATMAP_DT);
                             obs.sample_presence(&view, &cs, HEATMAP_DT, frame.serverframe);
-                            for text in conn.drain_prints() {
-                                obs.on_print(&text, name, frame.serverframe);
+                            for text in &prints {
+                                obs.on_print(text, name, frame.serverframe);
                             }
                             let (w_danger, w_pop) = brain.heatmap_weights();
                             let overlay = obs.cost_overlay(w_danger, w_pop);

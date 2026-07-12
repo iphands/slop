@@ -54,7 +54,9 @@ pub use move_ctrl::{MovementController, MovementIntent};
 pub use nav::{NavGoal, NavigationDriver};
 pub use nav_mode::{DangerSource, Navigator};
 pub use navmesh_driver::NavmeshDriver;
-pub use observed::{parse_obituary, HeatmapObserver, HeatmapSnapshot, Obituary};
+pub use observed::{
+    classify_env_death, parse_obituary, EnvDeath, HeatmapObserver, HeatmapSnapshot, Obituary,
+};
 pub use perception::{EntityClass, PerceivedEntity, SelfState, Worldview};
 pub use q3char::{CharPreset, Q3Character};
 pub use recorder::{

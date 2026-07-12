@@ -7,6 +7,7 @@
 //! supervisor reads totals for the periodic heartbeat and the final shutdown
 //! report.
 
+use brain::EnvDeath;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -15,6 +16,27 @@ use std::sync::{Arc, Mutex};
 pub struct BotTally {
     pub kills: u64,
     pub deaths: u64,
+    /// Environmental suicides (lava/slime/drown/squish/…), indexed by
+    /// [`EnvDeath::index`]. These deaths are also counted in `deaths`.
+    pub env_suicides: [u64; EnvDeath::ALL.len()],
+}
+
+impl BotTally {
+    /// Total environmental suicides across all causes.
+    pub fn env_total(&self) -> u64 {
+        self.env_suicides.iter().sum()
+    }
+
+    /// Compact per-cause breakdown for reports, e.g. `lava:3 drown:1`.
+    /// Empty string when no environmental suicides occurred.
+    pub fn env_breakdown(&self) -> String {
+        EnvDeath::ALL
+            .into_iter()
+            .filter(|k| self.env_suicides[k.index()] > 0)
+            .map(|k| format!("{}:{}", k.name(), self.env_suicides[k.index()]))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
 }
 
 /// Shared, clone-cheap fleet tally keyed by bot name. Cheap to clone (one `Arc`);
@@ -59,15 +81,34 @@ impl FleetStats {
             .deaths += 1;
     }
 
+    /// Record one environmental suicide (lava/slime/…) attributed to `name`.
+    /// Does **not** bump `deaths` — the health-based death detector already
+    /// counts every death; this only classifies the cause.
+    pub fn record_env_suicide(&self, name: &str, kind: EnvDeath) {
+        self.bots
+            .lock()
+            .unwrap()
+            .entry(name.to_string())
+            .or_default()
+            .env_suicides[kind.index()] += 1;
+    }
+
     /// Fleet totals across all registered bots.
     pub fn totals(&self) -> BotTally {
         self.bots
             .lock()
             .unwrap()
             .values()
-            .fold(BotTally::default(), |acc, t| BotTally {
-                kills: acc.kills + t.kills,
-                deaths: acc.deaths + t.deaths,
+            .fold(BotTally::default(), |acc, t| {
+                let mut env = acc.env_suicides;
+                for (a, b) in env.iter_mut().zip(t.env_suicides) {
+                    *a += b;
+                }
+                BotTally {
+                    kills: acc.kills + t.kills,
+                    deaths: acc.deaths + t.deaths,
+                    env_suicides: env,
+                }
             })
     }
 
@@ -106,14 +147,16 @@ mod tests {
             snap["a"],
             BotTally {
                 kills: 2,
-                deaths: 1
+                deaths: 1,
+                ..Default::default()
             }
         );
         assert_eq!(
             snap["b"],
             BotTally {
                 kills: 1,
-                deaths: 0
+                deaths: 0,
+                ..Default::default()
             }
         );
     }
@@ -131,7 +174,8 @@ mod tests {
             t,
             BotTally {
                 kills: 2,
-                deaths: 3
+                deaths: 3,
+                ..Default::default()
             }
         );
     }
@@ -156,6 +200,23 @@ mod tests {
         assert_eq!(s.totals(), BotTally::default());
         let snap = s.snapshot();
         assert_eq!(snap[0], ("idle".to_string(), BotTally::default()));
+    }
+
+    #[test]
+    fn env_suicides_tally_per_cause_and_sum() {
+        let s = FleetStats::new();
+        s.record_env_suicide("a", EnvDeath::Lava);
+        s.record_env_suicide("a", EnvDeath::Lava);
+        s.record_env_suicide("a", EnvDeath::Drown);
+        s.record_env_suicide("b", EnvDeath::Squish);
+        let snap: HashMap<String, BotTally> = s.snapshot().into_iter().collect();
+        assert_eq!(snap["a"].env_suicides[EnvDeath::Lava.index()], 2);
+        assert_eq!(snap["a"].env_total(), 3);
+        assert_eq!(snap["a"].env_breakdown(), "lava:2 drown:1");
+        assert_eq!(snap["b"].env_breakdown(), "squish:1");
+        assert_eq!(s.totals().env_total(), 4);
+        // Cause classification never bumps the death counter itself.
+        assert_eq!(s.totals().deaths, 0);
     }
 
     #[test]

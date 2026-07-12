@@ -347,6 +347,7 @@ pub async fn run_fleet(
                 bots = count,
                 kills = totals.kills,
                 deaths = totals.deaths,
+                env_suicides = totals.env_total(),
                 "fleet heartbeat"
             );
             if sd.requested() {
@@ -759,6 +760,7 @@ struct ModeScore {
     tag: String,
     kills: u64,
     deaths: u64,
+    env_suicides: u64,
     bots: usize,
 }
 
@@ -767,7 +769,7 @@ struct ModeScore {
 /// ranked by kills desc (then tag) — pure, so the scoreboard formatting is unit-testable.
 fn mode_scoreboard(stats: &FleetStats, group_tags: &[String]) -> Vec<ModeScore> {
     use std::collections::HashMap;
-    let mut by_tag: HashMap<String, (u64, u64, usize)> = HashMap::new();
+    let mut by_tag: HashMap<String, (u64, u64, u64, usize)> = HashMap::new();
     for t in group_tags {
         by_tag.entry(t.clone()).or_default();
     }
@@ -779,14 +781,16 @@ fn mode_scoreboard(stats: &FleetStats, group_tags: &[String]) -> Vec<ModeScore> 
         let e = by_tag.entry(tag).or_default();
         e.0 += tally.kills;
         e.1 += tally.deaths;
-        e.2 += 1;
+        e.2 += tally.env_total();
+        e.3 += 1;
     }
     let mut rows: Vec<ModeScore> = by_tag
         .into_iter()
-        .map(|(tag, (kills, deaths, bots))| ModeScore {
+        .map(|(tag, (kills, deaths, env_suicides, bots))| ModeScore {
             tag,
             kills,
             deaths,
+            env_suicides,
             bots,
         })
         .collect();
@@ -796,7 +800,9 @@ fn mode_scoreboard(stats: &FleetStats, group_tags: &[String]) -> Vec<ModeScore> 
 
 /// Log a per-group frag scoreboard. `label` distinguishes the periodic "live" board from "FINAL".
 fn log_competition_scoreboard(stats: &FleetStats, group_tags: &[String], label: &str) {
-    tracing::info!("── competition scoreboard [{label}] (group: kills/deaths, K/D) ──");
+    tracing::info!(
+        "── competition scoreboard [{label}] (group: kills/deaths, K/D, env suicides) ──"
+    );
     for (rank, s) in mode_scoreboard(stats, group_tags).iter().enumerate() {
         let kd = if s.deaths > 0 {
             s.kills as f32 / s.deaths as f32
@@ -804,13 +810,14 @@ fn log_competition_scoreboard(stats: &FleetStats, group_tags: &[String], label: 
             s.kills as f32
         };
         tracing::info!(
-            "  #{:<2} {:<9} bots={:<2} kills={:<4} deaths={:<4} kd={:.2}",
+            "  #{:<2} {:<9} bots={:<2} kills={:<4} deaths={:<4} kd={:.2} env={:<3}",
             rank + 1,
             s.tag,
             s.bots,
             s.kills,
             s.deaths,
-            kd
+            kd,
+            s.env_suicides
         );
     }
 }
@@ -934,11 +941,30 @@ fn log_final_stats(stats: &FleetStats) {
     tracing::info!(
         kills = totals.kills,
         deaths = totals.deaths,
+        env_suicides = totals.env_total(),
         bots = stats.bot_count(),
         "fleet final stats"
     );
     for (name, t) in stats.snapshot() {
-        tracing::info!("{:>3} kills / {:>3} deaths  {}", t.kills, t.deaths, name);
+        let env = t.env_breakdown();
+        if env.is_empty() {
+            tracing::info!("{:>3} kills / {:>3} deaths  {}", t.kills, t.deaths, name);
+        } else {
+            tracing::info!(
+                "{:>3} kills / {:>3} deaths  {}  [{}]",
+                t.kills,
+                t.deaths,
+                name,
+                env
+            );
+        }
+    }
+    if totals.env_total() > 0 {
+        tracing::warn!(
+            total = totals.env_total(),
+            breakdown = %totals.env_breakdown(),
+            "environmental suicides this run"
+        );
     }
 }
 
