@@ -183,7 +183,8 @@ fn report(aggs: &[GroupAgg], control: Option<&str>) -> String {
 // ── Traversal-matrix driver (Plan 47 T2) ──────────────────────────────────────────────────
 //
 // `acceptance matrix --addr <host:port> [--bin qbots] [--brains a,b] [--maps m1,m2] [--rows sub]
-//  [--yes]` runs the proven traversal gates per brain and prints one pass/fail table. Rows are
+//  [--navmode xg] [--yes]` runs the proven traversal gates per brain and prints one pass/fail
+// table. Rows are
 // grouped by map; the operator is prompted to switch the server between batches (`--yes` skips
 // prompts — a wrong-map row then fails fast on the scenario's own map preflight). The map's nav
 // cache is regenerated before each batch.
@@ -261,6 +262,9 @@ fn run_matrix(mut args: Vec<String>) -> ExitCode {
         .split(',')
         .map(str::to_string)
         .collect();
+    // Optional nav backend override appended to every scenario run (Plan 62: the `xg`
+    // A/B batch runs the same rows with `--navmode xg` vs the default `as`).
+    let navmode = take_flag(&mut args, "--navmode");
     let maps_filter: Option<Vec<String>> =
         take_flag(&mut args, "--maps").map(|m| m.split(',').map(str::to_string).collect());
     let rows_filter = take_flag(&mut args, "--rows");
@@ -312,11 +316,17 @@ fn run_matrix(mut args: Vec<String>) -> ExitCode {
                 .output();
         }
         for brain in &brains {
-            eprintln!("[matrix] {} / {} / --brain {brain} …", row.map, row.name);
-            let out = std::process::Command::new(&bin)
-                .args(row.args)
-                .args(["--addr", &addr, "--brain", brain])
-                .output();
+            let nm = navmode.as_deref().unwrap_or("as");
+            eprintln!(
+                "[matrix] {} / {} / --brain {brain} / --navmode {nm} …",
+                row.map, row.name
+            );
+            let mut cmd = std::process::Command::new(&bin);
+            cmd.args(row.args).args(["--addr", &addr, "--brain", brain]);
+            if let Some(nm) = navmode.as_deref() {
+                cmd.args(["--navmode", nm]);
+            }
+            let out = cmd.output();
             let outcome = out.ok().and_then(|o| {
                 let text = format!(
                     "{}{}",

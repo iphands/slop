@@ -173,3 +173,12 @@ Deaths are high for both groups (q2dm3's lava + crossfire) — aggression, not w
 the thrash fixed, `main` traded evenly with `q3` for the first time (single-run caveat: verify
 at N≥5 with the aggregator). *(Plan's persona-roster showcase substituted with main-vs-q3 —
 `competition --personas` isn't wired yet, a Plan 27 follow-on.)*
+
+## 2026-07-11 — Plan 62 T2: `xon` brain + `xg` navmode join the matrix
+
+- Driver: `acceptance matrix` gained `--navmode <m>` passthrough (the xg A/B batch runs the
+  same rows against the same gates with `--navmode xg`).
+- q2dm1 batch (live): **xon 2/3 swim-railgun PASS** (≥2/3 gate); **runtester+xg 2/3 PASS**.
+- q2dm3/q2dm2 batches: pending operator map flips (manual q2dm3 evidence already recorded in
+  `mode_perf.md` 2026-07-11: xon ride 1/4 + soak win; xg ride 2/2 + the session's only quad
+  reach — both consistent with the matrix floors).
