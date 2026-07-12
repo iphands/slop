@@ -301,3 +301,20 @@ override engagements (q2dm3's environment, Plan 50 family — no regression sign
 **Read**: parity on q2dm1 (nothing for the texture to price), advantage on q2dm3 (cutover +
 watchdog + danger pricing shine where routes are contested and lift-gated). Deferred:
 fall-time edge pricing (needs an edge-kind-aware weighted API).
+
+## 2026-07-11 — Plan 62 T3: xon preset tuning (q2dm1, 5-min runs, 2 bots/group, q3 = control)
+
+| Group | R1 | R2 | R3 | mean [min..max] | R4 (post-tune) |
+|---|---|---|---|---|---|
+| q3_as (control) | 2.40 | 3.33 | 3.00 | 2.91 [2.40..3.33] | 2.00 |
+| xon_shp | 1.33 | 1.00 | **4.67** (#1) | 2.33 [1.00..4.67] | 1.00 |
+| xon_nob | 1.00 | 0.33 | 0.86 | 0.73 | 0.38 |
+| xon_rus | 0.60 | 0.38 | 0.36 | 0.45 | 0.33 (deaths 11→6) |
+| xon_trt | 0.10 | 1.00 | 0.21 | 0.44 | **1.33** |
+
+**Reads**: presets ARE distinguishable beyond the control's ±0.5 noise floor (shp ≫ others,
+consistently). **shp reaches q3's band** — confirms the Plan 60 T8 hypothesis that aim skill
+was xon's kill-rate gap. **Tuned** (evidence-committed): rusher aim −1→+1 (it fed all 3 runs;
+post-tune deaths halved, kills still low — pressing into an aim-dominated meta is just hard,
+identity kept); turtle skill 4→5 (was fodder; post-tune 1.33). Denser servers (10 bots) also
+resolved the T8 low-encounter artifact: xon presets frag normally at density.

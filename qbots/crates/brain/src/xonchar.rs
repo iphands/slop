@@ -147,13 +147,16 @@ impl XonCharPreset {
     /// these against the K/D aggregator — treat the numbers as starting points).
     pub fn skill(self) -> XonSkill {
         match self {
+            // Tuned 2026-07-11 (Plan 62 T3, N=3 aggregated): aim −1 made the rusher FEED
+            // (kd 0.36-0.60 across all runs — it closes distance then loses the duel);
+            // +1 keeps the identity (press + close range) with duel-viable aim.
             XonCharPreset::Rusher => XonSkill {
                 skill: 5.0,
                 axes: XonAxes {
                     aggres: 3.0,
                     movement: 2.0,
                     dodge: 1.0,
-                    aim: -1.0,
+                    aim: 1.0,
                     offset: -1.0,
                     rangepref: -1.0,
                     ..XonAxes::default()
@@ -170,8 +173,10 @@ impl XonCharPreset {
                     ..XonAxes::default()
                 },
             },
+            // Tuned 2026-07-11 (Plan 62 T3): skill 4 was fodder in 2 of 3 runs (0.10/0.21);
+            // 5 keeps the cautious identity without the free deaths.
             XonCharPreset::Turtle => XonSkill {
-                skill: 4.0,
+                skill: 5.0,
                 axes: XonAxes {
                     dodge: 3.0,
                     movement: -1.0,
