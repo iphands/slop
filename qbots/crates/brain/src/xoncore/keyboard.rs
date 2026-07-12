@@ -105,6 +105,15 @@ impl KeyboardEmu {
             analog.1 + (self.keys.1 - analog.1) * blend,
         )
     }
+
+    /// Drop the held keys and arm an immediate re-key. The caller's hazard veto (Plan 63
+    /// B4): keys are held across ticks at the re-key cadence AFTER every upstream hazard
+    /// gate ran, so a stale held key can point into lava on a later tick — releasing lets
+    /// the (already-gated) analog legs take over this tick and re-keys fresh on the next.
+    pub fn release(&mut self) {
+        self.keys = (0.0, 0.0);
+        self.next_key_time = self.time;
+    }
 }
 
 #[cfg(test)]
@@ -200,6 +209,22 @@ mod tests {
         };
         // Low skill can be slower to re-key (never faster) than high skill w/ same seed.
         assert!(flip_lag(1.9) >= flip_lag(9.0));
+    }
+
+    #[test]
+    fn release_drops_held_keys_and_rekeys_immediately() {
+        // Plan 63 B4: the hazard veto releases held keys; the very next quantize must
+        // re-key from the fresh analog legs instead of replaying the stale hold.
+        let s = skill(1.9); // slow cadence → keys would otherwise be held for many ticks
+        let mut kb = KeyboardEmu::new();
+        let mut rng = Lcg::new(4);
+        let _ = kb.quantize(&mut rng, &s, (0.9, 0.0), 10_000.0, 0.01);
+        assert_eq!(kb.keys, (1.0, 0.0), "forward key held");
+        kb.release();
+        assert_eq!(kb.keys, (0.0, 0.0), "release drops the held keys");
+        // Next tick re-keys immediately from the new (reversed) analog intent.
+        let out = kb.quantize(&mut rng, &s, (-0.9, 0.0), 10_000.0, 0.01);
+        assert_eq!(out.0, -1.0, "re-keyed on the tick after release");
     }
 
     #[test]

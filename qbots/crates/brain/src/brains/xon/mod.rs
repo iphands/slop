@@ -538,8 +538,21 @@ impl Brain for XonBrain {
                     pursue_dist,
                     dt,
                 );
-                mv.move_forward(kf);
-                mv.move_side(ks);
+                // Stale-key hazard veto (Plan 63 B4): quantize runs AFTER every hazard
+                // gate and holds keys across ticks, so a held key can point into lava on
+                // a tick where the (gated) analog legs no longer do. If the quantized
+                // direction is hazardous, release the keys and keep the analog legs.
+                let yaw = self.steering.view_yaw();
+                let key_world =
+                    crate::steer::view_forward(yaw) * kf + crate::steer::view_right(yaw) * ks;
+                let key_hazard = key_world.length_squared() > 1e-4
+                    && cm.is_some_and(|c| crate::hazard::dir_is_hazardous(c, pos, key_world));
+                if key_hazard {
+                    self.keyboard.release();
+                } else {
+                    mv.move_forward(kf);
+                    mv.move_side(ks);
+                }
             }
         } else {
             // No nav graph yet — walk forward so the bot isn't a statue.
