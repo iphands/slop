@@ -5,6 +5,7 @@
 //! `vendor/xonotic/data/xonotic-data.pk3dir/qcsrc/server/bot/default/`. Every port cites its
 //! vendor file:line. All randomness comes from the caller-owned [`Lcg`] so tests are seeded.
 
+pub mod aim;
 pub mod rating;
 
 /// A tiny deterministic per-bot LCG (same constants as `Q3Brain::roll`) standing in for
