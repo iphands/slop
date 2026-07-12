@@ -7,6 +7,7 @@
 pub mod bsp;
 pub mod build;
 pub mod collision;
+pub mod deadly;
 pub mod mapcache;
 pub mod navgraph;
 pub mod navmesh;
@@ -25,6 +26,7 @@ pub use collision::{
     water_channel_world, CollisionModel, Trace, CONTENTS_LAVA, CONTENTS_SLIME, CONTENTS_SOLID,
     CONTENTS_WATER, CONTENTS_WINDOW, MASK_SOLID, MASK_WATER,
 };
+pub use deadly::{floor_is_deadly, landing_strip_deadly, segment_has_floor};
 pub use mapcache::{load as load_mapcache, save as save_mapcache, Fingerprint};
 pub use navgraph::{
     walkable_stair, EdgeKind, NavGraph, RideInfo, HULL_MAXS, HULL_MINS, STAIR_MAX, STEP,

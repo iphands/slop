@@ -14,6 +14,7 @@
 use rayon::prelude::*;
 
 use crate::collision::{CollisionModel, MASK_SOLID, MASK_WATER};
+use crate::deadly::floor_is_deadly;
 use crate::navgraph::STEP;
 
 /// Build-time voxelization parameters. `cell_size` is a *resolution* knob (finer = more
@@ -255,7 +256,13 @@ fn column_floors(cm: &CollisionModel, x: f32, y: f32, bounds: ([f32; 3], [f32; 3
         // mesh fragments. Recast-style distance-field erosion (keep cells whose distance-to-
         // border ≥ radius, centerline inclusive) is the correct fix and is the next step; until
         // then bots can be routed into near-wall cells and wedge (hull embedded in solid).
-        if headroom && cm.point_contents(&[x, y, oz]) & MASK_WATER == 0 {
+        // The floor+24 liquid probe only catches pools deeper than 24u; a SHALLOW
+        // lava/slime coat leaves the origin in air above the surface, so also probe
+        // the floor surface itself (Plan 48 L1's two-part test, ported in Plan 63).
+        if headroom
+            && cm.point_contents(&[x, y, oz]) & MASK_WATER == 0
+            && !floor_is_deadly(cm, &down.endpos)
+        {
             out.push(oz);
         }
 
