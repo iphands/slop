@@ -243,3 +243,24 @@ look-ahead/smoothing on the fragmented upper level — the named tuning follow-u
 legs + 0 drownings + 0 panics across all runs. Single-run kd numbers are directional only
 (acceptance.md noise floor ~0.6-1.0); the deliverable is a *distinct, competent* third brain,
 which this is.
+
+## 2026-07-11 — Plan 60 T7/T8: `xon` brain baselines (q2dm1)
+
+### T7 spawn-to-* (q2dm1 legs; q2dm3 ride legs BLOCKED — server map change needs user-run RCON)
+| Scenario | Result |
+|---|---|
+| s2s ×4 | **3/4 reached** (8.85s/2019u, 14.40s/3487u, 11.44s/3006u; 1 cap-miss 3389u) — q3-parity+ (same-session q3 1/3) |
+| spawn-to-weapon railgun (swim) | **reached** 14.91s/3005u, 9 bumps |
+
+### T8 live competition — 2× 5-min, `--brains mai,q3,xon --count 2 --navmodes as`
+| Group | Run1 kd | Run2 kd | Mean | Notes |
+|---|---|---|---|---|
+| q3_as | 1.25 (5/4) | 1.00 (4/4) | 1.13 | control band |
+| mai_as | 0.57 (4/7) | 0.57 (4/7) | 0.57 | |
+| xon_as | 0.20 (1/5) | 0.50 (1/2) | 0.35 | low kill rate; survives well (fewest deaths run2) |
+
+0 panics/kicks/drowns/lava-events across both runs. xon's kill rate is the gap:
+hypothesis = default skill 5 → fire cone (1000/(d−9)−0.35)×2.5 ≈ 3.3° at 600u while the
+fighting bad-aim offset swings ±4.5° (vendor-authentic miss profile at mid skill) + items
+out-rating enemies in the goal layer (vendor numbers). Tuning → Plan 62 (presets sweep with
+the aggregator; candidates: default skill ↑, aggres axis ↑, offset axis ↑).
