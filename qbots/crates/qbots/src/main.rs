@@ -885,6 +885,10 @@ pub(crate) async fn bot_task(
     // reactive wall probes (Plan 13). Set when the map loads.
     let mut collision: Option<Arc<world::CollisionModel>> = None;
     let mut map_loaded = false;
+    // Plan 64: the servercount the loaded map belongs to. Every SV_SpawnServer bumps it,
+    // so a mismatch against the live serverdata means the server changed (or restarted)
+    // the level and all per-map state below is stale.
+    let mut map_servercount: Option<i32> = None;
     let mut last_serverframe: Option<i32> = None;
     let mut last_health: Option<i32> = None; // Track health across frames for damage detection
     let mut last_frags: Option<i32> = None; // Track frags for kill detection
@@ -902,7 +906,9 @@ pub(crate) async fn bot_task(
     // window (e.g. a silently-dropped handshake the reject parse can't classify) fails
     // its join instead of hanging forever. Per bot_task invocation, so it resets on each
     // reconnect attempt.
-    let connect_deadline =
+    // Mutable since Plan 64: a mid-game map change drops us back into the handshake, and
+    // the re-handshake gets a fresh deadline (the original one passed long ago).
+    let mut connect_deadline =
         time::Instant::now() + Duration::from_millis(cfg.fleet.connect_timeout_ms);
 
     // Plan 57: ack-on-frame send re-phasing. The 10 Hz timer below no longer owns the
@@ -934,8 +940,18 @@ pub(crate) async fn bot_task(
                 // Plan 57: remember which frame we held before parsing, so we can detect a
                 // freshly-decoded snapshot below and ack it on arrival.
                 let prev_sf = conn.frame.as_ref().map(|f| f.serverframe);
+                let prev_state = conn.state();
                 if let Some(pkt) = conn.on_recv(&buf[..n]) {
                     let _ = sock.send(&pkt).await;
+                }
+                // Plan 64: the server pulled us out of Active (map-change "changing"/
+                // "reconnect" stufftext). Re-arm the Plan 53 connect deadline — the
+                // original one expired long ago, so without this the very next tick
+                // would classify the re-handshake as a timed-out join.
+                if prev_state == ConnState::Active && conn.state() == ConnState::Connected {
+                    tracing::info!("map change: re-handshaking on the live netchan");
+                    connect_deadline =
+                        time::Instant::now() + Duration::from_millis(cfg.fleet.connect_timeout_ms);
                 }
                 if conn.state() == ConnState::Disconnected {
                     tracing::info!("disconnected");
@@ -1033,6 +1049,34 @@ pub(crate) async fn bot_task(
                     }
                 }
 
+                // Plan 64: a servercount other than the one the loaded map came from means
+                // the server respawned the level (rcon `map X`, fraglimit rotation, or a
+                // same-map restart). Drop every per-map structure; the `!map_loaded` block
+                // below reloads from the NEW level's configstrings once they arrive.
+                let servercount = conn.serverdata.as_ref().map(|sd| sd.servercount);
+                if map_loaded && servercount != map_servercount {
+                    tracing::info!(
+                        old = ?map_servercount,
+                        new = ?servercount,
+                        "server changed level — resetting per-map state"
+                    );
+                    map_loaded = false;
+                    map_servercount = None;
+                    nav_driver = None;
+                    collision = None;
+                    heatmap_obs = None;
+                    last_serverframe = None;
+                    last_health = None;
+                    last_frags = None;
+                    last_alive_pos = None;
+                    stall_mon = brain::StallMonitor::new();
+                    send_timing = client::SendTiming::new();
+                    // Same semantics as the respawn teleport: clears enemy/goal/FSM state
+                    // that would otherwise reference the old map. `set_map` below re-feeds
+                    // the graph/items when the new nav graph loads.
+                    brain.on_death();
+                }
+
                 if !map_loaded && state == ConnState::Active {
                     if let Some(bsp_path) = cs.get(33) {
                         if !bsp_path.is_empty() {
@@ -1044,6 +1088,7 @@ pub(crate) async fn bot_task(
                                 .unwrap_or(&bsp_path)
                                 .to_owned();
                             map_loaded = true;
+                            map_servercount = servercount;
                             tracing::info!(map, bsp = %bsp_path, "loading nav graph");
                             // Shared across the fleet: built once per map, reused as Arc.
                             if let Some(map_nav) = nav_cache.get_or_build(cfg, &map) {
