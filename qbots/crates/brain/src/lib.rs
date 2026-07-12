@@ -35,6 +35,7 @@ pub mod steer;
 pub mod traverse;
 pub mod water;
 pub mod weapons;
+pub mod xonchar;
 
 // The brain plugin contract + bundled I/O (Plan 23). The root `Brain` is the **trait** (the
 // binary drives a `Box<dyn Brain>` via `build_brain`); the concrete `main` impl is `MainBrain`
@@ -61,6 +62,7 @@ pub use recover::{Recovery, RecoveryAction, StuckDetector, StuckLevel};
 pub use skill::{BotSkill, Personality, SkillLevel, SkillRegistry};
 pub use stall::{StallEpisode, StallMonitor, StallSample};
 pub use weapons::Weapon;
+pub use xonchar::{XonCharPreset, XonSkill};
 
 #[cfg(test)]
 mod tests {
