@@ -739,3 +739,33 @@ the data indicts. All soaks: noir.lan:27910 q2dm3, 305 s,
 - **Aim stability note**: the filter cascade + turn law are stable at our dt=0.1 (10k-step
   test, circling target); vendor runs at 0.05 s thinks. If live aim ever oscillates,
   halve the aim tick before touching the poles.
+
+## 2026-07-11 — Plan 60: the `xon` brain (T1–T8; q2dm3 legs pending)
+
+- **What shipped** (`--brain xon`, alias `xonotic`; `--xonchar rus/shp/trt/nob`):
+  - **T1 skeleton**: q3-shape `locomote` (shared Steering/Recovery/TraversalExecutor/hazard;
+    Plan 58's shared stage was abandoned), lava-escape override, full CLI/factory wiring
+    (`build_brain` widened with `xonchar: Option<XonCharPreset>`).
+  - **T2 goal-stack strategy** (`xon/goals.rs`): ONE `flood_costs` per rating session; items
+    (class-level Q2 pickupeval × `ItemMemory`) vs PVS enemies (t×2500) vs wander fallback;
+    evidence expiry (observed-taken), 0.5 s progress watchdog (replan → dump+3 s ignore),
+    7 s/5.5 s deadlines, ordinal stagger. Live: commit→grab→expire→re-rate loop confirmed.
+  - **T3 combat** (`xon/combat.rs`): sticky 2 s/4 s nearest-visible enemy (full-sphere,
+    vendor-authentic — subsumes Plan 49); far/mid/close weapon lists at
+    `bound(10,d−200,10k)·2^rangepref`; mid-refire combos; **probe-and-learn inventory**
+    (request → grace → assume-unowned 30 s) since Q2 hides ownership; 1 req/s thrash guard.
+  - **T4 aim/fire**: `XonAim` drives the view when engaged (legs re-expressed against aim
+    yaw — the zb2 R2 lesson); fire = cone ∧ LOS ∧ ¬self-splash (`would_self_splash`
+    PROMOTED from q3 to shared `brain::aim`). Deferred: GL ballistic arc (straight lead),
+    real-RTT latency (fixed 50 ms).
+  - **T5 texture**: flight-path dodge (all skills, vs upstream's SUPERBOT gate; hazard-
+    mirrored), 80 u keepaway strip, low-skill overshoot stop, `KeyboardEmu` quantization
+    LAST (suspended while traversing).
+  - **T6**: seeded 2-run byte-identical reproducibility (100 ticks).
+- **Baselines** (see `mode_perf.md` 2026-07-11): s2s 3/4 + swim reached on q2dm1
+  (q3-parity+); competition kd mean **0.35** vs mai 0.57 / q3 1.13 (N=2). Kill rate is the
+  gap — hypotheses: skill-5 fire cone ~3.3° at 600 u vs ±4.5° fighting bad-aim swing
+  (vendor-authentic mid-skill missing), items out-rating enemies (vendor numbers). Tuning
+  belongs to Plan 62's aggregator loop (candidates: default skill ↑, aggres/offset axes ↑).
+- **Blocked**: T7's q2dm3 ride/lift legs — needs the server on q2dm3 (RCON map change
+  requires user approval; the auto-mode classifier correctly refused it).

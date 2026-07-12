@@ -1,7 +1,7 @@
 # Xonotic brain plugin (`xon`) — Tracker
 
 ## Overview
-- Status: 44% complete (T1-T4 done)
+- Status: 85% complete (T1-T6, T8 done; T7 partial — q2dm3 legs blocked; T9 docs done, closeout pending T7)
 - Start date: 2026-07-11
 - Deliverable: `--brain xon` — goal-stack strategy + XonAim + keyboard movement on shared locomotion/traversal, proven by spawn-to-* matrix + live competition.
 - Blocked by: Plan 59 in `completed/` ✓ (Plan 58 abandoned — xon carries its own q3-shape locomote).
@@ -22,11 +22,11 @@
 | 2 | T2: goal-stack strategy | `brains/xon/goals.rs` | done | `07f8fd406`. Live debug run: commit→grab→observed-taken-expire→re-rate loop + watchdog dumps working. Chase cutover deferred to T3 (enemy goals need combat first). |
 | 3 | T3: enemy + weapons | `brains/xon/combat.rs` | done | `5d9f7730c`. Vendor-authentic full-sphere awareness (no FOV) subsumes Plan 49 widen. Ownership adaptation: probe-and-learn assumed-unowned (30s memory). 1 req/s thrash guard. |
 | 4 | T4: aim/fire | `brains/xon/mod.rs`, `aim.rs` | done | `809ee610b`. would_self_splash promoted to brain::aim (q3 re-exports). DEFERRED: GL ballistic arc (straight lead for now); real-RTT latency (fixed 50ms). Live: xon frags in q3's band (kd 1.00/0.50), 0 panics. |
-| 5 | T5: combat move + dodge + keyboard | `brains/xon/{mod,dodge}.rs` | pending | dodge through safe_strafe_dir |
-| 6 | T6: deterministic tests | `brains/xon/*` | pending | seeded 2-run reproducibility |
-| 7 | T7: spawn-to-* matrix | — (verification) | pending | s2s q2dm1 / swim / q2dm3 ride+lift; parity vs runtester |
-| 8 | T8: live competition | `context/mode_perf.md` | pending | mean K/D w/ noise floor (Plan 47 aggregator) |
-| 9 | T9: docs + close | `context/brain_notes.md`, SERIES | pending | git mv to completed/ |
+| 5 | T5: combat move + dodge + keyboard | `brains/xon/{mod,dodge}.rs` | done | `5dd2b61d7`. Dodge hazard-mirrored; enabled for all skills (upstream SUPERBOT-gates it — documented). |
+| 6 | T6: deterministic tests | `brains/xon/*` | done | `5d1ff3ec2`. with_ordinal pinned seed; 100-tick byte-identical streams. |
+| 7 | T7: spawn-to-* matrix | — (verification) | blocked (partial) | q2dm1 DONE: s2s 3/4 (8.85/14.40/11.44s; 1 long-draw cap-miss), swim railgun reached 14.91s — q3-parity+. q2dm3 ride+lift legs BLOCKED: server map change via RCON denied by auto-mode (user must flip map or run `rcon map q2dm3`). |
+| 8 | T8: live competition | `context/mode_perf.md` | done | `23b26776d`. 2×5min: xon 0.35 vs mai 0.57 / q3 1.13; clean (0 panics/kicks/drowns). Kill-rate gap documented w/ hypotheses → Plan 62 tuning. |
+| 9 | T9: docs + close | `context/brain_notes.md`, SERIES | in-progress | brain_notes entry written; plan closeout (git mv + SERIES done) waits on T7's q2dm3 legs. |
 
 ## Verification
 
@@ -40,4 +40,9 @@
 
 | Scenario / Run | Map | Result | SUMMARY / K/D |
 |---|---|---|---|
-| | | | |
+| s2s ×4 (xon) | q2dm1 | 3/4 | 8.85s/3b, 14.40s/5b, 11.44s/6b, cap-miss 3389u |
+| spawn-to-weapon railgun (xon) | q2dm1 | reached | 14.91s / 3005u / 9 bumps |
+| competition run1 (5min, ×2 bots) | q2dm1 | — | q3 1.25, mai 0.57, xon 0.20 |
+| competition run2 (5min, ×2 bots) | q2dm1 | — | q3 1.00, mai 0.57, xon 0.50 |
+| spawn-to-item quaddamage (xon) | q2dm3 | BLOCKED | needs map change |
+| spawn-to-weapon railgun --instance 1 (xon) | q2dm3 | BLOCKED | needs map change |
