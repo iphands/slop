@@ -1,10 +1,10 @@
 # Xonotic brain plugin (`xon`) — Tracker
 
 ## Overview
-- Status: 0% complete
-- Start date: —
+- Status: 11% complete (T1 done)
+- Start date: 2026-07-11
 - Deliverable: `--brain xon` — goal-stack strategy + XonAim + keyboard movement on shared locomotion/traversal, proven by spawn-to-* matrix + live competition.
-- Blocked by: Plan 58 and Plan 59 must be in `completed/` first.
+- Blocked by: Plan 59 in `completed/` ✓ (Plan 58 abandoned — xon carries its own q3-shape locomote).
 
 ## Resume Instructions
 1. Read `context/plans/RULES.md`, Plan 60, and `context/distilled/xonotic.md` (§ cited per task).
@@ -18,7 +18,7 @@
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: skeleton + wiring | `brains/xon/mod.rs`, mod.rs, main.rs, supervisor.rs | pending | walks before it fights |
+| 1 | T1: skeleton + wiring | `brains/xon/mod.rs`, mod.rs, main.rs, supervisor.rs | done | `c04b7adbc`. Factory decision: widened `build_brain` with `xonchar: Option<XonCharPreset>` (parallel to q3 `char`). Live: connect-one 45s clean; s2s reach = q3-class (same-session q3 1/3, xon 0/4 on >3k draws vs runtester 3/3 — PRE-EXISTING combat-brain scenario gap: no sustained backoff/speed_scale; revisit at T7). |
 | 2 | T2: goal-stack strategy | `brains/xon/goals.rs` | pending | flood_costs sessions; stack = bookkeeping only |
 | 3 | T3: enemy + weapons | `brains/xon/combat.rs` | pending | Plan 49 widen; thrash guard |
 | 4 | T4: aim/fire | `brains/xon/mod.rs`, shared splash helper | pending | GL ballistic may defer — note here |
