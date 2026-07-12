@@ -163,6 +163,10 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 - After **62** (done): xon is a tuned roster of named personalities in fleet/competition
   (sharp duels in q3's band), and xon/xg run in the Plan 47 acceptance matrix with a recorded
   q2dm1 baseline — the Xonotic series (59–62) closed 2026-07-11, all in one day.
+- After **64**: bots survive server map changes (rcon `map X` and fraglimit rotation) —
+  `Conn` speaks the `changing`/`reconnect` stufftext flow (re-handshake on the live
+  netchan), `bot_task` reloads per-map nav state on servercount change, and bots press
+  ATTACK during `PM_FREEZE` intermission so an all-bot server advances the level.
 
 > **Brain-notes discipline (Plans 23–33, 36–38, 40, 43, 58–62):** every brain plan appends a dated section to
 > `context/brain_notes.md` (running log, same shape as `map_errors.notes.log.md`). It is a

@@ -201,6 +201,26 @@ impl Conn {
                                 self.begin_queued = true;
                             }
                         }
+                    } else if s.starts_with("changing") {
+                        // Map change, part 1 (`sv_init.c:614` broadcasts "changing\n"):
+                        // the level is unloading. Mirror `CL_Changing_f`
+                        // (`cl_network.c:436`): drop out of Active but KEEP the netchan —
+                        // the server retains our client slot across the change.
+                        self.reset_level_state();
+                        self.state = ConnState::Connected;
+                    } else if s.starts_with("reconnect") {
+                        // Map change, part 2 (`sv_init.c:654` broadcasts "reconnect\n"):
+                        // the new level is up. Mirror `CL_Reconnect_f` while connected
+                        // (`cl_network.c:468`): request a fresh serverdata over the SAME
+                        // netchan with a reliable "new" — no challenge/connect redo.
+                        self.reset_level_state();
+                        self.serverdata = None;
+                        self.configstrings = ConfigStrings::default();
+                        self.state = ConnState::Connected;
+                        if let Some(nc) = self.netchan.as_mut() {
+                            nc.message_mut().write_u8(ClcOp::Stringcmd.into());
+                            nc.message_mut().write_string("new");
+                        }
                     }
                     // Other stufftext ("kick", "cmd startdlights", etc.) is ignored.
                 }
@@ -218,7 +238,11 @@ impl Conn {
                     break;
                 }
                 Ok(SvcEvent::Reconnect) => {
-                    // Restart the handshake from scratch.
+                    // Server-forced hard reconnect: restart the handshake from scratch.
+                    // Clear all per-level state too — the next serverdata is a new level.
+                    self.reset_level_state();
+                    self.serverdata = None;
+                    self.configstrings = ConfigStrings::default();
                     self.netchan = None;
                     self.state = ConnState::Connecting;
                     return Some(oob_line("getchallenge\n"));
@@ -238,6 +262,16 @@ impl Conn {
             }
         }
         None
+    }
+
+    /// Drop the per-level snapshot state (frame history + spawn latch) when the server
+    /// changes levels. Stale [`FrameRing`] entries would poison delta decode against the
+    /// new level's frames, and `begin_queued` must re-arm so the next `precache`
+    /// stufftext queues a fresh `begin <servercount>`.
+    fn reset_level_state(&mut self) {
+        self.begin_queued = false;
+        self.frame = None;
+        self.ring = FrameRing::new();
     }
 
     /// Build a heartbeat frame. Once Active, send a real `clc_move` (walk forward) so
@@ -536,6 +570,70 @@ mod tests {
             "print past Connecting is ignored"
         );
         assert!(c.reject_reason.is_none());
+    }
+
+    /// A netchan payload of just `svc_stufftext "<text>"`.
+    fn stufftext_payload(text: &str) -> Bytes {
+        let mut w = Writer::new();
+        w.write_u8(SvcOp::Stufftext.into());
+        w.write_string(text);
+        w.freeze()
+    }
+
+    /// Walk a fresh Conn through the handshake to Active with servercount 4242.
+    fn active_conn() -> Conn {
+        let mut c = Conn::new(addr(), "qbots", 1234);
+        c.start();
+        c.on_recv(&server_oob("challenge 999 p=34\n"));
+        c.on_recv(&server_oob("client_connect\n"));
+        let mut payload = serverdata_payload().to_vec();
+        payload.extend_from_slice(&stufftext_payload("cmd configstrings 4242 0\n"));
+        c.on_recv(&server_frame(1, 1, &payload));
+        c.on_recv(&server_frame(2, 1, &stufftext_payload("precache 4242\n")));
+        assert_eq!(c.state(), ConnState::Active);
+        assert!(c.begin_queued);
+        c
+    }
+
+    /// The Yamagi map-change flow (`sv_init.c:614/654`): stufftext "changing" drops us
+    /// to Connected on the live netchan, stufftext "reconnect" queues a reliable "new",
+    /// and the fresh serverdata + precache re-queue `begin <new servercount>` — which
+    /// requires the `begin_queued` latch to have reset.
+    #[test]
+    fn map_change_stufftext_rehandshakes_on_live_netchan() {
+        let mut c = active_conn();
+
+        // Part 1: "changing" → not Active anymore, netchan kept, frame state dropped.
+        c.on_recv(&server_frame(3, 1, &stufftext_payload("changing\n")));
+        assert_eq!(c.state(), ConnState::Connected);
+        assert!(c.netchan.is_some(), "netchan must survive the map change");
+        assert!(c.frame.is_none());
+        assert!(!c.begin_queued);
+
+        // Part 2: "reconnect" → reliable "new" rides the next transmit.
+        c.on_recv(&server_frame(4, 1, &stufftext_payload("reconnect\n")));
+        assert_eq!(c.state(), ConnState::Connected);
+        assert!(c.serverdata.is_none(), "old serverdata cleared");
+        let out = c.keepalive().expect("transmit flushing the reliable new");
+        // header(8) + qport(2) + Stringcmd(1) + "new\0"(4)
+        assert!(out.len() >= 15, "reliable new must be in flight");
+
+        // New level's serverdata (servercount 4343) + precache → begin re-queued.
+        let mut w = Writer::new();
+        w.write_u8(SvcOp::Serverdata.into());
+        w.write_i32(34);
+        w.write_i32(4343); // new servercount
+        w.write_u8(0);
+        w.write_string("baseq2");
+        w.write_i16(0);
+        w.write_string("q2dm2");
+        let pkt = server_frame(5, 2, &w.freeze());
+        c.on_recv(&pkt);
+        assert_eq!(c.state(), ConnState::Active);
+        assert_eq!(c.serverdata.as_ref().unwrap().servercount, 4343);
+        assert!(!c.begin_queued, "begin waits for the new precache");
+        c.on_recv(&server_frame(6, 2, &stufftext_payload("precache 4343\n")));
+        assert!(c.begin_queued, "begin re-queued for the new level");
     }
 
     #[test]
