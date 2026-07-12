@@ -39,10 +39,12 @@ use crate::steer::{move_from_world_dir, Steering};
 use crate::traverse::{TraversalExecutor, TraversalFrame};
 use crate::xonchar::XonSkill;
 use crate::xoncore::aim::{AimInputs, Angles, XonAim};
+use crate::xoncore::keyboard::KeyboardEmu;
 use crate::xoncore::Lcg;
 use crate::{aim as shared_aim, los};
 
 mod combat;
+mod dodge;
 mod goals;
 use combat::{EnemyTracker, WeaponChooser};
 use goals::{RatingCtx, XonGoals};
@@ -83,6 +85,10 @@ pub struct XonBrain {
     aim: XonAim,
     /// Current view pitch (yaw lives in `steering`); XonAim integrates from here.
     view_pitch: f32,
+    /// Keyboard-emulation quantizer (T5) — the last stage before the intent is emitted.
+    keyboard: KeyboardEmu,
+    /// Low-skill overshoot stop deadline (`havocbot.qc:1130-1134`).
+    overshoot_until: f32,
     /// Wall-clock seconds since connect (accumulated from `dt`).
     time: f32,
     /// Status label reflecting the committed goal kind (`xon-item`/`xon-enemy`/`xon-wander`).
@@ -120,6 +126,8 @@ impl XonBrain {
             fired_at: None,
             aim: XonAim::new(),
             view_pitch: 0.0,
+            keyboard: KeyboardEmu::new(),
+            overshoot_until: 0.0,
             time: 0.0,
             status: "xon",
             steering,
@@ -166,6 +174,8 @@ impl XonBrain {
         let enemies: Vec<(i32, Vec3)> = if self.cfg.combat_enabled {
             view.entities()
                 .filter(|e| e.class == EntityClass::EnemyPlayer && !e.is_stale)
+                // Don't rate rocketing/falling players as goals (`roles.qc:191`).
+                .filter(|e| e.velocity.is_none_or(|v| v.length() <= 640.0))
                 .map(|e| (e.entity_number, e.origin))
                 .collect()
         } else {
@@ -206,7 +216,7 @@ impl XonBrain {
         dt: f32,
         view: &crate::perception::Worldview,
         mv: &mut MovementIntent,
-    ) -> bool {
+    ) -> (bool, f32) {
         nav.update(pos, None);
         nav.set_goal(goal, pos);
         if let Some(cm) = cm {
@@ -244,6 +254,23 @@ impl XonBrain {
         let (fwd, side) = move_from_world_dir(world_dir, view_yaw, true);
         mv.move_forward(fwd * arrive * creep);
         mv.move_side(side * arrive * creep);
+
+        // Low-skill overshoot stop (`havocbot.qc:1130-1134`): a clumsy mover at speed whose
+        // velocity deviates > 70° from the desired direction slams the brakes for 0.4-0.6 s.
+        if self.sk.movement() <= 3.0 {
+            let vel = view.self_state().velocity.truncate();
+            let speed = vel.length();
+            if speed > 200.0 && world_dir.length_squared() > 0.5 {
+                let vel_dir = (vel / speed).extend(0.0);
+                if vel_dir.dot(world_dir) < (70f32).to_radians().cos() {
+                    self.overshoot_until = self.time + 0.4 + self.rng.next() * 0.2;
+                }
+            }
+        }
+        if self.time < self.overshoot_until {
+            mv.move_forward(0.0);
+            mv.move_side(0.0);
+        }
 
         // Traversal gates (Plan 46): swim/ride/ladder suspend stuck recovery + jump-edge.
         let gates = self.traverse.gates(nav, cm, pos, dt);
@@ -289,7 +316,11 @@ impl XonBrain {
             steer_side: side,
             dt,
         };
-        self.traverse.apply(mv, gates, nav, &frame).is_some()
+        let traversing = self.traverse.apply(mv, gates, nav, &frame).is_some();
+        (
+            traversing,
+            pursue_pt.map(|pt| (pt - pos).length()).unwrap_or(0.0),
+        )
     }
 }
 
@@ -369,7 +400,32 @@ impl Brain for XonBrain {
                     None => self.roam_goal(view, ticks, pos),
                 },
             };
-            let traversing = self.locomote(nav, cm, pos, goal, dt, view, &mut mv);
+            let (traversing, pursue_dist) = self.locomote(nav, cm, pos, goal, dt, view, &mut mv);
+
+            // Flight-path projectile dodge (T5): PVS rockets/grenades with fresh velocity.
+            // Hazard-gated (Plan 48 L2): mirror a deadly dodge, cancel when both sides kill.
+            let projectiles: Vec<(Vec3, Vec3)> = view
+                .entities()
+                .filter(|e| {
+                    matches!(
+                        e.class,
+                        EntityClass::ProjectileRocket | EntityClass::ProjectileGrenade
+                    ) && !e.is_stale
+                })
+                .map(|e| (e.origin, e.velocity.unwrap_or(Vec3::ZERO)))
+                .collect();
+            let mut dodge_vec =
+                dodge::flight_path_dodge(pos, &projectiles, self.sk.dodge()).unwrap_or(Vec3::ZERO);
+            if dodge_vec != Vec3::ZERO {
+                if let Some(c) = cm {
+                    if crate::hazard::dir_is_hazardous(c, pos, dodge_vec) {
+                        dodge_vec = -dodge_vec;
+                        if crate::hazard::dir_is_hazardous(c, pos, dodge_vec) {
+                            dodge_vec = Vec3::ZERO;
+                        }
+                    }
+                }
+            }
 
             // ── Aim & fire (T4): the XonAim dynamical system owns the view while an enemy
             // is engaged — EXCEPT during traversal legs (the executor owns the view). Legs
@@ -414,9 +470,22 @@ impl Brain for XonBrain {
                     };
                     let cmd = self.aim.step(&mut self.rng, &self.sk, current, &inputs, dt);
 
-                    // Re-express the locomotion legs against the aim yaw.
-                    let legs_world = crate::steer::view_forward(old_yaw) * mv.forward
+                    // Re-express the locomotion legs against the aim yaw, with keepaway +
+                    // the dodge folded in (the vendor composes `dir + dodge`, :1269-1278).
+                    let mut legs_world = crate::steer::view_forward(old_yaw) * mv.forward
                         + crate::steer::view_right(old_yaw) * mv.side;
+                    let dist = (e.pos - pos).length();
+                    if dist < 80.0 {
+                        // Keepaway (`havocbot.qc:915-931`): halt the approach 80 u out —
+                        // strip the closing component, keep any lateral motion.
+                        let to_enemy = (e.pos - pos).truncate().normalize_or_zero().extend(0.0);
+                        let closing = legs_world.dot(to_enemy).max(0.0);
+                        legs_world -= to_enemy * closing;
+                    }
+                    if dodge_vec != Vec3::ZERO {
+                        legs_world = (legs_world + dodge_vec).normalize_or_zero()
+                            * legs_world.length().max(dodge_vec.length());
+                    }
                     let (ff, ss) = move_from_world_dir(legs_world, cmd.angles.yaw, false);
                     mv.look_at(cmd.angles.yaw, cmd.angles.pitch);
                     mv.move_forward(ff);
@@ -441,6 +510,31 @@ impl Brain for XonBrain {
             } else {
                 // No enemy: pitch relaxes to level (locomote already looks flat).
                 self.view_pitch = 0.0;
+                if dodge_vec != Vec3::ZERO && !traversing {
+                    // Dodge while roaming: slide off the flight line without turning.
+                    let yaw = self.steering.view_yaw();
+                    let legs_world = crate::steer::view_forward(yaw) * mv.forward
+                        + crate::steer::view_right(yaw) * mv.side
+                        + dodge_vec;
+                    let (ff, ss) = move_from_world_dir(legs_world, yaw, false);
+                    mv.move_forward(ff);
+                    mv.move_side(ss);
+                }
+            }
+
+            // Keyboard-emulation texture LAST (T5, `havocbot.qc:272-341`): quantize the
+            // final legs at the skill-gated re-key cadence. Suspended during traversal
+            // legs (swim/ride/ladder need analog precision).
+            if !traversing {
+                let (kf, ks) = self.keyboard.quantize(
+                    &mut self.rng,
+                    &self.sk,
+                    (mv.forward, mv.side),
+                    pursue_dist,
+                    dt,
+                );
+                mv.move_forward(kf);
+                mv.move_side(ks);
             }
         } else {
             // No nav graph yet — walk forward so the bot isn't a statue.
