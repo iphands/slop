@@ -56,6 +56,20 @@ pub fn point_ahead(path: &[Vec3], seg: usize, t: f32, dist: f32) -> Vec3 {
     }
 }
 
+/// True when steering straight from `from` to `to` is safe: hull-clear (no wall clip) and
+/// floor-continuous / non-deadly (no gap or lava under the line). The single shared
+/// validation both `pursue_target_safe` impls use (Plan 63 — extracted from the identical
+/// checks the A* and navmesh drivers each hand-rolled); the *fallback policy* when it fails
+/// stays per-driver (A*'s graph node is safe by construction, the navmesh's funnel vertex
+/// must be re-validated).
+pub fn steer_line_safe(cm: &world::CollisionModel, from: Vec3, to: Vec3) -> bool {
+    use world::navgraph::{segment_has_floor, HULL_MAXS, HULL_MINS};
+    let a = [from.x, from.y, from.z];
+    let b = [to.x, to.y, to.z];
+    let t = cm.trace(&a, &b, &HULL_MINS, &HULL_MAXS, world::MASK_SOLID);
+    !(t.startsolid || t.fraction < 1.0) && segment_has_floor(cm, a, b)
+}
+
 /// Arc-length from the path start to `(seg, t)` — the bot's forward progress, independent of
 /// how the path is vertexed.
 pub fn arc_length(path: &[Vec3], seg: usize, t: f32) -> f32 {
@@ -73,6 +87,35 @@ pub fn arc_length(path: &[Vec3], seg: usize, t: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn steer_line_safe_passes_on_flat_floor() {
+        // Floor just under the origin — hull-clear and continuous floor.
+        let cm = world::CollisionModel::half_space([0.0, 0.0, 1.0], -0.25);
+        assert!(steer_line_safe(
+            &cm,
+            Vec3::new(0.0, 0.0, 24.0),
+            Vec3::new(96.0, 0.0, 24.0)
+        ));
+    }
+
+    #[test]
+    fn steer_line_safe_rejects_gap_and_wall() {
+        // Bottomless world: the hull line is clear but there is no floor under it.
+        let gap = world::CollisionModel::half_space([0.0, 0.0, 1.0], -100_000.0);
+        assert!(!steer_line_safe(
+            &gap,
+            Vec3::new(0.0, 0.0, 24.0),
+            Vec3::new(96.0, 0.0, 24.0)
+        ));
+        // Wall at x=0 (solid x<0): a line crossing it is hull-blocked.
+        let wall = world::CollisionModel::half_space([1.0, 0.0, 0.0], 0.0);
+        assert!(!steer_line_safe(
+            &wall,
+            Vec3::new(50.0, 0.0, 24.0),
+            Vec3::new(-50.0, 0.0, 24.0)
+        ));
+    }
 
     fn line() -> Vec<Vec3> {
         vec![

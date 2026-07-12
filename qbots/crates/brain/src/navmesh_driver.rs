@@ -11,8 +11,6 @@ use std::sync::Arc;
 
 use glam::Vec3;
 
-use world::collision::MASK_SOLID;
-use world::navgraph::{segment_has_floor, HULL_MAXS, HULL_MINS};
 use world::{CollisionModel, NavMesh};
 
 use crate::nav::NavGoal;
@@ -129,16 +127,23 @@ impl Navigator for NavmeshDriver {
 
     fn pursue_target_safe(&self, from: Vec3, cm: &CollisionModel) -> Option<Vec3> {
         let (seg, _t, raw) = self.aim(from)?;
-        let a = [from.x, from.y, from.z];
-        let b = [raw.x, raw.y, raw.z];
-        let tr = cm.trace(&a, &b, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
-        if !(tr.startsolid || tr.fraction < 1.0) && segment_has_floor(cm, a, b) {
+        if pursuit::steer_line_safe(cm, from, raw) {
             return Some(raw);
         }
-        // Unsafe straight line — fall back to the next path vertex forward of the projection
-        // (always on the walkable funnel polyline).
+        // Unsafe straight line — try the next funnel vertex, but VALIDATE the line to it
+        // too (Plan 63): the vertex lies on the funnel polyline, but the straight line from
+        // the (possibly displaced) bot to it can still cross a gap or lava channel. Unlike
+        // the A* driver's graph-node fallback, a funnel vertex carries no by-construction
+        // floor guarantee.
         let nxt = (seg + 1).min(self.path.len() - 1);
-        Some(self.path[nxt])
+        let v = self.path[nxt];
+        if pursuit::steer_line_safe(cm, from, v) {
+            return Some(v);
+        }
+        // No safe steer this tick: hold. Brains treat None as "no target" (stand), and the
+        // position-based StuckDetector force_replans real stalls — standing beats steering
+        // at an unvalidated point next to lava.
+        None
     }
 
     fn current_edge_is_jump(&self) -> bool {
@@ -180,5 +185,43 @@ impl Navigator for NavmeshDriver {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(1.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A driver with an injected funnel polyline (no BSP needed).
+    fn driver_with_path(path: Vec<Vec3>) -> NavmeshDriver {
+        NavmeshDriver {
+            mesh: Arc::new(NavMesh::empty()),
+            radius: 16.0,
+            path,
+            goal: None,
+            seg: 0,
+            cooldown: 0,
+        }
+    }
+
+    #[test]
+    fn safe_pursuit_returns_lookahead_on_flat_floor() {
+        let d = driver_with_path(vec![Vec3::new(0.0, 0.0, 24.0), Vec3::new(200.0, 0.0, 24.0)]);
+        // Floor just under the hull bottom (z=24 origin − 24 hull = 0; plane at −0.25).
+        let cm = CollisionModel::half_space([0.0, 0.0, 1.0], -0.25);
+        let t = d
+            .pursue_target_safe(Vec3::new(0.0, 0.0, 24.0), &cm)
+            .expect("flat floor → raw look-ahead");
+        assert!(t.x > 0.0, "aims forward along the path, got {t:?}");
+    }
+
+    #[test]
+    fn safe_pursuit_holds_instead_of_unvalidated_vertex() {
+        // Bottomless world: both the look-ahead line AND the line to the next funnel
+        // vertex cross a void. Pre-Plan-63 this returned the raw vertex (the bot walked
+        // into the gap/lava); now it must hold (None) and let the StuckDetector replan.
+        let d = driver_with_path(vec![Vec3::new(0.0, 0.0, 24.0), Vec3::new(200.0, 0.0, 24.0)]);
+        let cm = CollisionModel::half_space([0.0, 0.0, 1.0], -100_000.0);
+        assert_eq!(d.pursue_target_safe(Vec3::new(0.0, 0.0, 24.0), &cm), None);
     }
 }

@@ -154,8 +154,8 @@ impl XonNavDriver {
     }
 
     /// Is the straight line `from → goal` walkable enough to cut the polyline: hull-clear,
-    /// near-level, and not crossing deadly ground (`tracewalk`-lite; Plan 48 probe on the
-    /// segment midpoint direction).
+    /// near-level, and standing on continuous non-deadly floor the whole way
+    /// (`tracewalk`-lite).
     fn cutover_ok(&self, from: Vec3, goal: Vec3, cm: &CollisionModel) -> bool {
         let d = goal - from;
         if d.truncate().length() > CUTOVER_DIST || d.z.abs() > CUTOVER_MAX_DZ {
@@ -173,8 +173,11 @@ impl XonNavDriver {
         if t.fraction < 1.0 || t.startsolid {
             return false;
         }
-        // A clear hull trace can still cross a lava gap — veto hazardous directions.
-        !crate::hazard::dir_is_hazardous(cm, from, d)
+        // A clear hull trace can still cross a lava gap. The old `dir_is_hazardous` probe
+        // only sampled 24/48u ahead — useless against a ≤700u cut (Plan 63 B5). Require
+        // continuous safe floor under the WHOLE cut (16u sampling), the same primitive
+        // every other polyline shortcut uses.
+        world::navgraph::segment_has_floor(cm, from.to_array(), goal.to_array())
     }
 
     /// Watchdog: track best-ever 2D/Z distance to the goal; stall 0.5 s → replan; twice →
@@ -460,6 +463,25 @@ mod tests {
             xg.pursue_target_safe(from, &cm).map(|v| v.to_array()),
             Some(far.to_array()),
             "700 u cap"
+        );
+    }
+
+    #[test]
+    fn cutover_rejects_hull_clear_line_over_a_void() {
+        // Plan 63 B5: a hull-clear, level, in-range cut whose floor is missing (void —
+        // stand-in for a lava channel) must NOT cut over; full-segment floor continuity
+        // is required, not a 48u directional probe.
+        let g = diamond();
+        let cm = CollisionModel::half_space([0.0, 0.0, 1.0], -100_000.0);
+        let mut xg = XonNavDriver::new(Arc::clone(&g));
+        let from = Vec3::new(0.0, 0.0, 0.0);
+        let goal = Vec3::new(300.0, 0.0, 0.0);
+        xg.set_goal(NavGoal::Position(goal), from);
+        xg.update(from, Some(&cm));
+        assert_ne!(
+            xg.pursue_target_safe(from, &cm).map(|v| v.to_array()),
+            Some(goal.to_array()),
+            "no cutover across a floorless span"
         );
     }
 

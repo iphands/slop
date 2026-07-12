@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use world::collision::MASK_SOLID;
 use world::{
-    navgraph::{segment_has_floor, HULL_MAXS, HULL_MINS},
+    navgraph::{HULL_MAXS, HULL_MINS},
     CollisionModel, EdgeKind, NavGraph,
 };
 
@@ -459,14 +459,12 @@ impl NavigationDriver {
     /// hull- and floor-valid by construction, so steering at it never cuts a corner.
     pub fn pursue_target_safe(&self, from: Vec3, cm: &CollisionModel) -> Option<Vec3> {
         let raw = self.pursue_target(from)?;
-        let a = [from.x, from.y, from.z];
-        let b = [raw.x, raw.y, raw.z];
-        let t = cm.trace(&a, &b, &HULL_MINS, &HULL_MAXS, MASK_SOLID);
-        let wall_blocked = t.startsolid || t.fraction < 1.0;
-        if !wall_blocked && segment_has_floor(cm, a, b) {
+        if crate::pursuit::steer_line_safe(cm, from, raw) {
             return Some(raw);
         }
-        // Unsafe straight line — steer at the next graph node instead.
+        // Unsafe straight line — steer at the next graph node instead. Deliberately NOT
+        // re-validated: graph nodes are hull- and floor-valid by construction, and a line
+        // check here would return None around inside corners (a regression, Plan 63).
         let wp = self.current_waypoint?;
         Some(Vec3::from(self.nav_graph.nodes[wp]))
     }
