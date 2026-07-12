@@ -773,3 +773,15 @@ the data indicts. All soaks: noir.lan:27910 q2dm3, 305 s,
   123 `P` frames, 2 bumps; 1/4 reliability = zb2-class); quad leg caps for runtester too
   (Plan 47 map finding). 5-min q2dm3 soak: **xon kd 0.60 BEATS q3 0.30**, 0 drownings,
   33 traversal legs, 0 panics — the traversal-heavy map favors xon's goal-driven roaming.
+
+## 2026-07-11 — Plan 61: `xg` navmode (CLOSED)
+
+- `--navmode xg` (`XonNavDriver`, brain-agnostic): swim-node travel-time penalty, PVS danger
+  field via new defaulted `Navigator::note_dangers` (bot_task feeds rockets/grenades r=300,
+  enemies r=150; 0.25 s refresh, 0.5 s TTL, replan on >200 mass delta; heatmap overlay SUMMED),
+  700 u chase cutover (chest-height hull trace + Plan 48 hazard probe), goal-progress watchdog
+  (stall→replan, twice→`goal_abandoned`). 6 unit tests incl. inert-passthrough parity pin.
+- **Live**: q2dm1 = parity with `as` (matched 3629 u draw: 13.06 vs 13.64 s); q2dm3 = better
+  (ride 2/2 beating the control, the session's only quad reach, A/B kd 0.17 ≥ 0.06).
+- Deferred: fall-time pricing of jump-downs (the per-node overlay can't see edge kinds — an
+  edge-kind-aware `path_weighted` variant is the follow-up if wanted).

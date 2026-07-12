@@ -1,7 +1,7 @@
 # Xonotic goal-stack navmode (`xg`) — Tracker
 
 ## Overview
-- Status: 85% complete (T1-T5 done; T6 sweep partial — q2dm1 legs need the map back)
+- Status: 100% complete (closed 2026-07-11)
 - Start date: 2026-07-11
 - Deliverable: `--navmode xg` — A*-wrapping Navigator with travel-time costs, PVS danger field, chase cutover, progress watchdog; reach parity with `as` proven by spawn-to-* + competition A/B.
 - Blocked by: Plan 59 must be in `completed/` first (uses flood/rating primitives). Independent of Plan 60 — can run in parallel with it.
@@ -21,15 +21,15 @@
 | 3 | T3: danger field | `xonnav.rs`, `nav_mode.rs` | done | `note_dangers` + `DangerSource` (defaulted no-op); 0.25s refresh, 0.5s TTL, replan on >200 mass delta; heatmap overlay SUMMED. |
 | 4 | T4: cutover + watchdog | `xonnav.rs` | done | 700u + chest-height hull trace + hazard probe; watchdog stall→replan, twice→goal_abandoned. Swim/ride flags stay live during cutover (executor compat). |
 | 5 | T5: wiring | `main.rs`, `supervisor.rs` | done | `29376e8bc`. Danger feed at bot_task (rockets/grenades 300, enemies 150). |
-| 6 | T6: live sweep + docs + close | `mode_perf.md`, brain_notes, SERIES | in-progress | q2dm3 DONE (see Results). q2dm1 legs (s2s, swim railgun) pending map flip back. |
+| 6 | T6: live sweep + docs + close | `mode_perf.md`, brain_notes, SERIES | done | Full sweep recorded (q2dm1 parity incl. a matched-draw pair; q2dm3 advantage). mode_perf + brain_notes written; plan → completed/. |
 
 ## Verification
 
-- [ ] Parity/cost/danger/cutover/watchdog unit tests green
-- [ ] spawn-to-* reach parity vs `as` (s2s q2dm1, swim q2dm1, ride q2dm3 ×2) — SUMMARYs recorded below
-- [ ] competition `--brains q3 --navmodes as,xg` within noise floor
-- [ ] mode_perf.md xg section + brain_notes entry
-- [ ] Zero warnings, clippy clean, fmt, tests green at every commit (Rule A/B)
+- [x] Parity/cost/danger/cutover/watchdog unit tests green (6)
+- [x] spawn-to-* reach parity vs `as` — q2dm1 1/3 vs 1/3 (matched 3629u draw 13.06 vs 13.64s); q2dm3 xg BETTER (ride 2/2, only quad reach)
+- [x] competition A/B q3 × {as,xg}: xg 0.17 ≥ as 0.06 (within/above noise floor)
+- [x] mode_perf.md xg section + brain_notes entry
+- [x] Zero warnings, clippy clean, fmt, tests green at every commit (Rule A/B)
 
 ## Results (fill during T6)
 
@@ -38,4 +38,5 @@
 | railgun-1 ×2 (xg, runtester) | q2dm3 | 2/2 | 18.73s/3b, 15.62s/6b — beats as-control 25.82s |
 | quaddamage ×2 (xg) | q2dm3 | 1/2 | 24.10s reach — the session's ONLY quad reach (as-controls 0/3) |
 | 5-min A/B q3 × {as,xg} | q2dm3 | xg ≥ as | xg 0.17 vs as 0.06; 0 drowns, 23 traverse-done, 0 panics |
-| s2s + swim railgun (xg) | q2dm1 | pending | needs map back on q2dm1 |
+| s2s ×3 (xg) | q2dm1 | 1/3 | 13.06s/3629u reach; as control 1/3 incl. SAME draw 13.64s — parity |
+| swim railgun ×2 (xg) | q2dm1 | 1/2 | 19.19s reach; as control 17.77s |

@@ -282,3 +282,22 @@ on this leg (route-quality, Plans 35/47 findings).
 
 0 panics, 0 drownings, 33 completed traversal legs (`EVT traverse done`), 248 lava-escape
 override engagements (q2dm3's environment, Plan 50 family — no regression signal).
+
+## 2026-07-11 — Plan 61: `xg` (xon-goal) navmode sweep — the SEVENTH navmode
+
+`XonNavDriver` = A* + swim travel-time pricing + live PVS danger field (`note_dangers`) +
+700u chase cutover + goal-progress watchdog. Runtime pricing only (no cache change).
+
+### spawn-to-* (runtester brain; same-session `as` controls)
+| Leg | xg | as control |
+|---|---|---|
+| s2s q2dm1 ×3 | 1/3 (13.06s on 3629u) | 1/3 (13.64s on the SAME 3629u draw — parity) |
+| swim railgun q2dm1 ×2 | 1/2 (19.19s) | 1/1 (17.77s) |
+| ride railgun-1 q2dm3 ×2 | **2/2 (15.6/18.7s)** | 1/1 (25.8s) — xg faster |
+| quad q2dm3 ×2 | **1/2 (24.10s)** | 0/3 — xg logged the session's ONLY quad reach |
+
+### 5-min A/B (q3 brain, q2dm3): xg kd 0.17 ≥ as 0.06; 0 drowns, 23 traversal legs, 0 panics.
+
+**Read**: parity on q2dm1 (nothing for the texture to price), advantage on q2dm3 (cutover +
+watchdog + danger pricing shine where routes are contested and lift-gated). Deferred:
+fall-time edge pricing (needs an edge-kind-aware weighted API).

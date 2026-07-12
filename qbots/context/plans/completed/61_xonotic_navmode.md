@@ -1,6 +1,6 @@
 # Plan 61 — Xonotic goal-stack navmode (`xon-goal`, code `xg`)
 
-> **Status**: pending
+> **Status**: done (2026-07-11)
 > **Created**: 2026-07-11
 > **Depends on**: Plan 20 (hybrid navmode pattern), Plan 08 (risk overlay seam), Plan 59 (flood/rating primitives)
 > **Goal**: A new `--navmode xg` Navigator that wraps the proven A* driver with Xonotic's route texture — travel-time edge costs (water/fall aware), a 0.25 s-refresh danger field from PVS-observed projectiles/players baked into path costs, shorten-path chase cutover, and a 0.5 s goal-progress watchdog — available to EVERY brain.
