@@ -36,6 +36,21 @@ The user's run (`competition --brains q3,xon --count 2 --navmodes nm,sg --chars 
 - **B2 — drop links land in lava.** `find_drops` (`heightfield.rs:158-193`) validates the fall with a `MASK_SOLID` trace only (line 181); `add_drops` (`polymesh.rs:344-360`) wires nearest-poly with zero liquid checks. The A* equivalents call `landing_strip_deadly` (`navgraph.rs:2078-2092`, wired at `1660` and `2292`, Plan 50 E3 / v23) which also rejects the 0–48u momentum-overshoot strip.
 - **B3 — driver fallback aims at unvalidated vertices.** `NavmeshDriver::pursue_target_safe` (`crates/brain/src/navmesh_driver.rs:130-142`) validates the look-ahead line with lava-aware `segment_has_floor`, **but on failure falls back to the raw funnel vertex `path[nxt]` with no check** (lines 138-141). Raw `pursue_target` (:126-128) validates nothing. With B1/B2 in the mesh, the fallback aims straight at lava polys.
 - **B4 — xon stale keyboard keys.** xon's `KeyboardEmu::quantize` runs *after* every hazard check and holds keys across ticks at a skill-gated re-key cadence (`xon/mod.rs:530-543`, `xoncore/keyboard.rs:184-203`) — a held forward key can point into lava on a later tick with no re-probe. Unique to xon; q3 has no equivalent.
+- **B5 — xg chase cutover probes 48u of a 700u cut.** `cutover_ok` (`xonnav.rs:159-178`) accepts a direct-to-goal cut up to `CUTOVER_DIST=700` (:43) but its lava check is `dir_is_hazardous`, which samples only 24/48u ahead (`hazard.rs:25`) — lava 100u out passes. hazard.rs's own header (:10-12) says it is deliberately NOT for route pursuit; the cutover *is* route pursuit.
+
+### All-navmode audit (2026-07-12, second pass — answers "do all navmodes avoid lava?")
+
+| Navmode | Path data | Steer validation | Verdict |
+|---|---|---|---|
+| `as` (A*) | graph — lava-clean (Plans 48/50) | hull + `segment_has_floor` (`nav.rs:460-472`); fallback = clean graph node | ✅ safe (reference pattern) |
+| `nm` (navmesh) | mesh — **dirty** (B1/B2) | `_safe` validates line, **fallback vertex unvalidated** (B3) | ❌ |
+| `fb`, `race`, `sg` (hybrids) | dispatchers — navmesh when active | none of their own (`hybrid/fallback.rs:76`, `race.rs:135`, `segment.rs:129`) | ❌ inherit `nm`'s gaps — fixing `nm` fixes all three |
+| `hier` | steers only via A* (`hier.rs:83-85`); mesh just seeds sub-goals | A* `_safe` | ✅ safe |
+| `xg` (xonnav) | wraps the A* driver — clean | inner = A* `_safe`; **chase cutover** validates a ≤700u cut with `dir_is_hazardous`, which probes only 24/48u ahead (`xonnav.rs:43` vs `hazard.rs:25`) | ⚠️ **B5**: cutover can cross lava >48u out |
+| zb2 route facade | `graph.path` — clean; returns exact nodes, no interpolation; shortcut gated by `segment_has_floor` (`zb2.rs:539`) | deliberate raw-forward is safe here (`zb2.rs:177-180`) | ✅ safe |
+| TraversalExecutor | delegated; raw pursue only on swim legs (`traverse.rs:244`) | safe by construction (over water, not lava) | ✅ safe |
+
+**Sharing decision:** share the *primitives*, keep the *policy* per-driver. `floor_is_deadly`/`landing_strip_deadly` being **private** to `navgraph.rs` is the concrete blocker that let the navmesh builder ship without them → extract all three (with `segment_has_floor`) to a new `world::deadly` module (navgraph re-exports `segment_has_floor` so no import churn). Do **NOT** make `pursue_target_safe` a default trait method: A*'s fallback node is clean by construction and must stay unvalidated (validating would regress corner cases), navmesh's must be validated, zb2 opts out on purpose — a uniform default regresses one or fixes nothing. Share only the line predicate (`brain::pursuit::steer_line_safe` = foot-origin hull trace + `segment_has_floor`, the check both drivers hand-roll today). `hazard::dir_is_hazardous` stays for combat-dir gating (different question: instantaneous direction vs segment continuity).
 
 ### Key facts
 
@@ -57,35 +72,41 @@ The user's run (`competition --brains q3,xon --count 2 --navmodes nm,sg --chars 
 
 **Commit**: `task(T1): q2dm6 lava baseline + red navmesh-lava regression tests`
 
-### T2: Heightfield deadly-floor span rejection (B1)
+### T2: `world::deadly` extraction + heightfield span rejection (B1)
 
-**File**: `crates/world/src/navmesh/heightfield.rs`
+**Files**: `crates/world/src/deadly.rs` (new), `crates/world/src/lib.rs`, `crates/world/src/navgraph.rs`, `crates/world/src/navmesh/heightfield.rs`
 
-**What to do**: In `column_floors`, after the existing `oz` liquid check, reject the span when the floor **surface** is deadly — the same two-part test as `navgraph.rs:1833`: `floor_is_deadly(cm, &down.endpos)` (export it from `navgraph.rs` or move to a shared spot in `world`). Keep plain water walkable (water spans are how the mesh approaches swims).
+**What to do**:
+1. Move `floor_is_deadly` (navgraph.rs:2067), `segment_has_floor` (:2026), `landing_strip_deadly` (:2078) **verbatim** into new `world::deadly`, all `pub`. `lib.rs` gets `pub mod deadly;` + root re-exports. navgraph.rs keeps `pub use crate::deadly::segment_has_floor;` (zero import churn for brain::nav/navmesh_driver/zb2/tests) + private `use` for its internal call sites (316, 1660, 1833, 2213, 2217, 2292). Pure refactor — `cargo test -p world -p brain` unchanged before proceeding.
+2. In `column_floors` (heightfield.rs:~258), add `&& !floor_is_deadly(cm, &[x, y, floor_z])` to span acceptance. Deep lava is already rejected by the floor+24 `MASK_WATER` probe; this kills the shallow (≤24u) case. Plain water spans stay walkable (swim approach).
 
-**Verify**: T1 test (a) goes green; q2dm3 + q2dm6 mesh poly counts logged before/after in the tracker (expect a drop only around lava).
+**Verify**: T1 test (a) goes green; q2dm3 + q2dm6 mesh poly counts logged before/after in the tracker (expect a drop only around lava; a lava-free map must be identical).
 
-**Commit**: `task(T2): heightfield rejects deadly-floor spans (floor_is_deadly port)`
+**Commit**: `task(T2): world::deadly extraction + heightfield rejects deadly-floor spans`
 
 ### T3: Drop-link landing validation (B2)
 
-**Files**: `crates/world/src/navmesh/heightfield.rs` (`find_drops`), `crates/world/src/navmesh/polymesh.rs` (`add_drops`)
+**File**: `crates/world/src/navmesh/heightfield.rs` (`find_drops`, :158-193)
 
-**What to do**: Validate each drop's landing with `landing_strip_deadly` semantics (landing point + 16/32/48u strip along the drop's horizontal direction). Reject deadly landings in `find_drops`; `add_drops` asserts/filters defensively.
+**What to do**: Before recording a drop pair (~:183), reject it when `landing_strip_deadly(cm, landing, dir2)` — landing at origin level, `dir2` = the 4-neighbour horizontal direction — mirroring the graph builder's jump/drop guards (navgraph.rs:1660, 2292). `add_drops` (polymesh.rs) needs **no change**: it only wires pairs `find_drops` produced.
 
 **Verify**: T1 test (b) green.
 
 **Commit**: `task(T3): navmesh drop links validate landings against lava`
 
-### T4: NavmeshDriver fallback guard (B3)
+### T4: Shared `steer_line_safe` + driver fallback guard (B3) + xg cutover (B5)
 
-**File**: `crates/brain/src/navmesh_driver.rs`
+**Files**: `crates/brain/src/pursuit.rs`, `crates/brain/src/nav.rs`, `crates/brain/src/navmesh_driver.rs`, `crates/brain/src/xonnav.rs`
 
-**What to do**: In `pursue_target_safe`'s fallback, validate `path[nxt]` (e.g. `segment_has_floor(cm, pos, path[nxt])` or a `floor_is_deadly` probe at the vertex); if that fails too, return the current position-adjacent safe point (hold/creep) instead of an unvalidated vertex — mirror what `nav.rs` does for A*, and note the same fallback exists there if trivial to share.
+**What to do**:
+1. New `pub fn steer_line_safe(cm, from: Vec3, to: Vec3) -> bool` in `pursuit.rs`: foot-origin hull trace (`HULL_MINS/MAXS`, `MASK_SOLID`, startsolid or fraction<1 = fail) + `segment_has_floor` — byte-identical to what nav.rs:462-466 and navmesh_driver.rs:132-135 hand-roll.
+2. `nav.rs pursue_target_safe`: call the shared predicate. **Behavior-identical dedup** — same decision tree, same unvalidated graph-node fallback (clean by construction). Do-not-regress path.
+3. `navmesh_driver.rs pursue_target_safe` (the fix): validate the look-ahead line; on fail validate the line to `path[nxt]`; on fail return `None` (hold — every brain treats `None` as "stand"; the StuckDetector force_replans real stalls). No unvalidated steer target can escape the driver → fixes `nm` and all three navmesh-using hybrids at once. Poly-center third stage deliberately NOT shipped (would need its own validation + mesh query on the failure path) — note as follow-up if soaks show hold-stalls.
+4. `xonnav.rs cutover_ok` (:177): replace the final `!dir_is_hazardous(...)` with `segment_has_floor(cm, from, goal)` — full-length 16u-sampled floor continuity for a ≤700u cut instead of a 24/48u directional probe. Keep the chest-height (+32) hull trace above it.
 
-**Verify**: unit test with a synthetic mesh path over a deadly vertex.
+**Verify**: unit tests — synthetic mesh path over a deadly vertex returns `None` not the vertex; xg cutover over a mid-segment gap rejects. Existing brain tests green (A* path diff is inspection-clean).
 
-**Commit**: `task(T4): navmesh driver never falls back to an unvalidated funnel vertex`
+**Commit**: `task(T4): shared steer_line_safe; navmesh fallback + xg cutover validated`
 
 ### T5: xon keyboard stale-key veto (B4)
 
@@ -109,11 +130,14 @@ The user's run (`competition --brains q3,xon --count 2 --navmodes nm,sg --chars 
 
 | File | Change | Priority |
 |------|--------|----------|
+| `crates/world/src/deadly.rs` (new) | the 3 primitives moved verbatim, all `pub` | P0 |
+| `crates/world/src/navgraph.rs` | delete 3 bodies; re-export `segment_has_floor`; private `use` internally | P0 |
 | `crates/world/src/navmesh/heightfield.rs` | `column_floors` deadly-floor rejection; `find_drops` landing validation | P0 |
-| `crates/world/src/navgraph.rs` | export/share `floor_is_deadly`, `landing_strip_deadly` | P0 |
 | `crates/world/tests/lava_navmesh_q2dm6.rs` | pak-gated red→green regression tests | P0 |
-| `crates/world/src/navmesh/polymesh.rs` | `add_drops` defensive filter | P1 |
-| `crates/brain/src/navmesh_driver.rs` | fallback vertex validation | P1 |
+| `crates/brain/src/pursuit.rs` | new shared `steer_line_safe` predicate | P0 |
+| `crates/brain/src/navmesh_driver.rs` | fallback vertex validation, `None` terminal | P1 |
+| `crates/brain/src/nav.rs` | `pursue_target_safe` → shared predicate (behavior-identical) | P1 |
+| `crates/brain/src/xonnav.rs` | cutover → `segment_has_floor` | P1 |
 | `crates/brain/src/brains/xon/mod.rs` | stale-key hazard veto | P2 |
 | `context/{brain_notes,pitfalls,acceptance}.md` | findings + counters | P1 |
 
