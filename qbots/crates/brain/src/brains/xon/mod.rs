@@ -106,10 +106,15 @@ impl XonBrain {
     /// Build an `xon` brain with the given personality. Roam goals + the nav graph arrive
     /// later via [`set_map`](Brain::set_map).
     pub fn new(sk: XonSkill, cfg: BrainConfig) -> Self {
+        Self::with_ordinal(sk, cfg, BOT_ORDINAL.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Deterministic constructor: everything seeded from `ordinal` (tests pin it; `new`
+    /// takes the process-wide counter).
+    fn with_ordinal(sk: XonSkill, cfg: BrainConfig, ordinal: usize) -> Self {
         // Path-following turn rate scales with movement skill (XonAim owns combat turning
         // from T4); qport-independent, deterministic.
         let steering = Steering::new(1.0 + (sk.movement() / 10.0).clamp(0.0, 1.0) * 4.0);
-        let ordinal = BOT_ORDINAL.fetch_add(1, Ordering::Relaxed);
         Self {
             sk,
             rng: Lcg::new(0x584f_4e21 ^ ordinal as u32), // "XON!" + per-bot ordinal
@@ -635,6 +640,40 @@ mod tests {
             Some(goal),
             "scenario contract: honor the override"
         );
+    }
+
+    /// Plan 60 T6: two brains with identical seeds + identical scripted inputs must emit
+    /// byte-identical intent streams (the vendor's RNG is the only nondeterminism source,
+    /// and ours is the seeded per-bot Lcg).
+    #[test]
+    fn two_seeded_runs_are_identical() {
+        let run = || {
+            let mut b = XonBrain::with_ordinal(XonSkill::default(), BrainConfig::default(), 42);
+            let view = view0();
+            let mut nav = StubNav {
+                pursue: Some(Vec3::new(300.0, 150.0, 0.0)),
+                ..Default::default()
+            };
+            let mut out = Vec::new();
+            for t in 0..100 {
+                let o = b.tick(BrainContext {
+                    view: &view,
+                    nav: Some(&mut nav),
+                    cm: None,
+                    dt: 0.1,
+                    ticks: t,
+                    goal_override: None,
+                });
+                out.push((
+                    o.intent.forward.to_bits(),
+                    o.intent.side.to_bits(),
+                    o.intent.yaw.to_bits(),
+                    o.intent.attack,
+                ));
+            }
+            out
+        };
+        assert_eq!(run(), run(), "seeded runs must replay identically");
     }
 
     #[test]
