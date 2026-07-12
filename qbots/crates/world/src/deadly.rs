@@ -75,19 +75,26 @@ pub fn segment_has_floor(cm: &CollisionModel, a: [f32; 3], b: [f32; 3]) -> bool 
 /// Every soak-verified q2dm3 lava entry was a FALL (vz −240..−690) clustered on such
 /// landings.
 pub fn landing_strip_deadly(cm: &CollisionModel, base: [f32; 3], dir: [f32; 2]) -> bool {
+    // A skid that leaves the strip FALLS — and a fall that ends in lava is death at ANY
+    // depth (q2dm6 telemetry: entries 100–280u below landings only 13–30u away). Probe to
+    // past MAX_FALL instead of a step-down horizon (was 72, then 96, pre-/early-Plan-63).
+    const FALL_PROBE: f32 = 512.0;
     let zero = [0.0f32; 3];
-    for d in [0.0f32, 16.0, 32.0, 48.0] {
-        let p = [base[0] + dir[0] * d, base[1] + dir[1] * d, base[2] + 8.0];
-        if cm.point_contents(&p) & (CONTENTS_LAVA | CONTENTS_SLIME) != 0 {
-            return true;
-        }
-        // 96 below the strip point (was 72 pre-Plan-63): q2dm6's basin channels sit
-        // 64–96u under the landing lip, so a skid off the strip still ends in lava.
-        // Matches `segment_has_floor`'s FLOOR_PROBE step-down horizon.
-        let down = [p[0], p[1], p[2] - 96.0];
-        let t = cm.trace(&p, &down, &zero, &zero, MASK_SOLID);
-        if !t.startsolid && t.fraction < 1.0 && floor_is_deadly(cm, &t.endpos) {
-            return true;
+    // Bots arrive with momentum in the PATH direction, not the drop's axis — they skid
+    // sideways off the landing too (live entries 22u to the SIDE of validated landings).
+    // Sample the drop direction plus both perpendiculars.
+    let perp = [-dir[1], dir[0]];
+    for ray in [dir, perp, [-perp[0], -perp[1]]] {
+        for d in [0.0f32, 16.0, 32.0, 48.0] {
+            let p = [base[0] + ray[0] * d, base[1] + ray[1] * d, base[2] + 8.0];
+            if cm.point_contents(&p) & (CONTENTS_LAVA | CONTENTS_SLIME) != 0 {
+                return true;
+            }
+            let down = [p[0], p[1], p[2] - FALL_PROBE];
+            let t = cm.trace(&p, &down, &zero, &zero, MASK_SOLID);
+            if !t.startsolid && t.fraction < 1.0 && floor_is_deadly(cm, &t.endpos) {
+                return true;
+            }
         }
     }
     false

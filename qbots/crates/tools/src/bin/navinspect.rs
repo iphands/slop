@@ -125,6 +125,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    // DROPS mode: `navinspect <baseq2> <map> drops [cell_size]`
+    // Dumps every navmesh drop link (edge origin → landing origin), one per line, for
+    // correlating live lava-entry telemetry (`EVT lava_escape`) against route drops.
+    if args[3] == "drops" {
+        let cell: f32 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(8.0);
+        let model = &built.bsp.models[0];
+        let params = world::VoxelParams {
+            cell_size: cell,
+            ..Default::default()
+        };
+        let hf = world::Heightfield::build(cm, (model.mins, model.maxs), params);
+        let drops = hf.find_drops(cm);
+        println!("drops map={map} cell={cell} count={}", drops.len());
+        for (e, l) in &drops {
+            println!(
+                "DROP edge=({:.0},{:.0},{:.0}) land=({:.0},{:.0},{:.0})",
+                e[0], e[1], e[2], l[0], l[1], l[2]
+            );
+        }
+        return Ok(());
+    }
+
     // NAVMESH mode: `navinspect <baseq2> <map> navmesh [cell_size]`
     // Builds heightfield → polygon navmesh and reports poly/portal counts, component count,
     // and whether all DM spawns land in ONE component (the navmesh analog of

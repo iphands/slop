@@ -91,6 +91,9 @@ pub fn safe_combat_dir(
 /// Speed multiplier for walking a hazard-bordered stretch (creep, don't sprint).
 const CREEP: f32 = 0.35;
 
+/// Milder governor for hazard BESIDE the move direction (rim-parallel running).
+const CREEP_LATERAL: f32 = 0.55;
+
 /// Per-tick speed governor for path following near deadly ground (Plan 50). q2dm3's
 /// central maze is walkways at z≈−48 with lava 16 u below — a LEGAL step-down, so the
 /// nav polyline is valid, but at full sprint the 10 Hz control wobble (yaw rate limit,
@@ -98,11 +101,24 @@ const CREEP: f32 = 0.35;
 /// lava walkways; so do we: when the move direction's short probe borders a hazard,
 /// return [`CREEP`], else 1.0. This never vetoes the move — the path is valid — it
 /// shrinks the tracking error until the stretch is past.
+///
+/// Plan 63: the frontal probe misses **rim-parallel** sprints — q2dm6 telemetry shows
+/// lava entries at 200–350 u/s with the commanded direction ALONG the walkway (safe) and
+/// the lava beside it; 10 Hz drift then carries the bot off sideways. When either
+/// perpendicular borders a hazard, apply the milder [`CREEP_LATERAL`].
 pub fn creep_scale(cm: Option<&CollisionModel>, pos: Vec3, world_dir: Vec3) -> f32 {
-    match cm {
-        Some(c) if dir_is_hazardous(c, pos, world_dir) => CREEP,
-        _ => 1.0,
+    let Some(c) = cm else { return 1.0 };
+    if dir_is_hazardous(c, pos, world_dir) {
+        return CREEP;
     }
+    let flat = Vec3::new(world_dir.x, world_dir.y, 0.0);
+    if flat.length_squared() > 1e-6 {
+        let side = Vec3::new(-flat.y, flat.x, 0.0);
+        if dir_is_hazardous(c, pos, side) || dir_is_hazardous(c, pos, -side) {
+            return CREEP_LATERAL;
+        }
+    }
+    1.0
 }
 
 /// Last-resort combat move when BOTH strafe variants are deadly (fighting at a pool rim):

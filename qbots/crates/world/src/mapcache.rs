@@ -83,7 +83,11 @@ const MAGIC: &[u8; 7] = b"QBNAVC2";
 // Version 25: (Plan 63) `landing_strip_deadly`'s down-probe deepens 72→96u (q2dm6 basin
 // channels sit 64–96u under landing lips — a skid off the strip still fell into lava).
 // Jump/drop edge sets change → regen.
-const VERSION: u8 = 25;
+// Version 26: (Plan 63 T6 iteration) `landing_strip_deadly` probes to ANY depth (512u —
+// a skid-off fall ending in lava is death regardless of height; live entries were 100–280u
+// below their landings) and samples the two perpendicular rays (bots skid sideways off
+// landings, 22u lateral in telemetry). Jump/drop edge sets change → regen.
+const VERSION: u8 = 26;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]
