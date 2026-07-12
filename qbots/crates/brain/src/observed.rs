@@ -171,12 +171,18 @@ impl EnvDeath {
 
 /// Classify a `svc_print` line as an environmental self-death of `name`.
 ///
-/// The server broadcasts these as `"<victim> <message>\n"` with **no attacker**
-/// (`ClientObituary`, client.c:391), so an exact whole-line match on
-/// `"<name> <message>"` cannot collide with attacker obituaries — e.g. slime's
-/// "melted" never matches the hyperblaster's "was melted by <attacker>".
+/// The server broadcasts these as `"<victim> <message>.\n"` with **no attacker**
+/// (`ClientObituary`, client.c:391; the trailing period comes from the
+/// `"%s %s.\n"` format at client.c:495 — verified live 2026-07-12), so an exact
+/// whole-line match on `"<name> <message>"` cannot collide with attacker
+/// obituaries — e.g. slime's "melted" never matches "was melted by <attacker>",
+/// which uses the period-less `"%s %s %s%s\n"` format (client.c:586).
 pub fn classify_env_death(text: &str, name: &str) -> Option<EnvDeath> {
-    let rest = text.trim_end().strip_prefix(name)?.strip_prefix(' ')?;
+    let rest = text
+        .trim_end()
+        .strip_prefix(name)?
+        .strip_prefix(' ')?
+        .trim_end_matches('.');
     match rest {
         "does a back flip into the lava" => Some(EnvDeath::Lava),
         "melted" => Some(EnvDeath::Slime),
@@ -372,8 +378,13 @@ mod tests {
         ];
         for (text, want) in cases {
             assert_eq!(classify_env_death(text, "qb1"), Some(want), "{text}");
-            // Trailing newline (as delivered over the wire) must not break it.
-            assert_eq!(classify_env_death(&format!("{text}\n"), "qb1"), Some(want));
+            // The real wire format carries a trailing period + newline
+            // (client.c:495 `"%s %s.\n"`) — verified live on q2dm6 2026-07-12.
+            assert_eq!(
+                classify_env_death(&format!("{text}.\n"), "qb1"),
+                Some(want),
+                "{text} (wire format)"
+            );
         }
     }
 

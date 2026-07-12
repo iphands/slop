@@ -1213,6 +1213,9 @@ pub(crate) async fn bot_task(
                         // then hand the same lines to the heatmap observer below.
                         let prints = conn.drain_prints();
                         for text in &prints {
+                            // Raw print visibility (debug): obituary grammar differs per
+                            // server/mod — this is the lens for verifying classification.
+                            tracing::debug!(text = %text.trim_end(), "svc_print");
                             if let Some(kind) = brain::classify_env_death(text, name) {
                                 tracing::warn!(kind = kind.name(), "EVT env_suicide");
                                 stats.record_env_suicide(name, kind);
