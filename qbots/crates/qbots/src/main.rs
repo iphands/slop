@@ -158,6 +158,10 @@ enum Cmd {
         /// the behavior-preserving default persona.
         #[arg(long)]
         persona: Option<String>,
+        /// Xonotic personality (only for `--brain xon`): `rus`/`shp`/`trt`/`nob` (Plan 60).
+        /// Absent → a neutral XonSkill at the master skill level.
+        #[arg(long, value_enum)]
+        xonchar: Option<brain::XonCharPreset>,
     },
     /// Launch the full bot fleet from the config's `[fleet]` roster.
     Run {
@@ -786,6 +790,7 @@ pub(crate) async fn bot_task(
     brain_kind: brain::BrainKind,
     char: Option<brain::CharPreset>,
     persona: Option<brain::persona::Persona>,
+    xonchar: Option<brain::XonCharPreset>,
 ) -> std::io::Result<()> {
     use brain::perception::Worldview;
     // `Brain` is the plugin trait (its methods resolve on the `Box<dyn Brain>` the factory
@@ -844,6 +849,7 @@ pub(crate) async fn bot_task(
         BrainConfig::default(),
         char,
         persona,
+        xonchar,
     );
     // Boxed behind the `Navigator` trait so the tick loop is backend-agnostic: `--navmode`
     // picks A* (waypoint graph) or navmesh (polygons + funnel) at map load. `+ Send`
@@ -1949,6 +1955,7 @@ async fn main() -> ExitCode {
             brain,
             char,
             persona,
+            xonchar,
         } => {
             // Resolve the persona name (Plan 27) → a preset; unknown names are a hard error so a
             // typo isn't silently ignored.
@@ -1979,7 +1986,10 @@ async fn main() -> ExitCode {
             }
             tracing::info!("connecting '{name}' to {addr} (qport {qport})…  Ctrl-C to stop.");
 
-            match supervisor::run_single(&cfg, addr, &name, qport, mode, brain, char, persona).await
+            match supervisor::run_single(
+                &cfg, addr, &name, qport, mode, brain, char, persona, xonchar,
+            )
+            .await
             {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {

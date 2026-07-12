@@ -471,6 +471,7 @@ fn brain_code(brain: brain::BrainKind) -> &'static str {
         brain::BrainKind::RunTester => "run",
         brain::BrainKind::Quake3 => "q3",
         brain::BrainKind::Zb2 => "zb2",
+        brain::BrainKind::Xon => "xon",
     }
 }
 
@@ -777,6 +778,7 @@ async fn bot_supervisor_loop(
             brain,
             char,
             None, // TODO(P27): per-bot fleet persona from config
+            None, // per-bot fleet xonchar lands with the Plan 62 roster
         )
         .await
         {
@@ -836,15 +838,16 @@ pub async fn run_single(
     brain: brain::BrainKind,
     char: Option<brain::CharPreset>,
     persona: Option<brain::persona::Persona>,
+    xonchar: Option<brain::XonCharPreset>,
 ) -> std::io::Result<()> {
     let nav = NavCache::new();
     let shutdown = Shutdown::new();
     let stats = FleetStats::new();
     let _signals = spawn_signal_listener(shutdown.clone());
-    // A selected Q3 character wears its recognizable skin even as a single bot.
-    let skin = char.map(|q| q.skin());
+    // A selected character wears its recognizable skin even as a single bot.
+    let skin = char.map(|q| q.skin()).or(xonchar.map(|x| x.skin()));
     let res = crate::bot_task(
-        addr, name, qport, skin, cfg, &nav, &shutdown, &stats, mode, brain, char, persona,
+        addr, name, qport, skin, cfg, &nav, &shutdown, &stats, mode, brain, char, persona, xonchar,
     )
     .await;
     // bot_task has disconnected (or errored) — emit the single-bot tally.

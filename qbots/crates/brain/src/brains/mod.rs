@@ -9,6 +9,7 @@ pub mod main;
 pub mod q3;
 pub mod runtester;
 pub mod sentry;
+pub mod xon;
 pub mod zb2;
 
 pub use core::{Brain, BrainConfig, BrainContext, BrainMap, BrainOutput};
@@ -17,9 +18,11 @@ use crate::brains::main::MainBrain;
 use crate::brains::q3::Q3Brain;
 use crate::brains::runtester::RunTesterBrain;
 use crate::brains::sentry::SentryBrain;
+use crate::brains::xon::XonBrain;
 use crate::brains::zb2::Zb2Brain;
 use crate::q3char::{CharPreset, Q3Character};
 use crate::skill::BotSkill;
+use crate::xonchar::{XonCharPreset, XonSkill};
 
 /// Which brain implementation a bot runs. Mirrors `NavMode` (the nav-backend selector); a
 /// `ValueEnum` derive + CLI flag land in Plan 25, more variants in Plan 24.
@@ -45,6 +48,10 @@ pub enum BrainKind {
     /// zb2 — The 3ZB2-derived brain (committed routes + shortcut skips + run-and-gun; Plan 44).
     #[value(name = "zb2")]
     Zb2,
+    /// xonotic — The Xonotic-havocbot-derived brain (goal-rating strategy + XonAim + keyboard
+    /// movement; Plan 60).
+    #[value(name = "xon", alias = "xonotic")]
+    Xon,
 }
 
 /// Short kebab-case tag for `kind` — for logging + competition bot naming (mirrors `mode_tag`).
@@ -55,6 +62,7 @@ pub fn brain_tag(kind: BrainKind) -> &'static str {
         BrainKind::RunTester => "runtester",
         BrainKind::Quake3 => "q3",
         BrainKind::Zb2 => "zb2",
+        BrainKind::Xon => "xon",
     }
 }
 
@@ -62,13 +70,16 @@ pub fn brain_tag(kind: BrainKind) -> &'static str {
 /// exactly mirroring `build_navigator` for nav backends. `Send` so a bot task can own the box.
 ///
 /// `char` selects a named Q3 personality for the `Quake3` brain (Plan 38 roster); `None` →
-/// `Q3Character::from_skill(skill)` (the Plan 37 default). Every other arm ignores it.
+/// `Q3Character::from_skill(skill)` (the Plan 37 default). `xonchar` is the same idea for the
+/// `Xon` brain (Plan 60/62 roster); `None` → a neutral `XonSkill` at the master skill level.
+/// Every other arm ignores both.
 pub fn build_brain(
     kind: BrainKind,
     skill: BotSkill,
     cfg: BrainConfig,
     char: Option<CharPreset>,
     persona: Option<crate::persona::Persona>,
+    xonchar: Option<XonCharPreset>,
 ) -> Box<dyn Brain + Send> {
     match kind {
         BrainKind::Main => Box::new(MainBrain::new(skill, cfg).with_persona(persona)),
@@ -88,6 +99,13 @@ pub fn build_brain(
         // Zb2 reuses the shared combat driver; `cfg.combat_enabled` gates it for scenarios.
         // It ignores `char`/`persona` (its personality IS the committed-route texture).
         BrainKind::Zb2 => Box::new(Zb2Brain::new(skill, cfg.combat_enabled)),
+        // Xon: a named 12-axis roster preset if given, else neutral at the master skill.
+        BrainKind::Xon => {
+            let sk = xonchar
+                .map(XonCharPreset::skill)
+                .unwrap_or_else(|| XonSkill::new(skill.skill.min(10) as f32));
+            Box::new(XonBrain::new(sk))
+        }
     }
 }
 
@@ -103,6 +121,7 @@ mod tests {
             BrainConfig::default(),
             None,
             None,
+            None,
         );
         assert_eq!(brain.status(), "roam");
     }
@@ -113,6 +132,7 @@ mod tests {
             BrainKind::Sentry,
             BotSkill::default(),
             BrainConfig::default(),
+            None,
             None,
             None,
         );
@@ -136,11 +156,14 @@ mod tests {
         assert_eq!(BrainKind::from_str("run", true), Ok(BrainKind::RunTester));
         assert_eq!(BrainKind::from_str("q3", true), Ok(BrainKind::Quake3));
         assert_eq!(BrainKind::from_str("zb2", true), Ok(BrainKind::Zb2));
+        assert_eq!(BrainKind::from_str("xon", true), Ok(BrainKind::Xon));
+        assert_eq!(BrainKind::from_str("xonotic", true), Ok(BrainKind::Xon));
         assert!(BrainKind::from_str("nope", true).is_err());
         assert_eq!(brain_tag(BrainKind::Main), "main");
         assert_eq!(brain_tag(BrainKind::Sentry), "sentry");
         assert_eq!(brain_tag(BrainKind::RunTester), "runtester");
         assert_eq!(brain_tag(BrainKind::Quake3), "q3");
+        assert_eq!(brain_tag(BrainKind::Xon), "xon");
     }
 
     #[test]
@@ -149,6 +172,7 @@ mod tests {
             BrainKind::Quake3,
             BotSkill::default(),
             BrainConfig::default(),
+            None,
             None,
             None,
         );

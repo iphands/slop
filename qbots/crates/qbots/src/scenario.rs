@@ -356,6 +356,7 @@ pub async fn run_scenario(
         },
         None, // scenarios don't select a Q3 personality (no combat)
         None, // ...nor a main persona (combat off)
+        None, // ...nor an xon character (Plan 60; neutral skill is fine goal-driven)
     );
 
     // Drive through the `Navigator` trait so the tick loop is backend-agnostic. `+ Send`
