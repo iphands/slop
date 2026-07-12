@@ -844,20 +844,26 @@ async fn bot_supervisor_loop(
         if shared.shutdown.requested() {
             return;
         }
-        match crate::bot_task(
-            addr,
-            &name,
-            qport,
-            skin.as_deref(),
-            &cfg,
-            &shared.nav,
-            &shared.shutdown,
-            &shared.stats,
-            mode,
-            brain,
-            char,
-            None, // TODO(P27): per-bot fleet persona from config
-            xonchar,
+        // Per-bot log attribution: instrument the FUTURE (a `span.enter()` inside the
+        // async fn leaks across `.await` and cross-tags other bots' events).
+        let span = tracing::info_span!("bot", %name, qport);
+        match tracing::Instrument::instrument(
+            crate::bot_task(
+                addr,
+                &name,
+                qport,
+                skin.as_deref(),
+                &cfg,
+                &shared.nav,
+                &shared.shutdown,
+                &shared.stats,
+                mode,
+                brain,
+                char,
+                None, // TODO(P27): per-bot fleet persona from config
+                xonchar,
+            ),
+            span,
         )
         .await
         {
@@ -925,8 +931,13 @@ pub async fn run_single(
     let _signals = spawn_signal_listener(shutdown.clone());
     // A selected character wears its recognizable skin even as a single bot.
     let skin = char.map(|q| q.skin()).or(xonchar.map(|x| x.skin()));
-    let res = crate::bot_task(
-        addr, name, qport, skin, cfg, &nav, &shutdown, &stats, mode, brain, char, persona, xonchar,
+    let span = tracing::info_span!("bot", %name, qport);
+    let res = tracing::Instrument::instrument(
+        crate::bot_task(
+            addr, name, qport, skin, cfg, &nav, &shutdown, &stats, mode, brain, char, persona,
+            xonchar,
+        ),
+        span,
     )
     .await;
     // bot_task has disconnected (or errored) — emit the single-bot tally.

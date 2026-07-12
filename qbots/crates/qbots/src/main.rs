@@ -839,10 +839,10 @@ pub(crate) async fn bot_task(
     // (a sentinel — CS slot 255 is empty), so enemy-weapon inference is NOT available here.
     let p28_debug = std::env::var("QBOTS_P28_DEBUG").is_ok();
 
-    // Attribute every event in this task to the bot name so fleet logs are
-    // per-bot filterable (Plan 09 T3).
-    let span = tracing::info_span!("bot", %name, qport);
-    let _enter = span.enter();
+    // Per-bot span attribution (Plan 09 T3) is applied by the CALLERS via
+    // `Future::instrument` (supervisor.rs) — an inline `span.enter()` here leaked its
+    // guard across `.await` points, stacking other bots' spans onto whatever task the
+    // thread polled next (observed live: three `[name=…]` prefixes on one event).
 
     // Register this bot with the fleet tally so it appears in the report even
     // if it never frags/dies (Plan 09 observability).
