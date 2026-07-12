@@ -6,6 +6,7 @@
 //! vendor file:line. All randomness comes from the caller-owned [`Lcg`] so tests are seeded.
 
 pub mod aim;
+pub mod keyboard;
 pub mod rating;
 
 /// A tiny deterministic per-bot LCG (same constants as `Q3Brain::roll`) standing in for
