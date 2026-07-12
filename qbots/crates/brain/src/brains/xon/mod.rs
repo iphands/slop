@@ -89,6 +89,8 @@ pub struct XonBrain {
     keyboard: KeyboardEmu,
     /// Low-skill overshoot stop deadline (`havocbot.qc:1130-1134`).
     overshoot_until: f32,
+    /// Previous tick's health — drives the rim hit-reflex (Plan 63).
+    last_health: i32,
     /// Wall-clock seconds since connect (accumulated from `dt`).
     time: f32,
     /// Status label reflecting the committed goal kind (`xon-item`/`xon-enemy`/`xon-wander`).
@@ -133,6 +135,7 @@ impl XonBrain {
             view_pitch: 0.0,
             keyboard: KeyboardEmu::new(),
             overshoot_until: 0.0,
+            last_health: 100,
             time: 0.0,
             status: "xon",
             steering,
@@ -361,6 +364,8 @@ impl Brain for XonBrain {
 
         let pos = view.self_state().origin;
         let health = view.self_state().health;
+        // Hit detection for the rim hit-reflex (Plan 63); updated at the end of the tick.
+        let took_damage = health > 0 && health < self.last_health;
 
         // PVS-honest item memory (evidence for goal expiry + candidate availability).
         self.item_memory.observe(&self.map_items, view, self.time);
@@ -492,11 +497,18 @@ impl Brain for XonBrain {
                             * legs_world.length().max(dodge_vec.length());
                     }
                     // Rim pressure (Plan 63): fighting near a deadly rim gets the bot
-                    // rocket-juggled in — bias the combat legs inward off the rim.
+                    // rocket-juggled in — bias the combat legs inward off the rim. On a
+                    // damage tick the bias becomes the WHOLE move (hit-reflex): drive off
+                    // the rim before the next rocket finishes the juggle.
                     if let Some(c) = cm {
                         if let Some(bias) = crate::hazard::rim_pressure(c, pos) {
-                            let mag = legs_world.length().max(0.5);
-                            legs_world = (legs_world + bias * 0.6 * mag).normalize_or_zero() * mag;
+                            if took_damage {
+                                legs_world = bias;
+                            } else {
+                                let mag = legs_world.length().max(0.5);
+                                legs_world =
+                                    (legs_world + bias * 0.6 * mag).normalize_or_zero() * mag;
+                            }
                         }
                     }
                     let (ff, ss) = move_from_world_dir(legs_world, cmd.angles.yaw, false);
@@ -592,6 +604,8 @@ impl Brain for XonBrain {
                 );
             }
         }
+
+        self.last_health = health;
 
         BrainOutput {
             intent: mv,

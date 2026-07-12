@@ -704,6 +704,7 @@ impl Q3Brain {
         }
         // Never strafe/backpedal into lava or off a blind drop (Plan 48 L2): mirror the
         // tangential component across the enemy axis, else stand and fight.
+        let mut rim_near = false;
         if let Some(c) = cm {
             if crate::hazard::dir_is_hazardous(c, pos, world) {
                 let radial = dir * world.dot(dir);
@@ -719,9 +720,17 @@ impl Q3Brain {
                 };
             }
             // Rim pressure (Plan 63): dueling NEAR a rim gets rocket-juggled in even when
-            // every commanded direction is safe — bias the fight inward off the rim.
+            // every commanded direction is safe — bias the fight inward off the rim. On a
+            // damage tick the bias becomes the WHOLE move (hit-reflex): mid-juggle, the
+            // next rocket finishes the push — drive off the rim before it lands.
             if let Some(bias) = crate::hazard::rim_pressure(c, pos) {
-                world = (world + bias * 0.6).normalize_or_zero();
+                rim_near = true;
+                let took_damage = view.self_state().health < self.last_health;
+                world = if took_damage {
+                    bias
+                } else {
+                    (world + bias * 0.6).normalize_or_zero()
+                };
             }
         }
         let (fwd, side) = move_from_world_dir(world, aimres.yaw, false);
@@ -729,7 +738,9 @@ impl Q3Brain {
         mv.move_side(side);
 
         // Jump / crouch dodge with 1 s cooldowns (CROUCHER is best-effort — see brain_notes).
-        if self.roll() < self.ch.jumper && self.time >= self.next_jump_time {
+        // Never jump-dodge near a deadly rim (Plan 63): a jump carries combat momentum
+        // ballistically — on q2dm6 walkways that's a flight into the basin.
+        if self.roll() < self.ch.jumper && self.time >= self.next_jump_time && !rim_near {
             mv.jump();
             self.next_jump_time = self.time + 1.0;
         }
