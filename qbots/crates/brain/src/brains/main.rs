@@ -600,7 +600,7 @@ impl crate::brains::core::Brain for MainBrain {
             // is filtered through `hazard::safe_combat_dir` (Plan 48 L2): keep it, mirror
             // the strafe component, or stand and fight — never walk into lava or off a
             // blind drop while aiming at someone.
-            let (world_move_dir, face_then_go) = if flee_hard {
+            let (mut world_move_dir, face_then_go) = if flee_hard {
                 // Hard flee (Plan 45): move along the escape path (toward the resource /
                 // away node). If we're firing (view is locked on the enemy behind us) use
                 // raw decomposition (`face_then_go = false`) so `forward` can go negative
@@ -693,6 +693,16 @@ impl crate::brains::core::Brain for MainBrain {
                     .unwrap_or(Vec3::ZERO);
                 (dir, true)
             };
+
+            // Rim pressure (Plan 63): dueling near a deadly rim gets rocket-juggled in
+            // even when every commanded direction is safe — bias the fight inward.
+            if matches!(self.fsm, BehaviorState::Engage { .. }) {
+                if let Some(c) = cm {
+                    if let Some(bias) = hazard::rim_pressure(c, pos) {
+                        world_move_dir = (world_move_dir + bias * 0.6).normalize_or_zero();
+                    }
+                }
+            }
 
             // ── 4. Arrive throttle (slows near final goal) ────────────────
             let arrive = pursue_pt

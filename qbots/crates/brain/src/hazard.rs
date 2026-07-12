@@ -61,6 +61,26 @@ pub fn dir_is_hazardous(cm: &CollisionModel, pos: Vec3, world_dir: Vec3) -> bool
     false
 }
 
+/// Inward push away from nearby deadly rims, or `None` when no rim is near.
+///
+/// Plan 63 (q2dm6 telemetry): **81% of lava entries had damage in the prior 1.5 s** —
+/// bots dueling ON walkway rims get rocket-juggled or strafe-drift in, and the basin
+/// walls are sheer (100–280u), so entry ≈ death. The per-direction gates only veto the
+/// COMMANDED direction; knockback + tracking drift need standing clearance. This probes
+/// 8 compass directions and sums the inward opposites of every hazardous one — combat
+/// movement adds the bias so fights slide away from rims instead of along them.
+pub fn rim_pressure(cm: &CollisionModel, pos: Vec3) -> Option<Vec3> {
+    let mut inward = Vec3::ZERO;
+    for i in 0..8 {
+        let a = (i as f32) * std::f32::consts::FRAC_PI_4;
+        let dir = Vec3::new(a.cos(), a.sin(), 0.0);
+        if dir_is_hazardous(cm, pos, dir) {
+            inward -= dir;
+        }
+    }
+    inward.try_normalize()
+}
+
 /// Pick a survivable variant of a combat move direction: `normalize(radial + tangential)`
 /// times `scale`, then the same with the tangential (strafe) component mirrored, else
 /// `None` (hold position — standing beats swimming in lava). `radial` and `tangential` are

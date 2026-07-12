@@ -671,8 +671,16 @@ impl Brain for Zb2Brain {
                     let wp_dist = pursue.map(|p| (p - pos).length() as i32).unwrap_or(-1);
                     tracing::debug!(action, wp_dist, "zb2 combat keeps recovery legs");
                 }
-                let legs_world =
+                let mut legs_world =
                     view_forward(view_yaw) * mv.forward + view_right(view_yaw) * mv.side;
+                // Rim pressure (Plan 63): run-and-gun near a deadly rim gets juggled in —
+                // bias the legs inward off the rim.
+                if let Some(c) = cm {
+                    if let Some(bias) = crate::hazard::rim_pressure(c, pos) {
+                        let mag = legs_world.length().max(0.5);
+                        legs_world = (legs_world + bias * 0.6 * mag).normalize_or_zero() * mag;
+                    }
+                }
                 mv.look_at(combat_dec.aim_yaw, combat_dec.aim_pitch);
                 let (ff, ss) = move_from_world_dir(legs_world, combat_dec.aim_yaw, false);
                 mv.move_forward(ff);

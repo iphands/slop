@@ -718,6 +718,11 @@ impl Q3Brain {
                     crate::hazard::rim_retreat_dir(c, pos, aimres.yaw).unwrap_or(Vec3::ZERO)
                 };
             }
+            // Rim pressure (Plan 63): dueling NEAR a rim gets rocket-juggled in even when
+            // every commanded direction is safe — bias the fight inward off the rim.
+            if let Some(bias) = crate::hazard::rim_pressure(c, pos) {
+                world = (world + bias * 0.6).normalize_or_zero();
+            }
         }
         let (fwd, side) = move_from_world_dir(world, aimres.yaw, false);
         mv.move_forward(fwd);

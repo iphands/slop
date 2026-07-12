@@ -491,6 +491,14 @@ impl Brain for XonBrain {
                         legs_world = (legs_world + dodge_vec).normalize_or_zero()
                             * legs_world.length().max(dodge_vec.length());
                     }
+                    // Rim pressure (Plan 63): fighting near a deadly rim gets the bot
+                    // rocket-juggled in — bias the combat legs inward off the rim.
+                    if let Some(c) = cm {
+                        if let Some(bias) = crate::hazard::rim_pressure(c, pos) {
+                            let mag = legs_world.length().max(0.5);
+                            legs_world = (legs_world + bias * 0.6 * mag).normalize_or_zero() * mag;
+                        }
+                    }
                     let (ff, ss) = move_from_world_dir(legs_world, cmd.angles.yaw, false);
                     mv.look_at(cmd.angles.yaw, cmd.angles.pitch);
                     mv.move_forward(ff);
