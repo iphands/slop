@@ -769,3 +769,7 @@ the data indicts. All soaks: noir.lan:27910 q2dm3, 305 s,
   belongs to Plan 62's aggregator loop (candidates: default skill ↑, aggres/offset axes ↑).
 - **Blocked**: T7's q2dm3 ride/lift legs — needs the server on q2dm3 (RCON map change
   requires user approval; the auto-mode classifier correctly refused it).
+- **q2dm3 addendum (map flipped, Plan 60 CLOSED)**: railgun-1 ride reached (23.17 s,
+  123 `P` frames, 2 bumps; 1/4 reliability = zb2-class); quad leg caps for runtester too
+  (Plan 47 map finding). 5-min q2dm3 soak: **xon kd 0.60 BEATS q3 0.30**, 0 drownings,
+  33 traversal legs, 0 panics — the traversal-heavy map favors xon's goal-driven roaming.

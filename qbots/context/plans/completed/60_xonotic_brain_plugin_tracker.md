@@ -1,7 +1,7 @@
 # Xonotic brain plugin (`xon`) — Tracker
 
 ## Overview
-- Status: 85% complete (T1-T6, T8 done; T7 partial — q2dm3 legs blocked; T9 docs done, closeout pending T7)
+- Status: 100% complete (closed 2026-07-11)
 - Start date: 2026-07-11
 - Deliverable: `--brain xon` — goal-stack strategy + XonAim + keyboard movement on shared locomotion/traversal, proven by spawn-to-* matrix + live competition.
 - Blocked by: Plan 59 in `completed/` ✓ (Plan 58 abandoned — xon carries its own q3-shape locomote).
@@ -24,9 +24,9 @@
 | 4 | T4: aim/fire | `brains/xon/mod.rs`, `aim.rs` | done | `809ee610b`. would_self_splash promoted to brain::aim (q3 re-exports). DEFERRED: GL ballistic arc (straight lead for now); real-RTT latency (fixed 50ms). Live: xon frags in q3's band (kd 1.00/0.50), 0 panics. |
 | 5 | T5: combat move + dodge + keyboard | `brains/xon/{mod,dodge}.rs` | done | `5dd2b61d7`. Dodge hazard-mirrored; enabled for all skills (upstream SUPERBOT-gates it — documented). |
 | 6 | T6: deterministic tests | `brains/xon/*` | done | `5d1ff3ec2`. with_ordinal pinned seed; 100-tick byte-identical streams. |
-| 7 | T7: spawn-to-* matrix | — (verification) | blocked (partial) | q2dm1 DONE: s2s 3/4 (8.85/14.40/11.44s; 1 long-draw cap-miss), swim railgun reached 14.91s — q3-parity+. q2dm3 ride+lift legs BLOCKED: server map change via RCON denied by auto-mode (user must flip map or run `rcon map q2dm3`). |
+| 7 | T7: spawn-to-* matrix | — (verification) | done | q2dm1: s2s 3/4, swim reached (q3-parity+). q2dm3 (user flipped map): railgun-1 1/4 reached w/ 123 `P` ride frames (zb2-class reliability, route-quality findings); quad capped for runtester control too (Plan 47 map finding). |
 | 8 | T8: live competition | `context/mode_perf.md` | done | `23b26776d`. 2×5min: xon 0.35 vs mai 0.57 / q3 1.13; clean (0 panics/kicks/drowns). Kill-rate gap documented w/ hypotheses → Plan 62 tuning. |
-| 9 | T9: docs + close | `context/brain_notes.md`, SERIES | in-progress | brain_notes entry written; plan closeout (git mv + SERIES done) waits on T7's q2dm3 legs. |
+| 9 | T9: docs + close | `context/brain_notes.md`, SERIES | done | brain_notes entries; mode_perf q2dm1+q2dm3 baselines; plan → completed/; SERIES done. |
 
 ## Verification
 
@@ -44,5 +44,6 @@
 | spawn-to-weapon railgun (xon) | q2dm1 | reached | 14.91s / 3005u / 9 bumps |
 | competition run1 (5min, ×2 bots) | q2dm1 | — | q3 1.25, mai 0.57, xon 0.20 |
 | competition run2 (5min, ×2 bots) | q2dm1 | — | q3 1.00, mai 0.57, xon 0.50 |
-| spawn-to-item quaddamage (xon) | q2dm3 | BLOCKED | needs map change |
-| spawn-to-weapon railgun --instance 1 (xon) | q2dm3 | BLOCKED | needs map change |
+| spawn-to-item quaddamage (xon) | q2dm3 | 0/1 cap | control ALSO capped — Plan 47 quad map finding |
+| spawn-to-weapon railgun --instance 1 (xon) | q2dm3 | 1/4 | 23.17s reach, 123 P frames, 2 bumps; ctrl 1/1 (25.82s) |
+| 5-min soak q3 vs xon | q2dm3 | xon 0.60 vs q3 0.30 | 0 drown, 33 traverse-done, 0 panics |

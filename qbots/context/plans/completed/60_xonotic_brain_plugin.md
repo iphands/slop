@@ -1,6 +1,6 @@
 # Plan 60 — Xonotic brain plugin (`xon`)
 
-> **Status**: pending
+> **Status**: done (2026-07-11)
 > **Created**: 2026-07-11
 > **Depends on**: Plan 59 (xoncore primitives), Plan 46 (traversal), Plan 48/49/50 (hazard + acquisition). (Plan 58's shared `follow_path` was abandoned — see its row in SERIES; `xon` carries its own locomote copy following q3's shape, `q3/mod.rs` `locomote`.)
 > **Goal**: A full Xonotic-havocbot-derived brain (`--brain xon`) — goal-stack strategy with rating-driven goal selection, evidence-based re-planning, Xonotic weapon choice + weapon combos, the XonAim dynamical system, and keyboard-emulated movement — sharing ALL traversal/hazard/locomotion infrastructure with the other brains.

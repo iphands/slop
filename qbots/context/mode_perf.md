@@ -264,3 +264,21 @@ hypothesis = default skill 5 → fire cone (1000/(d−9)−0.35)×2.5 ≈ 3.3° 
 fighting bad-aim offset swings ±4.5° (vendor-authentic miss profile at mid skill) + items
 out-rating enemies in the goal layer (vendor numbers). Tuning → Plan 62 (presets sweep with
 the aggregator; candidates: default skill ↑, aggres axis ↑, offset axis ↑).
+
+### T7 addendum (q2dm3, map flipped by user 2026-07-11)
+| Scenario | xon | runtester control |
+|---|---|---|
+| spawn-to-item quaddamage | 0/1 (cap) | 0/1 (cap) — the Plan 47 "quad" map finding, not brain-specific |
+| spawn-to-weapon railgun --instance 1 | **1/4** (23.17s, 123 `P` ride frames, 2 bumps) | 1/1 (25.82s) |
+
+Ride capability proven (clean board/carry/dismount); 1/4 reliability = zb2's baseline class
+on this leg (route-quality, Plans 35/47 findings).
+
+### T8 addendum — 5-min q2dm3 soak (`--brains q3,xon --count 2`)
+| Group | K/D |
+|---|---|
+| **xon_as** | **0.60** (6/10) — beats q3 on the traversal-heavy map |
+| q3_as | 0.30 (3/10) |
+
+0 panics, 0 drownings, 33 completed traversal legs (`EVT traverse done`), 248 lava-escape
+override engagements (q2dm3's environment, Plan 50 family — no regression signal).
