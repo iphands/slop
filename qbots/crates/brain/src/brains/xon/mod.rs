@@ -22,35 +22,57 @@
 //!
 //! Personality: [`XonSkill`] — Xonotic's 12 additive skill axes (Plan 59).
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use glam::Vec3;
 use world::NavGraph;
 
-use crate::brains::core::{Brain, BrainContext, BrainMap, BrainOutput};
-use crate::items;
+use crate::brains::core::{Brain, BrainConfig, BrainContext, BrainMap, BrainOutput, MapItem};
+use crate::items::{self, ItemMemory};
 use crate::move_ctrl::MovementIntent;
 use crate::nav::NavGoal;
+use crate::perception::EntityClass;
 use crate::recover::{Recovery, RecoveryAction};
 use crate::skill::BotSkill;
 use crate::steer::{move_from_world_dir, Steering};
 use crate::traverse::{TraversalExecutor, TraversalFrame};
 use crate::xonchar::XonSkill;
+use crate::xoncore::Lcg;
+
+mod goals;
+use goals::{RatingCtx, XonGoals};
+
+/// Process-wide xon ordinal — staggers each bot's first rating session so a fleet doesn't
+/// flood the graph on the same frame (the poor-man's strategy token, `bot.qc:784-811`).
+static BOT_ORDINAL: AtomicUsize = AtomicUsize::new(0);
 
 /// The Xonotic-derived decision brain. Owns the goal-stack strategy (T2), combat (T3–T5),
 /// and the locomotion state; the `Navigator` is injected each tick.
 pub struct XonBrain {
     /// The 12-axis personality (Plan 59) — every skill-scaled formula reads from here.
-    /// Consumed by the constructor (turn rate) today; the T2 rating session + T3-T5 combat
-    /// read it per-tick.
-    #[allow(dead_code)]
     sk: XonSkill,
+    /// Deterministic per-bot RNG (the vendor's `random()`).
+    rng: Lcg,
+    /// Combat gate (scenarios force `combat_enabled = false` — enemies are then never
+    /// rated as goals, and T3-T5 combat stays off).
+    cfg: BrainConfig,
 
     // ── navigation / roam (mirrors Q3Brain until the T2 strategy layer lands) ─────────
     roam_nodes: Vec<usize>,
     roam_idx: usize,
     nav_graph: Option<Arc<NavGraph>>,
     roam_as_position: bool,
+    /// Static BSP item table (Plan 30) — the rating-session candidates.
+    map_items: Vec<MapItem>,
+    /// PVS-honest taken/respawn memory over `map_items` (shared `items::ItemMemory`).
+    item_memory: ItemMemory,
+    /// The goal-stack strategy layer (T2).
+    goals: XonGoals,
+    /// Wall-clock seconds since connect (accumulated from `dt`).
+    time: f32,
+    /// Status label reflecting the committed goal kind (`xon-item`/`xon-enemy`/`xon-wander`).
+    status: &'static str,
 
     // ── shared locomotion primitives (same modules as main/q3/zb2) ────────────────────
     steering: Steering,
@@ -63,16 +85,24 @@ pub struct XonBrain {
 impl XonBrain {
     /// Build an `xon` brain with the given personality. Roam goals + the nav graph arrive
     /// later via [`set_map`](Brain::set_map).
-    pub fn new(sk: XonSkill) -> Self {
+    pub fn new(sk: XonSkill, cfg: BrainConfig) -> Self {
         // Path-following turn rate scales with movement skill (XonAim owns combat turning
         // from T4); qport-independent, deterministic.
         let steering = Steering::new(1.0 + (sk.movement() / 10.0).clamp(0.0, 1.0) * 4.0);
+        let ordinal = BOT_ORDINAL.fetch_add(1, Ordering::Relaxed);
         Self {
             sk,
+            rng: Lcg::new(0x584f_4e21 ^ ordinal as u32), // "XON!" + per-bot ordinal
+            cfg,
             roam_nodes: Vec::new(),
             roam_idx: 0,
             nav_graph: None,
             roam_as_position: false,
+            map_items: Vec::new(),
+            item_memory: ItemMemory::new(),
+            goals: XonGoals::new(ordinal as f32 * 0.35),
+            time: 0.0,
+            status: "xon",
             steering,
             recovery: Recovery::new(),
             traverse: TraversalExecutor::new(),
@@ -102,6 +132,46 @@ impl XonBrain {
             };
         }
         NavGoal::Position(pos)
+    }
+
+    /// Run the T2 strategy layer: build this frame's rating context and delegate to
+    /// [`XonGoals::tick`]. Enemies are candidates only when combat is enabled (the
+    /// scenario contract). Returns `(goal, replan_requested)`.
+    fn strategy_goal(
+        &mut self,
+        view: &crate::perception::Worldview,
+        pos: Vec3,
+        dt: f32,
+    ) -> Option<(NavGoal, bool)> {
+        let graph = self.nav_graph.clone()?;
+        let enemies: Vec<(i32, Vec3)> = if self.cfg.combat_enabled {
+            view.entities()
+                .filter(|e| e.class == EntityClass::EnemyPlayer && !e.is_stale)
+                .map(|e| (e.entity_number, e.origin))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let ss = view.self_state();
+        let ctx = RatingCtx {
+            graph: &graph,
+            items: &self.map_items,
+            memory: &self.item_memory,
+            enemies: &enemies,
+            roam_nodes: &self.roam_nodes,
+            pos,
+            health: ss.health as f32,
+            armor: ss.armor as f32,
+            held: ss.held_weapon.unwrap_or(crate::weapons::Weapon::Blaster),
+            now: self.time,
+        };
+        let d = self.goals.tick(&mut self.rng, &self.sk, &ctx, dt)?;
+        self.status = match d.key {
+            goals::GoalKey::Item(_) => "xon-item",
+            goals::GoalKey::Enemy(_) => "xon-enemy",
+            goals::GoalKey::Wander(_) => "xon-wander",
+        };
+        Some((NavGoal::Position(d.goal_pos), d.replan))
     }
 
     /// Drive the injected navigator to `goal` — the canonical path-follow stage (q3's
@@ -210,15 +280,17 @@ impl Brain for XonBrain {
             roam_nodes,
             nav_graph,
             roam_as_position,
-            items: _, // stored by the T2 strategy layer (rating-session candidates)
+            items,
         } = map;
         self.roam_nodes = roam_nodes;
         self.nav_graph = Some(nav_graph);
         self.roam_as_position = roam_as_position;
+        // The static item table feeds the rating sessions (values × ItemMemory availability).
+        self.map_items = items;
     }
 
     fn status(&self) -> &str {
-        "xon"
+        self.status
     }
 
     fn tick(&mut self, ctx: BrainContext) -> BrainOutput {
@@ -230,17 +302,30 @@ impl Brain for XonBrain {
             ticks,
             goal_override,
         } = ctx;
+        self.time += dt;
 
         let pos = view.self_state().origin;
         let health = view.self_state().health;
 
+        // PVS-honest item memory (evidence for goal expiry + candidate availability).
+        self.item_memory.observe(&self.map_items, view, self.time);
+
         let mut mv = MovementIntent::new();
         if let Some(nav) = nav {
             // Scenario / pinned-goal override always path-follows (the spawn-to-* contract);
-            // otherwise the interim roam ladder (T2 replaces this with rating sessions).
+            // otherwise the T2 rating-session strategy picks the goal.
             let goal = match goal_override.clone() {
                 Some(g) => g,
-                None => self.roam_goal(view, ticks, pos),
+                None => match self.strategy_goal(view, pos, dt) {
+                    Some((g, replan)) => {
+                        if replan {
+                            nav.force_replan();
+                        }
+                        g
+                    }
+                    // Nothing ratable (no graph candidates yet) — interim roam ladder.
+                    None => self.roam_goal(view, ticks, pos),
+                },
             };
             self.locomote(nav, cm, pos, goal, dt, view, &mut mv);
         } else {
@@ -301,7 +386,7 @@ mod tests {
 
     #[test]
     fn walks_toward_lookahead() {
-        let mut b = XonBrain::new(XonSkill::default());
+        let mut b = XonBrain::new(XonSkill::default(), BrainConfig::default());
         let view = view0();
         let mut nav = StubNav {
             pursue: Some(Vec3::new(200.0, 0.0, 0.0)),
@@ -322,7 +407,7 @@ mod tests {
 
     #[test]
     fn goal_override_drives_the_navigator() {
-        let mut b = XonBrain::new(XonSkill::default());
+        let mut b = XonBrain::new(XonSkill::default(), BrainConfig::default());
         let view = view0();
         let mut nav = StubNav::default();
         let goal = NavGoal::Position(Vec3::new(7.0, 8.0, 9.0));
@@ -343,7 +428,7 @@ mod tests {
 
     #[test]
     fn no_nav_walks_forward() {
-        let mut b = XonBrain::new(XonSkill::default());
+        let mut b = XonBrain::new(XonSkill::default(), BrainConfig::default());
         let view = view0();
         let out = b.tick(BrainContext {
             view: &view,

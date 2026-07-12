@@ -104,7 +104,7 @@ pub fn build_brain(
             let sk = xonchar
                 .map(XonCharPreset::skill)
                 .unwrap_or_else(|| XonSkill::new(skill.skill.min(10) as f32));
-            Box::new(XonBrain::new(sk))
+            Box::new(XonBrain::new(sk, cfg))
         }
     }
 }
