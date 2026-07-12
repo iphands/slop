@@ -445,6 +445,7 @@ pub(crate) fn mode_tag(mode: crate::NavMode) -> &'static str {
         crate::NavMode::HybridRace => "race",
         crate::NavMode::HybridHier => "hier",
         crate::NavMode::HybridSegment => "segment",
+        crate::NavMode::XonGoal => "xon-goal",
     }
 }
 
@@ -459,6 +460,7 @@ fn mode_code(mode: crate::NavMode) -> &'static str {
         crate::NavMode::HybridRace => "rc",
         crate::NavMode::HybridHier => "hr",
         crate::NavMode::HybridSegment => "sg",
+        crate::NavMode::XonGoal => "xg",
     }
 }
 

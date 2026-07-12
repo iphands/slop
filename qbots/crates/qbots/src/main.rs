@@ -67,13 +67,17 @@ pub enum NavMode {
     /// hybrid-segment — Hybrid: navmesh routes open space, A* owns jump-link segments only.
     #[value(name = "sg", alias = "hybrid-segment")]
     HybridSegment,
+    /// xon-goal — Xonotic route texture over A*: travel-time costs, live danger pricing,
+    /// chase cutover, goal-progress watchdog (Plan 61).
+    #[value(name = "xg", alias = "xon-goal")]
+    XonGoal,
 }
 
 impl NavMode {
     /// True for the backends that need a navmesh built (so the factory can skip building it
     /// for pure `astar`, whose construction is graph-only).
     fn needs_mesh(self) -> bool {
-        !matches!(self, NavMode::Astar)
+        !matches!(self, NavMode::Astar | NavMode::XonGoal)
     }
 }
 
@@ -91,6 +95,7 @@ fn build_navigator(
     let mesh = mode.needs_mesh().then(build_mesh);
     match mode {
         NavMode::Astar => Box::new(brain::NavigationDriver::new(graph)),
+        NavMode::XonGoal => Box::new(brain::XonNavDriver::new(graph)),
         NavMode::Navmesh => Box::new(brain::NavmeshDriver::new(mesh.unwrap(), AGENT_RADIUS)),
         NavMode::HybridFallback => Box::new(brain::hybrid::HybridFallback::new(
             graph,
@@ -1168,6 +1173,34 @@ pub(crate) async fn bot_task(
                             }
                         }
                         last_frags = Some(current_frags);
+
+                        // Plan 61 (`xg`): push this frame's PVS threats into the navigator's
+                        // danger pricing (defaulted no-op on every other backend). Rockets/
+                        // grenades price hot lines; visible enemies price contested ground.
+                        if let Some(nav) = nav_driver.as_mut() {
+                            use brain::EntityClass;
+                            let dangers: Vec<brain::DangerSource> = view
+                                .entities()
+                                .filter(|e| !e.is_stale)
+                                .filter_map(|e| match e.class {
+                                    EntityClass::ProjectileRocket
+                                    | EntityClass::ProjectileGrenade => {
+                                        Some(brain::DangerSource {
+                                            pos: e.origin,
+                                            rating: 300.0,
+                                        })
+                                    }
+                                    EntityClass::EnemyPlayer => Some(brain::DangerSource {
+                                        pos: e.origin,
+                                        rating: 150.0,
+                                    }),
+                                    _ => None,
+                                })
+                                .collect();
+                            if !dangers.is_empty() {
+                                nav.note_dangers(&dangers);
+                            }
+                        }
 
                         // Plan 08 heatmap: observe this frame (presence + obituary
                         // prints), advance decay, and refresh the risk overlay the
