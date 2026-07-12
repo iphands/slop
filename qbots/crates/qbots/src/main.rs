@@ -244,6 +244,11 @@ enum Cmd {
         /// non-`q3` brains. Absent → one default-character `q3` group.
         #[arg(long = "chars", value_enum, value_delimiter = ',')]
         chars: Vec<brain::CharPreset>,
+        /// Xonotic personalities to field for the `xon` brain, comma-separated (e.g.
+        /// `--xonchars rus,shp,trt,nob`). Each becomes its own group/skin. Ignored by
+        /// non-`xon` brains. Absent → one neutral `xon` group.
+        #[arg(long = "xonchars", value_enum, value_delimiter = ',')]
+        xonchars: Vec<brain::XonCharPreset>,
         /// Base qport; group `g` bot `i` uses `base + g*count + i` (disjoint per-group blocks,
         /// group = a (mode,brain[,char]) tuple). Per-process default if omitted.
         #[arg(long)]
@@ -2114,6 +2119,7 @@ async fn main() -> ExitCode {
             modes,
             brains,
             chars,
+            xonchars,
             qport_base,
             loose_botcap,
         } => {
@@ -2168,6 +2174,7 @@ async fn main() -> ExitCode {
                 modes,
                 brains,
                 chars,
+                xonchars,
                 count,
                 qport_base,
                 skins_per_mode,

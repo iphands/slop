@@ -315,14 +315,16 @@ pub async fn run_fleet(
         let qport = qport_base.wrapping_add(i as u16);
         // A selected Q3 character pins its recognizable skin; else draw once per bot (kept
         // across reconnects); `None` keeps the userinfo default.
+        let xonchar = cfg.fleet.xonchar_preset();
         let bot_skin = char
             .map(|q| q.skin().to_string())
+            .or_else(|| xonchar.map(|x| x.skin().to_string()))
             .or_else(|| skin.per_bot(&mut skin_rng));
         let cfg = Arc::clone(&cfg);
         let shared = shared.clone();
         tasks.push(tokio::spawn(async move {
             bot_supervisor_loop(
-                addr, name, qport, bot_skin, cfg, shared, reconnect, mode, brain, char,
+                addr, name, qport, bot_skin, cfg, shared, reconnect, mode, brain, char, xonchar,
             )
             .await;
         }));
@@ -477,6 +479,48 @@ fn brain_code(brain: brain::BrainKind) -> &'static str {
     }
 }
 
+/// The per-group personality axis: q3 groups may carry a Q3 character, xon groups an
+/// Xonotic character; every other brain has none (Plan 62 T1).
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum GroupChar {
+    None,
+    Q3(brain::CharPreset),
+    Xon(brain::XonCharPreset),
+}
+
+impl GroupChar {
+    fn q3(self) -> Option<brain::CharPreset> {
+        match self {
+            GroupChar::Q3(c) => Some(c),
+            _ => None,
+        }
+    }
+    fn xon(self) -> Option<brain::XonCharPreset> {
+        match self {
+            GroupChar::Xon(x) => Some(x),
+            _ => None,
+        }
+    }
+    fn skin(self) -> Option<String> {
+        match self {
+            GroupChar::Q3(c) => Some(c.skin().to_string()),
+            GroupChar::Xon(x) => Some(x.skin().to_string()),
+            GroupChar::None => None,
+        }
+    }
+}
+
+/// 3-char code for an Xonotic character (xon brain only) — same 15-char-name budget as
+/// [`char_code`]. The full name is [`brain::XonCharPreset::tag`].
+fn xon_char_code(x: brain::XonCharPreset) -> &'static str {
+    match x {
+        brain::XonCharPreset::Rusher => "rus",
+        brain::XonCharPreset::Sharp => "shp",
+        brain::XonCharPreset::Turtle => "trt",
+        brain::XonCharPreset::Noob => "nob",
+    }
+}
+
 /// 3-char code for a Q3 character (q3 brain only), used in competition bot names (see
 /// [`mode_code`]). The full, log-facing name is [`brain::CharPreset::tag`].
 fn char_code(char: brain::CharPreset) -> &'static str {
@@ -502,6 +546,7 @@ pub async fn run_competition(
     modes: Vec<crate::NavMode>,
     brains: Vec<brain::BrainKind>,
     chars: Vec<brain::CharPreset>,
+    xonchars: Vec<brain::XonCharPreset>,
     per_group_count: usize,
     qport_base_override: Option<u16>,
     skins_per_mode: Vec<Option<String>>,
@@ -515,11 +560,13 @@ pub async fn run_competition(
     // bots for the full cross product. The `char` axis only expands the `q3` brain (others get a
     // single `None` sub-group). Group tags are `<mode>_<brain>[_<char>]` (see `group_tag`).
     // The Q3 personalities that expand a brain into sub-groups (`[None]` = the default character).
-    let chars_for = |bk: brain::BrainKind| -> Vec<Option<brain::CharPreset>> {
+    let chars_for = |bk: brain::BrainKind| -> Vec<GroupChar> {
         if bk == brain::BrainKind::Quake3 && !chars.is_empty() {
-            chars.iter().map(|&c| Some(c)).collect()
+            chars.iter().map(|&c| GroupChar::Q3(c)).collect()
+        } else if bk == brain::BrainKind::Xon && !xonchars.is_empty() {
+            xonchars.iter().map(|&x| GroupChar::Xon(x)).collect()
         } else {
-            vec![None]
+            vec![GroupChar::None]
         }
     };
     let groups_per_mode: usize = brains.iter().map(|&b| chars_for(b).len()).sum();
@@ -572,7 +619,7 @@ pub async fn run_competition(
     );
     // Bot names use short codes to fit Q2's 15-char limit; print the legend so the
     // scoreboard's `mai_as`-style tags are readable.
-    log_competition_legend(&modes, &brains, &chars);
+    log_competition_legend(&modes, &brains, &chars, &xonchars);
 
     // Stable group ordering (mode-major, brain-minor) → contiguous, disjoint qport blocks.
     // `group_tags` is the scoreboard's grouping key list, in the same order.
@@ -582,12 +629,10 @@ pub async fn run_competition(
     for (mi, &mode) in modes.iter().enumerate() {
         let mode_skin = skins_per_mode.get(mi).cloned().flatten();
         for &bk in &brains {
-            for char in chars_for(bk) {
-                let tag = group_tag(mode, bk, char);
-                // A named Q3 character wears its own recognizable skin; else the per-mode skin.
-                let skin = char
-                    .map(|q| q.skin().to_string())
-                    .or_else(|| mode_skin.clone());
+            for gc in chars_for(bk) {
+                let tag = group_tag(mode, bk, gc);
+                // A named character wears its own recognizable skin; else the per-mode skin.
+                let skin = gc.skin().or_else(|| mode_skin.clone());
                 group_tags.push(tag.clone());
                 tracing::info!(group = %tag, skin = ?skin, count = per_group_count, "competitor entering");
                 for i in 0..per_group_count {
@@ -598,7 +643,17 @@ pub async fn run_competition(
                     let shared = shared.clone();
                     tasks.push(tokio::spawn(async move {
                         bot_supervisor_loop(
-                            addr, name, qport, bot_skin, cfg, shared, reconnect, mode, bk, char,
+                            addr,
+                            name,
+                            qport,
+                            bot_skin,
+                            cfg,
+                            shared,
+                            reconnect,
+                            mode,
+                            bk,
+                            gc.q3(),
+                            gc.xon(),
                         )
                         .await;
                     }));
@@ -641,6 +696,7 @@ fn log_competition_legend(
     modes: &[crate::NavMode],
     brains: &[brain::BrainKind],
     chars: &[brain::CharPreset],
+    xonchars: &[brain::XonCharPreset],
 ) {
     let join = |pairs: Vec<String>| pairs.join(", ");
     let brain_leg = join(
@@ -666,6 +722,15 @@ fn log_competition_legend(
         );
         tracing::info!("name-code legend — char:  {char_leg}");
     }
+    if !xonchars.is_empty() {
+        let xc_leg = join(
+            xonchars
+                .iter()
+                .map(|&x| format!("{}={}", xon_char_code(x), x.tag()))
+                .collect(),
+        );
+        tracing::info!("name-code legend — xonchar: {xc_leg}");
+    }
 }
 
 /// The scoreboard grouping tag for a `(mode, brain, char?)` group: short brain code first,
@@ -673,14 +738,18 @@ fn log_competition_legend(
 /// `<brain>_<mode>[_<char>]` (e.g. `mai_as`, `q3_rc`, `q3_rc_gru`). Short codes keep the
 /// `<tag>_<i>` bot name inside Q2's 15-char `netname` limit. Every token is `_`-free, so the
 /// name still index-splits on its trailing `_` in [`mode_scoreboard`].
-fn group_tag(
-    mode: crate::NavMode,
-    brain: brain::BrainKind,
-    char: Option<brain::CharPreset>,
-) -> String {
-    match char {
-        Some(c) => format!("{}_{}_{}", brain_code(brain), mode_code(mode), char_code(c)),
-        None => format!("{}_{}", brain_code(brain), mode_code(mode)),
+fn group_tag(mode: crate::NavMode, brain: brain::BrainKind, gc: GroupChar) -> String {
+    match gc {
+        GroupChar::Q3(c) => format!("{}_{}_{}", brain_code(brain), mode_code(mode), char_code(c)),
+        GroupChar::Xon(x) => {
+            format!(
+                "{}_{}_{}",
+                brain_code(brain),
+                mode_code(mode),
+                xon_char_code(x)
+            )
+        }
+        GroupChar::None => format!("{}_{}", brain_code(brain), mode_code(mode)),
     }
 }
 
@@ -760,6 +829,7 @@ async fn bot_supervisor_loop(
     mode: crate::NavMode,
     brain: brain::BrainKind,
     char: Option<brain::CharPreset>,
+    xonchar: Option<brain::XonCharPreset>,
 ) {
     let mut attempts: u32 = 0;
     let mut backoff_ms: u64 = 1000;
@@ -780,7 +850,7 @@ async fn bot_supervisor_loop(
             brain,
             char,
             None, // TODO(P27): per-bot fleet persona from config
-            None, // per-bot fleet xonchar lands with the Plan 62 roster
+            xonchar,
         )
         .await
         {
@@ -934,26 +1004,37 @@ mod tests {
         use crate::NavMode;
         use brain::{BrainKind, CharPreset};
         // Brain code first, then nav-plan code, then optional character code; underscore-joined.
-        assert_eq!(group_tag(NavMode::Astar, BrainKind::Main, None), "mai_as");
         assert_eq!(
-            group_tag(NavMode::HybridRace, BrainKind::Quake3, None),
+            group_tag(NavMode::Astar, BrainKind::Main, GroupChar::None),
+            "mai_as"
+        );
+        assert_eq!(
+            group_tag(NavMode::HybridRace, BrainKind::Quake3, GroupChar::None),
             "q3_rc"
         );
         assert_eq!(
             group_tag(
                 NavMode::HybridRace,
                 BrainKind::Quake3,
-                Some(CharPreset::Grunt)
+                GroupChar::Q3(CharPreset::Grunt)
             ),
             "q3_rc_gru"
         );
         assert_eq!(
-            group_tag(NavMode::Navmesh, BrainKind::Sentry, None),
+            group_tag(NavMode::Navmesh, BrainKind::Sentry, GroupChar::None),
             "sen_nm"
         );
         assert_eq!(
-            group_tag(NavMode::HybridFallback, BrainKind::Zb2, None),
+            group_tag(NavMode::HybridFallback, BrainKind::Zb2, GroupChar::None),
             "zb2_fb"
+        );
+        assert_eq!(
+            group_tag(
+                NavMode::XonGoal,
+                BrainKind::Xon,
+                GroupChar::Xon(brain::XonCharPreset::Rusher)
+            ),
+            "xon_xg_rus"
         );
     }
 
@@ -961,10 +1042,19 @@ mod tests {
     /// even at a two-digit (or three-digit) bot index — the whole point of the short codes.
     #[test]
     fn every_competition_name_fits_15_chars() {
-        use brain::{BrainKind, CharPreset};
+        use brain::{BrainKind, CharPreset, XonCharPreset};
         use clap::ValueEnum;
-        let chars: Vec<Option<CharPreset>> = std::iter::once(None)
-            .chain(CharPreset::value_variants().iter().map(|&c| Some(c)))
+        let chars: Vec<GroupChar> = std::iter::once(GroupChar::None)
+            .chain(
+                CharPreset::value_variants()
+                    .iter()
+                    .map(|&c| GroupChar::Q3(c)),
+            )
+            .chain(
+                XonCharPreset::value_variants()
+                    .iter()
+                    .map(|&x| GroupChar::Xon(x)),
+            )
             .collect();
         for &mode in crate::NavMode::value_variants() {
             for &brain in BrainKind::value_variants() {

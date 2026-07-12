@@ -54,6 +54,9 @@ pub struct Fleet {
     /// Q3 personality for the fleet when `brain = "q3"`: `grunt`/`major`/`sarge`/`camper`.
     /// `None`/absent → the skill-derived default character. CLI `--char` overrides this.
     pub char: Option<String>,
+    /// Xonotic personality for `xon`-brain fleet bots (`rus`/`shp`/`trt`/`nob` or long names;
+    /// Plan 62). `None`/absent → a neutral XonSkill at the master skill level.
+    pub xonchar: Option<String>,
 }
 
 impl Default for Fleet {
@@ -69,6 +72,7 @@ impl Default for Fleet {
             connect_timeout_ms: 10_000,
             brain: None,
             char: None,
+            xonchar: None,
         }
     }
 }
@@ -102,6 +106,21 @@ impl Fleet {
                 .map(Some)
                 .unwrap_or_else(|_| {
                     tracing::warn!(char = s, "unknown [fleet].char; ignoring");
+                    None
+                }),
+        }
+    }
+
+    /// Parse the configured `xonchar` string into an `XonCharPreset` (same contract as
+    /// [`Self::char_preset`]).
+    pub fn xonchar_preset(&self) -> Option<brain::XonCharPreset> {
+        use clap::ValueEnum;
+        match self.xonchar.as_deref() {
+            None => None,
+            Some(s) => brain::XonCharPreset::from_str(s, true)
+                .map(Some)
+                .unwrap_or_else(|_| {
+                    tracing::warn!(xonchar = s, "unknown [fleet].xonchar; ignoring");
                     None
                 }),
         }
