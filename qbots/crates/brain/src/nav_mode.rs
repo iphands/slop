@@ -11,6 +11,15 @@ use world::CollisionModel;
 
 use crate::nav::NavGoal;
 
+/// A live threat a navigator may price routes around (Plan 61 `xg`): a PVS-observed
+/// projectile or contested spot. `rating` is the danger radius in world units — nodes
+/// inside it gain up to `rating` of additive path cost (linear falloff).
+#[derive(Debug, Clone, Copy)]
+pub struct DangerSource {
+    pub pos: Vec3,
+    pub rating: f32,
+}
+
 /// The navigation interface the scenario / bot tick loop depends on.
 pub trait Navigator {
     /// Set or update the goal; replans only when the goal changes or the path is exhausted.
@@ -69,6 +78,10 @@ pub trait Navigator {
     fn speed_scale(&self, _pos: Vec3) -> f32 {
         1.0
     }
+
+    /// Push this frame's PVS-observed threats (Plan 61): a danger-pricing backend (`xg`)
+    /// folds them into its path costs; every other backend ignores them (no-op default).
+    fn note_dangers(&mut self, _dangers: &[DangerSource]) {}
 }
 
 /// A scriptable `Navigator` stub for deterministic brain tests (no nav graph / server needed).

@@ -37,6 +37,7 @@ pub mod water;
 pub mod weapons;
 pub mod xonchar;
 pub mod xoncore;
+pub mod xonnav;
 
 // The brain plugin contract + bundled I/O (Plan 23). The root `Brain` is the **trait** (the
 // binary drives a `Box<dyn Brain>` via `build_brain`); the concrete `main` impl is `MainBrain`
@@ -51,7 +52,7 @@ pub use danger::{DangerDriver, DodgeAction};
 pub use heatmap::Heatmap;
 pub use move_ctrl::{MovementController, MovementIntent};
 pub use nav::{NavGoal, NavigationDriver};
-pub use nav_mode::Navigator;
+pub use nav_mode::{DangerSource, Navigator};
 pub use navmesh_driver::NavmeshDriver;
 pub use observed::{parse_obituary, HeatmapObserver, HeatmapSnapshot, Obituary};
 pub use perception::{EntityClass, PerceivedEntity, SelfState, Worldview};
@@ -64,6 +65,7 @@ pub use skill::{BotSkill, Personality, SkillLevel, SkillRegistry};
 pub use stall::{StallEpisode, StallMonitor, StallSample};
 pub use weapons::Weapon;
 pub use xonchar::{XonCharPreset, XonSkill};
+pub use xonnav::XonNavDriver;
 
 #[cfg(test)]
 mod tests {
