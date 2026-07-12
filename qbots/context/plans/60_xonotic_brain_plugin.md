@@ -2,7 +2,7 @@
 
 > **Status**: pending
 > **Created**: 2026-07-11
-> **Depends on**: Plan 58 (shared locomotion), Plan 59 (xoncore primitives), Plan 46 (traversal), Plan 48/49/50 (hazard + acquisition)
+> **Depends on**: Plan 59 (xoncore primitives), Plan 46 (traversal), Plan 48/49/50 (hazard + acquisition). (Plan 58's shared `follow_path` was abandoned — see its row in SERIES; `xon` carries its own locomote copy following q3's shape, `q3/mod.rs` `locomote`.)
 > **Goal**: A full Xonotic-havocbot-derived brain (`--brain xon`) — goal-stack strategy with rating-driven goal selection, evidence-based re-planning, Xonotic weapon choice + weapon combos, the XonAim dynamical system, and keyboard-emulated movement — sharing ALL traversal/hazard/locomotion infrastructure with the other brains.
 > **Agent**: implementation agent (ralph-loop)
 
@@ -13,7 +13,7 @@
 
 ## TL;DR
 
-**What**: Assemble `XonBrain` from the Plan 59 primitives on top of the Plan 58 shared locomotion stage; wire it as a first-class `BrainKind` and prove it with spawn-to-* scenarios and live competition.
+**What**: Assemble `XonBrain` from the Plan 59 primitives on q3's locomotion shape (own `locomote` copy delegating to the shared Steering/Recovery/TraversalExecutor/hazard modules); wire it as a first-class `BrainKind` and prove it with spawn-to-* scenarios and live competition.
 
 **Deliverables**:
 1. `crates/brain/src/brains/xon/mod.rs` — `XonBrain` implementing `trait Brain` (honors `goal_override`, `combat_enabled=false`, `intent_forward`).
@@ -36,9 +36,9 @@ What makes `xon` different from our existing brains (distilled §9): a single sm
 
 | Piece | Decision |
 |---|---|
-| Path following | **Reuse** `brain::locomotion::follow_path` (Plan 58) — no fifth copy |
+| Path following | **Copy q3's `locomote` shape** (Plan 58 abandoned) — steer/creep/recovery/jump/traverse in the proven order, delegating to the shared modules |
 | Traversal (swim/ride/ladder/lift/air) | **Reuse** `TraversalExecutor` (mandatory, Plan 46/31/32) |
-| Hazard gates + lava override | **Reuse** `hazard::*` + `lava_override` (Plan 48/50/58) |
+| Hazard gates + lava override | **Reuse** `hazard::*` (Plan 48/50); lava-escape caller glue copied from q3 |
 | Stuck recovery | **Reuse** `Recovery`/`StuckDetector`; Xonotic's 0.5 s progress watchdog is ADDITIONAL, at the goal level |
 | Item respawn inference | **Reuse** `items::ItemMemory` (Plan 30) — it implements distilled §2 "item timing" already |
 | Goal selection | **Reimplement** — the rating session IS the brain (xoncore::rating + flood_costs) |
@@ -58,7 +58,7 @@ What makes `xon` different from our existing brains (distilled §9): a single sm
 
 **Files**: `crates/brain/src/brains/xon/mod.rs` (new), `crates/brain/src/brains/mod.rs`, `crates/qbots/src/main.rs`, `crates/qbots/src/supervisor.rs`, `crates/qbots/src/config.rs`
 
-**What to do**: `XonBrain { skill: XonSkill, steering, recovery, traverse, goals: XonGoals (stub), aim: XonAim, keyboard: KeyboardEmu, rng: SmallRng, ... }`. Tick v1: honor `goal_override` → `locomotion::follow_path` → `hazard::lava_override`; else roam via shared `roam::roam_goal`. Wire everything NOW so every later task is live-testable: `BrainKind` variant `#[value(name="xon", alias="xonotic")]`, `brain_tag` arm, `build_brain` arm (accepts an `Option<XonCharPreset>` following the q3 `char` pattern — widen the factory param or add a parallel arg, decide at impl and note in tracker), `brain_code` → `"xon"` (supervisor.rs:467-476), competition acceptance (do NOT reject like runtester).
+**What to do**: `XonBrain { skill: XonSkill, steering, recovery, traverse, goals: XonGoals (stub), aim: XonAim, keyboard: KeyboardEmu, rng: SmallRng, ... }`. Tick v1: honor `goal_override` → own `locomote` (q3's shape: pursue_target_safe → change_yaw → creep_scale → gates → recovery w/ safe_strafe_dir → jump-edge → traverse.apply) → the lava-escape override block (q3/mod.rs:916-938 shape); else roam (q3's roam_goal shape). Wire everything NOW so every later task is live-testable: `BrainKind` variant `#[value(name="xon", alias="xonotic")]`, `brain_tag` arm, `build_brain` arm (accepts an `Option<XonCharPreset>` following the q3 `char` pattern — widen the factory param or add a parallel arg, decide at impl and note in tracker), `brain_code` → `"xon"` (supervisor.rs:467-476), competition acceptance (do NOT reject like runtester).
 
 **Verify live**: `connect-one --brain xon` connects, roams, no panics; `spawn-to-spawn --map q2dm1 --brain xon` exit 0.
 

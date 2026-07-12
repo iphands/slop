@@ -13,10 +13,10 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 > (46 before 35's live re-checks so all brains can exercise the fixed routes; 27 can land
 > any time before 33; 44 is diversity, not core; 47 closes the series.)
 >
-> **Active set (Xonotic series, added 2026-07-11):** `58` → `59` → `60` ∥ `61` → `62`.
-> 58 (shared locomotion DRY pass) must land before 60 so `xon` isn't a fifth copy of the
-> path-follow block; 61 (`xg` navmode) only needs 59 and can run parallel to 60; 62 closes.
-> Research: `context/distilled/xonotic.md`.
+> **Active set (Xonotic series, added 2026-07-11):** `59` → `60` ∥ `61` → `62`.
+> (58, the shared-locomotion DRY pass, was abandoned the same day — see its row; `xon`
+> carries its own locomote copy following q3's shape.) 61 (`xg` navmode) only needs 59 and
+> can run parallel to 60; 62 closes. Research: `context/distilled/xonotic.md`.
 
 | Plan | Title | Depends on | Status | Milestone / Notes |
 |------|-------|-----------|--------|-------------------|
@@ -73,7 +73,7 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 | **37** | Quake 3 brain plugin (`q3`) | 36, 24, 25 | done | `Q3Brain` (`BrainKind::Quake3`, `--brain q3`) — Q3's node FSM (Seek_LTG/NBG, Battle_Fight/Chase/Retreat/NBG; `ai_dmnet.c`) with aggression-gated retreat/chase, Q3 enemy selection (alertness range, awareness FOV, LOS, sneak-past), and the Q3 aim/fire model (per-weapon accuracy, reaction-time sight gate, fire-throttle duty cycle, radial ground-aim, self-preservation abort, circle-strafe + jump dodge). Reuses `Navigator`/`steer`/`recover`/`los`; injected nav, no `MainBrain` fork. **Closed 2026-06-19** — live q2dm1 A/B: q3 K/D 2.00 vs main 0.75; pure-q3 fleet 9 frags/90s, 0 panics/kicks. Needed a Q2 **blaster-floor** in `bot_aggression` (healthy bot engages on the start weapon). Research: `context/distilled/quake3.md` §1, §4–7. |
 | **38** | Quake 3 personality roster + tuning | 37, 21 | done | Turn `q3` into a selectable roster of named Q3 characters (`--q3char`/`[fleet].q3char`/`competition --q3chars`) with distinct skins/names. **Closed 2026-06-19** — `Q3CharPreset` (grunt/major/sarge/camper) threaded through `build_brain`/CLI/config/competition; live q2dm1 tuning shows an intentional spread (major K/D 5.00, sarge 1.25, camper 1.00, grunt 0.00) so presets stand as-is. Observed-inventory upgrade (T3) **deferred** — the Plan 37 blaster-floor already makes held-weapon aggression competitive. Reference shapes: `vendor/Quake-III-Arena/.../bots/*.c` (distilled, not committed). |
 | **57** | Ack-on-frame send re-phasing (drop ping to ≈RTT) | 09, 22, 51 | done | **Closed 2026-07-11.** Q2 ping = avg over 16 frames of `(recv of our clc_move acking frame N) − (senttime of frame N)` (`sv_user.c:686-696`, `sv_main.c:131-164`) — it folds in the client's OWN reply delay. Our free-running 10 Hz send added ~50 ms of self-inflicted phase. Fix: ack the `clc_move` the instant a `svc_frame` decodes (recv-arm detects `serverframe` change), demote the 100 ms timer to a 90 ms-gated keepalive; new `client::SendTiming` (`EVT send_timing`) measures the phase. Send rate + per-packet `msec` unchanged (dedupe guards the 2× double-send) ⇒ movement byte-identical. **Live q2dm1:** scoreboard 50–80 ms → **16 ms**; self-measured phase **ema=0.0/max=0.0**, sends ~10/s, 0 kicks. `scenario.rs` opted out (Plan 10–14 baselines). |
-| **58** | Shared locomotion extraction (`brain::locomotion`) | 46, 48, 50, 51 | pending | Behavior-preserving DRY pass: one `follow_path` stage + shared `lava_override`/`roam_goal`; main/q3/zb2/runtester delegate. Prerequisite so Plan 60's `xon` isn't a fifth copy. Live no-regression matrix per brain (s2s/swim/ride). |
+| **58** | Shared locomotion extraction (`brain::locomotion`) | 46, 48, 50, 51 | skipped | **Abandoned 2026-07-11** (moved to `abandoned/`): runtester/q3/main migrations live-verified in-family, but zb2's regressed (0/3 scenario reach) and the user chose revert+skip over debugging — Xonotic series first. Plan 60's `xon` carries its own locomote copy (q3's shape). Reopenable later. |
 | **59** | Xonotic character + core primitives (`xonchar`, `xoncore`) | 23, 05 | pending | Pure, unit-tested havocbot primitives (Plan 36 pattern): 12-axis additive `XonSkill` + presets, `route_rating`+Q2 item eval, `XonAim` (filter cascade / mouse-think / fire cone), keyboard quantizer, `NavGraph::flood_costs`. Additive only. Research: `context/distilled/xonotic.md`. |
 | **60** | **Xonotic brain plugin** (`xon`) | 58, 59, 46, 48/49/50 | pending | Goal-stack strategy (7 s rating sessions over one Dijkstra flood + evidence-based expiry + 0.5 s progress watchdog), sticky enemy selection w/ Plan 49 damage-widen, far/mid/close weapon lists + mid-refire combos, XonAim aim/fire, flight-path dodge, keyboard movement texture — all on shared locomotion/traversal. Proof: spawn-to-* matrix + live competition vs mai/q3. |
 | **61** | Xonotic goal-stack **navmode** (`xg`) | 20, 08, 59 | pending | `XonNavDriver` wrapping the A* driver (any brain × `xg`): travel-time edge costs (swim ×1/0.7, falls = free-fall time), 0.25 s PVS danger field summed into path costs (composes with the heatmap overlay), ≤700 u chase cutover, goal-progress watchdog. Runtime pricing only — no cache bump. Parallel-safe with 60. |
@@ -150,9 +150,6 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
   10 Hz timer, so the scoreboard ping shows ≈ true RTT (live 50–80 ms → 16 ms) instead of
   RTT + ~50 ms of self-inflicted send phase — send rate and movement unchanged.
 
-- After **58**: the path-follow stage (steer → hazard → gates → recovery → jump → traverse)
-  exists exactly once (`brain::locomotion::follow_path`); all four brains delegate; lava-override
-  glue and roam-goal ladders are shared.
 - After **59**: Xonotic's decision math (rating formula + item eval, XonAim dynamical system,
   keyboard quantizer, 12-axis personality) exists as pure, pinned-constant primitives, plus a
   single-source `flood_costs` on `NavGraph`.

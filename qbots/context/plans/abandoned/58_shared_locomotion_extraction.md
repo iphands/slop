@@ -1,6 +1,13 @@
 # Plan 58 — Shared locomotion extraction (`brain::locomotion`)
 
-> **Status**: pending
+> **Status**: abandoned (2026-07-11) — user call after T5 live checks: the runtester/q3/main
+> migrations verified in-family live, but the zb2 migration regressed its scenario runs
+> (0/3 reached incl. a short 2868u draw w/ 177 hindered frames) and the user chose to revert
+> the whole extraction (commits b088ca05d..cf762f539 reset) and skip 58 rather than debug it —
+> priority is the Xonotic series (59–62). The `xon` brain (Plan 60) carries its own locomote
+> copy following q3's shape instead. If reopened: the T1 module design + per-copy diff notes
+> are in this file's history (session 2026-07-11); the zb2 divergence to investigate is its
+> post-stage watchdog/combat-re-expression interaction.
 > **Created**: 2026-07-11
 > **Depends on**: Plan 46 (traversal executor), 48/50 (hazard gates), 51 (stall fixes)
 > **Goal**: Extract the four near-identical path-following blocks (main/q3/zb2/runtester) into one shared `brain::locomotion::follow_path`, plus promote the duplicated lava-escape caller glue and roam-goal ladder — so the upcoming `xon` brain (Plan 60) lands on shared code instead of becoming a fifth copy.
