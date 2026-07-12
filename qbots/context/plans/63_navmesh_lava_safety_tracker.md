@@ -1,9 +1,17 @@
 # Navmesh lava safety (q2dm6) — Tracker
 
 ## Overview
-- Status: 0% complete
+- Status: 15% complete (T1 done; T4 code+tests done pending commit order)
 - Start date: 2026-07-12
-- Baseline (T1, to fill): lava env_suicides = ?, share of deaths = ?, per brain/navmode
+- **Baseline (T1, 2026-07-12, 305s, 32 bots, q2dm6, pre-fix build)**: **273 lava + 1 squish
+  env_suicides** = ~8.5 lava/bot/5min; lava = **51% of all 531 deaths**. Every group hit
+  (env 9–25 per 2-bot group; worst q3_nm_sar 25, xon_sg_rus 22). Log:
+  `logs/63_T1_baseline2_q2dm6.log`. NB: first soak (`63_T1_baseline_q2dm6.log`) read env=0 —
+  the classifier missed the server's trailing period (`"%s %s.\n"`, client.c:495); fixed in
+  `876373add` before this true baseline.
+- Red tests (pre-fix): span audit RED (1 deadly span), drop audit RED (**17/5348 drops land
+  in/skid into lava** — drops are the dominant entry mechanism, matching Plan 50's
+  every-entry-is-a-fall finding).
 - Gate: lava+slime env_suicides ≤ 2 per bot per 5 min AND < 5% of deaths
 
 ## Resume Instructions
