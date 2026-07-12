@@ -819,6 +819,51 @@ impl NavGraph {
         self.path_inner(start, goal, |_| 0.0)
     }
 
+    /// Single-source Dijkstra flood: the best travel cost from `from` to EVERY node
+    /// (`f32::INFINITY` = unreachable, including everything when `from` is out of range).
+    ///
+    /// The Xonotic-style rating session's primitive (Plan 59 T5): havocbot floods the graph
+    /// ONCE per goal-rating session (`navigation_markroutes`, `navigation.qc:1082-1169`) and
+    /// then rates N candidates against the per-node costs, instead of running N point
+    /// queries. Costs are in the same units as the graph's edge costs (the `path*` family).
+    /// Runtime-only — no mapcache format impact.
+    pub fn flood_costs(&self, from: usize) -> Vec<f32> {
+        self.flood_costs_weighted(from, &[])
+    }
+
+    /// [`Self::flood_costs`] with the same per-node **additive cost overlay** semantics as
+    /// [`Self::path_weighted`]: edge cost `cur→nb` = `(base_cost + overlay[cur]).max(EPS)`;
+    /// missing overlay entries read 0.
+    pub fn flood_costs_weighted(&self, from: usize, overlay: &[f32]) -> Vec<f32> {
+        let n = self.nodes.len();
+        let mut g = vec![f32::INFINITY; n];
+        if from >= n {
+            return g;
+        }
+        let mut closed = vec![false; n];
+        g[from] = 0.0;
+        let mut open: BinaryHeap<Reverse<(FOrd, usize)>> = BinaryHeap::new();
+        open.push(Reverse((FOrd(0.0), from)));
+        while let Some(Reverse((_, cur))) = open.pop() {
+            if closed[cur] {
+                continue;
+            }
+            closed[cur] = true;
+            let add = overlay.get(cur).copied().unwrap_or(0.0);
+            for &(nb, cost) in &self.adj[cur] {
+                if closed[nb] {
+                    continue;
+                }
+                let ng = g[cur] + (cost + add).max(EPS);
+                if ng < g[nb] {
+                    g[nb] = ng;
+                    open.push(Reverse((FOrd(ng), nb)));
+                }
+            }
+        }
+        g
+    }
+
     /// A* path from `start` to `goal` with a per-node **additive cost overlay**
     /// added to each edge leaving a node (Plan 08 T3): edge cost `cur→nb` =
     /// `(base_cost + overlay[cur]).max(EPS)`. A positive overlay (danger) makes a
@@ -2356,6 +2401,63 @@ mod tests {
             vec![vec![], vec![]], // no edges
         );
         assert!(g.path(0, 1).is_none());
+    }
+
+    /// Plan 59 T5: the single-source flood returns per-node best costs matching the edge
+    /// sums, ∞ for disconnected components, and honors the additive overlay exactly like
+    /// `path_weighted`.
+    #[test]
+    fn flood_costs_line_graph_and_unreachable() {
+        // 0 —64— 1 —64— 2, plus a disconnected node 3.
+        let g = NavGraph::from_raw(
+            vec![
+                [0.0, 0.0, 0.0],
+                [64.0, 0.0, 0.0],
+                [128.0, 0.0, 0.0],
+                [999.0, 0.0, 0.0],
+            ],
+            vec![
+                vec![(1, 64.0)],
+                vec![(0, 64.0), (2, 64.0)],
+                vec![(1, 64.0)],
+                vec![],
+            ],
+        );
+        let c = g.flood_costs(0);
+        assert_eq!(c[0], 0.0);
+        assert_eq!(c[1], 64.0);
+        assert_eq!(c[2], 128.0);
+        assert_eq!(c[3], f32::INFINITY);
+        // Out-of-range source → everything unreachable, no panic.
+        assert!(g.flood_costs(99).iter().all(|&x| x == f32::INFINITY));
+    }
+
+    /// The flood must pick the cheaper of two routes, and an overlay on the cheap route's
+    /// middle node must flip the choice — same relaxation as `path_weighted`.
+    #[test]
+    fn flood_costs_weighted_reroutes() {
+        // Diamond: 0→1→3 costs 10+10; 0→2→3 costs 15+15.
+        let g = NavGraph::from_raw(
+            vec![
+                [0.0, 0.0, 0.0],
+                [10.0, 10.0, 0.0],
+                [10.0, -10.0, 0.0],
+                [20.0, 0.0, 0.0],
+            ],
+            vec![
+                vec![(1, 10.0), (2, 15.0)],
+                vec![(0, 10.0), (3, 10.0)],
+                vec![(0, 15.0), (3, 15.0)],
+                vec![(1, 10.0), (2, 15.0)],
+            ],
+        );
+        assert_eq!(g.flood_costs(0)[3], 20.0);
+        // Danger on node 1: leaving it now costs +100 → the 30-cost route wins.
+        let mut overlay = vec![0.0; 4];
+        overlay[1] = 100.0;
+        assert_eq!(g.flood_costs_weighted(0, &overlay)[3], 30.0);
+        // Parity with path_weighted's route choice.
+        assert_eq!(g.path_weighted(0, 3, &overlay).unwrap(), vec![0, 2, 3]);
     }
 
     /// Plan 39: a water channel between two dry ledges. `generate` must sample water nodes,
