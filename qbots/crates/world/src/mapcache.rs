@@ -80,7 +80,10 @@ const MAGIC: &[u8; 7] = b"QBNAVC2";
 // nodes — base64's drain duct), spawn-rescue jump pass (`RESCUE_MAX_FALL`), and teleporter
 // edges (`EdgeKind::Teleport`, serialized after the ride edges). Node + edge sets change
 // and the format grows a teleport section → regen.
-const VERSION: u8 = 24;
+// Version 25: (Plan 63) `landing_strip_deadly`'s down-probe deepens 72→96u (q2dm6 basin
+// channels sit 64–96u under landing lips — a skid off the strip still fell into lava).
+// Jump/drop edge sets change → regen.
+const VERSION: u8 = 25;
 
 /// Generation-constant + BSP-structural snapshot for cache invalidation.
 #[derive(Debug, Clone, PartialEq)]

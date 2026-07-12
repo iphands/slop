@@ -81,7 +81,10 @@ pub fn landing_strip_deadly(cm: &CollisionModel, base: [f32; 3], dir: [f32; 2]) 
         if cm.point_contents(&p) & (CONTENTS_LAVA | CONTENTS_SLIME) != 0 {
             return true;
         }
-        let down = [p[0], p[1], p[2] - 72.0];
+        // 96 below the strip point (was 72 pre-Plan-63): q2dm6's basin channels sit
+        // 64–96u under the landing lip, so a skid off the strip still ends in lava.
+        // Matches `segment_has_floor`'s FLOOR_PROBE step-down horizon.
+        let down = [p[0], p[1], p[2] - 96.0];
         let t = cm.trace(&p, &down, &zero, &zero, MASK_SOLID);
         if !t.startsolid && t.fraction < 1.0 && floor_is_deadly(cm, &t.endpos) {
             return true;

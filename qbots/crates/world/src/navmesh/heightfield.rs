@@ -14,7 +14,7 @@
 use rayon::prelude::*;
 
 use crate::collision::{CollisionModel, MASK_SOLID, MASK_WATER};
-use crate::deadly::floor_is_deadly;
+use crate::deadly::{floor_is_deadly, landing_strip_deadly};
 use crate::navgraph::STEP;
 
 /// Build-time voxelization parameters. `cell_size` is a *resolution* knob (finer = more
@@ -181,10 +181,15 @@ impl Heightfield {
                         let bot = [top[0], top[1], nz - 24.0];
                         let t = cm.trace(&top, &bot, &zero, &zero, MASK_SOLID);
                         if !t.startsolid && (t.endpos[2] - (nz - 24.0)).abs() < STEP {
-                            out.push((
-                                self.cell_center(ix as usize, iy as usize, z),
-                                self.cell_center(nxi as usize, nyi as usize, nz),
-                            ));
+                            // Landing + 0–48u momentum-overshoot strip must not touch
+                            // lava/slime (Plan 50 E3, ported from the A* jump/drop
+                            // builders in Plan 63): the bot arrives with fall momentum
+                            // and skids past the landing cell.
+                            let landing = self.cell_center(nxi as usize, nyi as usize, nz);
+                            if landing_strip_deadly(cm, landing, [dx as f32, dy as f32]) {
+                                continue;
+                            }
+                            out.push((self.cell_center(ix as usize, iy as usize, z), landing));
                         }
                     }
                 }
