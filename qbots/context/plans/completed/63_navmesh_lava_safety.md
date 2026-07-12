@@ -1,6 +1,6 @@
 # Plan 63 — Navmesh lava safety (q2dm6 lava suicides → near zero)
 
-> **Status**: pending
+> **Status**: done (2026-07-12; T6 gate revised — user accepted the measured combat-knockback floor)
 > **Created**: 2026-07-12
 > **Depends on**: Plan 48 (A* lava fixes), Plan 50 (jump-landing fixes), Plan 20 (navmesh/hybrids)
 > **Goal**: Eliminate lava/slime suicides on navmesh-backed navmodes (`nm`, `sg`, and the other hybrids) by porting the Plan 48/50 deadly-floor validation into the heightfield/navmesh builder and closing the driver-level fallback gaps — measured live on q2dm6 with the new `EVT env_suicide` counters.
