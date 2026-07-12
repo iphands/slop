@@ -1311,7 +1311,7 @@ pub(crate) async fn bot_task(
                                 } else {
                                     -1
                                 };
-                                tracing::info!(
+                                tracing::debug!(
                                     bot = name,
                                     secs = %format!("{:.1}", ep.secs),
                                     speed = ep.mean_speed as i32,
@@ -1382,7 +1382,7 @@ pub(crate) async fn bot_task(
                     // that slipped past ~40 ms (a starved loop / a stalled frame stream).
                     let st = send_timing.snapshot();
                     if st.sends > 0 {
-                        tracing::info!(
+                        tracing::debug!(
                             bot = name,
                             ema = %format!("{:.1}", st.ema_ms),
                             max = %format!("{:.1}", st.max_ms),

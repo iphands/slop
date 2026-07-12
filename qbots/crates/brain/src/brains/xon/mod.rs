@@ -561,7 +561,7 @@ impl Brain for XonBrain {
                 mv.jump();
                 mv.up = 1.0;
                 let vel = view.self_state().velocity;
-                tracing::info!(
+                tracing::debug!(
                     x = pos.x as i32,
                     y = pos.y as i32,
                     z = pos.z as i32,

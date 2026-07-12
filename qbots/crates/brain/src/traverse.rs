@@ -153,7 +153,7 @@ impl TraversalExecutor {
                     'L' => "ladder",
                     _ => "ride",
                 };
-                tracing::info!(kind, "EVT traverse done");
+                tracing::debug!(kind, "EVT traverse done");
             }
         }
         TraversalGates {
@@ -165,7 +165,7 @@ impl TraversalExecutor {
     /// The server dealt us damage underwater that combat can't explain — drown damage. Re-sync
     /// the air clock to "out of air" so the surface-seek engages immediately (Plan 32 Risk #1).
     pub fn on_underwater_damage(&mut self) {
-        tracing::info!("EVT drown"); // Plan 47 T1 counter: the acceptance gate wants this at ZERO
+        tracing::debug!("EVT drown"); // Plan 47 T1 counter: the acceptance gate wants this at ZERO
         self.air.on_unexplained_damage();
     }
 
@@ -419,14 +419,14 @@ impl TraversalExecutor {
                     LiftPhase::Enter => {
                         if occupied {
                             // Someone claimed it while we approached — yield.
-                            tracing::info!("EVT lift_yield reason=occupied");
+                            tracing::debug!("EVT lift_yield reason=occupied");
                             self.lift_phase = LiftPhase::BackOff;
                             self.lift_timer = 0.0;
                             intent_forward = go(mv, standoff);
                         } else if self.lift_timer > 5.0 {
                             // The pad never lifted us — someone unseen is pinning it up. Leaving
                             // the trigger volume is what allows it to come down.
-                            tracing::info!("EVT lift_yield reason=pinned");
+                            tracing::debug!("EVT lift_yield reason=pinned");
                             self.lift_phase = LiftPhase::BackOff;
                             self.lift_timer = 0.0;
                             intent_forward = go(mv, standoff);

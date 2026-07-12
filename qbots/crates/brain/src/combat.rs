@@ -201,7 +201,7 @@ impl CombatDriver {
             self.held_weapon = desired;
             // EVT counter (Plan 47 T1): weapon switch + the engagement range that drove it —
             // greppable proof of "switches weapons for close/far combat".
-            tracing::info!(
+            tracing::debug!(
                 weapon = desired.name(),
                 dist = distance as i32,
                 "EVT switch"

@@ -143,7 +143,9 @@ explicitly re-baseline with a written rationale.
 
 ## Behavior counters (T1) — greppable `EVT` events
 
-`grep -c "EVT <name>"` over any competition/fleet log:
+`grep -c "EVT <name>"` over any competition/fleet log. EVT lines are emitted at
+**debug** level (moved from info 2026-07-12) — run with `RUST_LOG=debug` (or
+`RUST_LOG=info,brain=debug,qbots=debug`) when collecting counters:
 `EVT switch weapon=<w> dist=<d>` · `EVT chase start|convert|abort reason=…` ·
 `EVT traverse done kind=swim|ride|ladder` · `EVT drown` (gate: zero).
 Pickup counters + FleetStats aggregation deferred (no direct wire signal for pickups).

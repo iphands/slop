@@ -622,7 +622,7 @@ impl Brain for Zb2Brain {
                             .progress
                             .stalled(route.current_waypoint(), (pt - pos).length(), dt)
                         {
-                            tracing::info!(
+                            tracing::debug!(
                                 wp = ?route.current_waypoint(),
                                 x = pos.x as i32,
                                 y = pos.y as i32,
@@ -731,7 +731,7 @@ impl Brain for Zb2Brain {
                 mv.up = 1.0;
                 intent_forward = 1.0;
                 let vel = view.self_state().velocity;
-                tracing::info!(
+                tracing::debug!(
                     x = pos.x as i32,
                     y = pos.y as i32,
                     z = pos.z as i32,

@@ -393,7 +393,7 @@ impl crate::brains::core::Brain for MainBrain {
                 if self.chasing {
                     // EVT counter (Plan 47 T1): we chased a lost target through the map and
                     // re-acquired LOS — the "chased for the kill" conversion.
-                    tracing::info!(target, "EVT chase convert");
+                    tracing::debug!(target, "EVT chase convert");
                     self.chasing = false;
                 }
                 if !matches!(self.fsm, BehaviorState::Engage { .. }) {
@@ -423,9 +423,9 @@ impl crate::brains::core::Brain for MainBrain {
                 if quit_chase {
                     // EVT counters (Plan 47 T1): chase abort, with the reason.
                     if third_party {
-                        tracing::info!(target = ?combat_dec.target_entity, "EVT chase abort reason=third_party");
+                        tracing::debug!(target = ?combat_dec.target_entity, "EVT chase abort reason=third_party");
                     } else {
-                        tracing::info!("EVT chase abort reason=losing");
+                        tracing::debug!("EVT chase abort reason=losing");
                     }
                     self.chasing = false;
                     BehaviorIntent {
@@ -434,7 +434,7 @@ impl crate::brains::core::Brain for MainBrain {
                     }
                 } else {
                     if !self.chasing {
-                        tracing::info!(target = ?combat_dec.target_entity, "EVT chase start");
+                        tracing::debug!(target = ?combat_dec.target_entity, "EVT chase start");
                         self.chasing = true;
                     }
                     self.fsm.tick(view, cm) // chase the last-known pos
@@ -831,7 +831,7 @@ impl crate::brains::core::Brain for MainBrain {
                 mv.jump();
                 mv.up = 1.0;
                 let vel = view.self_state().velocity;
-                tracing::info!(
+                tracing::debug!(
                     x = pos.x as i32,
                     y = pos.y as i32,
                     z = pos.z as i32,
