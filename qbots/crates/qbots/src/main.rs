@@ -650,13 +650,29 @@ where
             abbreviate_level(*event.metadata().level(), self.ansi)
         };
 
+        // Prefix the enclosing span chain's fields (e.g. the per-bot `bot{name=…}` span)
+        // so fleet logs are per-bot attributable (Plan 09 T3 — the fields were recorded
+        // but never printed until Plan 63's telemetry work needed them).
+        let mut spans = String::new();
+        if let Some(scope) = ctx.event_scope() {
+            for span in scope.from_root() {
+                let ext = span.extensions();
+                if let Some(f) = ext.get::<tracing_subscriber::fmt::FormattedFields<N>>() {
+                    if !f.is_empty() {
+                        use std::fmt::Write as _;
+                        let _ = write!(spans, "[{f}] ");
+                    }
+                }
+            }
+        }
+
         // Format the event's fields into a buffer (the dedup key + the emit body).
         let mut fields = String::new();
         ctx.field_format().format_fields(
             tracing_subscriber::fmt::format::Writer::new(&mut fields),
             event,
         )?;
-        let key = format!("{level} {fields}");
+        let key = format!("{level} {spans}{fields}");
 
         // Hold the lock across decision + write so interleaved threads can't tear
         // a line or corrupt the run state.
@@ -670,7 +686,7 @@ where
                 }
                 let secs = elapsed.as_secs();
                 let millis = elapsed.subsec_millis();
-                writeln!(writer, "{secs:04}.{millis:03} {level} {fields}")
+                writeln!(writer, "{secs:04}.{millis:03} {level} {spans}{fields}")
             }
         }
     }
@@ -1986,6 +2002,10 @@ async fn main() -> ExitCode {
         .with_timer(ElapsedFormatter(start_time))
         .with_target(false)
         .with_thread_ids(false)
+        // Span fields (the `[name=… qport=…]` prefix) are formatted at span-record time
+        // by the LAYER's field formatter — align its ANSI mode with the event formatter's
+        // or piped logs get escape codes inside the brackets.
+        .with_ansi(ansi)
         .event_format(AbbreviatedFormat::new(start_time, ansi))
         .init();
 
