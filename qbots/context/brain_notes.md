@@ -804,3 +804,37 @@ the data indicts. All soaks: noir.lan:27910 q2dm3, 305 s,
   acceptance. Follow-up candidates parked in tracker/notes: xon default-skill/aim tuning
   (shp evidence), GL ballistic arc, real-RTT aim latency, edge-kind-aware weighted API for
   fall-time pricing, q2dm3/q2dm2 formal matrix batches.
+
+## 2026-07-12 — Plan 63: q2dm6 lava suicides — mesh cleaned, the residual is combat physics
+
+User report: `competition --brains q3,xon --navmodes nm,sg` on q2dm6 (Lava Tomb) = "a ton
+of bots falling in lava". New measurement first (this session): `EVT env_suicide` WARN +
+per-cause FleetStats + scoreboard `env=` column, classified from obituary prints — which
+found its own bug on the first soak: self-death obituaries end with a PERIOD
+(`"%s %s.\n"`, client.c:495); the exact-matcher read env=0 against 533 deaths (pitfalls).
+
+True baseline: **273 lava suicides / 5 min / 32 bots — 51% of ALL deaths** (~8.5/bot).
+
+- **Nav-data layer (T2–T3, cache v25/v26)**: the navmesh builder had NONE of the Plan 48/50
+  lava validation (`floor_is_deadly`/`landing_strip_deadly` were *private* to navgraph.rs —
+  the enabler). Extracted to `world::deadly`, wired into `column_floors` + `find_drops`;
+  strip probes now any-depth (512u) + perpendicular rays. Red→green pak tests
+  (`lava_navmesh_q2dm6.rs`): 1 deadly span + 17/5348 deadly drops → 0 + 0.
+- **Driver layer (T4)**: shared `pursuit::steer_line_safe`; NavmeshDriver's fallback vertex
+  validated (`None` = hold, StuckDetector replans) — fixes nm/fb/race/sg through one
+  driver; xg's 700u cutover was only lava-probing 24/48u → `segment_has_floor`.
+- **Live effect of all of that: FLAT** (282→267). Instrument-first (Plan 50's lesson)
+  then found the real mechanism: per-bot-attributed telemetry (fixed two logging bugs to
+  get it: span fields were never printed, and `span.enter()` across awaits cross-tagged
+  bots) showed **81% of lava entries take damage in the prior 1.5 s** and fatal-per-entry
+  ≈100% (sheer 100–280u basin walls — escape can't climb; q2dm3 was 55%). It's rocket
+  juggling at walkway rims, not routing.
+- **Combat layer**: `hazard::rim_pressure` (8-dir inward push near deadly rims) folded
+  into all four brains' combat legs → **205 (−23%), lava share 40%, K/D up**. A further
+  hit-reflex (full inward on damage ticks) + q3 jump-dodge rim gate measured flat (214).
+
+**Honest residual**: ~200/5min at 32-bot density is a combat-knockback floor on a map
+that is mostly lava. Options if "near zero" stands: engagement-denial near rims (refuse
+rim duels — real behavior distortion), heatmap risk overlay for the navmesh backend
+(`set_risk_overlay` is a no-op there), or accept the floor. Plan 63 T6 left in-progress
+pending that decision.

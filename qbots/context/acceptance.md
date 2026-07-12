@@ -145,7 +145,12 @@ explicitly re-baseline with a written rationale.
 
 `grep -c "EVT <name>"` over any competition/fleet log. EVT lines are emitted at
 **debug** level (moved from info 2026-07-12) — run with `RUST_LOG=debug` (or
-`RUST_LOG=info,brain=debug,qbots=debug`) when collecting counters:
+`RUST_LOG=info,brain=debug,qbots=debug`) when collecting counters.
+**Exception:** `EVT env_suicide kind=lava|slime|drown|squish|falling|trigger_hurt`
+(Plan 63) is a **warn** — visible at default `RUST_LOG=info`. Per-bot/per-cause
+tallies aggregate in `FleetStats`; the competition scoreboard carries an `env=`
+column per group and the final fleet stats print `[lava:N …]` breakdowns. Gate
+(Plan 63, q2dm6): lava+slime ≤ 2/bot/5min and < 5% of deaths:
 `EVT switch weapon=<w> dist=<d>` · `EVT chase start|convert|abort reason=…` ·
 `EVT traverse done kind=swim|ride|ladder` · `EVT drown` (gate: zero).
 Pickup counters + FleetStats aggregation deferred (no direct wire signal for pickups).

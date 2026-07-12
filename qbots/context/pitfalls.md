@@ -1138,3 +1138,38 @@ should collapse to true RTT. Live q2dm1: 50–80 ms → 16 ms, phase 0.0 ms.
 - qbots: crates/client/src/send_timing.rs (`SendTiming` phase-delay measurement)
 - qbots: crates/client/src/conn.rs (`run` reference loop, same re-phasing)
 - qbots: context/plans/completed/57_ack_on_frame_ping.md
+
+# Safety fixes must land in BOTH nav builders — a private primitive guarantees divergence
+Plans 48/50 taught the A* graph builder that `MASK_SOLID` floor probes see a lava bed as
+walkable floor, and fixed it at node sampling, walk edges, stair treads, and jump/drop
+landings. The navmesh builder (`nm`, and via dispatch `fb`/`race`/`sg`) got NONE of that:
+its only liquid check was one `point_contents` at floor+24, so lava ≤24u deep was walkable
+mesh and `find_drops` validated nothing — on q2dm6 that produced **273 lava suicides in a
+5-minute 32-bot soak (51% of all deaths)**. The root enabler: `floor_is_deadly` and
+`landing_strip_deadly` were *private to navgraph.rs*, so the heightfield author literally
+could not call them. Fix shape: extract shared primitives to `world::deadly` (navgraph
+re-exports keep old import paths alive), call them from BOTH builders, and share the
+runtime line predicate (`pursuit::steer_line_safe`) while keeping each driver's *fallback
+policy* separate (A*'s graph-node fallback is safe by construction and must stay
+unvalidated; the navmesh's funnel vertex must be validated, else hold). When adding any
+new world-safety probe, grep for the OTHER builder before calling it done.
+## Sources
+- qbots: crates/world/src/deadly.rs (the shared primitives)
+- qbots: crates/world/src/navmesh/heightfield.rs (`column_floors`, `find_drops`)
+- qbots: crates/brain/src/pursuit.rs (`steer_line_safe`)
+- qbots: context/plans/63_navmesh_lava_safety.md (all-navmode audit table)
+
+# Q2 self-death obituaries end with a period — exact-match parsers silently read zero
+Environmental/self obituaries print as `"%s %s.\n"` (`game/player/client.c:495`) — "qb1
+does a back flip into the lava**.**" — while attacker obituaries use the period-less
+`"%s %s %s%s\n"` (client.c:586). An exact whole-line matcher built from the message table
+(client.c:391-429, no periods in the table) matches NOTHING, and the failure mode is a
+plausible-looking zero (our first q2dm6 baseline read env=0 against 533 deaths, ~half of
+them lava). Always verify a wire-text parser against LIVE traffic before trusting its
+counters: log the raw drained `svc_print` lines at debug (`bot_task` does this now) and
+eyeball one real event of each class. Strip a trailing `.` after the name+space prefix;
+keep matching the un-punctuated message table.
+## Sources
+- qbots: crates/brain/src/observed.rs (`classify_env_death`)
+- qbots: crates/qbots/src/main.rs (`bot_task` svc_print debug log)
+- qbots: vendor/yquake2/src/game/player/client.c:495 (the format string)
