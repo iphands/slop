@@ -30,10 +30,10 @@ internal constants in §4) is a code-level default that requires editing the sou
 
 | Switch | Where | Values | Default |
 |--------|-------|--------|---------|
-| `--brain <kind>` | `connect-one`, `run` | `main` \| `sentry` \| `runtester` \| `q3` | `main` (`run`: `[fleet].brain`) |
+| `--brain <kind>` | `connect-one`, `run` | `main` \| `sentry` \| `runtester` \| `q3` \| `zb2` \| `xon` | `main` (`run`: `[fleet].brain`) |
 | `--brain <kind>` | `spawn-to-spawn`, `spawn-to-weapon` | `runtester` \| `main` (A/B pathing; combat forced off) | `runtester` |
 | `--brains a,b,…` | `competition` | comma list; **`runtester` rejected** (non-combat) | `main` |
-| `[fleet].brain` | `config.yaml` | `"main"` \| `"sentry"` \| `"runtester"` \| `"q3"` | `main` |
+| `[fleet].brain` | `config.yaml` | `"main"` \| `"sentry"` \| `"runtester"` \| `"q3"` \| `"zb2"` \| `"xon"` | `main` |
 
 ### Q3 personality (only affects `--brain q3`)
 
@@ -42,6 +42,24 @@ internal constants in §4) is a code-level default that requires editing the sou
 | `--char <name>` | `connect-one`, `run` | `grunt` \| `major` \| `sarge` \| `camper` | skill-derived (`Q3Character::from_skill(5)`) |
 | `--chars a,b,…` | `competition` | comma list; fields one group/skin per character | one default-character `q3` group |
 | `[fleet].char` | `config.yaml` | `"grunt"` \| `"major"` \| `"sarge"` \| `"camper"` | skill-derived |
+
+### Xonotic personality (only affects `--brain xon`; Plans 59–62)
+
+| Switch | Where | Values | Default |
+|--------|-------|--------|---------|
+| `--xonchar <name>` | `connect-one` | `rus`(rusher) \| `shp`(sharp) \| `trt`(turtle) \| `nob`(noob) | neutral `XonSkill` at master skill |
+| `--xonchars a,b,…` | `competition` | comma list; one group/skin per preset (only expands `xon`) | one neutral `xon` group |
+| `[fleet].xonchar` | `config.yaml` | same names | neutral |
+
+`xon` (Plan 60, `context/distilled/xonotic.md`) is the Xonotic-havocbot brain: one smooth
+goal objective (`value·rangebias/(rangebias+travel_time)` over items/enemies/wander, one
+Dijkstra flood per 7 s session), evidence-based re-planning (observed pickups, progress
+watchdog, 3 s ignore list), sticky nearest-visible enemy, far/mid/close weapon lists with
+mid-refire combos + a probe-and-learn inventory, the `XonAim` dynamical system (5-filter
+anticipation cascade, mouse-think, `1000/(dist−9)−0.35` fire cone, burst timer), flight-path
+projectile dodge, and keyboard-emulated movement. Personality = a 12-axis additive `XonSkill`
+(`xonchar.rs`); tuning history in `context/mode_perf.md` (2026-07-11). The `xg` navmode
+(Plan 61, `xonnav.rs`) carries the matching route texture and works with EVERY brain.
 
 A selected character also pins a recognizable **skin** (grunt→`male/grunt`, major→`male/major`,
 sarge→`male/sarge`, camper→`female/athena`). Non-`q3` brains ignore `--char`.

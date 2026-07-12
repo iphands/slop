@@ -785,3 +785,22 @@ the data indicts. All soaks: noir.lan:27910 q2dm3, 305 s,
   (ride 2/2 beating the control, the session's only quad reach, A/B kd 0.17 ≥ 0.06).
 - Deferred: fall-time pricing of jump-downs (the per-node overlay can't see edge kinds — an
   edge-kind-aware `path_weighted` variant is the follow-up if wanted).
+
+## 2026-07-11 — Plan 62: xon roster, tuning & acceptance (CLOSED — the Xonotic series ends)
+
+- **T1**: `--xonchars` (competition), `[fleet].xonchar`, `--xonchar` (connect-one);
+  `GroupChar` axis (None/Q3/Xon) in the competition group loop; `xon_xg_rus_N` names fit the
+  15-char budget; per-preset skins + legend. Live: 4 distinct groups on the scoreboard.
+- **T2**: `acceptance matrix --navmode` passthrough; q2dm1 batches PASS (xon 2/3 swim gate,
+  runtester+xg 2/3). q2dm3/q2dm2 formal batches pending operator map flips (manual q2dm3
+  evidence already in mode_perf).
+- **T3** (N=3 + post-tune verify, table in mode_perf): presets distinguishable beyond the q3
+  control's ±0.5 noise floor; **shp reaches q3's band** (won a run at kd 4.67) — aim skill was
+  the gap. Tuned: rusher aim −1→+1 (was feeding), turtle skill 4→5 (was fodder → 1.33).
+- **T4 SKIPPED with evidence**: no rating-session CPU/timing signal in any soak up to 10 bots
+  (one flood per bot per 7 s, ordinal-staggered at construction) — the fleet strategy token
+  isn't needed at current scale.
+- **Series wrap (59→62)**: `xoncore` primitives → `xon` brain → `xg` navmode → roster/
+  acceptance. Follow-up candidates parked in tracker/notes: xon default-skill/aim tuning
+  (shp evidence), GL ballistic arc, real-RTT aim latency, edge-kind-aware weighted API for
+  fall-time pricing, q2dm3/q2dm2 formal matrix batches.

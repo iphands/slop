@@ -1,6 +1,6 @@
 # Plan 62 — Xonotic roster, tuning & acceptance (capstone)
 
-> **Status**: pending
+> **Status**: done (2026-07-11; T4 skipped with evidence)
 > **Created**: 2026-07-11
 > **Depends on**: Plan 60 (`xon` brain), Plan 61 (`xg` navmode), Plan 21 (competition), Plan 47 (acceptance suite)
 > **Goal**: Field `xon` as a roster of named 12-axis personalities selectable in fleet/competition, fold `xon` and `xg` into the Plan 47 acceptance matrix with a recorded baseline, and run the live tuning loop.

@@ -77,10 +77,13 @@ qbots status                         # query server (map + player list) — the 
 ```
 
 `run` and `connect-one` honor `--addr`, `--qport`/`--qport-base`, `--navmode` (nav backend,
-see below), and `--brain` (decision plugin: `main` default, `sentry`, `runtester`, or `q3` —
-the Quake 3-derived node-FSM brain; independent of `--navmode`). With `--brain q3`,
+see below), and `--brain` (decision plugin: `main` default, `sentry`, `runtester`, `q3` —
+the Quake 3-derived node-FSM brain, `zb2` — the 3ZB2 committed-route brain, or `xon` — the
+Xonotic-havocbot goal-rating brain; independent of `--navmode`). With `--brain q3`,
 `--char <grunt|major|sarge|camper>` (and `[fleet].char`) pick a named Q3 personality (each
-with its own skin); absent → a skill-derived default character. `run` adds skin selection
+with its own skin); absent → a skill-derived default character. With `--brain xon`,
+`--xonchar <rus|shp|trt|nob>` (and `[fleet].xonchar`) pick a named 12-axis Xonotic
+personality the same way. `run` adds skin selection
 (`--skin model/skin`, `--skin-random-male`,
 `--skin-random-female`) and `--name`/`--count` overrides.
 
@@ -128,12 +131,14 @@ navigation backend. The steering loop is identical for all; only the path source
 | `hybrid-race` | plan both per goal, run the cheaper-scoring one to completion |
 | `hybrid-hier` | navmesh picks the corridor, A* executes a sliding local sub-goal |
 | `hybrid-segment` | navmesh routes open space, A* owns jump-link segments only |
+| `xon-goal` (`xg`) | Xonotic route texture over A*: swim travel-time pricing, live PVS danger field, 700u chase cutover, goal-progress watchdog (Plan 61) |
 
 The `navmesh` and `hybrid-*` modes require the navmesh to be available (built lazily from
 the map cache). `competition` spawns bots for every `--navmode` (× `--brains`) at once and
 prints a per-group frag scoreboard (e.g. `qbots competition --navmodes astar,navmesh
 --brains main,q3 --count 2`). `--chars grunt,major,sarge,camper` fields the whole Q3 roster
-(one group/skin per character; only expands the `q3` brain).
+(one group/skin per character; only expands the `q3` brain), and `--xonchars rus,shp,trt,nob`
+does the same for the `xon` brain (Plan 62).
 
 ---
 

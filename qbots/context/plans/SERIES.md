@@ -77,7 +77,7 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 | **59** | Xonotic character + core primitives (`xonchar`, `xoncore`) | 23, 05 | done | **Closed 2026-07-11.** Pure, unit-tested havocbot primitives (Plan 36 pattern): 12-axis additive `XonSkill` + 4 presets (rus/shp/trt/nob), `xoncore::rating` (routerating + Q2 pickupeval + enemy/wander), `XonAim` (bad-aim offset / 5-stage anticipation cascade / mouse-think / turn law / fire cone+bursts / lead — vendor `int f` regression corrected to float), `KeyboardEmu` quantizer, `NavGraph::flood_costs(_weighted)` (no cache bump). 27 seeded tests; additive-only (no brain touched). Distillation ammo-formula fix. Research: `context/distilled/xonotic.md`. |
 | **60** | **Xonotic brain plugin** (`xon`) | 59, 46, 48/49/50 | done | **Closed 2026-07-11.** `--brain xon` (+`--xonchar`): goal-stack rating sessions (one flood; evidence expiry + progress watchdog + 3 s ignore), sticky nearest-visible enemy (full-sphere, subsumes Plan 49), weapon lists + combos + probe-and-learn inventory, XonAim aim/fire (shared `would_self_splash` promoted from q3), flight-path dodge, keepaway, keyboard texture. Live: q2dm1 s2s 3/4 + swim; q2dm3 railgun-1 ride (123 `P` frames); competition q2dm1 kd 0.35 (tuning → 62) but **q2dm3 kd 0.60 beats q3 0.30**, 0 drownings/panics. Deferred: GL ballistic arc, real-RTT latency. |
 | **61** | Xonotic goal-stack **navmode** (`xg`) | 20, 08, 59 | done | **Closed 2026-07-11.** `XonNavDriver` over A* (any brain × `xg`): swim travel-time pricing, PVS danger field via new defaulted `Navigator::note_dangers` (heatmap overlay SUMMED), 700 u chase cutover (hull+hazard-gated), goal-progress watchdog. Live: q2dm1 parity w/ `as` (matched-draw 13.06 vs 13.64 s); q2dm3 BETTER (ride 2/2 faster than control, the session's only quad reach, A/B kd 0.17 ≥ 0.06; 0 drowns/panics). Deferred: fall-time edge pricing (needs edge-kind-aware weighted API). |
-| **62** | Xonotic roster, tuning & acceptance (series capstone) | 60, 61, 21, 47 | pending | `--xonchars` roster on all surfaces, xon/xg rows in the Plan 47 acceptance matrix w/ recorded baseline, N≥3-run preset tuning with control noise floor; optional fleet strategy token if rating sessions cluster. Closes 58–62. |
+| **62** | Xonotic roster, tuning & acceptance (series capstone) | 60, 61, 21, 47 | done | **Closed 2026-07-11 — the Xonotic series (59–62) complete.** `--xonchars`/`[fleet].xonchar` roster (GroupChar axis, 15-char names, per-preset skins+legend); `acceptance matrix --navmode` passthrough + q2dm1 batches PASS (xon 2/3 swim, xg 2/3); N=3 tuning w/ q3 control: presets distinguishable, **shp reaches q3's band** (aim was the gap), rusher/turtle re-tuned w/ evidence. Strategy token SKIPPED w/ evidence (no timing signal ≤10 bots). q2dm3/q2dm2 formal matrix batches = operator-assisted follow-up. |
 
 **Milestones**
 - After **03**: a bot connects and shows in the server's player list.
@@ -159,8 +159,9 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 - After **61** (done): any brain can run `--navmode xg` — travel-time costs, a live PVS danger
   field in path pricing, chase cutover, and a progress watchdog — reach parity vs `as` on
   q2dm1 and an outright advantage on q2dm3.
-- After **62**: xon is a tuned roster of named personalities in fleet/competition, and xon/xg
-  are rows in the Plan 47 acceptance matrix with a recorded baseline — the Xonotic series closed.
+- After **62** (done): xon is a tuned roster of named personalities in fleet/competition
+  (sharp duels in q3's band), and xon/xg run in the Plan 47 acceptance matrix with a recorded
+  q2dm1 baseline — the Xonotic series (59–62) closed 2026-07-11, all in one day.
 
 > **Brain-notes discipline (Plans 23–33, 36–38, 40, 43, 58–62):** every brain plan appends a dated section to
 > `context/brain_notes.md` (running log, same shape as `map_errors.notes.log.md`). It is a
