@@ -86,8 +86,8 @@ export interface MapClock {
  */
 export interface BeaconStatus {
   /**
-   * Is a beacon configured at all? When false, nothing else here means anything and the UI
-   * should show nothing — nagging "disconnected" about a feature nobody enabled is noise.
+   * Is a beacon configured at all? When false, nothing else in here means anything — but the UI
+   * still says so out loud, because a missing indicator is indistinguishable from a broken one.
    */
   enabled: boolean;
   /** Is the unix socket to qbots open right now? */

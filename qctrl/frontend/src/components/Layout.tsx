@@ -12,8 +12,7 @@ export function Layout({ children }: LayoutProps) {
       <header className="p-4 border-b border-gray-700 flex items-center justify-between">
         <h1 className="text-xl font-bold">qctrl</h1>
         {/* The beacon sits next to the countdown because it is *about* the countdown: it is what
-            makes it a measurement rather than an inference. It renders nothing at all when no
-            qbots beacon is configured. */}
+            makes it a measurement rather than an inference. */}
         <div className="flex items-center gap-2">
           <BeaconIndicator />
           <MapCountdown variant="chip" />

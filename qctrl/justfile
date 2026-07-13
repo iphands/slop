@@ -11,9 +11,28 @@ nm_env := env_var_or_default("QCTRL_ENV", `. /etc/os-release 2>/dev/null; echo "
 # NOTE: use node 22 (see frontend/.nvmrc). Gentoo's system node 24.14 SIGSEGVs inside
 # vite — `npm ci`, `vite build` and `vitest` all die with no output. Node 22 runs all
 # three clean. `just fe-node-check` tells you which node you're on.
+#
+# So: if nvm has a node 22, put it in front of PATH for every fe-* recipe. This used to be a
+# recipe you had to remember to run, which meant the failure mode was `just fe-build` dying
+# with a bare "terminated by signal 11" and no clue that node was the problem.
+nvm_node22 := `ls -d "$HOME"/.nvm/versions/node/v22.*/bin 2>/dev/null | sort -V | tail -1`
+export PATH := if nvm_node22 == "" { env_var("PATH") } else { nvm_node22 + ":" + env_var("PATH") }
+
+# Refuse to run the frontend toolchain on a node that will segfault. A loud error beats a
+# signal 11 with no output — the build is not broken, the interpreter is.
+_node:
+    #!/usr/bin/env bash
+    major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+    if [ "$major" -ge 24 ]; then
+        echo "ERROR: node v$(node -v | tr -d v) segfaults (signal 11) inside vite and vitest on" >&2
+        echo "       this host, with no output. Your code is fine; the interpreter dies." >&2
+        echo "       Use node 22 (frontend/.nvmrc): nvm install 22" >&2
+        echo "       (just prefers \$HOME/.nvm/versions/node/v22.*/bin automatically when present.)" >&2
+        exit 1
+    fi
 
 # Ensure frontend/node_modules points at the per-env tree (installs on first use)
-_nm:
+_nm: _node
     #!/usr/bin/env bash
     set -euo pipefail
     cd frontend

@@ -6,3 +6,9 @@ server:
 paths:
   server_cfg: /mnt/noir/scratch/games/q2/baseq2/server.cfg
   baseq2: /mnt/noir/scratch/games/q2/baseq2
+
+# Exact map clock from a co-located qbots fleet: qbots relays the server's frame counter
+# (serverframe / 10 = age of the running map) over this unix socket. Feature is off when the
+# block is absent. qbots' side needs `beacon.enabled: true` + the same socket_path.
+frames:
+  socket_path: /tmp/qbots-beacon.sock

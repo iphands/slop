@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { display } from '../BeaconIndicator';
-import type { BeaconStatus } from '../../lib/api';
+import { beaconDisplay as display } from '../beacon';
+import type { BeaconStatus } from '../api';
 
 function beacon(overrides: Partial<BeaconStatus> = {}): BeaconStatus {
   return {
@@ -12,15 +12,22 @@ function beacon(overrides: Partial<BeaconStatus> = {}): BeaconStatus {
   };
 }
 
-describe('BeaconIndicator display', () => {
-  it('shows nothing when no beacon is configured', () => {
-    // Most deployments have no qbots. A red "disconnected" badge for a feature nobody turned
-    // on is nagging, not information.
-    expect(display(beacon({ enabled: false }))).toBeNull();
+describe('beaconDisplay', () => {
+  /**
+   * An earlier version returned null here, so the chip vanished when no beacon was configured.
+   * That made the one question this component exists to answer — "is the beacon on?" —
+   * unanswerable: an absent indicator looks exactly like a broken one. Off is a state.
+   */
+  it('shows a quiet off state when no beacon is configured', () => {
+    const d = display(beacon({ enabled: false }));
+    expect(d.text).toBe('off');
+    expect(d.tone).toBe('off');
+    // And it says how to turn it on, rather than just sitting there grey.
+    expect(d.title).toMatch(/socket_path/);
   });
 
-  it('shows nothing when the backend predates the beacon field', () => {
-    expect(display(undefined)).toBeNull();
+  it('shows off when the backend predates the beacon field', () => {
+    expect(display(undefined).text).toBe('off');
   });
 
   it('reports disconnected when the socket is down', () => {
