@@ -36,10 +36,14 @@ This document tracks the dependency chain and status of all plans for the qctrl 
 | 09 | Settings Persistence | `done` | 01 |
 | 10 | Final Testing & Polish | `done` | 01-09 |
 | 11 | Deployment Setup | `done` | 10 |
+| 12 | sv_maplist Resilience + Empty-Map Guards | `in-progress` | 11 |
 
-## All Plans Complete! ✅
+## Post-1.0 Plans
 
-All 11 plans have been successfully completed. The qctrl project is production-ready.
+Plans 01–11 shipped the production qctrl. Plan 12 (2026-07-12) hardens the server
+against the `maps/.bsp` crash: continuous `sv_maplist` re-sync + empty-map guards
+at the API and frontend layers. Incident forensics live in the qbots repo
+(`../qbots/context/plans/64_map_change_survival_tracker.md`).
 
 ## Execution Order
 
