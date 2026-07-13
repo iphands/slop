@@ -799,9 +799,22 @@ struct ModeScore {
     bots: usize,
 }
 
+impl ModeScore {
+    /// Kill/death ratio; a death-less group scores its raw kill count (the
+    /// display convention the board has always used).
+    fn kd(&self) -> f32 {
+        if self.deaths > 0 {
+            self.kills as f32 / self.deaths as f32
+        } else {
+            self.kills as f32
+        }
+    }
+}
+
 /// Group the fleet's per-bot tallies by the `<group_tag>_<i>` name prefix and sum kills/deaths,
 /// seeding every competing group (from `group_tags`) so a frag-less group still shows. Returned
-/// ranked by kills desc (then tag) — pure, so the scoreboard formatting is unit-testable.
+/// ranked by K/D desc, then kills desc (efficiency first, volume as tiebreak), then tag —
+/// pure, so the scoreboard formatting is unit-testable.
 fn mode_scoreboard(stats: &FleetStats, group_tags: &[String]) -> Vec<ModeScore> {
     use std::collections::HashMap;
     let mut by_tag: HashMap<String, (u64, u64, u64, usize)> = HashMap::new();
@@ -829,7 +842,12 @@ fn mode_scoreboard(stats: &FleetStats, group_tags: &[String]) -> Vec<ModeScore> 
             bots,
         })
         .collect();
-    rows.sort_by(|a, b| b.kills.cmp(&a.kills).then_with(|| a.tag.cmp(&b.tag)));
+    rows.sort_by(|a, b| {
+        b.kd()
+            .total_cmp(&a.kd())
+            .then_with(|| b.kills.cmp(&a.kills))
+            .then_with(|| a.tag.cmp(&b.tag))
+    });
     rows
 }
 
@@ -839,11 +857,7 @@ fn log_competition_scoreboard(stats: &FleetStats, group_tags: &[String], label: 
         "── competition scoreboard [{label}] (group: kills/deaths, K/D, env suicides) ──"
     );
     for (rank, s) in mode_scoreboard(stats, group_tags).iter().enumerate() {
-        let kd = if s.deaths > 0 {
-            s.kills as f32 / s.deaths as f32
-        } else {
-            s.kills as f32
-        };
+        let kd = s.kd();
         tracing::info!(
             "  #{:<2} {:<9} bots={:<2} kills={:<4} deaths={:<4} kd={:.2} env={:<3}",
             rank + 1,
@@ -1064,7 +1078,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mode_scoreboard_groups_by_name_prefix_and_ranks_by_kills() {
+    fn mode_scoreboard_groups_by_name_prefix_and_ranks_by_kd_then_kills() {
         let stats = FleetStats::new();
         // race fleet: 3 kills / 1 death across 2 bots; astar fleet: 1 kill / 2 deaths.
         stats.record_kill("race_1");
@@ -1086,16 +1100,38 @@ mod tests {
         ];
         let board = mode_scoreboard(&stats, &group_tags);
         assert_eq!(board.len(), 4);
-        // Ranked by kills desc: race (3) > {astar (1), q3_astar_grunt (1) by tag} > navmesh (0).
+        // Ranked by K/D desc: race (3.0) > q3_astar_grunt (1 kill, 0 deaths → 1.0)
+        // > astar (0.5) > navmesh (0.0).
         assert_eq!(board[0].tag, "race");
         assert_eq!((board[0].kills, board[0].deaths, board[0].bots), (3, 1, 2));
-        // Two groups tied at 1 kill → ordered by tag asc: `astar` before `q3_astar_grunt`.
-        assert_eq!(board[1].tag, "astar");
-        assert_eq!((board[1].kills, board[1].deaths, board[1].bots), (1, 2, 2));
-        assert_eq!(board[2].tag, "q3_astar_grunt");
-        assert_eq!((board[2].kills, board[2].deaths, board[2].bots), (1, 0, 1));
+        assert_eq!(board[1].tag, "q3_astar_grunt");
+        assert_eq!((board[1].kills, board[1].deaths, board[1].bots), (1, 0, 1));
+        assert_eq!(board[2].tag, "astar");
+        assert_eq!((board[2].kills, board[2].deaths, board[2].bots), (1, 2, 2));
         assert_eq!(board[3].tag, "navmesh");
         assert_eq!((board[3].kills, board[3].deaths, board[3].bots), (0, 0, 0));
+    }
+
+    #[test]
+    fn mode_scoreboard_breaks_kd_ties_by_kills_then_tag() {
+        let stats = FleetStats::new();
+        // Both groups at K/D = 1.0, but `busy` did it at 3/3 vs `calm` at 1/1
+        // → volume ranks busy first.
+        for _ in 0..3 {
+            stats.record_kill("busy_1");
+            stats.record_death("busy_1");
+        }
+        stats.record_kill("calm_1");
+        stats.record_death("calm_1");
+        // Same K/D AND same kills as calm → falls through to tag order.
+        stats.record_kill("zeta_1");
+        stats.record_death("zeta_1");
+
+        let tags = vec!["busy".to_string(), "calm".to_string(), "zeta".to_string()];
+        let board = mode_scoreboard(&stats, &tags);
+        assert_eq!(board[0].tag, "busy");
+        assert_eq!(board[1].tag, "calm");
+        assert_eq!(board[2].tag, "zeta");
     }
 
     #[test]
