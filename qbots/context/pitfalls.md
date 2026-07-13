@@ -1173,3 +1173,40 @@ keep matching the un-punctuated message table.
 - qbots: crates/brain/src/observed.rs (`classify_env_death`)
 - qbots: crates/qbots/src/main.rs (`bot_task` svc_print debug log)
 - qbots: vendor/yquake2/src/game/player/client.c:495 (the format string)
+
+# Map changes: two different wire flows, and both will kill a naive fleet (Plan 64)
+Yamagi has TWO map-change paths. `gamemap`/fraglimit rotation is SOFT: stufftext
+"changing" then "reconnect", the netchan + client slot survive, the client answers with a
+reliable `new` (CL_Reconnect_f). rcon `map X` is HARD: SV_InitGame → SV_FinalMessage
+(svc_print "Server restarted" + svc_reconnect), every slot is WIPED, and the server drops
+packets while the level loads — the client must redo the full getchallenge handshake AND
+resend it (~2 s cadence, CL_CheckForResend parity), because the first one is swallowed.
+Three traps found live with a 32-bot fleet: (1) bots rejoin in ~20 ms, so the staggered
+duplicate FinalMessage copies land AFTER the new netchan is up, get accepted as a big
+sequence jump, and the bot obeys a svc_disconnect meant for the DEAD connection —
+abandoning a live slot; fix = bind a FRESH local port on the hard path. (2) 32
+simultaneous rejoins overflow the server's ~1.4 KB per-client reliable buffer with skin
+configstring multicasts ("X overflowed" kicks, bare 1-byte svc_disconnect for cs_connected
+victims — the broadcast reason only reaches spawned clients); fix = per-bot 0–8 s
+name-hash jitter before re-handshaking (soft path: defer the reliable "new"). (3) reset
+ALL per-map state keyed on serverdata.servercount — every SV_SpawnServer bumps it, same-map
+restarts included.
+## Sources
+- qbots: crates/client/src/conn.rs (changing/reconnect stufftext, reset_level_state, resend_connect)
+- qbots: crates/qbots/src/main.rs (bot_task: fresh socket, rejoin_hold jitter, servercount reset)
+- qbots: context/plans/64_map_change_survival.md
+
+# An all-bot server never leaves intermission — and what happens when it finally does
+The fraglimit/timelimit scoreboard freezes every client (pm_type=PM_FREEZE) and the level
+only advances when some client presses a button ≥5 s in (game/player/client.c:2122).
+Human-less servers therefore hang on the scoreboard FOREVER — bots must detect PM_FREEZE
+(skip the brain; the playerstate is frozen anyway) and hold BUTTON_ATTACK|BUTTON_ANY after
+~6 s. Beware the second-order effect: code paths that never ran before (EndDMLevel map
+rotation) start running. Ours crashed the server on `maps/.bsp` because sv_maplist was
+empty — AND the sister-project fix revealed rcon strips double quotes (SVC_RemoteCommand
+re-joins argv with spaces), so `set sv_maplist "a b"` NEVER works over rcon; comma-join
+instead (`set sv_maplist a,b` — EndDMLevel tokenizes on " ,\n\r").
+## Sources
+- qbots: crates/qbots/src/main.rs (bot_task intermission branch), crates/q2proto/src/playerstate.rs (PM_FREEZE)
+- qctrl: crates/api/src/main.rs (sv_maplist watchdog, comma-join), context/plans/12_sv_maplist_resilience_tracker.md
+- yquake2: game/player/client.c:2117-2129, game/g_main.c EndDMLevel

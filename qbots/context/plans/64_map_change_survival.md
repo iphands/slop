@@ -1,6 +1,6 @@
 # Plan 64 — Map-Change Survival + Intermission Handling
 
-> **Status**: in-progress
+> **Status**: done
 > **Created**: 2026-07-12
 > **Depends on**: Plan 57 (ack-on-frame send loop), Plan 53 (connect deadline)
 > **Goal**: Bots survive server map changes (rcon `map X` and fraglimit/timelimit rotation) — they re-handshake on the live netchan, reload per-map nav state, and during intermission press ATTACK so an all-bot server actually advances to the next level.
@@ -148,8 +148,8 @@ findings in the tracker.
 
 ## Verification Checklist
 
-- [ ] T1: `cargo test -p client` green incl. new map-change flow test; clippy/fmt clean. **Committed.**
-- [ ] T2: fleet bot logs `map change` reset + `nav graph ready` for the new map after rcon `map q2dm2`; no `connect handshake timed out` on change. **Committed.**
-- [ ] T3: at fraglimit, logs show intermission detected, ATTACK pressed after ~6 s, server rotates. **Committed.**
-- [ ] T4: full live run: rcon change + fraglimit rotation, zero bot deaths (process-wise); findings in tracker. **Committed.**
-- [ ] Plan + tracker moved to `completed/`, SERIES.md updated.
+- [x] T1: `cargo test -p client` green incl. new map-change flow test; clippy/fmt clean. **Committed.**
+- [x] T2: fleet bot logs `map change` reset + `nav graph ready` for the new map after rcon `map q2dm2`; no `connect handshake timed out` on change. **Committed.**
+- [x] T3: at fraglimit, logs show intermission detected, ATTACK pressed after ~6 s, server rotates. **Committed.**
+- [x] T4: full live run: rcon change + fraglimit rotation, zero bot deaths (process-wise); findings in tracker. **Committed.**
+- [x] Plan + tracker moved to `completed/`, SERIES.md updated.
