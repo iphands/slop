@@ -35,17 +35,24 @@ table in the plan; implement to those tables.
   error on any `!res.ok`, so a bare `StatusCode::BAD_REQUEST` (no JSON body) keeps
   the UI's error path working. The rejection is also broadcast on the log stream as
   an `ERROR` line, so the in-app console says why nothing happened.
-- **T3 test runner is broken in this environment, and it was broken before Plan 12**:
-  `npm run test` and `npm run build` both **segfault** — `require('vite')` crashes on
-  load (vite 8 vs. the vitest 2.1.9 / `node_modules.gentoo` install; `npm ls` reports
-  invalid peers). `npm run lint` fails for a separate pre-existing reason: `eslint .`
-  descends into the `node_modules` → `node_modules.gentoo` symlink and dies on a
-  missing `@tanstack/eslint-config`.
-  Verified around it: `tsc -b` exits 0, `npx eslint` is clean on all four touched
-  files, and the 7 `buildApplyCommands` cases were compiled with `tsc` and run under
-  `node --test` — **7/7 pass**. The vitest suite is committed as specified and should
-  go green once the frontend toolchain is repaired (worth its own small plan: pin
-  vitest to a Vite-8-compatible major and make eslint ignore `node_modules.gentoo`).
+- **T3**: `npm run test` is **green — 30 passed / 4 files**, including the 7 new
+  `buildApplyCommands` cases. `npm run lint` and `npm run build` are clean too.
+  Getting there needed a frontend toolchain repair (commit `493d7c9db`), all of it
+  pre-existing breakage rather than anything Plan 12 introduced:
+  - **Use node 22** (`frontend/.nvmrc`, `just fe-node-check`). The system node 24.14
+    on this host SIGSEGVs inside vite: `npm ci`, `vite build` and `vitest` all die
+    with no output at all. Node 22 runs all three clean. This is the trap that makes
+    the whole toolchain look broken — the crash prints nothing.
+  - `vitest` was pinned at 2.x, which supports vite ≤5; against vite 8 it collected
+    zero suites ("No test suite found"). Now on 4.x.
+  - vitest and eslint both crawled into `node_modules.gentoo` — their built-in
+    `node_modules` ignores don't match the justfile's per-env tree name. vitest ran
+    zod's 185 locale suites; eslint died on a config inside a dependency. Both
+    configs now ignore `node_modules*`.
+  - Two stale suites had never been runnable and were fixed: `Rotation.test.tsx`
+    was missing the `NotificationsProvider` the page now requires, and
+    `useRotationTimer` asserted the countdown is `< 1200` when it starts at exactly
+    1200.
 - Pre-existing `dead_code` warning on `LogStream::get_history` (`crates/api/src/logs.rs:83`)
   is untouched — not introduced here, and out of this plan's scope.
 

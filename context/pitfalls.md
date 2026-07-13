@@ -402,3 +402,28 @@ from a status field that may be empty/unknown.
 - qctrl: `crates/api/src/main.rs` (`spawn_sv_maplist_watchdog`, `validate_rcon_command`)
 - qctrl: `frontend/src/lib/applyLogic.ts` (`buildApplyCommands`)
 - qbots: Plan 64 (bots pressing ATTACK at intermission surfaced the latent crash)
+
+# Silent SIGSEGV toolchains: per-env node_modules, node 24 + vite, vitest/vite major skew
+
+A frontend where `npm run test`, `npm run build` and even `npm ci` all exit 139 with
+**zero output** looks like one catastrophic break; it was three unrelated ones (qctrl):
+
+1. **node 24 + vite**: Gentoo's system node 24.14 segfaults inside vite. Nothing is
+   printed because piped stdout is block-buffered and the buffer dies with the process.
+   Node 22 runs the same tree clean. Suspect the node binary before the project when a
+   crash produces no output at all — and re-run without a pipe to recover the message.
+2. **Per-env `node_modules.<env>` trees** (a symlink swap so host and container never
+   share native binaries) defeat every tool's built-in `node_modules` ignore, which
+   matches the *name*, not the symlink target. vitest then collects dependency test
+   files (zod ships 185 locale suites); eslint lints the dependency tree and dies on the
+   first package with its own config. Fix: explicit `node_modules*` ignores in
+   `vitest.config.ts` and `eslint.config.js`.
+3. **vitest/vite major skew**: vitest 2 supports vite ≤5. Under vite 8 it starts, finds
+   the files, and reports "No test suite found" for every one — a green-looking runner
+   that tests nothing. Keep the vitest major peer-matched to vite.
+
+Lesson: a test suite nobody can run rots. All three broke while the repo looked healthy
+because CI for the frontend was never actually executing.
+
+## Sources
+- qctrl: `justfile` (`_nm`, `fe-node-check`), `frontend/vitest.config.ts`, `frontend/eslint.config.js`
