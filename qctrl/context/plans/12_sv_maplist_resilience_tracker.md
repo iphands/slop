@@ -27,6 +27,25 @@ table in the plan; implement to those tables.
 
 ## Notes / Deviations
 
+- **The original `set sv_maplist "…"` command never worked at all** (found when the
+  watchdog went live, 2026-07-13; fixed in `0ea97f490`). `SVC_RemoteCommand`
+  (`vendor/yquake2/src/server/sv_conless.c`) tokenizes the rcon packet and then
+  rebuilds the command by re-joining `argv` with spaces — the quotes are gone before
+  `Cmd_ExecuteString` ever sees it. So `set sv_maplist "q2dm1 q2dm2"` arrived as
+  `set sv_maplist q2dm1 q2dm2` (10 args), the server replied
+  `usage: set <variable> <value> [u / s]`, and the cvar stayed empty. **A quoted value
+  with spaces cannot survive rcon.** Plan 12's Key Facts asserted this command worked;
+  that was wrong, and it means `spawn_sv_maplist_sync` has been a no-op since it was
+  written — the server's `sv_maplist` was empty the whole time, which is exactly why
+  the crash happened.
+  Fix: comma-join, unquoted (`set sv_maplist q2dm1,q2dm2,…`) — `EndDMLevel` tokenizes
+  on `" ,\n\r"` (`g_main.c`), and a comma-joined value is a single argv token. Drift is
+  now compared map-by-map, so a space-separated value set from the server console is
+  not treated as drift (otherwise the watchdog would re-push over a working list every
+  minute).
+  Verified live against noir: quoted form → usage error, cvar unchanged; comma form →
+  all 8 maps assigned.
+
 - **T1**: implemented as `spawn_sv_maplist_watchdog(state)` (a named fn) rather than
   an inline block in `main()`, so it reads like the existing `spawn_sv_maplist_sync`.
   Design constraints from the plan all hold: 60 s interval, never push an empty

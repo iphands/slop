@@ -427,3 +427,27 @@ because CI for the frontend was never actually executing.
 
 ## Sources
 - qctrl: `justfile` (`_nm`, `fe-node-check`), `frontend/vitest.config.ts`, `frontend/eslint.config.js`
+
+# Quake 2 rcon strips quotes: a value with spaces can never be `set` remotely
+
+`rcon set sv_maplist "q2dm1 q2dm2"` looks like it works and silently does nothing. The
+server's `SVC_RemoteCommand` (`sv_conless.c`) tokenizes the incoming packet, then
+rebuilds the command line by concatenating `Cmd_Argv(i)` for i>=2 separated by spaces.
+The tokenizer has already consumed the quotes, so `Cmd_ExecuteString` receives
+`set sv_maplist q2dm1 q2dm2` — N arguments instead of 2. `set` prints
+`usage: set <variable> <value> [u / s]` into the rcon reply and the cvar is never
+assigned. Re-quoting, escaping (`\"`), or single quotes do not help: quoting is lost at
+tokenization, before any code you can influence. This is not a client bug — nothing sent
+over rcon can carry a space inside one cvar value.
+
+How to avoid: never send a multi-word value over rcon. Find a separator the *consumer*
+accepts that is not a space. For `sv_maplist`, `EndDMLevel` tokenizes on `" ,\n\r"`
+(`g_main.c`), so comma-joined and unquoted works: `set sv_maplist q2dm1,q2dm2,q2dm3`.
+Always verify a `set` by reading the cvar back (`rcon sv_maplist` →
+`"sv_maplist" is "…"`) rather than trusting an empty/OK-looking reply — this bug hid for
+months behind a command that *appeared* to succeed, and it was the actual cause of the
+empty-`sv_maplist` `maps/.bsp` server crash.
+
+## Sources
+- qctrl: `crates/api/src/main.rs` (`sv_maplist_value`, `push_sv_maplist`)
+- yquake2: `src/server/sv_conless.c` (`SVC_RemoteCommand`), `src/game/g_main.c` (`EndDMLevel`)
