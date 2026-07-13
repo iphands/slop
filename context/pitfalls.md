@@ -484,3 +484,39 @@ empty-`sv_maplist` `maps/.bsp` server crash.
 ## Sources
 - qctrl: `crates/api/src/main.rs` (`sv_maplist_value`, `push_sv_maplist`)
 - yquake2: `src/server/sv_conless.c` (`SVC_RemoteCommand`), `src/game/g_main.c` (`EndDMLevel`)
+
+# Never run a qbots fleet at a Q2 server with no qctrl running
+
+A qbots fleet plus an empty `sv_maplist` kills the server. The bots are the trigger, but
+the missing `sv_maplist` is the loaded gun, and **qctrl is the only thing that keeps it
+unloaded** — it pushes `sv_maplist` on startup and re-pushes it every 60s (a server
+restart wipes the cvar). Run the fleet with qctrl down and you re-arm the crash.
+
+The chain: Q2 never leaves intermission on its own — `ClientThink` requires a *connected
+client* to press `BUTTON_ANY` (`client.c:2122`), so an unattended server parks in
+intermission forever once the timelimit hits. qbots bots, on joining, see that and
+deliberately "press ATTACK to advance the level" — which is the *right* behaviour, and
+exactly what the server was waiting for. The changelevel then fires, reads an empty
+`sv_maplist`, resolves the next map to `""`, and `Com_Error`s:
+
+    Server crashed: Couldn't load maps/.bsp
+
+Note the failure mode: `q2ded` does **not** exit. `Com_Error(ERR_DROP)` drops it to a
+no-map state, so the process is still alive and the container still "up" while the server
+answers nothing on UDP. It looks like a network problem; it is a dead server. Revive with
+a single rcon `map <name>` — no restart needed.
+
+How to avoid: **start qctrl first, always** — before any fleet, in dev as in prod. Verify
+`sv_maplist` is actually populated (read it back; see the rcon-spaces pitfall above — a
+`set` that *appears* to succeed may have silently done nothing). If you must run bots at a
+bare server, push a maplist by hand first. Corollary for anyone testing the map clock: a
+frozen `serverframe` with a climbing `age_ms` on the beacon means the server is parked in
+intermission, not that the beacon is broken.
+
+Discovered twice: once in production (2026-07-12, qctrl Plan 12's founding incident) and
+again during Plan 13/66 verification (2026-07-13) by doing precisely what Plan 12 forbids.
+
+## Sources
+- qctrl: `crates/api/src/main.rs` (`spawn_sv_maplist_sync`, `spawn_sv_maplist_watchdog`), `crates/api/src/rotator.rs` (module doc — why intermission needs an owner)
+- qbots: `crates/brain` (intermission → press ATTACK), `context/plans/64_map_change_survival_tracker.md` (forensics)
+- yquake2: `src/game/g_main.c` (`EndDMLevel`), `src/game/player/client.c:2122` (`ClientThink` / `exitintermission`), `src/server/sv_init.c` (`SV_SpawnServer` → `Com_Error` on a missing BSP)

@@ -173,7 +173,7 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
   silently-dead slot costs one reconnect, never a bot; verified 36/36 across 9 straight
   rotations with zero attrition (pre-fix control run lost 4 bots in 5 rotations).
 
-- After **66** (in-progress): the fleet optionally publishes the one number qctrl cannot see —
+- After **66** (done): the fleet optionally publishes the one number qctrl cannot see —
   `sv.framenum`, which yquake2 zeroes on every map spawn and ticks at 10 Hz, so `serverframe/10`
   IS the age of the running map. One NDJSON line per server tick on a unix socket, coalesced so
   32 bots produce one message, not 32. Off by default. Consumer: qctrl Plan 13.

@@ -1,6 +1,6 @@
 # Plan 66 — Serverframe Beacon (optional qctrl coupling)
 
-> **Status**: in-progress
+> **Status**: done
 > **Created**: 2026-07-13
 > **Depends on**: Plan 57 (ack-on-frame — supplies the hook point), Plan 64 (servercount level detection)
 > **Goal**: Publish the fleet's observed `serverframe` on an optional unix socket so qctrl can know the exact age of the running map without connecting a Q2 client of its own.
