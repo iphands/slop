@@ -158,10 +158,15 @@ impl Backoff {
     }
 }
 
-/// What the reader does with each accepted beacon. Keeps this module free of `SharedState`, so it
-/// stays unit-testable and `main.rs` owns the wiring.
+/// What the reader does with each accepted beacon, and with the link coming and going. Keeps this
+/// module free of `SharedState`, so it stays unit-testable and `main.rs` owns the wiring.
 pub trait BeaconSink: Send + Sync + 'static {
     fn apply(&self, beacon: &Beacon, now: Instant);
+    /// The socket opened or closed. Reported from where it is actually *known*, rather than
+    /// inferred downstream from whether frames happen to be arriving — a live socket with an
+    /// idle fleet looks exactly like a dead one from the outside, and they are not the same
+    /// thing to anyone reading the UI.
+    fn set_connected(&self, connected: bool);
 }
 
 /// Connect, read lines, reconnect forever.
@@ -203,9 +208,11 @@ pub async fn run_reader<S: BeaconSink>(
         tracing::info!(beacon = %transport.describe(), "serverframe beacon connected");
         warned_unreachable = false;
         delay = backoff.min;
+        sink.set_connected(true);
 
         read_lines(stream, &sink, &want_addrs, &want_name, require_match).await;
 
+        sink.set_connected(false);
         tracing::warn!(
             beacon = %transport.describe(),
             "serverframe beacon disconnected; the map clock falls back to map-edge inference"

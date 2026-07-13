@@ -43,6 +43,30 @@ pub struct StatusResponse {
     pub clock: crate::clock::MapClock,
     /// False when the status poller cannot reach the server.
     pub server_online: bool,
+    /// Health of the qbots serverframe beacon link. See `crate::frames`.
+    pub beacon: BeaconStatus,
+}
+
+/// Whether the qbots beacon socket is actually there and feeding us.
+///
+/// Deliberately separate from `MapClock`: the clock is about *time*, this is about the
+/// *link*. And the two really are independent — the anchor stays valid (and keeps ticking
+/// correctly) long after the socket drops, so a UI that inferred "beacon down" from a stale
+/// clock would be wrong, and one that inferred "clock bad" from a dropped socket would be
+/// wrong too.
+#[derive(Debug, Clone, Serialize)]
+pub struct BeaconStatus {
+    /// Is a `frames.socket_path` configured at all? When false, nothing else here means
+    /// anything — the feature does not exist in this deployment, and the UI should say
+    /// nothing rather than cry "disconnected" about something nobody asked for.
+    pub enabled: bool,
+    /// Is the unix socket currently open?
+    pub connected: bool,
+    /// Bots feeding the beacon, as of the last line. A connected socket with zero bots means
+    /// qbots is running but has no bots on the server.
+    pub bots: u32,
+    /// Age of the last line we accepted. `None` if we have never had one.
+    pub last_frame_age_seconds: Option<u32>,
 }
 
 /// The map/cvar/player fields of a `status` reply, without the clock.

@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 
 use crate::clock::{ClockState, FrameObservation, MapClock, Observation};
 use crate::oob::OobStatus;
-use crate::status::{Player, StatusResponse};
+use crate::status::{BeaconStatus, Player, StatusResponse};
 
 /// A client number we could not resolve. The frontend must disable kick/ban on
 /// these rather than send `clientkick -1` and boot whoever happens to be there.
@@ -50,6 +50,15 @@ struct Inner {
     clock: ClockState,
     last_ok: Option<Instant>,
     consecutive_failures: u32,
+
+    // ── qbots beacon link health (Plan 13). Distinct from the clock: the anchor stays valid
+    // and keeps ticking long after the socket drops. ──
+    /// Is a beacon socket configured at all? False ⇒ the UI shows nothing.
+    beacon_enabled: bool,
+    /// Is the socket open right now? Set by the reader on connect/disconnect.
+    beacon_connected: bool,
+    beacon_bots: u32,
+    beacon_last_frame: Option<Instant>,
 }
 
 /// Shared, cheap-to-read server status.
@@ -140,16 +149,36 @@ impl StatusCache {
     /// rotator holds on `Degraded` — and a qctrl that cannot talk to the server has no business
     /// rotating it, however healthy the beacon looks.
     pub fn apply_beacon(&self, beacon: &crate::frames::Beacon, now: Instant) {
-        self.inner.write().unwrap().clock.observe_frame(
+        let mut inner = self.inner.write().unwrap();
+        inner.clock.observe_frame(
             FrameObservation {
                 map: &beacon.map,
                 servercount: beacon.servercount,
                 serverframe: beacon.serverframe,
                 age: Duration::from_millis(beacon.age_ms),
-                bots: beacon.bots,
             },
             now,
         );
+        inner.beacon_bots = beacon.bots;
+        inner.beacon_last_frame = Some(now);
+    }
+
+    /// A `frames.socket_path` is configured. Called once at startup; without it the UI treats
+    /// the beacon as nonexistent rather than as "disconnected".
+    pub fn enable_beacon(&self) {
+        self.inner.write().unwrap().beacon_enabled = true;
+    }
+
+    /// The reader connected to, or lost, the beacon socket. This is the *link*, observed —
+    /// not inferred from whether frames happen to be flowing.
+    pub fn set_beacon_connected(&self, connected: bool) {
+        let mut inner = self.inner.write().unwrap();
+        inner.beacon_connected = connected;
+        if !connected {
+            // A dropped socket means nobody is feeding us; the bot count is stale the moment
+            // the link goes. (The clock's anchor is NOT — it keeps ticking correctly.)
+            inner.beacon_bots = 0;
+        }
     }
 
     /// The server *probably* restarted — the `sv_maplist` watchdog found the cvar wiped.
@@ -203,6 +232,14 @@ impl StatusCache {
             players: merge_players(&inner.oob_players, &inner.rcon_players),
             server_online: inner.last_ok.is_some() && inner.consecutive_failures == 0,
             clock,
+            beacon: BeaconStatus {
+                enabled: inner.beacon_enabled,
+                connected: inner.beacon_connected,
+                bots: inner.beacon_bots,
+                last_frame_age_seconds: inner
+                    .beacon_last_frame
+                    .map(|t| now.saturating_duration_since(t).as_secs() as u32),
+            },
         }
     }
 }
@@ -399,7 +436,53 @@ mod tests {
         assert_eq!(clock.anchor, crate::clock::ClockAnchor::Exact);
         assert_eq!(clock.source, crate::clock::ClockSource::ServerFrame);
         assert_eq!(clock.server_frame, Some(4210));
-        assert_eq!(clock.beacon_bots, Some(12));
+        assert_eq!(snap.beacon.bots, 12);
+    }
+
+    /// With no `frames:` block the beacon does not exist. The UI must say nothing at all — not
+    /// "disconnected", which would nag about a feature nobody turned on.
+    #[test]
+    fn a_beacon_that_was_never_configured_is_not_disconnected() {
+        let cache = StatusCache::new();
+        let beacon = cache.snapshot().beacon;
+        assert!(!beacon.enabled);
+        assert!(!beacon.connected);
+        assert_eq!(beacon.last_frame_age_seconds, None);
+    }
+
+    /// Configured but qbots is down. THIS is the state worth showing.
+    #[test]
+    fn a_configured_beacon_with_no_qbots_reads_as_disconnected() {
+        let cache = StatusCache::new();
+        cache.enable_beacon();
+
+        let beacon = cache.snapshot().beacon;
+        assert!(beacon.enabled);
+        assert!(!beacon.connected, "nothing has connected yet");
+    }
+
+    #[test]
+    fn connecting_and_dropping_the_socket_is_reflected() {
+        let cache = StatusCache::new();
+        cache.enable_beacon();
+        let now = Instant::now() + Duration::from_secs(86_400);
+
+        cache.set_beacon_connected(true);
+        cache.apply_beacon(&beacon("q2dm7", 1234, 4210), now);
+        let b = cache.snapshot().beacon;
+        assert!(b.connected);
+        assert_eq!(b.bots, 12);
+
+        // qbots exits.
+        cache.set_beacon_connected(false);
+        let b = cache.snapshot().beacon;
+        assert!(!b.connected);
+        assert_eq!(b.bots, 0, "a dead link cannot vouch for a bot count");
+
+        // ...but the CLOCK is untouched: its anchor is a fixed Instant and stays correct.
+        let clock = cache.snapshot().clock;
+        assert_eq!(clock.anchor, crate::clock::ClockAnchor::Exact);
+        assert_eq!(clock.source, crate::clock::ClockSource::ServerFrame);
     }
 
     /// A beacon proves the GAME SERVER is alive. It says nothing about whether QCTRL can reach it

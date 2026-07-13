@@ -213,10 +213,8 @@ mod tests {
             quality,
             source: ClockSource::ObservedEdge,
             last_poll_age_seconds: 0,
-            // The rotator reads only anchor/elapsed/quality; the beacon fields are diagnostic.
+            // The rotator reads only anchor/elapsed/quality; server_frame is diagnostic.
             server_frame: None,
-            beacon_age_seconds: None,
-            beacon_bots: None,
         }
     }
 

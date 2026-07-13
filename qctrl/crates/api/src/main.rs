@@ -678,6 +678,10 @@ impl frames::BeaconSink for ClockSink {
     fn apply(&self, beacon: &frames::Beacon, now: Instant) {
         self.0.apply_beacon(beacon, now);
     }
+
+    fn set_connected(&self, connected: bool) {
+        self.0.set_beacon_connected(connected);
+    }
 }
 
 /// Spawn the serverframe beacon reader (Plan 13). Only called when `frames:` is configured.
@@ -715,6 +719,9 @@ async fn spawn_frame_listener(state: SharedState) {
         server = %want_name,
         "serverframe beacon enabled — the map clock will be measured, not inferred"
     );
+    // Distinguishes "no beacon configured" from "configured but qbots is down". The UI must not
+    // report a disconnection nobody asked for.
+    state.status_cache.enable_beacon();
 
     tokio::spawn(frames::run_reader(
         frames::Transport::Unix(path.into()),

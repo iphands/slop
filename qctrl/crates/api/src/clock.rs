@@ -110,11 +110,11 @@ pub struct MapClock {
     pub last_poll_age_seconds: u32,
     /// The server's own frame counter, when a beacon is feeding us. Diagnostic — the UI keys
     /// off `anchor`/`elapsed_seconds` exactly as before.
+    ///
+    /// Link health (is the socket up? how many bots?) lives in `StatusResponse::beacon`, not
+    /// here: the clock is about time, the beacon block is about the link, and they are genuinely
+    /// independent — this anchor stays valid and keeps ticking long after the socket drops.
     pub server_frame: Option<i32>,
-    /// Age of the most recent beacon. Grows once the fleet stops; `None` if there never was one.
-    pub beacon_age_seconds: Option<u32>,
-    /// How many bots are feeding the beacon.
-    pub beacon_bots: Option<u32>,
 }
 
 /// A poll's worth of server truth, as far as the clock cares.
@@ -138,7 +138,6 @@ pub struct FrameObservation<'a> {
     /// How stale the reading already was when it left qbots. Subtracted back out, which is why
     /// qbots' 1 Hz publish rate costs no accuracy at all.
     pub age: Duration,
-    pub bots: u32,
 }
 
 /// Elapsed is past `timelimit` by more than this before we call it overdue. The
@@ -186,7 +185,6 @@ pub struct ClockState {
     last_serverframe: Option<i32>,
     last_frame_map: Option<String>,
     last_frame_at: Option<Instant>,
-    beacon_bots: Option<u32>,
 }
 
 impl Default for ClockState {
@@ -202,7 +200,6 @@ impl Default for ClockState {
             last_serverframe: None,
             last_frame_map: None,
             last_frame_at: None,
-            beacon_bots: None,
         }
     }
 }
@@ -327,7 +324,6 @@ impl ClockState {
         self.last_serverframe = Some(f.serverframe);
         self.last_frame_map = Some(f.map.to_string());
         self.last_frame_at = Some(now);
-        self.beacon_bots = Some(f.bots);
     }
 
     /// Is a beacon recent enough to be trusted? `false` whenever no beacon is configured.
@@ -426,12 +422,6 @@ impl ClockState {
             source: self.source,
             last_poll_age_seconds,
             server_frame: self.last_serverframe,
-            // Reported even once stale, and deliberately: a growing age is how the UI can tell
-            // "the fleet stopped" from "there was never a beacon".
-            beacon_age_seconds: self
-                .last_frame_at
-                .map(|t| now.saturating_duration_since(t).as_secs() as u32),
-            beacon_bots: self.beacon_bots,
         }
     }
 }
@@ -618,7 +608,6 @@ mod tests {
             servercount,
             serverframe,
             age: Duration::ZERO,
-            bots: 8,
         }
     }
 
@@ -638,7 +627,6 @@ mod tests {
         assert_eq!(snap.source, ClockSource::ServerFrame);
         assert_eq!(snap.elapsed_seconds, Some(421));
         assert_eq!(snap.server_frame, Some(4210));
-        assert_eq!(snap.beacon_bots, Some(8));
     }
 
     /// The anti-jitter rule. Beacons arrive with varying latency; re-deriving the anchor from each
@@ -780,7 +768,6 @@ mod tests {
             !clock.frame_is_fresh(later),
             "but it no longer owns the clock"
         );
-        assert_eq!(snap.beacon_age_seconds, Some(60));
     }
 
     /// ...and once stale, map-edge detection is the authority again, exactly as it was before

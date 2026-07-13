@@ -74,10 +74,28 @@ export interface MapClock {
   last_poll_age_seconds: number;
   /** The server's own frame counter, when a qbots beacon is feeding us. Diagnostic. */
   server_frame?: number | null;
-  /** Age of the last beacon. Grows once the bot fleet stops; null if there never was one. */
-  beacon_age_seconds?: number | null;
-  /** Bots currently feeding the beacon. */
-  beacon_bots?: number | null;
+}
+
+/**
+ * Health of the qbots beacon link.
+ *
+ * Deliberately separate from `MapClock`: the clock is about *time*, this is about the *link*,
+ * and they really are independent. The clock's anchor stays valid and keeps ticking correctly
+ * long after the socket drops — so "beacon disconnected" does NOT mean "countdown is wrong",
+ * and a stale clock does NOT mean the beacon is down. Do not infer either from the other.
+ */
+export interface BeaconStatus {
+  /**
+   * Is a beacon configured at all? When false, nothing else here means anything and the UI
+   * should show nothing — nagging "disconnected" about a feature nobody enabled is noise.
+   */
+  enabled: boolean;
+  /** Is the unix socket to qbots open right now? */
+  connected: boolean;
+  /** Bots feeding the beacon. Connected with 0 bots = qbots is up but has no bots in the game. */
+  bots: number;
+  /** Age of the last line we accepted; null if there has never been one. */
+  last_frame_age_seconds: number | null;
 }
 
 export interface StatusResponse {
@@ -91,6 +109,8 @@ export interface StatusResponse {
   /** Optional so existing test fixtures that predate the clock still typecheck. */
   clock?: MapClock;
   server_online?: boolean;
+  /** Optional so fixtures predating the beacon still typecheck. */
+  beacon?: BeaconStatus;
 }
 
 export interface QueueStatus {
