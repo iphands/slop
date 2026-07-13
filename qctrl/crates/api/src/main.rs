@@ -440,6 +440,31 @@ fn spawn_sv_maplist_sync(state: SharedState, queue: &RotationQueue) {
     });
 }
 
+/// Join map names into an `sv_maplist` value that can survive rcon.
+///
+/// A quoted value with spaces CANNOT: the server tokenizes the rcon packet, then
+/// rebuilds the command by re-joining argv with spaces (`sv_conless.c`,
+/// `SVC_RemoteCommand`). The quotes are gone by then, so
+/// `set sv_maplist "q2dm1 q2dm2"` reaches the command buffer as
+/// `set sv_maplist q2dm1 q2dm2` — too many arguments, and `set` answers
+/// `usage: set <variable> <value> [u / s]` while the cvar stays empty.
+///
+/// Commas dodge this: `EndDMLevel` tokenizes `sv_maplist` on `" ,\n\r"`
+/// (`g_main.c`), and a comma-joined value is a single unquoted argv token.
+fn sv_maplist_value(maps: &[String]) -> String {
+    maps.join(",")
+}
+
+/// The map names in an `sv_maplist` value, however it happens to be separated.
+/// The game accepts spaces and commas interchangeably, so a value that differs
+/// from ours only in separators is not drift.
+fn sv_maplist_maps(value: &str) -> Vec<&str> {
+    value
+        .split([' ', ',', '\n', '\r'])
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 /// Push `maps` to the server as `sv_maplist`. An empty list is a no-op: clearing
 /// a good `sv_maplist` would reintroduce the `maps/.bsp` crash this module exists
 /// to prevent.
@@ -447,7 +472,7 @@ async fn push_sv_maplist(rcon: &RconClient, maps: &[String]) -> Result<(), Strin
     if maps.is_empty() {
         return Ok(());
     }
-    let command = format!("set sv_maplist \"{}\"", maps.join(" "));
+    let command = format!("set sv_maplist {}", sv_maplist_value(maps));
     rcon.execute(&command)
         .await
         .map(|_| ())
@@ -470,12 +495,17 @@ fn parse_cvar_echo<'a>(reply: &'a str, cvar: &str) -> Option<&'a str> {
 
 /// True when the server's live `sv_maplist` doesn't match the queue we want.
 ///
+/// Compared map-by-map rather than as a string, so a value someone set from the
+/// server console with spaces reads as equivalent to our comma-joined one — the
+/// game treats them the same, and re-pushing over a working list every minute
+/// would be pure console noise.
+///
 /// An unparseable reply (`None`) counts as *not* drifted: pushing on garbage
 /// would hammer the server exactly when it is throttling us.
 fn maplist_drifted(live: Option<&str>, wanted: &[String]) -> bool {
     match live {
         None => false,
-        Some(v) => v.trim() != wanted.join(" "),
+        Some(v) => sv_maplist_maps(v) != wanted.iter().map(String::as_str).collect::<Vec<_>>(),
     }
 }
 
@@ -753,6 +783,35 @@ mod tests {
     fn surrounding_whitespace_is_not_drift() {
         assert!(!maplist_drifted(
             Some(" q2dm1 q2dm2 "),
+            &maps(&["q2dm1", "q2dm2"])
+        ));
+    }
+
+    // The value must be comma-joined and unquoted: rcon strips quotes and re-joins
+    // argv with spaces, so a quoted multi-word value reaches the server as extra
+    // arguments and `set` rejects the whole command with its usage line.
+    #[test]
+    fn maplist_value_is_comma_joined_and_unquoted() {
+        let value = sv_maplist_value(&maps(&["q2dm1", "q2dm2", "q2dm3"]));
+        assert_eq!(value, "q2dm1,q2dm2,q2dm3");
+        assert!(!value.contains(' '));
+        assert!(!value.contains('"'));
+    }
+
+    #[test]
+    fn comma_separated_live_value_is_not_drift() {
+        assert!(!maplist_drifted(
+            Some("q2dm1,q2dm2"),
+            &maps(&["q2dm1", "q2dm2"])
+        ));
+    }
+
+    // Someone setting the cvar from the server console gets spaces; the game reads
+    // both the same, so that is not drift and must not trigger a re-push loop.
+    #[test]
+    fn separator_style_alone_is_not_drift() {
+        assert!(!maplist_drifted(
+            Some("q2dm1 q2dm2"),
             &maps(&["q2dm1", "q2dm2"])
         ));
     }
