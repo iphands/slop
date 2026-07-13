@@ -34,3 +34,6 @@ fleet:
   # max_reconnects: 0     # cap reconnect attempts; 0 = unlimited (default: 0)
   # max_bots: 0           # hard cap regardless of count; 0 = uncapped (default: 0)
                           #   leave server maxclients headroom for humans
+  # connect_timeout_ms: 10000  # max ms to reach Active before a join fails (default: 10000)
+  # stall_timeout_ms: 10000    # max ms Active with no new server frame before the slot
+                               #   is presumed dead and the bot re-handshakes (default: 10000)

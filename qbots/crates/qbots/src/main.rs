@@ -932,6 +932,18 @@ pub(crate) async fn bot_task(
     let mut connect_deadline =
         time::Instant::now() + Duration::from_millis(cfg.fleet.connect_timeout_ms);
 
+    // Plan 65: Active-state frame-stall watchdog. The Plan 53 deadline above is gated to
+    // `state != Active`, so a bot whose slot silently died — a hard map change whose
+    // unreliable svc_reconnect copies (SV_FinalMessage) were all lost — used to stay
+    // Active forever, feeding clc_move into a recycled slot the server ignores (no
+    // netchan match ⇒ zero bytes back, bot_task never exits, the supervisor never
+    // retries; observed live as gradual fleet attrition across rotations). An Active
+    // client receives svc_frame at 10 Hz, intermission included: `stall_timeout_ms`
+    // without one new serverframe means the slot is dead, and the recovery is the same
+    // retryable ConnectionReset re-handshake the supervisor already provides.
+    let stall_timeout = Duration::from_millis(cfg.fleet.stall_timeout_ms);
+    let mut last_frame_seen = time::Instant::now();
+
     // Plan 57: ack-on-frame send re-phasing. The 10 Hz timer below no longer owns the
     // send; it builds the decision and caches it in `last_cmd`, and the recv arm sends
     // that cmd the instant a new server frame arrives (acking it). `last_send` gates the
@@ -1039,6 +1051,7 @@ pub(crate) async fn bot_task(
                 if conn.state() == ConnState::Active {
                     if let Some(sf) = conn.frame.as_ref().map(|f| f.serverframe) {
                         if Some(sf) != prev_sf {
+                            last_frame_seen = time::Instant::now();
                             let now = Instant::now();
                             send_timing.on_frame(sf, now);
                             if let Some(cmd) = last_cmd {
@@ -1076,6 +1089,24 @@ pub(crate) async fn bot_task(
                         std::io::ErrorKind::TimedOut
                     };
                     return Err(std::io::Error::new(kind, "connect handshake timed out"));
+                }
+
+                // Plan 65: frame-stall watchdog (see `last_frame_seen` above). While not
+                // Active the connect deadline owns hang detection, so keep the baseline
+                // fresh; while Active, a full `stall_timeout` without one new serverframe
+                // means the slot is dead — return the retryable ConnectionReset so the
+                // supervisor re-handshakes on a fresh socket.
+                if conn.state() != ConnState::Active {
+                    last_frame_seen = time::Instant::now();
+                } else if time::Instant::now() >= last_frame_seen + stall_timeout {
+                    tracing::error!(
+                        stall_timeout_ms = cfg.fleet.stall_timeout_ms,
+                        "no server frames while Active — slot presumed dead, re-handshaking"
+                    );
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionReset,
+                        "server frames stalled while Active",
+                    ));
                 }
 
                 let (frame_opt, cs) = (conn.frame.clone(), conn.configstrings().clone());

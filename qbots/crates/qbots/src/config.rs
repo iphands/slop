@@ -47,6 +47,13 @@ pub struct Fleet {
     /// failed. Backstops silent drops the reject-parse can't classify; a fleet-fatal
     /// join failure aborts the run unless `--loose-botcap` is set. Default 10_000.
     pub connect_timeout_ms: u64,
+    /// Max time (ms) an `Active` bot may go without a single new server frame before
+    /// treating its slot as dead and re-handshaking (Plan 65). The server streams
+    /// `svc_frame` at 10 Hz, intermission included, so this only trips when the slot is
+    /// gone — e.g. a hard map change whose unreliable `svc_reconnect` copies were all
+    /// lost, which otherwise leaves the bot Active forever feeding `clc_move` into a
+    /// recycled slot the server ignores. Default 10_000.
+    pub stall_timeout_ms: u64,
     /// Brain (decision plugin) for the fleet: `main` (default), `sentry`, `runtester`, or `q3`.
     /// `None`/absent → `main`. The CLI `--brain` overrides this. Independent of the nav backend
     /// (`--navmode`).
@@ -70,6 +77,7 @@ impl Default for Fleet {
             max_reconnects: 0,
             max_bots: 0,
             connect_timeout_ms: 10_000,
+            stall_timeout_ms: 10_000,
             brain: None,
             char: None,
             xonchar: None,
