@@ -1,6 +1,6 @@
 # Plan 13 — Serverframe Beacon: an exact map clock
 
-> **Status**: in-progress
+> **Status**: done
 > **Created**: 2026-07-13
 > **Depends on**: Plan 12 (the `sv_maplist` watchdog stays as the beacon-less fallback); qbots Plan 66 (the producer)
 > **Goal**: Consume qbots' optional serverframe beacon so the map clock is **measured** instead of inferred — exact on a cold start, and correct across a same-map restart.
