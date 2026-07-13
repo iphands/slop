@@ -866,6 +866,11 @@ pub(crate) async fn bot_task(
     let mut ticks: u32 = 0;
     // Plan 64: consecutive ticks spent frozen in intermission (PM_FREEZE playerstate).
     let mut intermission_ticks: u32 = 0;
+    // Plan 64: consecutive ticks spent in Connecting — paces handshake resends.
+    let mut connecting_ticks: u32 = 0;
+    // Plan 64: whether this task ever reached Active — a later handshake timeout is then
+    // a map-change re-handshake (retryable), not a failed initial join (fatal).
+    let mut was_active = false;
 
     let mut move_ctrl = MovementController::new();
     // The decision layer (Plan 22): owns combat/FSM/dodge/steering/recovery/skill/roam.
@@ -946,12 +951,17 @@ pub(crate) async fn bot_task(
                 if let Some(pkt) = conn.on_recv(&buf[..n]) {
                     let _ = sock.send(&pkt).await;
                 }
-                // Plan 64: the server pulled us out of Active (map-change "changing"/
-                // "reconnect" stufftext). Re-arm the Plan 53 connect deadline — the
-                // original one expired long ago, so without this the very next tick
-                // would classify the re-handshake as a timed-out join.
-                if prev_state == ConnState::Active && conn.state() == ConnState::Connected {
-                    tracing::info!("map change: re-handshaking on the live netchan");
+                // Plan 64: the server pulled us out of Active — either the soft
+                // map-change stufftext flow ("changing"/"reconnect" → Connected, netchan
+                // kept) or a hard svc_reconnect (rcon `map X` restarts the game and wipes
+                // our slot → Connecting, full handshake). Re-arm the Plan 53 connect
+                // deadline — the original one expired long ago, so without this the very
+                // next tick would classify the re-handshake as a timed-out join.
+                let now_state = conn.state();
+                if prev_state == ConnState::Active
+                    && matches!(now_state, ConnState::Connected | ConnState::Connecting)
+                {
+                    tracing::info!(state = ?now_state, "map change: re-handshaking");
                     connect_deadline =
                         time::Instant::now() + Duration::from_millis(cfg.fleet.connect_timeout_ms);
                 }
@@ -1006,16 +1016,40 @@ pub(crate) async fn bot_task(
                     tracing::error!(
                         timeout_ms = cfg.fleet.connect_timeout_ms,
                         state = ?conn.state(),
+                        was_active,
                         "connect handshake timed out"
                     );
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        "connect handshake timed out",
-                    ));
+                    // Plan 64: a timeout on the re-handshake AFTER a map change is not a
+                    // join failure — the slot existed moments ago and the server is just
+                    // slow coming back. ConnectionReset makes the supervisor retry with
+                    // backoff; TimedOut (initial join) stays fatal per Plan 53.
+                    let kind = if was_active {
+                        std::io::ErrorKind::ConnectionReset
+                    } else {
+                        std::io::ErrorKind::TimedOut
+                    };
+                    return Err(std::io::Error::new(kind, "connect handshake timed out"));
                 }
 
                 let (frame_opt, cs) = (conn.frame.clone(), conn.configstrings().clone());
                 let state = conn.state();
+                was_active |= state == ConnState::Active;
+
+                // Plan 64: while Connecting, re-issue getchallenge every ~2 s. A hard
+                // server restart (rcon `map X`) wipes our slot and drops packets during
+                // the level load, so the single handshake packet the FSM emitted can be
+                // swallowed — real clients resend too (CL_CheckForResend, cl_main.c).
+                if state == ConnState::Connecting {
+                    connecting_ticks = connecting_ticks.wrapping_add(1);
+                    if connecting_ticks.is_multiple_of(20) {
+                        if let Some(pkt) = conn.resend_connect() {
+                            tracing::info!("still connecting — re-sending getchallenge");
+                            let _ = sock.send(&pkt).await;
+                        }
+                    }
+                } else {
+                    connecting_ticks = 0;
+                }
                 let playernum = conn.serverdata.as_ref().map(|sd| sd.playernum).unwrap_or(0);
 
                 // Track health across frames for damage detection

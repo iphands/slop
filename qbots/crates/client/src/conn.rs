@@ -264,6 +264,22 @@ impl Conn {
         None
     }
 
+    /// Re-issue the handshake request while stuck in `Connecting`, else `None`.
+    ///
+    /// UDP guarantees nothing, and after a server-forced hard reconnect (rcon `map X`
+    /// runs `SV_InitGame` → `SV_FinalMessage` with `svc_reconnect`, wiping every client
+    /// slot) the server answers nothing while the new level loads — a single
+    /// `getchallenge` sent into that window is simply swallowed. Real clients resend
+    /// every ~3 s (`CL_CheckForResend`, `cl_main.c`); callers should pace this the same
+    /// way. Restarting from `getchallenge` is always safe: `SV_GetChallenge` re-issues
+    /// per-address and a duplicate `client_connect` is ignored by [`Conn::on_oob`].
+    pub fn resend_connect(&self) -> Option<Bytes> {
+        if self.state != ConnState::Connecting {
+            return None;
+        }
+        Some(oob_line("getchallenge\n"))
+    }
+
     /// Drop the per-level snapshot state (frame history + spawn latch) when the server
     /// changes levels. Stale [`FrameRing`] entries would poison delta decode against the
     /// new level's frames, and `begin_queued` must re-arm so the next `precache`
