@@ -873,6 +873,18 @@ pub(crate) async fn bot_task(
     // Plan 64: whether this task ever reached Active — a later handshake timeout is then
     // a map-change re-handshake (retryable), not a failed initial join (fatal).
     let mut was_active = false;
+    // Plan 64: per-bot rejoin stagger. A map change hits the whole fleet in the same
+    // instant; 40 simultaneous configstring pumps overflow the server's per-client
+    // reliable channel (SV_SendDisconnect, sv_send.c:577 — observed live as mass bare
+    // svc_disconnect). A deterministic 0–8 s name-hash jitter breaks the herd, matching
+    // the initial join's supervisor-side stagger.
+    let rejoin_jitter = Duration::from_millis(
+        name.bytes()
+            .fold(0u64, |a, b| a.wrapping_mul(31).wrapping_add(b as u64))
+            % 8000,
+    );
+    // While Some, the re-handshake is held back until the instant inside.
+    let mut rejoin_hold: Option<time::Instant> = None;
 
     let mut move_ctrl = MovementController::new();
     // The decision layer (Plan 22): owns combat/FSM/dodge/steering/recovery/skill/roam.
@@ -954,7 +966,7 @@ pub(crate) async fn bot_task(
                 let prev_sf = conn.frame.as_ref().map(|f| f.serverframe);
                 let prev_state = conn.state();
                 was_active |= prev_state == ConnState::Active;
-                let reply = conn.on_recv(&buf[..n]);
+                let mut reply = conn.on_recv(&buf[..n]);
                 // Plan 64: the server pulled us out of Active — either the soft
                 // map-change stufftext flow ("changing"/"reconnect" → Connected, netchan
                 // kept) or a hard svc_reconnect (rcon `map X` restarts the game and wipes
@@ -965,9 +977,12 @@ pub(crate) async fn bot_task(
                 if prev_state == ConnState::Active
                     && matches!(now_state, ConnState::Connected | ConnState::Connecting)
                 {
-                    tracing::info!(state = ?now_state, "map change: re-handshaking");
-                    connect_deadline =
-                        time::Instant::now() + Duration::from_millis(cfg.fleet.connect_timeout_ms);
+                    tracing::info!(state = ?now_state, jitter_ms = rejoin_jitter.as_millis() as u64, "map change: re-handshaking");
+                    // Deadline covers the anti-herd jitter PLUS the normal handshake.
+                    connect_deadline = time::Instant::now()
+                        + rejoin_jitter
+                        + Duration::from_millis(cfg.fleet.connect_timeout_ms);
+                    rejoin_hold = Some(time::Instant::now() + rejoin_jitter);
                     // Hard restart: the whole old connection is dead, but its final
                     // packets are still in flight — SV_FinalMessage sends staggered
                     // copies of `svc_print "Server restarted" + svc_disconnect`, and we
@@ -979,6 +994,9 @@ pub(crate) async fn bot_task(
                     if now_state == ConnState::Connecting {
                         sock = UdpSocket::bind("0.0.0.0:0").await?;
                         sock.connect(addr).await?;
+                        // Hold the getchallenge too — the ticker sends it (and its
+                        // 2 s resends) once the jitter window passes.
+                        reply = None;
                     }
                 }
                 if let Some(pkt) = reply {
@@ -1064,20 +1082,35 @@ pub(crate) async fn bot_task(
                 let state = conn.state();
                 was_active |= state == ConnState::Active;
 
-                // Plan 64: while Connecting, re-issue getchallenge every ~2 s. A hard
-                // server restart (rcon `map X`) wipes our slot and drops packets during
-                // the level load, so the single handshake packet the FSM emitted can be
-                // swallowed — real clients resend too (CL_CheckForResend, cl_main.c).
+                // Plan 64: pace the map-change re-handshake. The hold is the per-bot
+                // anti-herd jitter; once it passes, the hard path sends getchallenge
+                // (re-sent every ~2 s — a hard restart drops packets while the level
+                // loads, and real clients resend too: CL_CheckForResend, cl_main.c) and
+                // the soft path queues the deferred "new".
+                let hold_just_cleared = match rejoin_hold {
+                    Some(t) if time::Instant::now() >= t => {
+                        rejoin_hold = None;
+                        true
+                    }
+                    _ => false,
+                };
                 if state == ConnState::Connecting {
                     connecting_ticks = connecting_ticks.wrapping_add(1);
-                    if connecting_ticks.is_multiple_of(20) {
+                    // First send fires the tick the hold clears; then every 2 s.
+                    if rejoin_hold.is_none()
+                        && (hold_just_cleared || connecting_ticks.is_multiple_of(20))
+                    {
                         if let Some(pkt) = conn.resend_connect() {
-                            tracing::info!("still connecting — re-sending getchallenge");
+                            tracing::info!("(re)sending getchallenge");
                             let _ = sock.send(&pkt).await;
                         }
                     }
                 } else {
                     connecting_ticks = 0;
+                    if rejoin_hold.is_none() && conn.rejoin_pending() {
+                        tracing::info!("soft map change: sending new");
+                        conn.send_new();
+                    }
                 }
                 let playernum = conn.serverdata.as_ref().map(|sd| sd.playernum).unwrap_or(0);
 

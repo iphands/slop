@@ -64,6 +64,9 @@ pub struct Conn {
     /// Server's rejection message when [`ConnState::Rejected`] (e.g. `Server is full.`).
     /// `None` until a pre-netchan OOB `print` classifies the handshake as refused.
     pub reject_reason: Option<String>,
+    /// A soft map change requested a re-handshake (`stufftext "reconnect"`) and the
+    /// reliable `"new"` has not been sent yet — the caller paces [`Conn::send_new`].
+    new_pending: bool,
 }
 
 impl Conn {
@@ -83,6 +86,7 @@ impl Conn {
             begin_queued: false,
             prints: Vec::new(),
             reject_reason: None,
+            new_pending: false,
         }
     }
 
@@ -170,6 +174,7 @@ impl Conn {
     }
 
     fn on_payload(&mut self, payload: &[u8]) -> Option<Bytes> {
+        let payload_hex: Vec<u8> = payload.iter().take(96).copied().collect();
         let mut r = Reader::new(payload);
         loop {
             match parse_message(&mut r) {
@@ -213,14 +218,16 @@ impl Conn {
                         // the new level is up. Mirror `CL_Reconnect_f` while connected
                         // (`cl_network.c:468`): request a fresh serverdata over the SAME
                         // netchan with a reliable "new" — no challenge/connect redo.
+                        // The "new" is NOT queued here: the whole fleet receives this
+                        // broadcast in the same instant, and a 40-client simultaneous
+                        // configstring pump overflows the server's per-client reliable
+                        // channel (`SV_SendDisconnect`, `sv_send.c:577` — observed live).
+                        // The caller staggers [`Conn::send_new`] to break the herd.
                         self.reset_level_state();
                         self.serverdata = None;
                         self.configstrings = ConfigStrings::default();
                         self.state = ConnState::Connected;
-                        if let Some(nc) = self.netchan.as_mut() {
-                            nc.message_mut().write_u8(ClcOp::Stringcmd.into());
-                            nc.message_mut().write_string("new");
-                        }
+                        self.new_pending = true;
                     }
                     // Other stufftext ("kick", "cmd startdlights", etc.) is ignored.
                 }
@@ -236,7 +243,14 @@ impl Conn {
                 Ok(SvcEvent::Disconnect) => {
                     // The reason (if any) rides as svc_print in the same or an earlier
                     // payload — callers should drain_prints() on seeing Disconnected.
-                    tracing::warn!(state = ?self.state, "server sent svc_disconnect");
+                    // The hex head is a live-debug lens: it distinguishes a genuine
+                    // `svc_disconnect` from a parser desync landing on a 0x07 byte.
+                    tracing::warn!(
+                        state = ?self.state,
+                        payload_len = payload.len(),
+                        head = %hex_head(&payload_hex),
+                        "server sent svc_disconnect"
+                    );
                     self.state = ConnState::Disconnected;
                     break;
                 }
@@ -267,6 +281,22 @@ impl Conn {
         None
     }
 
+    /// Whether a soft map change is waiting for [`Conn::send_new`] to be called.
+    pub fn rejoin_pending(&self) -> bool {
+        self.new_pending
+    }
+
+    /// Queue the reliable `"new"` that answers a soft map change's `stufftext
+    /// "reconnect"` (rides the next transmit). The caller staggers this per bot so a
+    /// fleet doesn't hit the fresh server with 40 simultaneous configstring pumps.
+    pub fn send_new(&mut self) {
+        self.new_pending = false;
+        if let Some(nc) = self.netchan.as_mut() {
+            nc.message_mut().write_u8(ClcOp::Stringcmd.into());
+            nc.message_mut().write_string("new");
+        }
+    }
+
     /// Re-issue the handshake request while stuck in `Connecting`, else `None`.
     ///
     /// UDP guarantees nothing, and after a server-forced hard reconnect (rcon `map X`
@@ -289,6 +319,7 @@ impl Conn {
     /// stufftext queues a fresh `begin <servercount>`.
     fn reset_level_state(&mut self) {
         self.begin_queued = false;
+        self.new_pending = false;
         self.frame = None;
         self.ring = FrameRing::new();
     }
@@ -370,6 +401,15 @@ impl Conn {
         let payload = b"disconnect";
         Some(nc.transmit(payload))
     }
+}
+
+/// First bytes of a payload as spaced hex — live-debug lens for unexpected messages.
+fn hex_head(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Build a connectionless datagram carrying `line`.
@@ -599,18 +639,38 @@ mod tests {
         w.freeze()
     }
 
-    /// Walk a fresh Conn through the handshake to Active with servercount 4242.
+    /// A server→client netchan packet whose ack word also acknowledges the client's
+    /// in-flight reliable stream (bit 31 of w2 = the client's even/odd toggle).
+    fn server_frame_rel_ack(sequence: u32, ack: u32, rel_toggle: u32, payload: &[u8]) -> Bytes {
+        let mut w = Writer::new();
+        w.write_i32(sequence as i32); // w1: seq, no reliable bit
+        w.write_i32((ack | (rel_toggle << 31)) as i32); // w2: ack + reliable-ack toggle
+        w.write_bytes(payload);
+        w.freeze()
+    }
+
+    /// Walk a fresh Conn through the handshake to Active with servercount 4242,
+    /// flushing + acking every client reliable so none linger in the netchan.
     fn active_conn() -> Conn {
         let mut c = Conn::new(addr(), "qbots", 1234);
         c.start();
         c.on_recv(&server_oob("challenge 999 p=34\n"));
         c.on_recv(&server_oob("client_connect\n"));
+        c.keepalive(); // flush the reliable "new" (client toggle → 1)
         let mut payload = serverdata_payload().to_vec();
         payload.extend_from_slice(&stufftext_payload("cmd configstrings 4242 0\n"));
-        c.on_recv(&server_frame(1, 1, &payload));
-        c.on_recv(&server_frame(2, 1, &stufftext_payload("precache 4242\n")));
-        assert_eq!(c.state(), ConnState::Active);
+        c.on_recv(&server_frame_rel_ack(1, 1, 1, &payload)); // acks "new"
+        c.keepalive(); // flush "cmd configstrings 4242 0" (toggle → 0)
+        c.on_recv(&server_frame_rel_ack(
+            2,
+            2,
+            0,
+            &stufftext_payload("precache 4242\n"),
+        ));
         assert!(c.begin_queued);
+        c.keepalive(); // flush "begin 4242" (toggle → 1)
+        c.on_recv(&server_frame_rel_ack(3, 3, 1, &[])); // acks "begin"
+        assert_eq!(c.state(), ConnState::Active);
         c
     }
 
@@ -623,19 +683,27 @@ mod tests {
         let mut c = active_conn();
 
         // Part 1: "changing" → not Active anymore, netchan kept, frame state dropped.
-        c.on_recv(&server_frame(3, 1, &stufftext_payload("changing\n")));
+        c.on_recv(&server_frame(4, 3, &stufftext_payload("changing\n")));
         assert_eq!(c.state(), ConnState::Connected);
         assert!(c.netchan.is_some(), "netchan must survive the map change");
         assert!(c.frame.is_none());
         assert!(!c.begin_queued);
 
-        // Part 2: "reconnect" → reliable "new" rides the next transmit.
-        c.on_recv(&server_frame(4, 1, &stufftext_payload("reconnect\n")));
+        // Part 2: "reconnect" → the "new" is PENDING (caller-paced, anti-herd), not
+        // auto-queued; a keepalive before send_new must carry no reliable payload.
+        c.on_recv(&server_frame(5, 3, &stufftext_payload("reconnect\n")));
         assert_eq!(c.state(), ConnState::Connected);
         assert!(c.serverdata.is_none(), "old serverdata cleared");
+        assert!(c.rejoin_pending(), "new must wait for the caller's stagger");
+        let has_new = |b: &[u8]| b.windows(4).any(|w| w == b"new\0");
+        let quiet = c.keepalive().expect("keepalive while holding");
+        assert!(!has_new(&quiet), "no \"new\" before send_new");
+        // header(8) + qport(2) only — every earlier reliable was acked in active_conn.
+        assert_eq!(quiet.len(), 10, "no reliable at all before send_new");
+        c.send_new();
+        assert!(!c.rejoin_pending());
         let out = c.keepalive().expect("transmit flushing the reliable new");
-        // header(8) + qport(2) + Stringcmd(1) + "new\0"(4)
-        assert!(out.len() >= 15, "reliable new must be in flight");
+        assert!(has_new(&out), "reliable new must be in flight");
 
         // New level's serverdata (servercount 4343) + precache → begin re-queued.
         let mut w = Writer::new();
@@ -646,12 +714,12 @@ mod tests {
         w.write_string("baseq2");
         w.write_i16(0);
         w.write_string("q2dm2");
-        let pkt = server_frame(5, 2, &w.freeze());
+        let pkt = server_frame(6, 4, &w.freeze());
         c.on_recv(&pkt);
         assert_eq!(c.state(), ConnState::Active);
         assert_eq!(c.serverdata.as_ref().unwrap().servercount, 4343);
         assert!(!c.begin_queued, "begin waits for the new precache");
-        c.on_recv(&server_frame(6, 2, &stufftext_payload("precache 4343\n")));
+        c.on_recv(&server_frame(7, 4, &stufftext_payload("precache 4343\n")));
         assert!(c.begin_queued, "begin re-queued for the new level");
     }
 
