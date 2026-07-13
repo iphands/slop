@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getHealth, getStatus } from '../lib/api';
 import { useChanges } from '../contexts/ChangesContext';
 import { Section } from '../components/Section';
+import { MapCountdown } from '../components/MapCountdown';
 import { Link } from 'react-router-dom';
 
 export function Dashboard() {
@@ -62,6 +63,7 @@ export function Dashboard() {
             <div className="text-sm text-gray-400">Map</div>
             <div className="text-xl font-bold">{currentMap}</div>
           </div>
+          <MapCountdown variant="stat" />
           <div className="p-3 bg-gray-700 rounded">
             <div className="text-sm text-gray-400">Time Limit</div>
             <div className="text-xl font-bold">{timelimit} min</div>

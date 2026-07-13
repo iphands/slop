@@ -2,8 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 
@@ -65,7 +65,7 @@ impl LogStream {
             ..LogEntry::new(level, message)
         };
         let entry_for_log = entry.clone();
-        
+
         // Store in history
         {
             let mut history = self.history.lock().unwrap();
@@ -74,12 +74,15 @@ impl LogStream {
                 history.pop_front();
             }
         }
-        
+
         // Broadcast to subscribers (may fail if no subscribers, which is OK)
         let _ = self.sender.send(entry);
         tracing::debug!("Broadcast log entry: {:?}", entry_for_log);
     }
 
+    /// Unused: `subscribe` already hands back the history alongside the receiver,
+    /// which is what every caller actually needs. Kept as a plain accessor.
+    #[allow(dead_code)]
     pub fn get_history(&self) -> Vec<LogEntry> {
         self.history.lock().unwrap().iter().cloned().collect()
     }

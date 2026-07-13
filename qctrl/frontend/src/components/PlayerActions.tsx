@@ -26,6 +26,14 @@ export function PlayerActions({ player, onAction }: PlayerActionsProps) {
     ban(`clientkick ${player.clientNum}`);
   };
 
+  /**
+   * The backend reports -1 when it cannot say which client number belongs to this
+   * player — either the slow rcon identity poll hasn't seen them yet, or two
+   * players share a name and matching them would be a guess. `clientkick -1`
+   * would act on the wrong player, so refuse rather than guess.
+   */
+  const identityUnknown = player.clientNum < 0;
+
   return (
     <div className="flex gap-2">
       <button
@@ -39,7 +47,12 @@ export function PlayerActions({ player, onAction }: PlayerActionsProps) {
       <button
         type="button"
         onClick={handleBan}
-        disabled={kicking || banning}
+        disabled={kicking || banning || identityUnknown}
+        title={
+          identityUnknown
+            ? 'Client number not resolved yet (or this name is ambiguous) — banning could hit the wrong player.'
+            : undefined
+        }
         className="px-3 py-1 bg-orange-600 hover:bg-orange-700 rounded text-sm disabled:opacity-50"
       >
         {banning ? 'Banning...' : 'Ban'}

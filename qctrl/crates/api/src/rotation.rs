@@ -63,11 +63,9 @@ impl RotationQueue {
         self.maps = maps;
     }
 
-    /// Get the next map to play based on rotation mode.
-    #[allow(dead_code)]
-    pub fn next_map(&mut self) -> Option<String> {
-        self.maps.first().cloned()
-    }
+    // Choosing the next map lives in `crate::rotator::select_next`, not here: it
+    // needs the map that is actually running (which this queue does not know) and
+    // a random draw for `Random` mode (which would make this type untestable).
 
     /// Get the current rotation mode.
     pub fn mode(&self) -> RotationMode {
@@ -230,23 +228,7 @@ mod tests {
         assert_eq!(queue.mode(), RotationMode::Random);
     }
 
-    #[test]
-    fn test_next_map_empty() {
-        let mut queue = RotationQueue::new(RotationMode::Sequential);
-
-        assert!(queue.next_map().is_none());
-    }
-
-    #[test]
-    fn test_next_map_with_maps() {
-        let mut queue = RotationQueue::new(RotationMode::Sequential);
-
-        queue.add_map("q2dm1".to_string());
-
-        let next = queue.next_map();
-        assert!(next.is_some());
-        assert_eq!(next.unwrap(), "q2dm1");
-    }
+    // Next-map selection is tested in `crate::rotator`.
 
     #[test]
     fn test_load_missing_file_creates_empty() {
@@ -434,7 +416,6 @@ mod integration_tests {
         let mut queue = RotationQueue::new(RotationMode::Sequential);
 
         assert!(queue.is_empty());
-        assert!(queue.next_map().is_none());
         assert_eq!(queue.get_maps().len(), 0);
 
         queue.remove_map("nonexistent");

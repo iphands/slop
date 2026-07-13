@@ -30,6 +30,37 @@ export interface Player {
   ping: number;
 }
 
+/**
+ * Whether the backend actually knows when the current map started.
+ *
+ * A Quake 2 server does not publish elapsed map time — there is no such field in
+ * rcon `status`, in the serverinfo string, or anywhere else. qctrl infers the map
+ * start by watching for the map name to change. If it was not running when the
+ * current map started (or the server has since restarted), that start is
+ * unknowable, and `anchor` says so instead of guessing.
+ */
+export type ClockAnchor = 'exact' | 'unknown';
+
+export type ClockQuality =
+  /** Polling is healthy. */
+  | 'live'
+  /** Polling is failing; elapsed keeps ticking but the map may have changed unseen. */
+  | 'degraded'
+  /** Past the timelimit with no map change — our model disagrees with the server. */
+  | 'overdue';
+
+export type ClockSource = 'observed_edge' | 'own_map_command' | 'none';
+
+export interface MapClock {
+  anchor: ClockAnchor;
+  /** Null if and only if `anchor === 'unknown'`. There is no honest number to show. */
+  elapsed_seconds: number | null;
+  quality: ClockQuality;
+  source: ClockSource;
+  server_uptime_seconds: number | null;
+  last_poll_age_seconds: number;
+}
+
 export interface StatusResponse {
   map: string | null;
   players: Player[];
@@ -38,6 +69,9 @@ export interface StatusResponse {
   timelimit?: number;
   fraglimit?: number;
   maxclients?: number;
+  /** Optional so existing test fixtures that predate the clock still typecheck. */
+  clock?: MapClock;
+  server_online?: boolean;
 }
 
 export interface QueueStatus {

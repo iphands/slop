@@ -6,31 +6,42 @@ use axum::{
     routing::{delete, get, post, put},
     Json, Router,
 };
-use qctrl_rcon::RconClient;
+use qctrl_rcon::{RconClient, ServerQuery};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tower_http::services::ServeDir;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+mod clock;
 mod config;
 mod favorites;
 mod logs;
 mod maps;
+mod oob;
 mod rotation;
+mod rotator;
 mod status;
+mod status_cache;
 
 use config::Config;
 use favorites::Favorites;
 use logs::LogStream;
 use maps::MapCache;
 use rotation::{AddMapRequest, QueueResponse, QueueStatusResponse, RotationMode, RotationQueue};
-use status::{parse_rcon_int, parse_status_output, StatusResponse};
+use rotator::{decide, RotationDecision, Tick};
+use status::{parse_status_output, StatusResponse};
+use status_cache::StatusCache;
 
 #[derive(Clone)]
 struct SharedState {
     config: Config,
     rcon_client: Arc<RconClient>,
+    /// Password-free OOB status query. Read-only, and metered by the server under
+    /// its own rate limit — see `qctrl_rcon::ServerQuery`.
+    server_query: Arc<ServerQuery>,
+    status_cache: StatusCache,
     map_cache: MapCache,
     log_stream: Arc<LogStream>,
     favorites: Favorites,
@@ -57,6 +68,9 @@ async fn main() {
         config.server.port,
         &config.server.rcon_password,
     ));
+
+    let server_query = Arc::new(ServerQuery::new(&config.server.host, config.server.port));
+    let status_cache = StatusCache::new();
 
     let map_cache = MapCache::new(&config.paths.baseq2);
     let log_stream = Arc::new(LogStream::new(1000, 200));
@@ -88,6 +102,8 @@ async fn main() {
     let state = SharedState {
         config,
         rcon_client,
+        server_query,
+        status_cache,
         map_cache,
         log_stream,
         favorites,
@@ -106,6 +122,15 @@ async fn main() {
     // ...and keep it pushed: a Q2 server restart wipes the cvar, which re-arms
     // the empty-map crash until something pushes it again.
     spawn_sv_maplist_watchdog(state.clone());
+
+    // The only thing that touches the server on a schedule for reads. Everything
+    // serving /api/status now reads its cache instead of opening an rcon call.
+    spawn_status_poller(state.clone());
+
+    // ...and the thing that acts on what the poller sees. Q2 never leaves
+    // intermission on its own, so without an owner here an unattended server
+    // stops rotating the moment the last browser tab closes.
+    spawn_rotator(state.clone());
 
     let api_routes = Router::new()
         .route("/health", get(health))
@@ -213,47 +238,15 @@ async fn remove_favorite(
     }
 }
 
-async fn get_status(State(state): State<SharedState>) -> Result<Json<StatusResponse>, StatusCode> {
-    // Get base status (map, players, and any settings present in the serverinfo line).
-    let base_output = state.rcon_client.execute("status").await;
-    tracing::trace!("Raw status output (first 800 chars): {}", &base_output.as_ref().unwrap_or(&String::new()).chars().take(800).collect::<String>());
-
-    // Parse base status
-    let mut status = match base_output {
-        Ok(output) => {
-            match parse_status_output(&output) {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::error!("Failed to parse status: {}", e);
-                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
-                }
-            }
-        },
-        Err(e) => {
-            tracing::error!("Failed to get status: {}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    };
-
-    // Only fall back to a per-cvar rcon query for settings that the serverinfo line
-    // did not already provide. This keeps the common case to a single round-trip and
-    // avoids tripping the server's rcon flood protection (which replies "Bad
-    // rcon_password" to every command once it throttles). `maxclients` typically is
-    // not in the serverinfo line, so it is usually the only extra query.
-    for (cvar, slot) in [
-        ("dmflags", &mut status.dmflags),
-        ("timelimit", &mut status.timelimit),
-        ("fraglimit", &mut status.fraglimit),
-        ("maxclients", &mut status.maxclients),
-    ] {
-        if slot.is_none() {
-            if let Ok(output) = state.rcon_client.execute(cvar).await {
-                *slot = parse_rcon_int(&output, cvar);
-            }
-        }
-    }
-
-    Ok(Json(status))
+/// Serve the cached status. A lock read — this touches the network not at all.
+///
+/// This used to do a live rcon round-trip per request, which meant an rcon
+/// `status` every 2 seconds once the frontend was open (six components poll the
+/// `['status']` query key and react-query dedupes them to the shortest
+/// interval). `sv_rcon_limit` defaults to 1/sec, and a throttled Q2 server
+/// answers every command with `Bad rcon_password` — see `context/pitfalls.md`.
+async fn get_status(State(state): State<SharedState>) -> Json<StatusResponse> {
+    Json(state.status_cache.snapshot())
 }
 
 async fn get_rotation(
@@ -268,7 +261,12 @@ async fn get_rotation(
         None
     };
 
-    tracing::info!("Rotation status: enabled={}, maps={:?}, current={:?}", enabled, maps, current_map);
+    tracing::info!(
+        "Rotation status: enabled={}, maps={:?}, current={:?}",
+        enabled,
+        maps,
+        current_map
+    );
 
     Ok(Json(QueueStatusResponse {
         maps,
@@ -310,7 +308,11 @@ async fn add_to_rotation(
                 return Err(StatusCode::INTERNAL_SERVER_ERROR);
             }
 
-            tracing::info!("Added '{}' to rotation queue. Queue size: {}", payload.map_name, queue.len());
+            tracing::info!(
+                "Added '{}' to rotation queue. Queue size: {}",
+                payload.map_name,
+                queue.len()
+            );
             spawn_sv_maplist_sync(state.clone(), &queue);
 
             Ok(Json(QueueResponse {
@@ -330,7 +332,11 @@ async fn update_rotation(
     State(state): State<SharedState>,
     Json(payload): Json<QueueStatusResponse>,
 ) -> Result<Json<QueueResponse>, StatusCode> {
-    tracing::info!("Updating rotation: mode={:?}, maps={:?}", payload.mode, payload.maps);
+    tracing::info!(
+        "Updating rotation: mode={:?}, maps={:?}",
+        payload.mode,
+        payload.maps
+    );
 
     if let Some(bad) = payload.maps.iter().find(|m| !valid_map_name(m)) {
         tracing::warn!("Rejected rotation update: invalid map name '{}'", bad);
@@ -362,7 +368,7 @@ async fn remove_from_rotation(
     axum::extract::Path(map_name): axum::extract::Path<String>,
 ) -> Result<Json<QueueResponse>, StatusCode> {
     tracing::info!("Removing from rotation: {}", map_name);
-    
+
     let mut queue = state.rotation_queue.lock().await;
 
     let was_present = queue.get_maps().contains(&map_name);
@@ -373,7 +379,12 @@ async fn remove_from_rotation(
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    tracing::info!("Removed '{}' from rotation. Was present: {}, queue size: {}", map_name, was_present, queue.len());
+    tracing::info!(
+        "Removed '{}' from rotation. Was present: {}, queue size: {}",
+        map_name,
+        was_present,
+        queue.len()
+    );
     spawn_sv_maplist_sync(state.clone(), &queue);
 
     Ok(Json(QueueResponse {
@@ -520,6 +531,9 @@ fn spawn_sv_maplist_watchdog(state: SharedState) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // Set once an engine proves it ignores sv_uptime, so we stop probing it
+        // (and stop writing a cvar it does nothing with) every minute.
+        let mut uptime_unsupported = false;
         loop {
             tick.tick().await;
 
@@ -540,10 +554,308 @@ fn spawn_sv_maplist_watchdog(state: SharedState) {
                         if let Err(e) = push_sv_maplist(&state.rcon_client, &wanted).await {
                             tracing::warn!("sv_maplist re-push failed: {}", e);
                         }
+                        // A wiped sv_maplist means the server process restarted, which
+                        // makes our map-start anchor meaningless. Say we don't know
+                        // rather than keep counting from a dead anchor.
+                        state.status_cache.invalidate_clock();
                     }
                 }
                 // Server down or unreachable: an outage must not become a log flood.
                 Err(e) => tracing::debug!("sv_maplist check skipped: {}", e),
+            }
+
+            if state.config.poll.manage_sv_uptime && !uptime_unsupported {
+                uptime_unsupported = ensure_sv_uptime(&state).await == SvUptime::Unsupported;
+            }
+        }
+    });
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SvUptime {
+    /// The server reports uptime — restart detection via the clock is armed.
+    Working,
+    /// This engine has no `sv_uptime`. Stop asking; fall back to `sv_maplist` drift.
+    Unsupported,
+    /// Just set the cvar (or couldn't reach the server); re-check next tick.
+    Pending,
+}
+
+/// Try to keep `sv_uptime 1` set, so the OOB status reply carries the server's uptime.
+///
+/// Uptime lets the map clock notice a server restart onto the *same* map — such a
+/// restart changes no map name, so without it the clock keeps counting from an
+/// anchor belonging to a dead process. `sv_uptime 1` is the second-resolution form
+/// (`MM.SS` / `H:MM.SS` / `D+HH:MM.SS`); `2` is a prose form we cannot parse.
+///
+/// **This only works on q2pro/q2repro.** yquake2 has no `sv_uptime` cvar at all —
+/// and crucially, setting it there still *appears* to succeed, because Q2 creates an
+/// inert user cvar for any unknown name and dutifully echoes `"sv_uptime" is "1"`
+/// back. Trusting that echo would mean believing restart detection was armed when it
+/// was doing nothing. So the cvar's value is not the test: the test is whether an
+/// `uptime` key ever shows up in an actual status reply.
+///
+/// On an engine that ignores it, we say so once and stop writing a junk cvar to
+/// someone's server. Restart detection then rests on the `sv_maplist` watchdog,
+/// which already spots a restart (a restart wipes the cvar) and invalidates the clock.
+async fn ensure_sv_uptime(state: &SharedState) -> SvUptime {
+    let reply = match state.rcon_client.execute("sv_uptime").await {
+        Ok(reply) => reply,
+        Err(e) => {
+            tracing::debug!("sv_uptime check skipped: {}", e);
+            return SvUptime::Pending;
+        }
+    };
+
+    if parse_cvar_echo(&reply, "sv_uptime") != Some("1") {
+        tracing::info!("Setting sv_uptime 1 (lets qctrl detect server restarts)");
+        if let Err(e) = state.rcon_client.execute("set sv_uptime 1").await {
+            tracing::warn!("Failed to set sv_uptime: {}", e);
+        }
+        // The next status poll will show whether the engine honored it.
+        return SvUptime::Pending;
+    }
+
+    // The cvar says 1. Did the server actually act on it?
+    if state.status_cache.saw_uptime_key() {
+        return SvUptime::Working;
+    }
+
+    tracing::warn!(
+        "Server accepts `sv_uptime 1` but never reports uptime — this engine \
+         (yquake2?) does not support it. Map-clock restart detection will rely on \
+         sv_maplist drift instead, so a server restart onto the same map may take \
+         up to a minute to notice."
+    );
+    SvUptime::Unsupported
+}
+
+/// The map name a `map`/`gamemap` command will load, if it is one.
+///
+/// qctrl issuing a map command is the only anchor available for a restart onto
+/// the map already running — that produces no map-name change, so the poller's
+/// edge detector will never fire for it.
+fn map_command_target(command: &str) -> Option<String> {
+    let mut it = command.split_whitespace();
+    let head = it.next()?.to_ascii_lowercase();
+    if head != "map" && head != "gamemap" {
+        return None;
+    }
+    let arg = it.next()?.trim_matches('"').trim();
+    (!arg.is_empty()).then(|| arg.to_string())
+}
+
+/// Poll the server for status and keep `StatusCache` current.
+///
+/// Two very different cadences, because they hit two different rate limits:
+///
+/// * The **OOB status query** runs every `poll.status_interval_ms` (1s default).
+///   It is unauthenticated and metered under `sv_status_limit` (default 15/sec),
+///   so 1 Hz costs the rcon budget nothing. It supplies the map, the cvars, and
+///   every player's frags/ping/name — and it is what anchors the map clock, so
+///   its interval is also the accuracy bound on the countdown.
+///
+/// * **RCON `status`** runs only when the identity table is stale or a new player
+///   name appears, because it is the sole source of client numbers and addresses
+///   (the OOB reply has neither) and rcon's budget is 1/sec.
+fn spawn_status_poller(state: SharedState) {
+    tokio::spawn(async move {
+        let status_interval = Duration::from_millis(state.config.poll.status_interval_ms.max(200));
+        let identity_max_age = Duration::from_millis(state.config.poll.rcon_identity_interval_ms);
+
+        let mut tick = tokio::time::interval(status_interval);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        // rcon `status` is rate-limited at 1/sec server-side; never queue two
+        // back-to-back even if players are churning.
+        const MIN_RCON_IDENTITY_GAP: Duration = Duration::from_secs(2);
+        let mut last_identity_attempt: Option<Instant> = None;
+
+        loop {
+            tokio::select! {
+                _ = tick.tick() => {}
+                _ = state.status_cache.refresh_requested() => {}
+            }
+
+            match state.server_query.status(Duration::from_secs(1)).await {
+                Ok(reply) => match oob::parse_oob_status(&reply) {
+                    Ok(status) => {
+                        state.status_cache.apply_oob(status, Instant::now());
+                    }
+                    Err(e) => {
+                        let failures = state.status_cache.note_failure();
+                        if failures == 1 {
+                            tracing::warn!("Unparseable OOB status reply: {}", e);
+                        }
+                    }
+                },
+                Err(e) => {
+                    // An outage must not become a log flood: say it once, then go quiet.
+                    let failures = state.status_cache.note_failure();
+                    if failures == 1 {
+                        tracing::warn!("Status poll failed (server down?): {}", e);
+                    } else {
+                        tracing::debug!("Status poll failed ({} in a row): {}", failures, e);
+                    }
+                    continue;
+                }
+            }
+
+            let now = Instant::now();
+            let gap_ok = last_identity_attempt
+                .map(|t| now.saturating_duration_since(t) >= MIN_RCON_IDENTITY_GAP)
+                .unwrap_or(true);
+
+            if gap_ok
+                && state
+                    .status_cache
+                    .needs_rcon_identity(now, identity_max_age)
+            {
+                last_identity_attempt = Some(now);
+                match state.rcon_client.execute("status").await {
+                    Ok(output) => match parse_status_output(&output) {
+                        Ok(parsed) => state
+                            .status_cache
+                            .apply_rcon_identity(parsed.players, Instant::now()),
+                        Err(e) => tracing::debug!("Failed to parse rcon status: {}", e),
+                    },
+                    Err(e) => tracing::debug!("rcon identity poll skipped: {}", e),
+                }
+            }
+        }
+    });
+}
+
+/// Don't retry a failed rotation faster than this. A `map` command that the
+/// server refuses (or never answers) would otherwise be resent once a second,
+/// which blows straight through `sv_rcon_limit` and gets every later command
+/// answered with `Bad rcon_password` — see `context/pitfalls.md`.
+const ROTATION_COOLDOWN: Duration = Duration::from_secs(15);
+
+/// A random `u64` for `Random` rotation mode, without pulling in a dependency for
+/// it. SipHash of the current nanos under a per-process random key: not
+/// cryptographic, but well-distributed, which is all "pick a map" needs.
+fn random_pick() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos(),
+    );
+    hasher.finish()
+}
+
+/// Advance the map when a match ends.
+///
+/// This has to live in the backend. Quake 2 never leaves intermission on its own
+/// — the only exit is a connected client pressing a button five seconds in
+/// (`yquake2 game/player/client.c:2122`) — and `sv_maplist` only picks the
+/// destination, it does not fire the exit. Rotation used to run in a React hook,
+/// so an unattended server stopped rotating the moment the last tab closed and
+/// sat in intermission until someone opened the frontend. See `rotator.rs` for
+/// the full story and the trigger policy.
+///
+/// Reads the status cache the poller already fills, so this costs no extra server
+/// I/O on a tick that decides to do nothing — which is almost all of them.
+fn spawn_rotator(state: SharedState) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(1));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        // The rotator's own view of how long the current map has been up. This is
+        // deliberately separate from the clock's anchor: it exists even when the
+        // clock has none, and that is exactly when the rescue trigger needs it.
+        let mut seen: Option<(String, Instant)> = None;
+        let mut cooldown_until: Option<Instant> = None;
+        let mut was_online = false;
+
+        loop {
+            tick.tick().await;
+
+            let status = state.status_cache.snapshot();
+            let now = Instant::now();
+
+            // A server that just came back is a server that may have restarted, and
+            // a restart onto the *same* map changes no map name — so the arm below
+            // would happily keep counting from before the outage and rescue-rotate a
+            // map that has been running for ten seconds. Treat the outage as a fresh
+            // start and re-arm the window.
+            let came_back = status.server_online && !was_online;
+            was_online = status.server_online;
+            if came_back {
+                seen = None;
+            }
+
+            // Re-arm the rescue window on every map change, however it happened.
+            match (&seen, status.map.as_deref()) {
+                (Some((last, _)), Some(current)) if last == current => {}
+                (_, Some(current)) => seen = Some((current.to_string(), now)),
+                (_, None) => seen = None,
+            }
+
+            let cooling_down = cooldown_until.is_some_and(|t| now < t);
+
+            let decision = {
+                let queue = state.rotation_queue.lock().await;
+                let enabled = *state.rotation_enabled.lock().await;
+                let maps = queue.get_maps();
+
+                decide(&Tick {
+                    clock: &status.clock,
+                    timelimit_minutes: status.timelimit,
+                    current_map: status.map.as_deref(),
+                    enabled,
+                    maps: &maps,
+                    mode: queue.mode(),
+                    cooling_down,
+                    map_seen_for: seen
+                        .as_ref()
+                        .map(|(_, since)| now.saturating_duration_since(*since))
+                        .unwrap_or_default(),
+                    pick: random_pick(),
+                })
+            };
+
+            let RotationDecision::Rotate(next) = decision else {
+                continue;
+            };
+
+            // Start the cooldown before the await, not after: the rcon call can
+            // take seconds, and nothing else guards this loop from firing again
+            // underneath it.
+            cooldown_until = Some(now + ROTATION_COOLDOWN);
+
+            tracing::info!(
+                "Rotating {} -> {} (elapsed={:?}s, timelimit={:?}m, anchor={:?})",
+                status.map.as_deref().unwrap_or("?"),
+                next,
+                status.clock.elapsed_seconds,
+                status.timelimit,
+                status.clock.anchor,
+            );
+            state
+                .log_stream
+                .broadcast("INFO", &format!("Rotating to {}", next));
+
+            match execute_rcon_checked(&state, &format!("map {}", next)).await {
+                Ok(_) => {
+                    // `note_own_map_command` already re-anchored the clock. Re-anchor
+                    // our own view too, so the rescue window restarts from here even
+                    // if the map name did not change.
+                    seen = Some((next.clone(), Instant::now()));
+                }
+                Err(RconFailure::Rejected(msg)) => {
+                    tracing::error!("Refused to rotate to '{}': {}", next, msg);
+                    state.log_stream.broadcast("ERROR", &msg);
+                }
+                Err(RconFailure::Failed(e)) => {
+                    tracing::warn!("Rotation to '{}' failed, will retry: {}", next, e);
+                    state
+                        .log_stream
+                        .broadcast("ERROR", &format!("Rotation to {} failed: {}", next, e));
+                }
             }
         }
     });
@@ -577,43 +889,84 @@ fn valid_map_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
+/// An rcon command we refused to send, or one the server refused to run.
+enum RconFailure {
+    /// Blocked before it left the process. A caller bug, not a server problem.
+    Rejected(String),
+    /// Sent, but the server did not answer.
+    Failed(String),
+}
+
+/// Run an rcon command with the rails every caller needs.
+///
+/// * [`validate_rcon_command`] — the empty-map-name tripwire. `map ""` resolves
+///   to `maps/.bsp`, which is fatal and shuts the game down.
+/// * [`map_command_target`] + `note_own_map_command` — the only clock anchor
+///   available for a restart onto the map already running, which produces no
+///   map-name edge for the poller to detect.
+/// * `request_refresh` — the cache is now behind the server; wake the poller so
+///   the next read isn't pre-change state.
+///
+/// Both the admin's command box and the rotator go through here, so neither can
+/// forget one.
+async fn execute_rcon_checked(state: &SharedState, command: &str) -> Result<String, RconFailure> {
+    validate_rcon_command(command).map_err(RconFailure::Rejected)?;
+
+    let output = state
+        .rcon_client
+        .execute(command)
+        .await
+        .map_err(|e| RconFailure::Failed(e.to_string()))?;
+
+    if let Some(map) = map_command_target(command) {
+        state
+            .status_cache
+            .note_own_map_command(&map, Instant::now());
+    }
+    state.status_cache.request_refresh();
+
+    Ok(output)
+}
+
 async fn rcon_execute(
     State(state): State<SharedState>,
     Json(payload): Json<ExecutePayload>,
 ) -> Result<Json<ExecuteResponse>, StatusCode> {
     tracing::info!("Received RCON command: {}", payload.command);
 
-    if let Err(msg) = validate_rcon_command(&payload.command) {
-        tracing::warn!("Rejected RCON command '{}': {}", payload.command, msg);
-        state.log_stream.broadcast("ERROR", &msg);
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
-    match state.rcon_client.execute(&payload.command).await {
+    match execute_rcon_checked(&state, &payload.command).await {
         Ok(output) => {
             tracing::info!("Command executed successfully, broadcasting logs");
+
             state
                 .log_stream
                 .broadcast("INFO", &format!("Executing: {}", payload.command));
-            
+
             let cleaned_output = output.replace('\0', "").trim().to_string();
-            
+
             let display_output = if cleaned_output.len() > 500 {
-                format!("{}... (truncated {} chars)", &cleaned_output[..500], cleaned_output.len() - 500)
+                format!(
+                    "{}... (truncated {} chars)",
+                    &cleaned_output[..500],
+                    cleaned_output.len() - 500
+                )
             } else {
                 cleaned_output
             };
-            
-            state
-                .log_stream
-                .broadcast("RESPONSE", &display_output);
+
+            state.log_stream.broadcast("RESPONSE", &display_output);
             tracing::info!("Logs broadcast complete");
             Ok(Json(ExecuteResponse {
                 success: true,
                 output,
             }))
         }
-        Err(e) => {
+        Err(RconFailure::Rejected(msg)) => {
+            tracing::warn!("Rejected RCON command '{}': {}", payload.command, msg);
+            state.log_stream.broadcast("ERROR", &msg);
+            Err(StatusCode::BAD_REQUEST)
+        }
+        Err(RconFailure::Failed(e)) => {
             state
                 .log_stream
                 .broadcast("ERROR", &format!("Command failed: {}", e));
@@ -638,16 +991,23 @@ async fn handle_websocket(
     mut socket: axum::extract::ws::WebSocket,
     (mut rx, history): (logs::LogReceiver, Vec<logs::LogEntry>),
 ) {
-    tracing::info!("WebSocket handler started, sending {} history entries", history.len());
-    
+    tracing::info!(
+        "WebSocket handler started, sending {} history entries",
+        history.len()
+    );
+
     for entry in history {
         let json = serde_json::to_string(&entry).unwrap();
-        if socket.send(axum::extract::ws::Message::Text(json)).await.is_err() {
+        if socket
+            .send(axum::extract::ws::Message::Text(json))
+            .await
+            .is_err()
+        {
             tracing::info!("WebSocket disconnected during history send");
             return;
         }
     }
-    
+
     loop {
         tokio::select! {
             msg = rx.recv() => {
@@ -849,6 +1209,29 @@ mod tests {
     }
 
     #[test]
+    fn recognizes_map_commands_and_their_target() {
+        assert_eq!(map_command_target("map q2dm1").as_deref(), Some("q2dm1"));
+        assert_eq!(
+            map_command_target("gamemap \"the_edge\"").as_deref(),
+            Some("the_edge")
+        );
+        assert_eq!(map_command_target("MAP q2dm3").as_deref(), Some("q2dm3"));
+    }
+
+    #[test]
+    fn non_map_commands_have_no_target() {
+        for command in ["status", "kick 3", "mapcycle foo", "set sv_maplist a,b"] {
+            assert_eq!(
+                map_command_target(command),
+                None,
+                "{command:?} is not a map command"
+            );
+        }
+        // Guarded elsewhere by validate_rcon_command, but must not anchor either.
+        assert_eq!(map_command_target("map"), None);
+    }
+
+    #[test]
     fn accepts_real_map_names() {
         for name in ["q2dm1", "the_edge", "ztn2dm3-b"] {
             assert!(valid_map_name(name), "should have accepted {name:?}");
@@ -857,7 +1240,14 @@ mod tests {
 
     #[test]
     fn rejects_map_names_that_could_escape_the_quoting() {
-        for name in ["", "q2dm1\"; quit", "maps/q2dm1", "q2 dm1", "a;quit", "$foo"] {
+        for name in [
+            "",
+            "q2dm1\"; quit",
+            "maps/q2dm1",
+            "q2 dm1",
+            "a;quit",
+            "$foo",
+        ] {
             assert!(!valid_map_name(name), "should have rejected {name:?}");
         }
         assert!(!valid_map_name(&"a".repeat(65)));

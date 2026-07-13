@@ -403,6 +403,39 @@ from a status field that may be empty/unknown.
 - qctrl: `frontend/src/lib/applyLogic.ts` (`buildApplyCommands`)
 - qbots: Plan 64 (bots pressing ATTACK at intermission surfaced the latent crash)
 
+# Quake 2 intermission never ends by itself — rotation cannot live in a client
+
+When a Q2 deathmatch match ends, `CheckDMRules` → `EndDMLevel` → `BeginIntermission` parks
+the server, and `CheckDMRules` then returns at the top forever after. The **only** writer of
+`level.exitintermission` reachable in deathmatch is `ClientThink`
+(`yquake2 game/player/client.c:2122`): it needs a *connected client* to send `BUTTON_ANY`
+(attack/use) at least 5 s in. There is no timeout, no max intermission length, no
+"empty server → advance" case. `G_RunFrame` calls `ExitLevel` only if that flag is set. So an
+empty or idle server hits the timelimit and **sits in intermission indefinitely**.
+
+The trap is believing `sv_maplist` is a fallback. It is not. It only decides *which* map the
+changelevel points at (`g_main.c:236-279`); it does nothing to make the exit **fire**. qctrl
+carried a comment claiming "losing the race is benign, sv_maplist is kept in sync, so the
+server's own rotation lands on the right map" — the premise was false, and every code path
+that "deferred to the server's rotation" was really deferring to a deadlock.
+
+This hides for a long time because *something* usually presses a button: a human player, or a
+bot taught to press ATTACK at intermission. It only surfaces on an unattended server.
+
+How to avoid: an external controller must **own** map advancement, and own it somewhere that
+runs headless. qctrl originally drove rotation from a React hook, so rotation silently became
+a property of having a browser tab open — the map would not advance until someone loaded the
+frontend, which looked like "the UI pokes the server awake." Put the timer in the daemon,
+trigger a few seconds *before* the timelimit so intermission never starts, and keep a rescue
+trigger for the case where you cannot know the elapsed time (e.g. the controller restarted
+mid-map) — otherwise that state has no way out.
+
+## Sources
+- qctrl: `crates/api/src/rotator.rs` (`decide`, `select_next`), `crates/api/src/main.rs` (`spawn_rotator`)
+- qctrl: vendor/yquake2 `src/game/g_main.c` (`CheckDMRules`, `EndDMLevel`, `ExitLevel`)
+- qctrl: vendor/yquake2 `src/game/player/client.c` (`ClientThink`, the BUTTON_ANY gate)
+- qbots: Plan 64 (bots pressing ATTACK at intermission — the other way to unstick it)
+
 # Silent SIGSEGV toolchains: per-env node_modules, node 24 + vite, vitest/vite major skew
 
 A frontend where `npm run test`, `npm run build` and even `npm ci` all exit 139 with

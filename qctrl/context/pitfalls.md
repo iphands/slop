@@ -87,3 +87,30 @@ response as "4086 chars"). Fixed to slice `buf[4..n]` using the actual `recv` co
 
 **Sources**:
 - `frontend/src/components/AddMapDialog.tsx` (button group structure)
+
+# A Quake 2 Server Does Not Expose Map Time — And `sv_uptime` Silently Lies on yquake2
+
+**Problem**: To show a map countdown, we need to know how long the current map has been running. There is no such field. `level.time` lives in the game DLL and has no cvar, no configstring, and no serverinfo key; rcon `status` prints only the map name and the client table. This is a protocol-level "no", not a missing lookup. Any elapsed time qctrl reports is *inferred* by watching for the map name to change — so if qctrl was not running when the map started, the elapsed time is genuinely unrecoverable and must be reported as unknown rather than guessed. A guessed anchor is worse than none: it makes the rotation timer fire at an arbitrary moment.
+
+**The second trap**: q2pro/q2repro have an `sv_uptime` cvar that adds `\uptime\MM.SS` to the status reply — a monotonic server clock, which is the only way to notice a *server restart onto the same map* (no map-name change, so a naive edge detector keeps counting from a dead anchor). **yquake2 has no such cvar.** But `set sv_uptime 1` still *appears* to succeed there, because Q2 creates an inert user cvar for any unknown name and dutifully echoes `"sv_uptime" is "1"` back. Trusting that echo means believing restart detection is armed when it is doing nothing at all.
+
+**Avoidance**: Never treat a cvar echo as proof a feature works — test for the *effect*. qctrl checks whether an `uptime` key ever appears in an actual status reply, not what `sv_uptime` reads back; when it doesn't, it warns once, stops writing a junk cvar, and falls back to the `sv_maplist` watchdog (a restart wipes that cvar, which the watchdog already spots within a minute). Identify the engine before relying on its extensions: yquake2 reports `version\8.70` and `maxspectators`; q2pro-family builds differ. Keep uptime strictly optional so the clock degrades honestly instead of breaking.
+
+## Sources
+- qctrl: `crates/api/src/clock.rs` (ClockAnchor::Unknown, the state machine)
+- qctrl: `crates/api/src/main.rs` (`ensure_sv_uptime`, `SvUptime::Unsupported`)
+- qctrl: `crates/api/src/status_cache.rs` (`saw_uptime_key`)
+- vendor/yquake2 `src/server/sv_main.c` (SV_StatusString — no uptime); vendor/q2repro `src/server/main.c:440` (uptime block)
+
+# The OOB `status` Query Is the Free Read Path — RCON Is for Mutations
+
+**Problem**: `/api/status` used to do a live rcon round-trip per HTTP request. Six frontend components poll the `['status']` react-query key, which dedupes to the shortest interval (2s) — so an open browser meant an rcon `status` every 2 seconds against a server whose `sv_rcon_limit` defaults to **1/sec**. Past that limit a Q2 server answers *every* command with `Bad rcon_password`, which looks exactly like a misconfigured password (see the flood-throttle note above).
+
+**The fix that was available all along**: the connectionless UDP status query — `\xff\xff\xff\xffstatus\n`, the one server browsers send — returns the entire serverinfo string (`mapname`, `timelimit`, `fraglimit`, `dmflags`, `maxclients`, `hostname`) plus a player line per client. It needs **no password** and is metered under `sv_status_limit` (default **15/sec**), a completely separate budget from rcon. Polling it at 1 Hz costs the rcon budget nothing.
+
+**Avoidance**: Read with the OOB query; reserve rcon for mutations and for the two columns OOB does not carry — **client number and address** (`SV_StatusString` emits only frags/ping/name, so `clientkick` still needs an rcon `status` table). Serve HTTP from a cache so UI poll frequency is decoupled from server traffic. Measured: 30 `/api/status` reads now produce **1** rcon command, where the old path produced 30+. When merging the two player lists by name, refuse to guess on a duplicate or unseen name — emit `client_num: -1` and disable the action, because a wrong `clientkick` boots the wrong player.
+
+## Sources
+- qctrl: `crates/rcon/src/lib.rs` (`ServerQuery`)
+- qctrl: `crates/api/src/oob.rs` (reply parser), `crates/api/src/status_cache.rs` (hybrid poller, player merge)
+- vendor/q2repro: `src/server/main.c:425` (SV_StatusString), `src/server/main.c:2189` (sv_status_show/sv_status_limit defaults)

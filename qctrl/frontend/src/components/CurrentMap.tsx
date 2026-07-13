@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { getStatus } from '../lib/api';
+import { MapCountdown } from './MapCountdown';
 
 export function CurrentMap() {
   const { data: status, isLoading, error } = useQuery({
@@ -35,6 +36,7 @@ export function CurrentMap() {
       <p className="text-sm text-gray-400 mt-1">
         {players} player{players !== 1 ? 's' : ''} connected
       </p>
+      <MapCountdown variant="card" />
     </div>
   );
 }

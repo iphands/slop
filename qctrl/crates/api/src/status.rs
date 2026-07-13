@@ -29,9 +29,29 @@ pub struct PlayerList {
     pub players: Vec<Player>,
 }
 
-/// Full status response including map, server settings, and players.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Full status response including map, server settings, players, and the map clock.
+#[derive(Debug, Clone, Serialize)]
 pub struct StatusResponse {
+    pub map: Option<String>,
+    pub dmflags: Option<i32>,
+    pub timelimit: Option<i32>,
+    pub fraglimit: Option<i32>,
+    pub maxclients: Option<i32>,
+    pub players: Vec<Player>,
+    /// How long the current map has been running — or an explicit "we don't know".
+    /// See `crate::clock`.
+    pub clock: crate::clock::MapClock,
+    /// False when the status poller cannot reach the server.
+    pub server_online: bool,
+}
+
+/// The map/cvar/player fields of a `status` reply, without the clock.
+///
+/// `parse_status_output` produces this. It is no longer the whole API response:
+/// the OOB poll supplies the same fields more cheaply, and RCON `status` is now
+/// read only for the columns OOB lacks (client numbers and addresses).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParsedStatus {
     pub map: Option<String>,
     pub dmflags: Option<i32>,
     pub timelimit: Option<i32>,
@@ -40,8 +60,8 @@ pub struct StatusResponse {
     pub players: Vec<Player>,
 }
 
-/// Parse the `status` command output into a StatusResponse.
-pub fn parse_status_output(output: &str) -> Result<StatusResponse, StatusParseError> {
+/// Parse the RCON `status` command output.
+pub fn parse_status_output(output: &str) -> Result<ParsedStatus, StatusParseError> {
     let mut map: Option<String> = None;
     let mut players = Vec::new();
     let lines: Vec<&str> = output.lines().collect();
@@ -125,7 +145,7 @@ pub fn parse_status_output(output: &str) -> Result<StatusResponse, StatusParseEr
     let mut saw_unparsed_line = false;
     for line in &lines {
         let line = line.trim();
-        
+
         // Debug: log each line being processed
         tracing::debug!("Processing line: '{}'", line);
 
@@ -161,11 +181,14 @@ pub fn parse_status_output(output: &str) -> Result<StatusResponse, StatusParseEr
                 players.push(player);
             } else {
                 saw_unparsed_line = true;
-                tracing::debug!("Failed to parse player line (likely not a player line): '{}'", line);
+                tracing::debug!(
+                    "Failed to parse player line (likely not a player line): '{}'",
+                    line
+                );
             }
         }
     }
-    
+
     // Only warn if there were actual data rows we couldn't parse — an empty
     // server prints the header + separator with no rows, which is normal.
     if found_header && players.is_empty() && saw_unparsed_line {
@@ -176,12 +199,22 @@ pub fn parse_status_output(output: &str) -> Result<StatusResponse, StatusParseEr
     use std::cmp::Reverse;
     players.sort_by_key(|p| Reverse(p.score));
 
-    tracing::debug!("Parsed status: map={:?}, players count={}", map, players.len());
+    tracing::debug!(
+        "Parsed status: map={:?}, players count={}",
+        map,
+        players.len()
+    );
     for player in &players {
-        tracing::debug!("  Player: {} (client_num={}, score={}, ping={})", player.name, player.client_num, player.score, player.ping);
+        tracing::debug!(
+            "  Player: {} (client_num={}, score={}, ping={})",
+            player.name,
+            player.client_num,
+            player.score,
+            player.ping
+        );
     }
 
-    Ok(StatusResponse {
+    Ok(ParsedStatus {
         map,
         dmflags,
         timelimit,
@@ -198,7 +231,7 @@ fn parse_player_line(line: &str) -> Option<Player> {
     // yquake2 with brackets: " 0     0   11 RPI2                  9 [192.168.11.199]:4443842841"
     // Example: " 0    15    45  PlayerName     0  192.168.1.100:27  27"
     // Example: " 0    15    45 Player One    0  192.168.1.100:27     27"
-    
+
     let parts: Vec<&str> = line.split_whitespace().collect();
     if parts.len() < 6 {
         return None;
@@ -207,25 +240,27 @@ fn parse_player_line(line: &str) -> Option<Player> {
     let client_num = i32::from_str(parts[0]).ok()?;
     let score = i32::from_str(parts[1]).ok()?;
     let ping = i32::from_str(parts[2]).ok()?;
-    
+
     // Find the address by looking for a part containing "[" or ":" that looks like IP:port
     // Address can be: "192.168.1.100:27" or "[192.168.11.199]:4443842841"
     let mut address_idx = None;
     for (idx, part) in parts.iter().enumerate().skip(3) {
         // Look for IP address patterns: contains "[" or looks like IP:port
-        if part.contains('[') || (part.contains(':') && part.chars().filter(|c| c.is_ascii_digit()).count() > 5) {
+        if part.contains('[')
+            || (part.contains(':') && part.chars().filter(|c| c.is_ascii_digit()).count() > 5)
+        {
             address_idx = Some(idx);
             break;
         }
     }
-    
+
     let address_idx = address_idx?;
     if address_idx < 5 {
         return None;
     }
-    
+
     let address = parts[address_idx].to_string();
-    
+
     // Name is everything from index 3 to address_idx - 1 (excluding lastmsg which is right before address)
     // lastmsg is at address_idx - 1
     // qport is the last element (if present)
@@ -239,22 +274,6 @@ fn parse_player_line(line: &str) -> Option<Player> {
         name,
         ping,
     })
-}
-
-/// Parse an integer value from RCON command output like: "dmflags" is "17424"
-pub fn parse_rcon_int(output: &str, command: &str) -> Option<i32> {
-    // Output format: "command" is "value"
-    let pattern = format!("\"{}\" is \"", command);
-    if let Some(start) = output.find(&pattern) {
-        let value_start = start + pattern.len();
-        let rest = &output[value_start..];
-        if let Some(end) = rest.find('"') {
-            if let Ok(val) = rest[..end].trim().parse() {
-                return Some(val);
-            }
-        }
-    }
-    None
 }
 
 #[cfg(test)]

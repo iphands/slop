@@ -10,9 +10,11 @@ import { getRotationQueue, toggleRotation } from '../lib/api';
 /**
  * Queue-management UI for map rotation.
  *
- * The actual automatic rotation is driven by <RotationController />, which is
- * mounted at the app root and runs regardless of which page is open. This page
- * only manages what's in the queue and the rotation mode/enable state.
+ * The rotation itself runs in the backend (`crates/api/src/rotator.rs`), which
+ * reads this queue and its mode. It used to run in the browser, which meant an
+ * unattended server stopped rotating as soon as the last tab closed. This page
+ * only manages what's in the queue and the rotation mode/enable state; closing
+ * it does not stop anything.
  */
 export function Rotation() {
   const queryClient = useQueryClient();

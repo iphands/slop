@@ -9,3 +9,30 @@ server:
 paths:
   server_cfg: /mnt/noir/scratch/games/q2/baseq2/server.cfg
   baseq2: /mnt/noir/scratch/games/q2/baseq2
+
+# Background status polling. Optional — these are the defaults.
+poll:
+  # Connectionless (OOB) status query interval. This costs the RCON rate limit
+  # nothing: the server meters it under sv_status_limit (default 15/sec), not
+  # sv_rcon_limit (default 1/sec).
+  #
+  # It is also the accuracy bound on the map countdown. A Q2 server does not
+  # expose elapsed map time, so qctrl infers it by noticing the map name change
+  # — which it can only do as fast as it polls.
+  status_interval_ms: 1000
+
+  # RCON `status` is still needed for client numbers and addresses (the OOB
+  # reply carries neither), but only as a slow identity table. A newly connected
+  # player triggers an early refresh, so this is just the backstop.
+  rcon_identity_interval_ms: 30000
+
+  # Keep `sv_uptime 1` set on the server, so the status reply carries uptime.
+  # That is how qctrl detects a server restart onto the *same* map, which changes
+  # no map name — without it the countdown would keep running from a dead anchor.
+  #
+  # Only q2pro/q2repro have this cvar. yquake2 does NOT, and will still happily
+  # accept `set sv_uptime 1` and echo it back while ignoring it. qctrl detects
+  # that (it checks for uptime in the reply, not for the cvar), logs a warning,
+  # and stops trying — restart detection then falls back to sv_maplist drift,
+  # which the watchdog above already catches within a minute.
+  manage_sv_uptime: true

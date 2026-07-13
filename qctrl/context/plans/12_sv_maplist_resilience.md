@@ -452,3 +452,24 @@ Protocol — record every result in the tracker:
 - [ ] T3: `npm run test` green including the 7 new applyLogic cases; `npm run lint` + `npm run build` clean. **Committed.**
 - [ ] T4: fraglimit match-end rotation completes on the live server with a qbots fleet connected — no `maps/.bsp`, no game shutdown; results recorded in tracker. **Committed.**
 - [ ] SERIES.md updated with Plan 12; plan + tracker moved to `completed/` when done.
+
+---
+
+## Follow-up (superseded assumption)
+
+This plan treats `sv_maplist` sync as the thing that makes "the server's own rotation" a
+correct fallback. That framing was too strong, and a later change corrected it.
+
+`sv_maplist` decides **which** map the changelevel targets. It does **not** make the
+intermission exit fire — as §Root Cause 3 above already notes, that needs a client to press
+a button ≥5 s in (`yquake2 game/player/client.c:2122`). So on an idle server there is no
+"server's own rotation" to fall back *to*; the match simply never ends. Rotation was living
+in a React hook, which meant an unattended server stopped rotating as soon as the last
+browser tab closed, and would sit in intermission until someone opened the frontend.
+
+Rotation now has a headless owner in the backend: `crates/api/src/rotator.rs` (policy) and
+`spawn_rotator` in `main.rs` (the task). Everything this plan built is unchanged and still
+needed — `sv_maplist` remains the right destination whenever a real player *does* press fire
+and the server exits intermission on its own. Item 6 above ("do not touch Random mode or
+`next_map()` dead code") is now resolved: `next_map()` is gone and `Random` is implemented in
+`rotator::select_next`, where it finally works without a browser driving it.

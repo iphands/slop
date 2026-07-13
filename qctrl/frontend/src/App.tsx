@@ -5,7 +5,7 @@ import { ChangesQueueUI } from './components/ChangesQueueUI';
 import { ServerStatusSync } from './components/ServerStatusSync';
 import { NotificationsProvider } from './hooks/useNotifications';
 import { NotificationContainer } from './components/NotificationContainer';
-import { RotationController } from './components/RotationController';
+import { MapChangeNotifier } from './components/MapChangeNotifier';
 import { Layout } from './components/Layout';
 import { Deathmatch } from './pages/Deathmatch';
 import { Maps } from './pages/Maps';
@@ -16,7 +16,20 @@ import { Rotation } from './pages/Rotation';
 import { Settings } from './pages/Settings';
 import { NotFound } from './pages/NotFound';
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // Keep polling in a background tab, so a tab you come back to shows the
+      // current map and clock rather than whatever was true when you left.
+      //
+      // This used to be load-bearing for correctness, not just for display: the
+      // rotation trigger rode on the ['status'] query, so a backgrounded tab
+      // meant a rotation that was due simply never fired. Rotation is the
+      // backend's now, and nothing here can stall it.
+      refetchIntervalInBackground: true,
+    },
+  },
+});
 
 function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
   const location = useLocation();
@@ -42,9 +55,9 @@ function App() {
       <ChangesProvider>
         <NotificationsProvider>
           <ServerStatusSync />
-          {/* Drives automatic map rotation globally, independent of the
-              current page. Must live outside <Routes>. */}
-          <RotationController />
+          {/* Announces map changes on any page. Rotation itself is the backend's
+              job now — see components/MapChangeNotifier.tsx. */}
+          <MapChangeNotifier />
           <Layout>
           <nav className="flex gap-4 mb-6 border-b border-gray-700 pb-4 flex-wrap">
             <NavLink to="/">Dashboard</NavLink>
