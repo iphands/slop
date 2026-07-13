@@ -837,6 +837,10 @@ impl Brain for Q3Brain {
             items: _, // q3 uses its own neutral PVS item picker (Plan 30 keeps q3 baseline)
         } = map;
         self.roam_nodes = roam_nodes;
+        // The cursor indexes the OLD map's roster; on a rotation to a smaller map a stale
+        // value panics in `roam_goal` on any non-modulo tick (Plan 65 T4, seen live
+        // q2dm1→q2dm3: len 6279, index 8501).
+        self.roam_idx = 0;
         self.nav_graph = Some(nav_graph);
         self.roam_as_position = roam_as_position;
     }
@@ -979,6 +983,30 @@ mod tests {
     fn new_brain_starts_in_seek_ltg() {
         let b = Q3Brain::new(Q3Character::default());
         assert_eq!(b.status(), "seek-ltg");
+    }
+
+    #[test]
+    fn set_map_resets_roam_cursor() {
+        // Plan 65 T4 regression: a rotation to a smaller map left `roam_idx` pointing
+        // past the new roster (seen live q2dm1→q2dm3: len 6279, index 8501 — a panic
+        // that killed the bot's supervisor loop for good). ticks=1 keeps the
+        // every-50th-tick re-modulo in `roam_goal` from masking the stale cursor.
+        let map = |n: usize| BrainMap {
+            roam_nodes: (0..n).collect(),
+            nav_graph: Arc::new(NavGraph::from_raw(
+                (0..n).map(|i| [i as f32 * 32.0, 0.0, 0.0]).collect(),
+                vec![Vec::new(); n],
+            )),
+            roam_as_position: false,
+            items: Vec::new(),
+        };
+        let mut b = Q3Brain::new(Q3Character::default());
+        b.set_map(map(10));
+        b.roam_idx = 9;
+        b.set_map(map(2));
+        let view = empty_view();
+        let _ = b.roam_goal(&view, 1, Vec3::ZERO); // must not panic
+        assert!(b.roam_idx < b.roam_nodes.len());
     }
 
     #[test]

@@ -93,6 +93,30 @@ handshake, anti-herd jitter) does the recovery.
 failed attempts, not lifetime reconnects. Simplest form: reset both in the `Ok(())` arm.
 Build gates + **commit** `task(T2): …`.
 
+### T4: Stale `roam_idx` panics the brain on map change (found live during T3)
+
+**Files**: `crates/brain/src/brains/q3/mod.rs`, `crates/brain/src/brains/main.rs`,
+`crates/brain/src/brains/xon/mod.rs`
+
+**What to do**: First T3 run caught it in the act — rotation q2dm1→q2dm3:
+`panicked at crates/brain/src/brains/q3/mod.rs:220:39: index out of bounds: the len is
+6279 but the index is 8501`. `set_map` replaces `roam_nodes` with the new map's (smaller)
+list but keeps the old `roam_idx`; `roam_goal` only re-modulos the index every 50th tick,
+so any other tick indexes straight out of bounds. `q3`, `main`, and `xon` all share the
+pattern (`zb2` uses `.get()` and is safe). Fix: reset `self.roam_idx = 0` in each
+`set_map`; add a regression test (set_map big roster → advance → set_map small roster →
+`roam_goal` must not panic). Build gates + **commit** `task(T4): …`.
+
+### T5: A brain panic must not permanently kill the bot
+
+**File**: `crates/qbots/src/supervisor.rs`
+
+**What to do**: `bot_supervisor_loop` awaits `bot_task` directly, so a panic anywhere in
+the brain unwinds the supervisor loop itself — the bot is gone for good with no retry (the
+exact attrition shape observed). Spawn `bot_task` as its own tokio task and await the
+`JoinHandle`: a `JoinError` (panic) becomes a warned, retryable outcome that falls through
+to the normal backoff/reconnect path. Build gates + **commit** `task(T5): …`.
+
 ### T3: Live multi-cycle durability run
 
 **What to do**: Against the user's 2-minute-timelimit server, run

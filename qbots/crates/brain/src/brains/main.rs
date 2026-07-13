@@ -237,6 +237,8 @@ impl crate::brains::core::Brain for MainBrain {
             items,
         } = map;
         self.roam_nodes = roam_nodes;
+        // Stale cursor from the previous map panics on a smaller roster (Plan 65 T4).
+        self.roam_idx = 0;
         self.nav_graph = Some(nav_graph);
         self.roam_as_position = roam_as_position;
         self.map_items = items;
