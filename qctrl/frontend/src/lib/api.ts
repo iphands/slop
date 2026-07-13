@@ -33,11 +33,12 @@ export interface Player {
 /**
  * Whether the backend actually knows when the current map started.
  *
- * A Quake 2 server does not publish elapsed map time — there is no such field in
- * rcon `status`, in the serverinfo string, or anywhere else. qctrl infers the map
- * start by watching for the map name to change. If it was not running when the
- * current map started (or the server has since restarted), that start is
- * unknowable, and `anchor` says so instead of guessing.
+ * A Quake 2 server does not publish elapsed map time on any channel qctrl speaks — not
+ * rcon `status`, not the serverinfo string. So by default qctrl *infers* the map start by
+ * watching for the map name to change, and if it wasn't running when the current map
+ * started, that start is unknowable and `anchor` says so rather than guessing.
+ *
+ * A qbots beacon removes the guesswork entirely — see `ClockSource.server_frame`.
  */
 export type ClockAnchor = 'exact' | 'unknown';
 
@@ -70,7 +71,6 @@ export interface MapClock {
   elapsed_seconds: number | null;
   quality: ClockQuality;
   source: ClockSource;
-  server_uptime_seconds: number | null;
   last_poll_age_seconds: number;
   /** The server's own frame counter, when a qbots beacon is feeding us. Diagnostic. */
   server_frame?: number | null;

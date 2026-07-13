@@ -35,22 +35,23 @@
 //! below takes exactly the path it took before, and the inference above is the whole story.
 //! See [`crate::frames`].
 //!
-//! # sv_uptime is a ghost — do not trust it to catch anything
+//! # The restart-onto-the-same-map problem, and the cvar that never solved it
 //!
 //! One failure mode is otherwise silent: a server restart onto the *same* map produces no
 //! map-name change, so a naive edge detector keeps counting and is confidently wrong.
-//! `sv_uptime` was supposed to catch it (uptime going backwards ⇒ the process restarted).
 //!
-//! **It cannot. yquake2 has no `sv_uptime` cvar at all** — the only `uptime` in the tree is
-//! a local in the *client's* input code. `Cvar_Set` merely *creates* the cvar when we set
-//! it, and nothing ever reads it, which is why the server happily reports `sv_uptime` is
-//! `1` while no status reply ever carries an `uptime` key. The uptime branches below are
-//! therefore dead on this engine; they are kept only because another engine might have it.
+//! qctrl used to try to catch this with `sv_uptime` — uptime going backwards ⇒ the process
+//! restarted. **It never worked.** yquake2 has no `sv_uptime` cvar at all; the only `uptime`
+//! in the tree is a local in the *client's* input code. `Cvar_Set` merely *created* the cvar
+//! when we set it, and nothing ever read it — which is why the server cheerfully reported
+//! `sv_uptime` as `1` while no status reply ever carried an `uptime` key. We were writing a
+//! junk cvar to someone's server and then detecting that it had done nothing. All of that is
+//! retired; do not bring it back.
 //!
-//! Without the beacon, the real backstop is the `sv_maplist` watchdog, which *guesses* at a
-//! restart within a minute. With the beacon, a restart is *measured* within a second — a
-//! change of `servercount` means a new level instance, and `serverframe` says exactly how
-//! old it is.
+//! Today the beacon *measures* the restart within a second: a changed `servercount` means a
+//! new level instance, and `serverframe` says exactly how old it is. Without the beacon, the
+//! backstop is the `sv_maplist` watchdog, which *guesses* at a restart within a minute (a
+//! restart wipes the cvar). Both are strictly better than a cvar that did nothing at all.
 
 use serde::Serialize;
 use std::time::{Duration, Instant};
@@ -106,7 +107,6 @@ pub struct MapClock {
     pub elapsed_seconds: Option<u32>,
     pub quality: ClockQuality,
     pub source: ClockSource,
-    pub server_uptime_seconds: Option<u64>,
     pub last_poll_age_seconds: u32,
     /// The server's own frame counter, when a beacon is feeding us. Diagnostic — the UI keys
     /// off `anchor`/`elapsed_seconds` exactly as before.
@@ -118,9 +118,11 @@ pub struct MapClock {
 }
 
 /// A poll's worth of server truth, as far as the clock cares.
+///
+/// Just the map name. The OOB status reply carries no clock of any kind — that is the whole
+/// reason [`FrameObservation`] exists.
 pub struct Observation<'a> {
     pub map: Option<&'a str>,
-    pub uptime_seconds: Option<u64>,
 }
 
 /// A serverframe beacon, relayed by a qbots client. See [`crate::frames`].
@@ -174,7 +176,6 @@ pub struct ClockState {
     anchor: ClockAnchor,
     source: ClockSource,
     current_map: Option<String>,
-    last_uptime: Option<u64>,
 
     // ── Serverframe beacon (Plan 13). All `None` when no beacon is configured, in which case
     // every branch keyed off them takes the pre-beacon path. ──
@@ -196,7 +197,6 @@ impl Default for ClockState {
             anchor: ClockAnchor::Unknown,
             source: ClockSource::None,
             current_map: None,
-            last_uptime: None,
             oob_map: None,
             last_servercount: None,
             last_serverframe: None,
@@ -210,35 +210,24 @@ impl Default for ClockState {
 impl ClockState {
     /// Fold one successful poll into the clock.
     ///
-    /// The state machine, in the order the checks must happen:
+    /// The state machine:
     ///
-    /// | observation                          | result                          |
-    /// |--------------------------------------|---------------------------------|
-    /// | server restarted (uptime went back)  | `Unknown` — invalidate          |
-    /// | map name changed                     | `Exact` / `ObservedEdge`        |
-    /// | anchor claims more elapsed than the  | `Unknown` — impossible, so our  |
-    /// | server has been up                   | anchor is bogus                 |
-    /// | otherwise                            | unchanged; keep ticking         |
+    /// | observation      | result                                    |
+    /// |------------------|-------------------------------------------|
+    /// | no map           | `Unknown` — invalidate; nothing to time    |
+    /// | map name changed | `Exact` / `ObservedEdge`                   |
+    /// | otherwise        | unchanged; keep ticking                    |
     ///
-    /// The restart check runs *before* the edge check on purpose: a restart that
-    /// also lands on a different map is still a restart, and re-anchoring on the
-    /// edge is correct there anyway (the map genuinely just started).
+    /// That is the *whole* of what a poll can tell us. The OOB status reply carries a map name
+    /// and nothing resembling a clock — see the module doc. A restart onto the **same** map is
+    /// invisible here, by construction; catching it is [`Self::observe_frame`]'s job.
     ///
     /// Every anchor-*mutating* branch below is skipped while a live beacon owns the clock for
     /// the map this poll is reporting ([`Self::frame_owns_the_clock`]) — the beacon has already
     /// anchored it, and more precisely. With no beacon configured that guard is always `false`
-    /// and this function behaves exactly as it did before Plan 13.
+    /// and this function is exactly the edge detector it has always been.
     pub fn observe(&mut self, obs: Observation<'_>, now: Instant) {
         let frame_owns = self.frame_owns_the_clock(now, obs.map);
-
-        let restarted = match (self.last_uptime, obs.uptime_seconds) {
-            // Monotonic within a server process, so a decrease means a new process.
-            (Some(prev), Some(now_up)) => now_up < prev,
-            _ => false,
-        };
-        if let Some(up) = obs.uptime_seconds {
-            self.last_uptime = Some(up);
-        }
 
         let map_changed = match (self.current_map.as_deref(), obs.map) {
             (Some(prev), Some(now_map)) => prev != now_map,
@@ -261,39 +250,12 @@ impl ClockState {
             return;
         }
 
-        if map_changed {
+        if map_changed && !frame_owns {
             // Unless the beacon already anchored this map — it read the age off the server,
             // where this edge only knows when we *noticed*, up to one poll interval late.
-            if !frame_owns {
-                self.map_start = Some(now);
-                self.anchor = ClockAnchor::Exact;
-                self.source = ClockSource::ObservedEdge;
-            }
-            return;
-        }
-
-        if restarted {
-            // Same map name, brand new server process: our anchor is stale and
-            // there is no edge to re-anchor on. This is exactly the case that
-            // would otherwise tick along being silently wrong.
-            //
-            // (Dead on yquake2 — it has no `sv_uptime`. See the module doc.)
-            if !frame_owns {
-                self.invalidate();
-            }
-            return;
-        }
-
-        // Sanity: a map cannot have been running longer than the server has been
-        // up. If it claims to be, the anchor is bogus — don't serve it.
-        if !frame_owns {
-            if let (ClockAnchor::Exact, Some(start), Some(up)) =
-                (self.anchor, self.map_start, obs.uptime_seconds)
-            {
-                if (start.elapsed().as_secs()) > up + 2 {
-                    self.invalidate();
-                }
-            }
+            self.map_start = Some(now);
+            self.anchor = ClockAnchor::Exact;
+            self.source = ClockSource::ObservedEdge;
         }
     }
 
@@ -462,7 +424,6 @@ impl ClockState {
             elapsed_seconds,
             quality,
             source: self.source,
-            server_uptime_seconds: self.last_uptime,
             last_poll_age_seconds,
             server_frame: self.last_serverframe,
             // Reported even once stale, and deliberately: a growing age is how the UI can tell
@@ -480,11 +441,8 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    fn obs<'a>(map: &'a str, uptime: Option<u64>) -> Observation<'a> {
-        Observation {
-            map: Some(map),
-            uptime_seconds: uptime,
-        }
+    fn obs(map: &str) -> Observation<'_> {
+        Observation { map: Some(map) }
     }
 
     /// qctrl started while a map was already running. We did not see it start,
@@ -493,7 +451,7 @@ mod tests {
     fn first_poll_mid_map_is_unknown() {
         let mut clock = ClockState::default();
         let now = Instant::now();
-        clock.observe(obs("q2dm7", Some(500)), now);
+        clock.observe(obs("q2dm7"), now);
 
         let snap = clock.snapshot(now, Some(now), Some(10));
         assert_eq!(snap.anchor, ClockAnchor::Unknown);
@@ -505,8 +463,8 @@ mod tests {
     fn observed_map_change_anchors_the_clock() {
         let mut clock = ClockState::default();
         let t0 = Instant::now();
-        clock.observe(obs("q2dm7", Some(500)), t0);
-        clock.observe(obs("q2dm1", Some(510)), t0);
+        clock.observe(obs("q2dm7"), t0);
+        clock.observe(obs("q2dm1"), t0);
 
         let snap = clock.snapshot(t0, Some(t0), Some(10));
         assert_eq!(snap.anchor, ClockAnchor::Exact);
@@ -518,31 +476,36 @@ mod tests {
     fn elapsed_counts_up_from_the_anchor() {
         let mut clock = ClockState::default();
         let t0 = Instant::now();
-        clock.observe(obs("q2dm7", Some(500)), t0);
-        clock.observe(obs("q2dm1", Some(510)), t0);
+        clock.observe(obs("q2dm7"), t0);
+        clock.observe(obs("q2dm1"), t0);
 
         let later = t0 + Duration::from_secs(90);
         let snap = clock.snapshot(later, Some(later), Some(10));
         assert_eq!(snap.elapsed_seconds, Some(90));
     }
 
-    /// The case sv_uptime exists to catch: the server restarts onto the SAME map,
-    /// so there is no name edge. Without the uptime check the clock would keep
-    /// counting from the old anchor and be silently, confidently wrong.
+    /// A poll CANNOT see a restart onto the same map — no map name changed, so there is no
+    /// edge. This asserts the limitation rather than papering over it: the clock keeps counting
+    /// the old level. `sv_uptime` was supposed to catch this and never did (see the module doc).
+    /// The beacon actually does — see `a_server_restart_onto_the_same_map_re_anchors`.
     #[test]
-    fn server_restart_on_same_map_invalidates_the_anchor() {
+    fn a_poll_alone_cannot_see_a_restart_onto_the_same_map() {
         let mut clock = ClockState::default();
         let t0 = Instant::now();
-        clock.observe(obs("q2dm7", Some(500)), t0);
-        clock.observe(obs("q2dm1", Some(510)), t0);
-        assert_eq!(clock.anchor, ClockAnchor::Exact);
+        clock.observe(obs("q2dm7"), t0);
+        clock.observe(obs("q2dm1"), t0);
 
-        // Uptime goes backwards: new server process, same map.
-        clock.observe(obs("q2dm1", Some(3)), t0 + Duration::from_secs(60));
+        // The server restarts onto q2dm1. Nothing in a status reply reveals it.
+        let later = t0 + Duration::from_secs(60);
+        clock.observe(obs("q2dm1"), later);
 
-        let snap = clock.snapshot(t0 + Duration::from_secs(60), Some(t0), Some(10));
-        assert_eq!(snap.anchor, ClockAnchor::Unknown);
-        assert_eq!(snap.elapsed_seconds, None);
+        let snap = clock.snapshot(later, Some(later), Some(10));
+        assert_eq!(
+            snap.elapsed_seconds,
+            Some(60),
+            "still counting the dead level"
+        );
+        assert_eq!(snap.source, ClockSource::ObservedEdge);
     }
 
     /// A restart that also lands on a new map still gets a valid anchor — the map
@@ -551,34 +514,18 @@ mod tests {
     fn server_restart_onto_a_new_map_still_anchors() {
         let mut clock = ClockState::default();
         let t0 = Instant::now();
-        clock.observe(obs("q2dm7", Some(500)), t0);
-        clock.observe(obs("q2dm1", Some(2)), t0);
+        clock.observe(obs("q2dm7"), t0);
+        clock.observe(obs("q2dm1"), t0);
 
         assert_eq!(clock.anchor, ClockAnchor::Exact);
         assert_eq!(clock.source, ClockSource::ObservedEdge);
-    }
-
-    /// A map cannot have run longer than the server has been up. If our anchor
-    /// says otherwise it is bogus, whatever produced it.
-    #[test]
-    fn anchor_older_than_the_server_is_rejected() {
-        let mut clock = ClockState::default();
-        let t0 = Instant::now();
-        clock.observe(obs("q2dm7", Some(500)), t0);
-        clock.observe(obs("q2dm1", Some(510)), t0);
-
-        // 10 minutes later, but the server claims it has only been up 30s.
-        let later = t0 + Duration::from_secs(600);
-        clock.observe(obs("q2dm1", Some(30)), later);
-
-        assert_eq!(clock.anchor, ClockAnchor::Unknown);
     }
 
     #[test]
     fn own_map_command_anchors_a_same_map_restart() {
         let mut clock = ClockState::default();
         let t0 = Instant::now();
-        clock.observe(obs("q2dm7", Some(500)), t0);
+        clock.observe(obs("q2dm7"), t0);
         assert_eq!(clock.anchor, ClockAnchor::Unknown);
 
         // qctrl restarts the map it's already on: no name edge will ever fire.
@@ -594,8 +541,8 @@ mod tests {
     fn a_stale_poll_degrades_quality_but_keeps_ticking() {
         let mut clock = ClockState::default();
         let t0 = Instant::now();
-        clock.observe(obs("q2dm7", Some(500)), t0);
-        clock.observe(obs("q2dm1", Some(510)), t0);
+        clock.observe(obs("q2dm7"), t0);
+        clock.observe(obs("q2dm1"), t0);
 
         let later = t0 + Duration::from_secs(30);
         let snap = clock.snapshot(later, Some(t0), Some(10));
@@ -608,8 +555,8 @@ mod tests {
     fn running_past_the_timelimit_is_overdue() {
         let mut clock = ClockState::default();
         let t0 = Instant::now();
-        clock.observe(obs("q2dm7", Some(500)), t0);
-        clock.observe(obs("q2dm1", Some(510)), t0);
+        clock.observe(obs("q2dm7"), t0);
+        clock.observe(obs("q2dm1"), t0);
 
         // timelimit 1 = 60s; 90s in with no map change means our model is wrong.
         let later = t0 + Duration::from_secs(90);
@@ -621,8 +568,8 @@ mod tests {
     fn a_few_seconds_over_the_limit_is_not_overdue() {
         let mut clock = ClockState::default();
         let t0 = Instant::now();
-        clock.observe(obs("q2dm7", Some(500)), t0);
-        clock.observe(obs("q2dm1", Some(510)), t0);
+        clock.observe(obs("q2dm7"), t0);
+        clock.observe(obs("q2dm1"), t0);
 
         // The server ends the match on its own clock and the new map takes a
         // moment to load; a small overshoot is normal.
@@ -635,8 +582,8 @@ mod tests {
     fn no_timelimit_is_never_overdue() {
         let mut clock = ClockState::default();
         let t0 = Instant::now();
-        clock.observe(obs("q2dm7", Some(500)), t0);
-        clock.observe(obs("q2dm1", Some(510)), t0);
+        clock.observe(obs("q2dm7"), t0);
+        clock.observe(obs("q2dm1"), t0);
 
         let later = t0 + Duration::from_secs(100_000);
         let snap = clock.snapshot(later, Some(later), Some(0));
@@ -647,32 +594,12 @@ mod tests {
     fn a_server_with_no_map_has_no_clock() {
         let mut clock = ClockState::default();
         let t0 = Instant::now();
-        clock.observe(obs("q2dm7", Some(500)), t0);
-        clock.observe(obs("q2dm1", Some(510)), t0);
+        clock.observe(obs("q2dm7"), t0);
+        clock.observe(obs("q2dm1"), t0);
         assert_eq!(clock.anchor, ClockAnchor::Exact);
 
-        clock.observe(
-            Observation {
-                map: None,
-                uptime_seconds: None,
-            },
-            t0,
-        );
+        clock.observe(Observation { map: None }, t0);
         assert_eq!(clock.anchor, ClockAnchor::Unknown);
-    }
-
-    /// Without sv_uptime everything still works — we just lose restart detection.
-    /// Degrading to a wrong-but-honest-looking clock is the documented tradeoff.
-    #[test]
-    fn works_without_uptime() {
-        let mut clock = ClockState::default();
-        let t0 = Instant::now();
-        clock.observe(obs("q2dm7", None), t0);
-        clock.observe(obs("q2dm1", None), t0);
-
-        let snap = clock.snapshot(t0, Some(t0), Some(10));
-        assert_eq!(snap.anchor, ClockAnchor::Exact);
-        assert_eq!(snap.server_uptime_seconds, None);
     }
 
     // ── Serverframe beacon (Plan 13) ──────────────────────────────────────────────────
@@ -798,8 +725,8 @@ mod tests {
     fn a_beacon_overrides_a_late_observed_edge_anchor() {
         let mut clock = ClockState::default();
         let t0 = base();
-        clock.observe(obs("q2dm7", None), t0);
-        clock.observe(obs("q2dm1", None), t0); // edge → Exact/ObservedEdge, elapsed 0
+        clock.observe(obs("q2dm7"), t0);
+        clock.observe(obs("q2dm1"), t0); // edge → Exact/ObservedEdge, elapsed 0
         assert_eq!(clock.source, ClockSource::ObservedEdge);
 
         // The map actually started 3s ago; our poll was simply late to notice.
@@ -863,10 +790,10 @@ mod tests {
         let mut clock = ClockState::default();
         let t0 = base();
         clock.observe_frame(beacon("q2dm7", 7, 100), t0);
-        clock.observe(obs("q2dm7", None), t0);
+        clock.observe(obs("q2dm7"), t0);
 
         let later = t0 + Duration::from_secs(60); // beacon long stale
-        clock.observe(obs("q2dm1", None), later);
+        clock.observe(obs("q2dm1"), later);
 
         let snap = clock.snapshot(later, Some(later), Some(10));
         assert_eq!(snap.source, ClockSource::ObservedEdge);
@@ -881,11 +808,11 @@ mod tests {
         let mut clock = ClockState::default();
         let t0 = base();
         clock.observe_frame(beacon("q2dm7", 7, 3000), t0); // fresh beacon, old map
-        clock.observe(obs("q2dm7", None), t0);
+        clock.observe(obs("q2dm7"), t0);
 
         // The poll sees the new map first. The beacon is still fresh — but it is about q2dm7.
         let later = t0 + Duration::from_secs(1);
-        clock.observe(obs("q2dm1", None), later);
+        clock.observe(obs("q2dm1"), later);
 
         let snap = clock.snapshot(later, Some(later), Some(10));
         assert_eq!(
@@ -903,7 +830,7 @@ mod tests {
     fn a_beacon_disagreeing_with_the_polled_map_is_ignored() {
         let mut clock = ClockState::default();
         let t0 = base();
-        clock.observe(obs("q2dm1", None), t0); // the poll says q2dm1 is running
+        clock.observe(obs("q2dm1"), t0); // the poll says q2dm1 is running
 
         clock.observe_frame(beacon("q2dm7", 7, 5000), t0); // a straggler from q2dm7
 
@@ -934,8 +861,8 @@ mod tests {
     fn an_inferred_invalidation_still_works_without_a_beacon() {
         let mut clock = ClockState::default();
         let t0 = Instant::now();
-        clock.observe(obs("q2dm7", None), t0);
-        clock.observe(obs("q2dm1", None), t0);
+        clock.observe(obs("q2dm7"), t0);
+        clock.observe(obs("q2dm1"), t0);
         assert_eq!(clock.anchor, ClockAnchor::Exact);
 
         clock.invalidate_inferred(t0);
@@ -949,17 +876,11 @@ mod tests {
         let mut clock = ClockState::default();
         let t0 = base();
 
-        clock.observe(obs("q2dm7", None), t0);
+        clock.observe(obs("q2dm7"), t0);
         clock.observe_frame(beacon("q2dm7", 7, 100), t0);
-        clock.observe(obs("q2dm7", None), t0);
+        clock.observe(obs("q2dm7"), t0);
         clock.observe_frame(beacon("q2dm7", 7, 110), t0);
-        clock.observe(
-            Observation {
-                map: None,
-                uptime_seconds: None,
-            },
-            t0,
-        );
+        clock.observe(Observation { map: None }, t0);
 
         for now in [t0, t0 + Duration::from_secs(5)] {
             let snap = clock.snapshot(now, Some(now), Some(10));
@@ -978,8 +899,8 @@ mod tests {
         let mut clock = ClockState::default();
         let t0 = Instant::now();
 
-        for (map, uptime) in [("q2dm7", 500u64), ("q2dm1", 510), ("q2dm1", 5)] {
-            clock.observe(obs(map, Some(uptime)), t0);
+        for map in ["q2dm7", "q2dm1", "q2dm1"] {
+            clock.observe(obs(map), t0);
             let snap = clock.snapshot(t0, Some(t0), Some(10));
             assert_eq!(
                 snap.elapsed_seconds.is_some(),

@@ -3,7 +3,7 @@
 //! The wire format, straight from `SV_StatusString` (q2repro `src/server/main.c`):
 //!
 //! ```text
-//! \cheats\0\dmflags\17424\fraglimit\0\mapname\q2dm7\maxclients\64\timelimit\10\uptime\12.34
+//! \cheats\0\dmflags\17424\fraglimit\0\mapname\q2dm7\maxclients\64\timelimit\10
 //! 15 45 "PlayerOne"
 //! -2 16 "Some Bot"
 //! ```
@@ -99,39 +99,6 @@ pub fn parse_oob_status(reply: &str) -> Result<OobStatus, StatusParseError> {
     Ok(OobStatus { info, players })
 }
 
-/// Seconds from an `sv_uptime 1` value.
-///
-/// Mirrors `Com_FormatTime` (q2repro `src/common/utils.c`), which emits one of
-/// three shapes depending on magnitude:
-///
-/// ```text
-/// 12.34        -> MM.SS
-/// 1:02.03      -> H:MM.SS
-/// 2+01:02.03   -> D+HH:MM.SS
-/// ```
-///
-/// Note the separator quirk: minutes and seconds are joined by a `.`, not a `:`.
-pub fn parse_uptime(value: &str) -> Option<u64> {
-    let value = value.trim();
-
-    let (days, rest) = match value.split_once('+') {
-        Some((d, rest)) => (d.parse::<u64>().ok()?, rest),
-        None => (0, value),
-    };
-
-    // The tail is always `MM.SS`; anything before it is hours (and, with days
-    // present, hours are zero-padded).
-    let (head, seconds) = rest.rsplit_once('.')?;
-    let seconds: u64 = seconds.parse().ok()?;
-
-    let (hours, minutes) = match head.rsplit_once(':') {
-        Some((h, m)) => (h.parse::<u64>().ok()?, m.parse::<u64>().ok()?),
-        None => (0, head.parse::<u64>().ok()?),
-    };
-
-    Some(((days * 24 + hours) * 60 + minutes) * 60 + seconds)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,25 +176,5 @@ mod tests {
         // e.g. an RCON error leaked into this path, or a garbage datagram.
         assert!(parse_oob_status("Bad rcon_password.").is_err());
         assert!(parse_oob_status("").is_err());
-    }
-
-    #[test]
-    fn parses_all_three_uptime_shapes() {
-        assert_eq!(parse_uptime("12.34"), Some(12 * 60 + 34));
-        assert_eq!(parse_uptime("1:02.03"), Some(3600 + 2 * 60 + 3));
-        assert_eq!(
-            parse_uptime("2+01:02.03"),
-            Some(2 * 86400 + 3600 + 2 * 60 + 3)
-        );
-    }
-
-    #[test]
-    fn rejects_garbage_uptime() {
-        // sv_uptime is off (key absent) or the server sent something unexpected:
-        // better to report no uptime than a wrong one, since uptime is what
-        // invalidates the clock on a server restart.
-        assert_eq!(parse_uptime(""), None);
-        assert_eq!(parse_uptime("soon"), None);
-        assert_eq!(parse_uptime("1 hour 20 minutes"), None); // this is sv_uptime 2
     }
 }

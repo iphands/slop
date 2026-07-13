@@ -88,19 +88,21 @@ response as "4086 chars"). Fixed to slice `buf[4..n]` using the actual `recv` co
 **Sources**:
 - `frontend/src/components/AddMapDialog.tsx` (button group structure)
 
-# A Quake 2 Server Does Not Expose Map Time — And `sv_uptime` Silently Lies on yquake2
+# `sv_uptime` on yquake2 is a Ghost Cvar — and the Map Clock Was Never Actually Unreadable
 
-**Problem**: To show a map countdown, we need to know how long the current map has been running. There is no such field. `level.time` lives in the game DLL and has no cvar, no configstring, and no serverinfo key; rcon `status` prints only the map name and the client table. This is a protocol-level "no", not a missing lookup. Any elapsed time qctrl reports is *inferred* by watching for the map name to change — so if qctrl was not running when the map started, the elapsed time is genuinely unrecoverable and must be reported as unknown rather than guessed. A guessed anchor is worse than none: it makes the rotation timer fire at an arbitrary moment.
+**Problem (as originally understood)**: To show a map countdown you need to know how long the current map has been running, and no channel qctrl speaks carries it. `level.time` lives in the game DLL with no cvar, no configstring, no serverinfo key; rcon `status` prints only the map name and the client table; the OOB status reply carries no clock. So elapsed time was *inferred* by watching the map name change — and if qctrl wasn't running when the map started, it was unrecoverable and had to be reported as unknown rather than guessed. (A guessed anchor is worse than none: it makes the rotation timer fire at an arbitrary moment. That part still stands.)
 
-**The second trap**: q2pro/q2repro have an `sv_uptime` cvar that adds `\uptime\MM.SS` to the status reply — a monotonic server clock, which is the only way to notice a *server restart onto the same map* (no map-name change, so a naive edge detector keeps counting from a dead anchor). **yquake2 has no such cvar.** But `set sv_uptime 1` still *appears* to succeed there, because Q2 creates an inert user cvar for any unknown name and dutifully echoes `"sv_uptime" is "1"` back. Trusting that echo means believing restart detection is armed when it is doing nothing at all.
+**The trap**: q2pro/q2repro have an `sv_uptime` cvar that adds `\uptime\MM.SS` to the status reply — a monotonic server clock, and seemingly the only way to notice a *server restart onto the same map* (no map-name change, so a naive edge detector keeps counting from a dead anchor). **yquake2 has no such cvar.** But `set sv_uptime 1` still *appears* to succeed there, because Q2 creates an inert user cvar for any unknown name and dutifully echoes `"sv_uptime" is "1"` back. qctrl believed restart detection was armed while it was doing precisely nothing — writing a junk cvar to someone's server every minute, and then detecting that it had had no effect. **All of it is now deleted. Do not reintroduce it.**
 
-**Avoidance**: Never treat a cvar echo as proof a feature works — test for the *effect*. qctrl checks whether an `uptime` key ever appears in an actual status reply, not what `sv_uptime` reads back; when it doesn't, it warns once, stops writing a junk cvar, and falls back to the `sv_maplist` watchdog (a restart wipes that cvar, which the watchdog already spots within a minute). Identify the engine before relying on its extensions: yquake2 reports `version\8.70` and `maxspectators`; q2pro-family builds differ. Keep uptime strictly optional so the clock degrades honestly instead of breaking.
+**The bigger lesson**: the premise was wrong. The server *does* publish the map clock — it just tells its **clients**, not its admins. `SV_SpawnServer` zeroes `sv.framenum` on every map spawn (`sv_init.c:267`), it increments at exactly 10 Hz (`sv_main.c:343`), and `svc_frame` carries it to every connected client every frame (`sv_entities.c:425`). So `serverframe / 10` **is** the exact age of the running map. "There is no way to read X" almost always means "there is no way to read X *on the channel I happen to be standing on*" — before concluding a value is unobtainable, enumerate every channel the software has, including the ones you aren't using. qctrl had no Q2 client; qbots had 32, already decoding this exact field and discarding it. See qctrl Plan 13 / qbots Plan 66.
+
+**Avoidance**: Never treat a cvar echo as proof a feature works — test for the *effect*, not the acknowledgement. Q2 will happily accept, store, and echo back a cvar no code reads. Identify the engine before relying on its extensions (yquake2 reports `version\8.70` and `maxspectators`; q2pro-family builds differ). And when a value looks unobtainable, ask which *other* process in the system is already being told it.
 
 ## Sources
-- qctrl: `crates/api/src/clock.rs` (ClockAnchor::Unknown, the state machine)
-- qctrl: `crates/api/src/main.rs` (`ensure_sv_uptime`, `SvUptime::Unsupported`)
-- qctrl: `crates/api/src/status_cache.rs` (`saw_uptime_key`)
-- vendor/yquake2 `src/server/sv_main.c` (SV_StatusString — no uptime); vendor/q2repro `src/server/main.c:440` (uptime block)
+- qctrl: `crates/api/src/clock.rs` (`ClockAnchor::Unknown`; `observe_frame` — the anchor that measures instead of infers)
+- qctrl: `crates/api/src/frames.rs` (the beacon reader that replaced the ghost)
+- qbots: `crates/qbots/src/beacon.rs` (the producer)
+- vendor/yquake2: `src/server/sv_init.c:267` (`memset(&sv,…)` zeroes framenum), `src/server/sv_main.c:343` (10 Hz), `src/server/sv_entities.c:425` (`svc_frame` → every client), `src/server/sv_main.c` (`SV_StatusString` — no uptime); vendor/q2repro `src/server/main.c:440` (the uptime block yquake2 lacks)
 
 # The OOB `status` Query Is the Free Read Path — RCON Is for Mutations
 

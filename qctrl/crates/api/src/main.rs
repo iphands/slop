@@ -540,9 +540,6 @@ fn spawn_sv_maplist_watchdog(state: SharedState) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        // Set once an engine proves it ignores sv_uptime, so we stop probing it
-        // (and stop writing a cvar it does nothing with) every minute.
-        let mut uptime_unsupported = false;
         loop {
             tick.tick().await;
 
@@ -572,71 +569,8 @@ fn spawn_sv_maplist_watchdog(state: SharedState) {
                 // Server down or unreachable: an outage must not become a log flood.
                 Err(e) => tracing::debug!("sv_maplist check skipped: {}", e),
             }
-
-            if state.config.poll.manage_sv_uptime && !uptime_unsupported {
-                uptime_unsupported = ensure_sv_uptime(&state).await == SvUptime::Unsupported;
-            }
         }
     });
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum SvUptime {
-    /// The server reports uptime — restart detection via the clock is armed.
-    Working,
-    /// This engine has no `sv_uptime`. Stop asking; fall back to `sv_maplist` drift.
-    Unsupported,
-    /// Just set the cvar (or couldn't reach the server); re-check next tick.
-    Pending,
-}
-
-/// Try to keep `sv_uptime 1` set, so the OOB status reply carries the server's uptime.
-///
-/// Uptime lets the map clock notice a server restart onto the *same* map — such a
-/// restart changes no map name, so without it the clock keeps counting from an
-/// anchor belonging to a dead process. `sv_uptime 1` is the second-resolution form
-/// (`MM.SS` / `H:MM.SS` / `D+HH:MM.SS`); `2` is a prose form we cannot parse.
-///
-/// **This only works on q2pro/q2repro.** yquake2 has no `sv_uptime` cvar at all —
-/// and crucially, setting it there still *appears* to succeed, because Q2 creates an
-/// inert user cvar for any unknown name and dutifully echoes `"sv_uptime" is "1"`
-/// back. Trusting that echo would mean believing restart detection was armed when it
-/// was doing nothing. So the cvar's value is not the test: the test is whether an
-/// `uptime` key ever shows up in an actual status reply.
-///
-/// On an engine that ignores it, we say so once and stop writing a junk cvar to
-/// someone's server. Restart detection then rests on the `sv_maplist` watchdog,
-/// which already spots a restart (a restart wipes the cvar) and invalidates the clock.
-async fn ensure_sv_uptime(state: &SharedState) -> SvUptime {
-    let reply = match state.rcon_client.execute("sv_uptime").await {
-        Ok(reply) => reply,
-        Err(e) => {
-            tracing::debug!("sv_uptime check skipped: {}", e);
-            return SvUptime::Pending;
-        }
-    };
-
-    if parse_cvar_echo(&reply, "sv_uptime") != Some("1") {
-        tracing::info!("Setting sv_uptime 1 (lets qctrl detect server restarts)");
-        if let Err(e) = state.rcon_client.execute("set sv_uptime 1").await {
-            tracing::warn!("Failed to set sv_uptime: {}", e);
-        }
-        // The next status poll will show whether the engine honored it.
-        return SvUptime::Pending;
-    }
-
-    // The cvar says 1. Did the server actually act on it?
-    if state.status_cache.saw_uptime_key() {
-        return SvUptime::Working;
-    }
-
-    tracing::warn!(
-        "Server accepts `sv_uptime 1` but never reports uptime — this engine \
-         (yquake2?) does not support it. Map-clock restart detection will rely on \
-         sv_maplist drift instead, so a server restart onto the same map may take \
-         up to a minute to notice."
-    );
-    SvUptime::Unsupported
 }
 
 /// The map name a `map`/`gamemap` command will load, if it is one.

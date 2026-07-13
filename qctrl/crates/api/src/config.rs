@@ -32,15 +32,6 @@ pub struct PollConfig {
     /// connected player refreshes it early regardless, so this is just the
     /// backstop.
     pub rcon_identity_interval_ms: u64,
-    /// Keep `sv_uptime 1` set on the server, intended to let qctrl notice a server
-    /// restart onto the same map.
-    ///
-    /// **On yquake2 this achieves nothing.** The engine has no `sv_uptime` cvar at all
-    /// — `Cvar_Set` merely *creates* one, which nothing reads, so no status reply ever
-    /// carries an `uptime` key. Kept because another engine (q2pro/q2repro) does have it.
-    /// The real fix for the same-map restart is the serverframe beacon: see
-    /// [`FramesConfig`] and `crate::clock`.
-    pub manage_sv_uptime: bool,
 }
 
 impl Default for PollConfig {
@@ -48,7 +39,6 @@ impl Default for PollConfig {
         Self {
             status_interval_ms: 1000,
             rcon_identity_interval_ms: 30_000,
-            manage_sv_uptime: true,
         }
     }
 }
@@ -168,7 +158,6 @@ paths:
         let config: Config = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.poll.status_interval_ms, 1000);
         assert_eq!(config.poll.rcon_identity_interval_ms, 30_000);
-        assert!(config.poll.manage_sv_uptime);
     }
 
     #[test]
@@ -183,11 +172,9 @@ paths:
   baseq2: /tmp/baseq2
 poll:
   status_interval_ms: 5000
-  manage_sv_uptime: false
 "#;
         let config: Config = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.poll.status_interval_ms, 5000);
-        assert!(!config.poll.manage_sv_uptime);
         // Unspecified keys keep their defaults.
         assert_eq!(config.poll.rcon_identity_interval_ms, 30_000);
     }

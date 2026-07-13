@@ -24,7 +24,6 @@ function clock(overrides: Partial<MapClock> = {}): MapClock {
     elapsed_seconds: 60,
     quality: 'live',
     source: 'observed_edge',
-    server_uptime_seconds: null,
     last_poll_age_seconds: 0,
     ...overrides,
   };

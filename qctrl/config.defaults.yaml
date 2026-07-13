@@ -26,19 +26,12 @@ poll:
   # player triggers an early refresh, so this is just the backstop.
   rcon_identity_interval_ms: 30000
 
-  # Keep `sv_uptime 1` set on the server, so the status reply carries uptime.
-  # That is how qctrl detects a server restart onto the *same* map, which changes
-  # no map name — without it the countdown would keep running from a dead anchor.
-  #
-  # Only q2pro/q2repro have this cvar. yquake2 does NOT — it has no `sv_uptime` at
-  # all, so `Cvar_Set` just CREATES one that nothing ever reads, which is why the
-  # server cheerfully reports `sv_uptime` is `1` while no reply ever carries an
-  # uptime key. qctrl notices (it checks the reply, not the cvar), warns, and stops
-  # trying. Restart detection then falls back to sv_maplist drift — within a minute.
-  #
-  # If you set `frames:` below, this is obsolete: the beacon MEASURES a restart in
-  # about a second. Turning it off is then reasonable.
-  manage_sv_uptime: true
+  # NOTE: qctrl used to also manage an `sv_uptime` cvar here, to catch a server restart
+  # onto the *same* map (which changes no map name, so nothing else notices). It has been
+  # RETIRED — yquake2 has no such cvar at all, so `Cvar_Set` merely created an inert one
+  # that nothing read, and we were writing junk to the server and then detecting that it
+  # had done nothing. Do not bring it back. A same-map restart is now caught either by the
+  # `frames:` beacon below (measured, ~1s) or by the sv_maplist watchdog (inferred, ~60s).
 
 # ── Serverframe beacon — optional exact map clock (Plan 13) ────────────────────
 # OFF by default. Omit this block and nothing changes.

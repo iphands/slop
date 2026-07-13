@@ -26,7 +26,7 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use crate::clock::{ClockState, FrameObservation, MapClock, Observation};
-use crate::oob::{parse_uptime, OobStatus};
+use crate::oob::OobStatus;
 use crate::status::{Player, StatusResponse};
 
 /// A client number we could not resolve. The frontend must disable kick/ban on
@@ -50,9 +50,6 @@ struct Inner {
     clock: ClockState,
     last_ok: Option<Instant>,
     consecutive_failures: u32,
-    /// Whether any OOB reply has ever carried an `uptime` key. See
-    /// `StatusCache::saw_uptime_key`.
-    saw_uptime_key: bool,
 }
 
 /// Shared, cheap-to-read server status.
@@ -92,15 +89,10 @@ impl StatusCache {
         let mut inner = self.inner.write().unwrap();
 
         let map = status.get("mapname").map(str::to_string);
-        let uptime = status.get("uptime").and_then(parse_uptime);
-        if uptime.is_some() {
-            inner.saw_uptime_key = true;
-        }
 
         inner.clock.observe(
             Observation {
                 map: map.as_deref(),
-                uptime_seconds: uptime,
             },
             now,
         );
@@ -171,16 +163,6 @@ impl StatusCache {
             .unwrap()
             .clock
             .invalidate_inferred(Instant::now());
-    }
-
-    /// Whether the server actually reports its uptime in the OOB status reply.
-    ///
-    /// `sv_uptime` is a q2pro/q2repro cvar. yquake2 has no such cvar — but
-    /// `set sv_uptime 1` still "succeeds" there, because Q2 creates an inert user
-    /// cvar for any unknown name and echoes it back. So the cvar reading `1` proves
-    /// nothing; only an `uptime` key actually appearing in a status reply does.
-    pub fn saw_uptime_key(&self) -> bool {
-        self.inner.read().unwrap().saw_uptime_key
     }
 
     pub fn needs_rcon_identity(&self, now: Instant, max_age: std::time::Duration) -> bool {
@@ -369,29 +351,6 @@ mod tests {
         assert_eq!(snap.map, None);
         // Nothing observed yet, so there is no honest elapsed to report.
         assert_eq!(snap.clock.elapsed_seconds, None);
-    }
-
-    /// The engine-detection test. yquake2 accepts `set sv_uptime 1` and echoes it
-    /// back, but never reports uptime — so the cvar's value must not be taken as
-    /// proof the feature works. Only an `uptime` key in a real reply counts.
-    #[test]
-    fn uptime_key_is_only_seen_when_the_server_actually_sends_it() {
-        let cache = StatusCache::new();
-        let now = Instant::now();
-
-        // A real yquake2 reply: no uptime key, however sv_uptime happens to read.
-        let yquake2 = crate::oob::parse_oob_status("\\mapname\\q2dm5\\timelimit\\10").unwrap();
-        cache.apply_oob(yquake2, now);
-        assert!(
-            !cache.saw_uptime_key(),
-            "must not claim uptime support the server never demonstrated"
-        );
-
-        // A q2pro reply does carry it.
-        let q2pro =
-            crate::oob::parse_oob_status("\\mapname\\q2dm5\\timelimit\\10\\uptime\\12.34").unwrap();
-        cache.apply_oob(q2pro, now);
-        assert!(cache.saw_uptime_key());
     }
 
     #[test]
