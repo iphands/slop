@@ -283,7 +283,12 @@ async fn add_to_rotation(
     Json(payload): Json<AddMapRequest>,
 ) -> Result<Json<QueueResponse>, StatusCode> {
     tracing::info!("Adding to rotation: {}", payload.map_name);
-    
+
+    if !valid_map_name(&payload.map_name) {
+        tracing::warn!("Rejected rotation map name '{}'", payload.map_name);
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
     match state.map_cache.get_maps() {
         Ok(available_maps) => {
             let map_exists = available_maps.iter().any(|m| m.name == payload.map_name);
@@ -326,7 +331,12 @@ async fn update_rotation(
     Json(payload): Json<QueueStatusResponse>,
 ) -> Result<Json<QueueResponse>, StatusCode> {
     tracing::info!("Updating rotation: mode={:?}, maps={:?}", payload.mode, payload.maps);
-    
+
+    if let Some(bad) = payload.maps.iter().find(|m| !valid_map_name(m)) {
+        tracing::warn!("Rejected rotation update: invalid map name '{}'", bad);
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
     let mut queue = state.rotation_queue.lock().await;
 
     queue.set_maps(payload.maps);
@@ -509,11 +519,46 @@ fn spawn_sv_maplist_watchdog(state: SharedState) {
     });
 }
 
+/// Reject rcon commands that would make the server load an empty map name:
+/// `map` / `gamemap` with a blank argument resolves to `maps/.bsp`, which is a
+/// fatal error that shuts the game down. Everything else passes through
+/// untouched — this is a tripwire, not a filter.
+fn validate_rcon_command(command: &str) -> Result<(), String> {
+    let mut it = command.split_whitespace();
+    let head = it.next().unwrap_or("").to_ascii_lowercase();
+    if head == "map" || head == "gamemap" {
+        let arg = it.next().unwrap_or("").trim_matches('"').trim();
+        if arg.is_empty() {
+            return Err(format!(
+                "refusing '{head}' with an empty map name (this crashes the server on maps/.bsp)"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Q2 map names as they appear on disk: letters, digits, underscore, hyphen.
+/// Anything else could escape the quoting in `set sv_maplist "…"`.
+fn valid_map_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
 async fn rcon_execute(
     State(state): State<SharedState>,
     Json(payload): Json<ExecutePayload>,
 ) -> Result<Json<ExecuteResponse>, StatusCode> {
     tracing::info!("Received RCON command: {}", payload.command);
+
+    if let Err(msg) = validate_rcon_command(&payload.command) {
+        tracing::warn!("Rejected RCON command '{}': {}", payload.command, msg);
+        state.log_stream.broadcast("ERROR", &msg);
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
     match state.rcon_client.execute(&payload.command).await {
         Ok(output) => {
             tracing::info!("Command executed successfully, broadcasting logs");
@@ -710,5 +755,53 @@ mod tests {
             Some(" q2dm1 q2dm2 "),
             &maps(&["q2dm1", "q2dm2"])
         ));
+    }
+
+    #[test]
+    fn rejects_map_commands_without_a_map_name() {
+        for command in ["map", "map   ", "map \"\"", "gamemap", "MAP", "  Gamemap  "] {
+            assert!(
+                validate_rcon_command(command).is_err(),
+                "should have rejected {command:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn allows_map_commands_with_a_map_name() {
+        assert!(validate_rcon_command("map q2dm1").is_ok());
+        assert!(validate_rcon_command("gamemap q2dm3").is_ok());
+    }
+
+    #[test]
+    fn leaves_unrelated_commands_alone() {
+        for command in [
+            "status",
+            "fraglimit 5",
+            "set sv_maplist \"a b\"",
+            "kick 3",
+            "mapcycle foo", // "map" as a prefix of another word is not a map command
+        ] {
+            assert!(
+                validate_rcon_command(command).is_ok(),
+                "should have allowed {command:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_real_map_names() {
+        for name in ["q2dm1", "the_edge", "ztn2dm3-b"] {
+            assert!(valid_map_name(name), "should have accepted {name:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_map_names_that_could_escape_the_quoting() {
+        for name in ["", "q2dm1\"; quit", "maps/q2dm1", "q2 dm1", "a;quit", "$foo"] {
+            assert!(!valid_map_name(name), "should have rejected {name:?}");
+        }
+        assert!(!valid_map_name(&"a".repeat(65)));
+        assert!(valid_map_name(&"a".repeat(64)));
     }
 }
