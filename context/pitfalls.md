@@ -375,3 +375,30 @@ ceiling even though the parser and UI are unbounded. The recv buffer size (e.g.
 - qctrl: crates/rcon/src/lib.rs (`execute_udp`, `execute_tcp`)
 - qctrl: vendor/yquake2/src/common/clientserver.c (`Com_VPrintf` redirect flush)
 - qctrl: vendor/yquake2/src/server/sv_send.c (`SV_FlushRedirect`)
+
+# Empty sv_maplist kills a Quake 2 server on `maps/.bsp`
+
+When a deathmatch match ends (fraglimit/timelimit), the game's `EndDMLevel` picks the
+next map from the **`sv_maplist`** cvar. If `sv_maplist` is empty, some game builds
+resolve the next map to the *empty string* and issue `gamemap ""` → `ERROR: Couldn't
+load maps/.bsp` → `ShutdownGame`. The server process dies with no rcon `map` line in
+the console, so it looks like a spontaneous crash rather than a command someone sent.
+Two things hide this for months: `sv_maplist` is normally empty and *nothing ever ends
+a match* on an all-bot server (leaving intermission needs a client to hold a button),
+so the fatal path is only reached once bots learn to press ATTACK at intermission.
+
+How to avoid: treat `sv_maplist` as **server state that resets on every server
+restart**, not as config you push once. A controller that pushes it at its own startup
+(or on rotation edits) silently loses the protection the moment the *game server*
+restarts. Poll the cvar (`rcon sv_maplist` → `"sv_maplist" is "q2dm1 q2dm2"`) on an
+interval and re-push on drift — check-then-push, never blind-push, because rcon flood
+protection answers `Bad rcon_password` when throttled. Never push an empty list (that
+re-arms the crash), and never push on an unparseable reply (that hammers a server
+that's already unhappy). Independently, reject `map`/`gamemap` with a blank argument
+at every layer that can emit rcon, and never build an implicit `map $current` restart
+from a status field that may be empty/unknown.
+
+## Sources
+- qctrl: `crates/api/src/main.rs` (`spawn_sv_maplist_watchdog`, `validate_rcon_command`)
+- qctrl: `frontend/src/lib/applyLogic.ts` (`buildApplyCommands`)
+- qbots: Plan 64 (bots pressing ATTACK at intermission surfaced the latent crash)
