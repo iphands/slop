@@ -16,8 +16,20 @@ export interface ApplyResult {
 }
 
 /**
+ * Map names that mean "we don't actually know what's running".
+ * Sending `map <one of these>` makes the server load maps/.bsp and die, so every
+ * guard in the UI imports this set rather than re-spelling the sentinel.
+ */
+const UNKNOWN_MAPS = new Set(['', 'unknown', 'Unknown']);
+
+export function isKnownMap(map: string | undefined | null): boolean {
+  return map !== undefined && map !== null && !UNKNOWN_MAPS.has(map.trim());
+}
+
+/**
  * Build the command list from queued changes
- * Always adds an implicit map restart if no map change is queued
+ * Adds an implicit map restart if no map change is queued, but only when the
+ * current map is known
  */
 export function buildApplyCommands(changes: Change[], currentMap: string): string[] {
   const commands: string[] = [];
@@ -39,15 +51,17 @@ export function buildApplyCommands(changes: Change[], currentMap: string): strin
     }
   });
 
-  // Always add map restart last
+  // Add the map restart last
   const mapChange = changes.find((c) => c.type === 'map');
-  if (mapChange) {
+  if (mapChange && String(mapChange.pendingValue).trim() !== '') {
     // Use the queued map change
     commands.push(`map ${mapChange.pendingValue}`);
-  } else {
+  } else if (isKnownMap(currentMap)) {
     // No map change queued, but we still need to restart to apply other changes
     commands.push(`map ${currentMap}`);
   }
+  // Otherwise send the cvar changes without a restart: they take effect on the
+  // next map load. `map <empty/unknown>` would kill the server.
 
   return commands;
 }
