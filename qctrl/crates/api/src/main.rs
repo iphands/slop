@@ -103,6 +103,10 @@ async fn main() {
         spawn_sv_maplist_sync(state.clone(), &queue);
     }
 
+    // ...and keep it pushed: a Q2 server restart wipes the cvar, which re-arms
+    // the empty-map crash until something pushes it again.
+    spawn_sv_maplist_watchdog(state.clone());
+
     let api_routes = Router::new()
         .route("/health", get(health))
         .route("/config", get(get_config))
@@ -419,10 +423,88 @@ fn spawn_sv_maplist_sync(state: SharedState, queue: &RotationQueue) {
         return;
     }
     tokio::spawn(async move {
-        let command = format!("set sv_maplist \"{}\"", maps.join(" "));
-        match state.rcon_client.execute(&command).await {
+        match push_sv_maplist(&state.rcon_client, &maps).await {
             Ok(_) => tracing::info!("Synced sv_maplist ({} maps) to server", maps.len()),
             Err(e) => tracing::warn!("Failed to sync sv_maplist to server: {}", e),
+        }
+    });
+}
+
+/// Push `maps` to the server as `sv_maplist`. An empty list is a no-op: clearing
+/// a good `sv_maplist` would reintroduce the `maps/.bsp` crash this module exists
+/// to prevent.
+async fn push_sv_maplist(rcon: &RconClient, maps: &[String]) -> Result<(), String> {
+    if maps.is_empty() {
+        return Ok(());
+    }
+    let command = format!("set sv_maplist \"{}\"", maps.join(" "));
+    rcon.execute(&command)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Extract the value from a cvar echo line: `"sv_maplist" is "q2dm1 q2dm2"`.
+///
+/// Returns `None` when the reply doesn't have the echo shape — e.g. the server
+/// is throttling rcon and replied `Bad rcon_password`.
+fn parse_cvar_echo<'a>(reply: &'a str, cvar: &str) -> Option<&'a str> {
+    let needle = format!("\"{cvar}\" is ");
+    let line = reply.lines().find(|l| l.contains(&needle))?;
+    // The value is the last quoted span on the line.
+    let mut parts = line.rsplitn(3, '"');
+    let _after_closing_quote = parts.next()?;
+    let value = parts.next()?;
+    Some(value)
+}
+
+/// True when the server's live `sv_maplist` doesn't match the queue we want.
+///
+/// An unparseable reply (`None`) counts as *not* drifted: pushing on garbage
+/// would hammer the server exactly when it is throttling us.
+fn maplist_drifted(live: Option<&str>, wanted: &[String]) -> bool {
+    match live {
+        None => false,
+        Some(v) => v.trim() != wanted.join(" "),
+    }
+}
+
+/// Re-check `sv_maplist` every 60 s and re-push the rotation queue on drift.
+///
+/// The startup and rotation-CRUD pushes are lost whenever the Q2 *server*
+/// restarts (cvars reset to empty), which silently re-arms the `maps/.bsp` crash
+/// at the next match end. Check-then-push keeps the server console quiet and
+/// stays well under rcon flood protection: one cheap query a minute, and a
+/// second command only when the cvar actually drifted.
+fn spawn_sv_maplist_watchdog(state: SharedState) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+
+            let wanted = state.rotation_queue.lock().await.get_maps();
+            if wanted.is_empty() {
+                continue; // Nothing to protect the server with.
+            }
+
+            match state.rcon_client.execute("sv_maplist").await {
+                Ok(reply) => {
+                    let live = parse_cvar_echo(&reply, "sv_maplist");
+                    if maplist_drifted(live, &wanted) {
+                        tracing::warn!(
+                            live = live.unwrap_or("<unparseable>"),
+                            "sv_maplist drifted (server restarted?) — re-pushing {} maps",
+                            wanted.len()
+                        );
+                        if let Err(e) = push_sv_maplist(&state.rcon_client, &wanted).await {
+                            tracing::warn!("sv_maplist re-push failed: {}", e);
+                        }
+                    }
+                }
+                // Server down or unreachable: an outage must not become a log flood.
+                Err(e) => tracing::debug!("sv_maplist check skipped: {}", e),
+            }
         }
     });
 }
@@ -557,4 +639,76 @@ struct ExecutePayload {
 struct ExecuteResponse {
     success: bool,
     output: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn maps(names: &[&str]) -> Vec<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn parses_cvar_echo() {
+        assert_eq!(
+            parse_cvar_echo("\"sv_maplist\" is \"q2dm1 q2dm2\"", "sv_maplist"),
+            Some("q2dm1 q2dm2")
+        );
+    }
+
+    #[test]
+    fn parses_empty_cvar_value() {
+        assert_eq!(
+            parse_cvar_echo("\"sv_maplist\" is \"\"", "sv_maplist"),
+            Some("")
+        );
+    }
+
+    #[test]
+    fn throttle_reply_is_unparseable() {
+        assert_eq!(parse_cvar_echo("Bad rcon_password.", "sv_maplist"), None);
+    }
+
+    #[test]
+    fn finds_echo_line_in_multiline_reply() {
+        assert_eq!(
+            parse_cvar_echo("foo\n\"sv_maplist\" is \"a b\"\n", "sv_maplist"),
+            Some("a b")
+        );
+    }
+
+    #[test]
+    fn empty_live_maplist_is_drift() {
+        assert!(maplist_drifted(Some(""), &maps(&["q2dm1", "q2dm2"])));
+    }
+
+    #[test]
+    fn exact_match_is_not_drift() {
+        assert!(!maplist_drifted(
+            Some("q2dm1 q2dm2"),
+            &maps(&["q2dm1", "q2dm2"])
+        ));
+    }
+
+    #[test]
+    fn unparseable_reply_is_never_drift() {
+        assert!(!maplist_drifted(None, &maps(&["q2dm1"])));
+    }
+
+    #[test]
+    fn different_order_is_drift() {
+        assert!(maplist_drifted(
+            Some("q2dm2 q2dm1"),
+            &maps(&["q2dm1", "q2dm2"])
+        ));
+    }
+
+    #[test]
+    fn surrounding_whitespace_is_not_drift() {
+        assert!(!maplist_drifted(
+            Some(" q2dm1 q2dm2 "),
+            &maps(&["q2dm1", "q2dm2"])
+        ));
+    }
 }
