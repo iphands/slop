@@ -19,6 +19,13 @@ pub struct BotTally {
     /// Environmental suicides (lava/slime/drown/squish/…), indexed by
     /// [`EnvDeath::index`]. These deaths are also counted in `deaths`.
     pub env_suicides: [u64; EnvDeath::ALL.len()],
+    /// Health *points* gained from pickups (stimpack/small/large/mega/adrenaline) —
+    /// own-playerstate stat increases while alive, so respawn resets don't count
+    /// (Plan 67). Amounts, not item counts.
+    pub health_picked: u64,
+    /// Armor *points* gained from pickups (shard/jacket/combat/body), same
+    /// detection rule as `health_picked`.
+    pub armor_picked: u64,
 }
 
 impl BotTally {
@@ -93,6 +100,26 @@ impl FleetStats {
             .env_suicides[kind.index()] += 1;
     }
 
+    /// Record `amount` health points gained from a pickup by `name` (Plan 67).
+    pub fn record_health_pickup(&self, name: &str, amount: u64) {
+        self.bots
+            .lock()
+            .unwrap()
+            .entry(name.to_string())
+            .or_default()
+            .health_picked += amount;
+    }
+
+    /// Record `amount` armor points gained from a pickup by `name` (Plan 67).
+    pub fn record_armor_pickup(&self, name: &str, amount: u64) {
+        self.bots
+            .lock()
+            .unwrap()
+            .entry(name.to_string())
+            .or_default()
+            .armor_picked += amount;
+    }
+
     /// Fleet totals across all registered bots.
     pub fn totals(&self) -> BotTally {
         self.bots
@@ -108,6 +135,8 @@ impl FleetStats {
                     kills: acc.kills + t.kills,
                     deaths: acc.deaths + t.deaths,
                     env_suicides: env,
+                    health_picked: acc.health_picked + t.health_picked,
+                    armor_picked: acc.armor_picked + t.armor_picked,
                 }
             })
     }
@@ -217,6 +246,25 @@ mod tests {
         assert_eq!(s.totals().env_total(), 4);
         // Cause classification never bumps the death counter itself.
         assert_eq!(s.totals().deaths, 0);
+    }
+
+    #[test]
+    fn pickups_accumulate_and_sum_in_totals() {
+        let s = FleetStats::new();
+        s.record_health_pickup("a", 25);
+        s.record_health_pickup("a", 100); // megahealth
+        s.record_armor_pickup("a", 2); // shard
+        s.record_health_pickup("b", 10);
+        s.record_armor_pickup("b", 50);
+        let snap: HashMap<String, BotTally> = s.snapshot().into_iter().collect();
+        assert_eq!(snap["a"].health_picked, 125);
+        assert_eq!(snap["a"].armor_picked, 2);
+        assert_eq!(snap["b"].health_picked, 10);
+        assert_eq!(snap["b"].armor_picked, 50);
+        let t = s.totals();
+        assert_eq!((t.health_picked, t.armor_picked), (135, 52));
+        // Pickups never touch the frag counters.
+        assert_eq!((t.kills, t.deaths), (0, 0));
     }
 
     #[test]

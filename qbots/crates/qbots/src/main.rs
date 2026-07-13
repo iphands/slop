@@ -923,6 +923,7 @@ pub(crate) async fn bot_task(
     let mut beacon_active: Option<beacon::ActiveBot> = None;
     let mut last_serverframe: Option<i32> = None;
     let mut last_health: Option<i32> = None; // Track health across frames for damage detection
+    let mut last_armor: Option<i32> = None; // Track armor for pickup detection (Plan 67)
     let mut last_frags: Option<i32> = None; // Track frags for kill detection
 
     // Plan 08: per-bot danger/popularity heatmap observer + the origin we were
@@ -1191,14 +1192,28 @@ pub(crate) async fn bot_task(
                                     tracing::error!(health = 0, "bot death detected");
                                 }
                             } else if current_health > prev && prev > 0 {
+                                // A health gain while alive is a pickup by definition in
+                                // stock DM (no regen); respawns are excluded by `prev > 0`
+                                // and megahealth rot is a decrease (Plan 67).
                                 let healed = current_health - prev;
-                                tracing::debug!(
-                                    health_before = prev,
-                                    health_after = current_health,
-                                    healed = healed,
-                                    "health restored"
-                                );
+                                tracing::debug!(kind = "health", amount = healed, "EVT pickup");
+                                stats.record_health_pickup(name, healed as u64);
                             }
+                            // Same rule for armor: only pickups increase it while alive
+                            // (damage absorption + the respawn reset are decreases).
+                            let current_armor = view.self_state().armor;
+                            if let Some(prev_armor) = last_armor {
+                                if current_armor > prev_armor {
+                                    let gained = current_armor - prev_armor;
+                                    tracing::debug!(
+                                        kind = "armor",
+                                        amount = gained,
+                                        "EVT pickup"
+                                    );
+                                    stats.record_armor_pickup(name, gained as u64);
+                                }
+                            }
+                            last_armor = Some(current_armor);
                         }
                         last_health = Some(current_health);
                     }
@@ -1227,6 +1242,7 @@ pub(crate) async fn bot_task(
                     heatmap_obs = None;
                     last_serverframe = None;
                     last_health = None;
+                    last_armor = None;
                     last_frags = None;
                     last_alive_pos = None;
                     stall_mon = brain::StallMonitor::new();
