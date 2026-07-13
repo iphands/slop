@@ -17,6 +17,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod clock;
 mod config;
 mod favorites;
+mod frames;
 mod logs;
 mod maps;
 mod oob;
@@ -131,6 +132,14 @@ async fn main() {
     // intermission on its own, so without an owner here an unattended server
     // stops rotating the moment the last browser tab closes.
     spawn_rotator(state.clone());
+
+    // Optional (Plan 13): a qbots fleet on this host can relay the server's own frame counter,
+    // which is the exact age of the running map — something neither RCON nor the OOB status query
+    // will ever tell us. Absent a `frames:` block, NOTHING here is spawned and the map clock keeps
+    // inferring from map-name edges exactly as before.
+    if state.config.frames.enabled() {
+        spawn_frame_listener(state.clone()).await;
+    }
 
     let api_routes = Router::new()
         .route("/health", get(health))
@@ -658,6 +667,8 @@ fn map_command_target(command: &str) -> Option<String> {
 /// * **RCON `status`** runs only when the identity table is stale or a new player
 ///   name appears, because it is the sole source of client numbers and addresses
 ///   (the OOB reply has neither) and rcon's budget is 1/sec.
+///
+/// Neither of them carries a map clock — see `spawn_frame_listener` for the one thing that does.
 fn spawn_status_poller(state: SharedState) {
     tokio::spawn(async move {
         let status_interval = Duration::from_millis(state.config.poll.status_interval_ms.max(200));
@@ -724,6 +735,61 @@ fn spawn_status_poller(state: SharedState) {
             }
         }
     });
+}
+
+/// Bridge the beacon reader to the status cache. Keeps `frames.rs` free of `SharedState`.
+struct ClockSink(StatusCache);
+
+impl frames::BeaconSink for ClockSink {
+    fn apply(&self, beacon: &frames::Beacon, now: Instant) {
+        self.0.apply_beacon(beacon, now);
+    }
+}
+
+/// Spawn the serverframe beacon reader (Plan 13). Only called when `frames:` is configured.
+///
+/// This is the only input that *measures* the map clock rather than inferring it. See
+/// `crate::frames`.
+///
+/// Resolves our own server address up front so a beacon about a **different** Q2 server can be
+/// rejected. A qbots fleet pointed at a test box would otherwise silently drive this map clock
+/// with a foreign map's age — and the countdown would look perfectly healthy while being wrong.
+async fn spawn_frame_listener(state: SharedState) {
+    let want_name = format!("{}:{}", state.config.server.host, state.config.server.port);
+
+    // Best-effort: a DNS failure is not fatal, it just means we fall back to matching on the
+    // configured name. Not worth re-resolving on a timer — the server address is static in practice.
+    let want_addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host(&want_name)
+        .await
+        .map(|it| it.collect())
+        .unwrap_or_default();
+    if want_addrs.is_empty() {
+        tracing::warn!(
+            server = %want_name,
+            "could not resolve our own server address; beacons will be matched on name alone"
+        );
+    }
+
+    let path = state.config.frames.socket_path.trim().to_string();
+    let backoff = frames::Backoff {
+        min: Duration::from_millis(state.config.frames.reconnect_min_ms.max(100)),
+        max: Duration::from_millis(state.config.frames.reconnect_max_ms.max(1000)),
+    };
+
+    tracing::info!(
+        beacon = %path,
+        server = %want_name,
+        "serverframe beacon enabled — the map clock will be measured, not inferred"
+    );
+
+    tokio::spawn(frames::run_reader(
+        frames::Transport::Unix(path.into()),
+        ClockSink(state.status_cache.clone()),
+        want_addrs,
+        want_name,
+        state.config.frames.require_server_match,
+        backoff,
+    ));
 }
 
 /// Don't retry a failed rotation faster than this. A `map` command that the

@@ -23,9 +23,9 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use crate::clock::{ClockState, MapClock, Observation};
+use crate::clock::{ClockState, FrameObservation, MapClock, Observation};
 use crate::oob::{parse_uptime, OobStatus};
 use crate::status::{Player, StatusResponse};
 
@@ -140,9 +140,37 @@ impl StatusCache {
             .note_own_map_command(map, now);
     }
 
-    /// The server restarted (e.g. `sv_maplist` was found wiped). Drop the anchor.
+    /// Fold a qbots serverframe beacon into the clock (Plan 13). See `crate::frames`.
+    ///
+    /// Deliberately does **not** touch `last_ok` or `consecutive_failures`. A beacon proves the
+    /// *game server* is alive; it says nothing about whether *qctrl* can reach it. `server_online`
+    /// and `ClockQuality::Degraded` must stay honest about qctrl's own polling, because the
+    /// rotator holds on `Degraded` — and a qctrl that cannot talk to the server has no business
+    /// rotating it, however healthy the beacon looks.
+    pub fn apply_beacon(&self, beacon: &crate::frames::Beacon, now: Instant) {
+        self.inner.write().unwrap().clock.observe_frame(
+            FrameObservation {
+                map: &beacon.map,
+                servercount: beacon.servercount,
+                serverframe: beacon.serverframe,
+                age: Duration::from_millis(beacon.age_ms),
+                bots: beacon.bots,
+            },
+            now,
+        );
+    }
+
+    /// The server *probably* restarted — the `sv_maplist` watchdog found the cvar wiped.
+    ///
+    /// This is an inference, and a slow one (up to 60 s). It is ignored while a live beacon owns
+    /// the anchor, because the beacon *measures* a restart within a second. See
+    /// `ClockState::invalidate_inferred`.
     pub fn invalidate_clock(&self) {
-        self.inner.write().unwrap().clock.invalidate();
+        self.inner
+            .write()
+            .unwrap()
+            .clock
+            .invalidate_inferred(Instant::now());
     }
 
     /// Whether the server actually reports its uptime in the OOB status reply.
@@ -381,5 +409,55 @@ mod tests {
             crate::oob::parse_oob_status("\\mapname\\q2dm1\n5 30 \"Alice\"\n0 40 \"Bob\"").unwrap();
         cache.apply_oob(status, now);
         assert!(cache.needs_rcon_identity(now, std::time::Duration::from_secs(30)));
+    }
+
+    fn beacon(map: &str, servercount: i32, serverframe: i32) -> crate::frames::Beacon {
+        crate::frames::Beacon {
+            v: 1,
+            server: "192.168.1.10:27910".into(),
+            server_name: "noir.lan:27910".into(),
+            map: map.into(),
+            servercount,
+            serverframe,
+            age_ms: 0,
+            bots: 12,
+            seq: 1,
+        }
+    }
+
+    /// A beacon anchors the clock exactly — 4210 frames at 10 Hz is 421 seconds.
+    #[test]
+    fn apply_beacon_anchors_the_clock() {
+        let cache = StatusCache::new();
+        // Instant is monotonic from boot; a beacon anchors in the past, so start far enough
+        // forward that `now - 421s` cannot underflow on a freshly-booted machine.
+        let now = Instant::now() + Duration::from_secs(86_400);
+
+        cache.apply_beacon(&beacon("q2dm7", 1234, 4210), now);
+
+        let snap = cache.snapshot();
+        let clock = snap.clock;
+        assert_eq!(clock.anchor, crate::clock::ClockAnchor::Exact);
+        assert_eq!(clock.source, crate::clock::ClockSource::ServerFrame);
+        assert_eq!(clock.server_frame, Some(4210));
+        assert_eq!(clock.beacon_bots, Some(12));
+    }
+
+    /// A beacon proves the GAME SERVER is alive. It says nothing about whether QCTRL can reach it
+    /// — those are different facts, and conflating them would be dangerous: the rotator holds when
+    /// the clock is `Degraded`, and a qctrl that cannot talk to the server has no business
+    /// rotating it, however healthy the bots' view looks.
+    #[test]
+    fn apply_beacon_does_not_fake_server_online() {
+        let cache = StatusCache::new();
+        let now = Instant::now() + Duration::from_secs(86_400);
+
+        cache.apply_beacon(&beacon("q2dm7", 1234, 4210), now);
+
+        let snap = cache.snapshot();
+        assert!(
+            !snap.server_online,
+            "a beacon must not make an unreachable server look online"
+        );
     }
 }

@@ -30,9 +30,40 @@ poll:
   # That is how qctrl detects a server restart onto the *same* map, which changes
   # no map name — without it the countdown would keep running from a dead anchor.
   #
-  # Only q2pro/q2repro have this cvar. yquake2 does NOT, and will still happily
-  # accept `set sv_uptime 1` and echo it back while ignoring it. qctrl detects
-  # that (it checks for uptime in the reply, not for the cvar), logs a warning,
-  # and stops trying — restart detection then falls back to sv_maplist drift,
-  # which the watchdog above already catches within a minute.
+  # Only q2pro/q2repro have this cvar. yquake2 does NOT — it has no `sv_uptime` at
+  # all, so `Cvar_Set` just CREATES one that nothing ever reads, which is why the
+  # server cheerfully reports `sv_uptime` is `1` while no reply ever carries an
+  # uptime key. qctrl notices (it checks the reply, not the cvar), warns, and stops
+  # trying. Restart detection then falls back to sv_maplist drift — within a minute.
+  #
+  # If you set `frames:` below, this is obsolete: the beacon MEASURES a restart in
+  # about a second. Turning it off is then reasonable.
   manage_sv_uptime: true
+
+# ── Serverframe beacon — optional exact map clock (Plan 13) ────────────────────
+# OFF by default. Omit this block and nothing changes.
+#
+# A Q2 server never tells qctrl how long the current map has been running: neither
+# RCON nor the connectionless status query carries a match clock. So by default
+# qctrl INFERS it — poll the map name, watch for it to change. That has two holes it
+# cannot close: start qctrl mid-map and the elapsed time is unknowable forever, and
+# a restart onto the SAME map changes no name, so the countdown keeps running and is
+# silently wrong.
+#
+# But the server does broadcast the number — to its CLIENTS. yquake2 zeroes
+# `sv.framenum` on every map spawn and ticks it at exactly 10 Hz, sending it to every
+# connected client every frame. So `serverframe / 10` IS the age of the running map.
+# qctrl has no client. qbots has up to 32 of them, already decoding this exact field.
+#
+# Point this at qbots' `beacon.socket_path` (set `beacon.enabled: true` on its side)
+# and the map clock stops being a guess. Requires qbots on the SAME HOST.
+#
+# frames:
+#   socket_path: /tmp/qbots-beacon.sock   # empty (default) = feature off
+#   require_server_match: true            # ignore beacons about a DIFFERENT server —
+#                                         #   a fleet pointed at a test box would
+#                                         #   otherwise drive this countdown with a
+#                                         #   foreign map's age, and look healthy doing
+#                                         #   it. Leave this on.
+#   reconnect_min_ms: 500                 # backoff floor (qbots may start after qctrl)
+#   reconnect_max_ms: 10000               # backoff ceiling

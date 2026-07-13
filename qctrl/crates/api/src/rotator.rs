@@ -167,10 +167,8 @@ pub fn select_next(
         return None;
     }
 
-    let index_of_current = current_map.and_then(|c| {
-        maps.iter()
-            .position(|m| m.eq_ignore_ascii_case(c.trim()))
-    });
+    let index_of_current =
+        current_map.and_then(|c| maps.iter().position(|m| m.eq_ignore_ascii_case(c.trim())));
 
     match mode {
         RotationMode::Sequential => {
@@ -216,6 +214,10 @@ mod tests {
             source: ClockSource::ObservedEdge,
             server_uptime_seconds: None,
             last_poll_age_seconds: 0,
+            // The rotator reads only anchor/elapsed/quality; the beacon fields are diagnostic.
+            server_frame: None,
+            beacon_age_seconds: None,
+            beacon_bots: None,
         }
     }
 
@@ -309,8 +311,14 @@ mod tests {
 
     #[test]
     fn an_empty_queue_has_no_next_map() {
-        assert_eq!(select_next(RotationMode::Sequential, &[], Some("q2dm1"), 0), None);
-        assert_eq!(select_next(RotationMode::Random, &[], Some("q2dm1"), 0), None);
+        assert_eq!(
+            select_next(RotationMode::Sequential, &[], Some("q2dm1"), 0),
+            None
+        );
+        assert_eq!(
+            select_next(RotationMode::Random, &[], Some("q2dm1"), 0),
+            None
+        );
     }
 
     // ---- decide: the preempt trigger ----
@@ -318,7 +326,11 @@ mod tests {
     #[test]
     fn preempt_fires_early_fire_seconds_before_the_timelimit() {
         let m = maps(&["q2dm1", "q2dm2"]);
-        let c = clock(ClockAnchor::Exact, Some(600 - EARLY_FIRE_SECONDS), ClockQuality::Live);
+        let c = clock(
+            ClockAnchor::Exact,
+            Some(600 - EARLY_FIRE_SECONDS),
+            ClockQuality::Live,
+        );
         let t = tick(&c, &m, Some("q2dm1"));
         assert_eq!(decide(&t), RotationDecision::Rotate("q2dm2".into()));
     }

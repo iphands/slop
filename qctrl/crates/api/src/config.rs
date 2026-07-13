@@ -32,9 +32,14 @@ pub struct PollConfig {
     /// connected player refreshes it early regardless, so this is just the
     /// backstop.
     pub rcon_identity_interval_ms: u64,
-    /// Keep `sv_uptime 1` set on the server. It is what lets qctrl notice a
-    /// server restart onto the same map — without it the map clock would keep
-    /// counting from a dead anchor and be silently wrong. See `crate::clock`.
+    /// Keep `sv_uptime 1` set on the server, intended to let qctrl notice a server
+    /// restart onto the same map.
+    ///
+    /// **On yquake2 this achieves nothing.** The engine has no `sv_uptime` cvar at all
+    /// — `Cvar_Set` merely *creates* one, which nothing reads, so no status reply ever
+    /// carries an `uptime` key. Kept because another engine (q2pro/q2repro) does have it.
+    /// The real fix for the same-map restart is the serverframe beacon: see
+    /// [`FramesConfig`] and `crate::clock`.
     pub manage_sv_uptime: bool,
 }
 
@@ -48,6 +53,44 @@ impl Default for PollConfig {
     }
 }
 
+/// Optional coupling to a qbots fleet on the same host (Plan 13).
+///
+/// qbots' clients are told the server's frame counter on every frame, and yquake2 zeroes it on
+/// every map spawn — so `serverframe / 10` is the exact age of the running map. qctrl cannot see
+/// that number over RCON or the OOB status query; this reads it off a socket qbots publishes.
+///
+/// **Empty `socket_path` (the default) means the feature is off**: no task is spawned, nothing is
+/// connected, and the map clock behaves exactly as it did before.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FramesConfig {
+    /// qbots' beacon socket (its `beacon.socket_path`). Empty ⇒ disabled.
+    pub socket_path: String,
+    /// Ignore beacons about a server other than the one qctrl manages. Leave this on: a qbots
+    /// fleet pointed at a different server would otherwise silently drive this map clock with a
+    /// foreign map's age, and the countdown would look perfectly healthy while being wrong.
+    pub require_server_match: bool,
+    pub reconnect_min_ms: u64,
+    pub reconnect_max_ms: u64,
+}
+
+impl Default for FramesConfig {
+    fn default() -> Self {
+        Self {
+            socket_path: String::new(),
+            require_server_match: true,
+            reconnect_min_ms: 500,
+            reconnect_max_ms: 10_000,
+        }
+    }
+}
+
+impl FramesConfig {
+    pub fn enabled(&self) -> bool {
+        !self.socket_path.trim().is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
@@ -55,6 +98,9 @@ pub struct Config {
     /// Absent from existing config.yaml files, so it must default.
     #[serde(default)]
     pub poll: PollConfig,
+    /// Optional serverframe beacon from qbots. Absent ⇒ disabled. See [`FramesConfig`].
+    #[serde(default)]
+    pub frames: FramesConfig,
 }
 
 impl Config {
@@ -144,5 +190,56 @@ poll:
         assert!(!config.poll.manage_sv_uptime);
         // Unspecified keys keep their defaults.
         assert_eq!(config.poll.rcon_identity_interval_ms, 30_000);
+    }
+
+    /// The whole feature is opt-in. Every config in the wild predates the `frames:` block, and
+    /// on those the beacon must not exist at all: no task spawned, no socket touched, the map
+    /// clock exactly as it was.
+    #[test]
+    fn a_config_without_a_frames_block_leaves_the_beacon_disabled() {
+        let yaml = r#"
+server:
+  host: test.local
+  port: 27910
+  rcon_password: test123
+paths:
+  server_cfg: /tmp/server.cfg
+  baseq2: /tmp/baseq2
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(!config.frames.enabled());
+        assert!(config.frames.require_server_match);
+    }
+
+    #[test]
+    fn frames_settings_are_overridable() {
+        let yaml = r#"
+server:
+  host: test.local
+  port: 27910
+  rcon_password: test123
+paths:
+  server_cfg: /tmp/server.cfg
+  baseq2: /tmp/baseq2
+frames:
+  socket_path: /tmp/qbots-beacon.sock
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.frames.enabled());
+        assert_eq!(config.frames.socket_path, "/tmp/qbots-beacon.sock");
+        // Unspecified keys keep their defaults.
+        assert!(config.frames.require_server_match);
+        assert_eq!(config.frames.reconnect_min_ms, 500);
+    }
+
+    /// A whitespace-only path is a typo, not a configuration. Treat it as off rather than trying
+    /// to connect to a socket named " ".
+    #[test]
+    fn a_blank_socket_path_is_disabled_not_a_socket_named_space() {
+        let cfg = FramesConfig {
+            socket_path: "   ".to_string(),
+            ..Default::default()
+        };
+        assert!(!cfg.enabled());
     }
 }

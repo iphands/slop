@@ -49,7 +49,20 @@ export type ClockQuality =
   /** Past the timelimit with no map change — our model disagrees with the server. */
   | 'overdue';
 
-export type ClockSource = 'observed_edge' | 'own_map_command' | 'none';
+/**
+ * How the map clock was anchored.
+ *
+ * `observed_edge` and `own_map_command` are *inferences* — they anchor at the moment we
+ * noticed something. `server_frame` is a *measurement*: the Q2 server zeroes its frame counter
+ * on every map spawn and ticks it at 10 Hz, so `serverframe / 10` is the exact age of the map.
+ * qctrl can't see that number, but a connected client can, and a qbots fleet relays it
+ * (backend Plan 13). It outranks the other two.
+ */
+export type ClockSource =
+  | 'observed_edge'
+  | 'own_map_command'
+  | 'server_frame'
+  | 'none';
 
 export interface MapClock {
   anchor: ClockAnchor;
@@ -59,6 +72,12 @@ export interface MapClock {
   source: ClockSource;
   server_uptime_seconds: number | null;
   last_poll_age_seconds: number;
+  /** The server's own frame counter, when a qbots beacon is feeding us. Diagnostic. */
+  server_frame?: number | null;
+  /** Age of the last beacon. Grows once the bot fleet stops; null if there never was one. */
+  beacon_age_seconds?: number | null;
+  /** Bots currently feeding the beacon. */
+  beacon_bots?: number | null;
 }
 
 export interface StatusResponse {
