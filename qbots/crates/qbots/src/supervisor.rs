@@ -860,26 +860,45 @@ async fn bot_supervisor_loop(
         // `Err` (e.g. the frame-stall watchdog's ConnectionReset).
         const BUDGET_RESET_AFTER: Duration = Duration::from_secs(60);
         let session_start = time::Instant::now();
-        match tracing::Instrument::instrument(
-            crate::bot_task(
-                addr,
-                &name,
-                qport,
-                skin.as_deref(),
-                &cfg,
-                &shared.nav,
-                &shared.shutdown,
-                &shared.stats,
-                mode,
-                brain,
-                char,
-                None, // TODO(P27): per-bot fleet persona from config
-                xonchar,
-            ),
-            span,
-        )
-        .await
-        {
+        // Plan 65: run bot_task as its OWN tokio task so a panic anywhere inside it
+        // (e.g. a brain bug — live: stale roam_idx indexing the new map's smaller graph)
+        // is caught at the task boundary as a JoinError instead of unwinding this
+        // supervisor loop. Before this, one brain panic silently removed the bot from
+        // the fleet forever; now it's just another retryable session end.
+        let task = tokio::spawn({
+            let name = name.clone();
+            let skin = skin.clone();
+            let cfg = Arc::clone(&cfg);
+            let shared = shared.clone();
+            async move {
+                tracing::Instrument::instrument(
+                    crate::bot_task(
+                        addr,
+                        &name,
+                        qport,
+                        skin.as_deref(),
+                        &cfg,
+                        &shared.nav,
+                        &shared.shutdown,
+                        &shared.stats,
+                        mode,
+                        brain,
+                        char,
+                        None, // TODO(P27): per-bot fleet persona from config
+                        xonchar,
+                    ),
+                    span,
+                )
+                .await
+            }
+        });
+        let result = match task.await {
+            Ok(r) => r,
+            Err(join_err) => Err(std::io::Error::other(format!(
+                "bot task panicked: {join_err}"
+            ))),
+        };
+        match result {
             Ok(()) => {
                 had_session = true;
                 tracing::info!(%name, "bot task exited");
