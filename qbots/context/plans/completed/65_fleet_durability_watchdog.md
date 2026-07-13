@@ -1,6 +1,6 @@
 # Plan 65 — Fleet Durability: Active-State Frame-Stall Watchdog
 
-> **Status**: in-progress
+> **Status**: done
 > **Created**: 2026-07-13
 > **Depends on**: Plan 64
 > **Goal**: Bots survive many hours of map rotations — every bot that loses its slot detects it and reconnects, so the fleet never shrinks.
@@ -152,6 +152,8 @@ pitfalls/distilled if anything new surfaces, then move the plan to `completed/`.
 
 ## Verification Checklist
 
-- [ ] T1: `cargo build`/`clippy`/`test` clean; watchdog code path returns `ConnectionReset` while `Active` with stalled frames; committed
-- [ ] T2: budget reset on successful session; build gates clean; committed
-- [ ] T3: live run — full roster at every settled poll across ≥4 map cycles; any stall trips recovered; committed; plan moved to `completed/`
+- [x] T1: `cargo build`/`clippy`/`test` clean; watchdog code path returns `ConnectionReset` while `Active` with stalled frames; committed (262679d95)
+- [x] T2: budget reset on successful session; build gates clean; committed (ffb71086a)
+- [x] T4: `roam_idx` reset in q3/main/xon `set_map` + regression test; committed (6f13cf044)
+- [x] T5: brain panic → `JoinError` → retryable session end; committed (37531802c)
+- [x] T3: live run — 36/36 at every settled poll across **9 rotations / ~18 min** (run 2, fixed binary); every rotation dip (incl. a 1-player hard-change trough at 11:14:42) recovered to 36/36 within one 30 s poll; **0 panics / 0 stalls / 0 give-ups** (run 1, pre-fix binary: 4 panics, 36→32, arithmetic exact); plan moved to `completed/`

@@ -1210,3 +1210,27 @@ instead (`set sv_maplist a,b` — EndDMLevel tokenizes on " ,\n\r").
 - qbots: crates/qbots/src/main.rs (bot_task intermission branch), crates/q2proto/src/playerstate.rs (PM_FREEZE)
 - qctrl: crates/api/src/main.rs (sv_maplist watchdog, comma-join), context/plans/12_sv_maplist_resilience_tracker.md
 - yquake2: game/player/client.c:2117-2129, game/g_main.c EndDMLevel
+
+# Long-run fleet attrition: every "impossible" bot loss is a panic or a silent hang, and both are invisible
+A 36-bot competition fleet shrank to 16 over an hour of 10-min map rotations (Plan 65).
+Two independent mechanisms, neither of which logs a bot-level error you'd grep for:
+(1) **Brain panic unwinds the supervisor.** q3/main/xon `set_map` swapped `roam_nodes`
+for the new map but kept the old `roam_idx`; `roam_goal` only re-modulos every 50th tick,
+so rotating big→small (q2dm1→q2dm3: len 6279, idx 8501) indexed out of bounds on the next
+tick. The panic propagated through `bot_supervisor_loop` into its tokio task — bot gone
+forever, fleet count −1, process fine. Run-1 arithmetic: 36 − 4 panics = 32 players. Never
+`await` fallible per-bot work inline in a supervisor: spawn it as its own task and convert
+`JoinError` into a retryable error. And treat any `vec[idx]` where vec and idx are set on
+different events (map load vs tick) as a panic waiting for a rotation.
+(2) **No watchdog once Active.** The connect deadline is gated to `state != Active`; a bot
+that misses every unreliable `svc_reconnect` copy (SV_FinalMessage) on a hard change keeps
+sending `clc_move` into a recycled slot the server ignores — zero bytes back, task never
+exits, supervisor never retries. An Active Q2 client gets `svc_frame` at 10 Hz always
+(intermission included): N seconds without one new serverframe = dead slot; return a
+retryable error (`stall_timeout_ms`, default 10 s).
+Verification that catches both: poll OOB `status` player-count every 30 s across ≥4
+rotations and demand it match the roster; count-vs-panic arithmetic pins the cause.
+## Sources
+- qbots: crates/brain/src/brains/q3/mod.rs (roam_goal/set_map), main.rs, xon/mod.rs
+- qbots: crates/qbots/src/supervisor.rs (bot_supervisor_loop task boundary)
+- qbots: crates/qbots/src/main.rs (bot_task frame-stall watchdog)
