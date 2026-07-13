@@ -840,6 +840,11 @@ async fn bot_supervisor_loop(
 ) {
     let mut attempts: u32 = 0;
     let mut backoff_ms: u64 = 1000;
+    // Plan 64: once a bot_task has completed a session (Ok = it connected and later
+    // got disconnected), later handshake failures are REJOIN failures — the server is
+    // mid-map-rotation, briefly full of ghost slots, or still loading. Those retry
+    // with backoff; only a bot that never joined keeps the fatal Plan 53 semantics.
+    let mut had_session = false;
     loop {
         if shared.shutdown.requested() {
             return;
@@ -868,16 +873,22 @@ async fn bot_supervisor_loop(
         .await
         {
             Ok(()) => {
+                had_session = true;
                 tracing::info!(%name, "bot task exited");
             }
             Err(e) => {
-                // A join failure (server full / connect timeout) is never retryable —
-                // the slot won't open by trying again. In strict mode it fails the whole
-                // fleet; with --loose-botcap it just drops this one bot with a warning.
-                if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::TimedOut
-                ) {
+                // An INITIAL join failure (server full / connect timeout) is never
+                // retryable — the slot won't open by trying again. In strict mode it
+                // fails the whole fleet; with --loose-botcap it just drops this one bot
+                // with a warning. After a completed session the same errors are rejoin
+                // hiccups (map rotation in progress, ghost slots timing out) and fall
+                // through to the normal retry-with-backoff below (Plan 64).
+                if !had_session
+                    && matches!(
+                        e.kind(),
+                        std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::TimedOut
+                    )
+                {
                     if shared.loose_botcap {
                         tracing::warn!(%name, "join failed ({e}); --loose-botcap set, dropping this bot");
                     } else {
