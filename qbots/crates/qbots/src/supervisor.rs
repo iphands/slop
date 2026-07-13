@@ -214,6 +214,33 @@ pub fn spawn_signal_listener(shutdown: Shutdown) -> JoinHandle<()> {
     })
 }
 
+/// Start the Plan 66 serverframe beacon, if `[beacon] enabled`.
+///
+/// `None` when disabled (the default) — no socket, no task, and `bot_task` takes exactly the
+/// code path it took before Plan 66. A beacon that cannot bind logs and disables itself: it is
+/// telemetry for qctrl, never a dependency of the fleet.
+fn start_beacon(
+    cfg: &Config,
+    addr: SocketAddr,
+    shutdown: &Shutdown,
+) -> Option<crate::beacon::Beacon> {
+    if !cfg.beacon.enabled {
+        return None;
+    }
+    let beacon = crate::beacon::Beacon::new();
+    tokio::spawn(crate::beacon::serve(
+        beacon.clone(),
+        cfg.beacon.clone(),
+        // The resolved ip:port the bots actually reach, plus the name as configured. qctrl
+        // checks a beacon against the server IT manages before trusting it, and the two sides
+        // routinely spell the same host differently.
+        addr.to_string(),
+        cfg.server_addr(),
+        shutdown.clone(),
+    ));
+    Some(beacon)
+}
+
 /// Reconnect policy for a bot in the fleet.
 #[derive(Clone, Copy)]
 struct Reconnect {
@@ -234,6 +261,9 @@ struct FleetShared {
     join_failure: Arc<Mutex<Option<String>>>,
     /// When true, a join failure only warns + drops that bot instead of failing the fleet.
     loose_botcap: bool,
+    /// Plan 66: the serverframe beacon, when `[beacon] enabled` is set. `None` (the default)
+    /// means no socket, no task, and no change to bot behaviour.
+    beacon: Option<crate::beacon::Beacon>,
 }
 
 /// Run the full fleet from config: shared nav cache + shutdown, one task per bot,
@@ -289,12 +319,16 @@ pub async fn run_fleet(
     let shutdown = Shutdown::new();
     let stats = FleetStats::new();
     let _signals = spawn_signal_listener(shutdown.clone());
+
+    let beacon = start_beacon(&cfg, addr, &shutdown);
+
     let shared = FleetShared {
         nav: nav_cache,
         shutdown: shutdown.clone(),
         stats: stats.clone(),
         join_failure: Arc::new(Mutex::new(None)),
         loose_botcap,
+        beacon,
     };
 
     // Per-process default so concurrent `run` fleets get disjoint qport ranges (the
@@ -605,6 +639,7 @@ pub async fn run_competition(
         stats: stats.clone(),
         join_failure: Arc::new(Mutex::new(None)),
         loose_botcap,
+        beacon: start_beacon(&cfg, addr, &shutdown),
     };
     // Contiguous per-mode qport blocks (`base + mi*count + i`) are disjoint, so the server's
     // (ip, qport) slot keys never collide across modes.
@@ -881,6 +916,7 @@ async fn bot_supervisor_loop(
                         &shared.nav,
                         &shared.shutdown,
                         &shared.stats,
+                        shared.beacon.as_ref(),
                         mode,
                         brain,
                         char,
@@ -975,9 +1011,11 @@ pub async fn run_single(
     let skin = char.map(|q| q.skin()).or(xonchar.map(|x| x.skin()));
     let span = tracing::info_span!("bot", %name, qport);
     let res = tracing::Instrument::instrument(
+        // No beacon for `connect-one`: it's a single-bot dev tool, and the beacon is a
+        // fleet-level facility that qctrl expects to be fed by a running fleet.
         crate::bot_task(
-            addr, name, qport, skin, cfg, &nav, &shutdown, &stats, mode, brain, char, persona,
-            xonchar,
+            addr, name, qport, skin, cfg, &nav, &shutdown, &stats, None, mode, brain, char,
+            persona, xonchar,
         ),
         span,
     )

@@ -37,3 +37,27 @@ fleet:
   # connect_timeout_ms: 10000  # max ms to reach Active before a join fails (default: 10000)
   # stall_timeout_ms: 10000    # max ms Active with no new server frame before the slot
                                #   is presumed dead and the bot re-handshakes (default: 10000)
+
+# ── Serverframe beacon — optional feed for qctrl (Plan 66) ─────────────────────
+# The Q2 server zeroes `sv.framenum` on every map spawn and ticks it at 10 Hz, and
+# sends it to every connected client — so `serverframe / 10` IS the age of the running
+# map. qctrl can't see it (it only speaks RCON + the connectionless status query), but
+# our bots decode it on every frame. This block relays it to qctrl over a unix socket,
+# so qctrl gets an exact map clock without connecting a Q2 client of its own.
+#
+# OFF by default. Omit the whole block and nothing changes: no socket, no task.
+# Requires qctrl on the SAME HOST (it's a unix socket), with `frames.socket_path` set
+# to the same path on its side.
+#
+# The fleet coalesces: 32 bots all see frame N, but the socket carries ONE message for
+# frame N — the message rate follows server ticks, never bot count.
+# beacon:
+#   enabled: false                        # (default: false)
+#   socket_path: /tmp/qbots-beacon.sock   # qbots listens; qctrl connects (default: this)
+                                          #   NOTE: under systemd `PrivateTmp=`, /tmp is NOT
+                                          #   shared between units — use /run/qbots/ instead.
+#   publish_interval_ms: 1000             # heartbeat; a map change publishes IMMEDIATELY
+                                          #   regardless, and each line carries `age_ms`, so a
+                                          #   slow interval costs resolution, not accuracy.
+#   socket_mode: 0o666                    # mode on the socket file (default: 0o666)
+#   max_clients: 4                        # concurrent readers (default: 4)

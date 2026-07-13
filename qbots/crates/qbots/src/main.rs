@@ -24,6 +24,7 @@ macro_rules! fatal {
     }};
 }
 
+mod beacon;
 mod config;
 mod scenario;
 mod skins;
@@ -812,6 +813,9 @@ pub(crate) async fn bot_task(
     nav_cache: &supervisor::NavCache,
     shutdown: &supervisor::Shutdown,
     stats: &supervisor::FleetStats,
+    // Plan 66: relays `sv.framenum` to qctrl. `None` when the beacon is disabled (the
+    // default), in which case this bot behaves exactly as it did before.
+    beacon: Option<&beacon::Beacon>,
     mode: NavMode,
     brain_kind: brain::BrainKind,
     char: Option<brain::CharPreset>,
@@ -910,6 +914,13 @@ pub(crate) async fn bot_task(
     // so a mismatch against the live serverdata means the server changed (or restarted)
     // the level and all per-map state below is stale.
     let mut map_servercount: Option<i32> = None;
+    // Plan 66: the map name we attribute beacon frames to. Set when configstring 33 lands,
+    // and CLEARED on a level change — a frame from the new level must never be published
+    // against the old level's map name.
+    let mut beacon_map = String::new();
+    // Counts this bot as Active in the beacon for as long as it holds a session. Armed on
+    // the first frame; dropped (and decremented) on every exit path, panic included.
+    let mut beacon_active: Option<beacon::ActiveBot> = None;
     let mut last_serverframe: Option<i32> = None;
     let mut last_health: Option<i32> = None; // Track health across frames for damage detection
     let mut last_frags: Option<i32> = None; // Track frags for kill detection
@@ -1054,6 +1065,21 @@ pub(crate) async fn bot_task(
                             last_frame_seen = time::Instant::now();
                             let now = Instant::now();
                             send_timing.on_frame(sf, now);
+
+                            // Plan 66: relay this frame to the fleet beacon. Already exactly
+                            // once per distinct frame per bot, so this is the natural hook.
+                            // 31 of 32 bots take the no-op path inside `fold` — see beacon.rs.
+                            if let Some(b) = beacon {
+                                if beacon_active.is_none() {
+                                    beacon_active = Some(b.bot_active());
+                                }
+                                if let Some(sc) =
+                                    conn.serverdata.as_ref().map(|sd| sd.servercount)
+                                {
+                                    b.on_frame(sc, sf, &beacon_map, now);
+                                }
+                            }
+
                             if let Some(cmd) = last_cmd {
                                 if let Some(pkt) = conn.transmit_cmd(&cmd) {
                                     let _ = sock.send(&pkt).await;
@@ -1191,6 +1217,11 @@ pub(crate) async fn bot_task(
                     );
                     map_loaded = false;
                     map_servercount = None;
+                    // Plan 66: the new level's frames are already arriving, but CS 33 hasn't
+                    // been re-parsed yet. Publishing them against the OLD map name would make
+                    // qctrl attribute the new map's age to the previous map — so say nothing
+                    // until we know where we are. `encode` skips a beacon with no map.
+                    beacon_map.clear();
                     nav_driver = None;
                     collision = None;
                     heatmap_obs = None;
@@ -1218,6 +1249,7 @@ pub(crate) async fn bot_task(
                                 .to_owned();
                             map_loaded = true;
                             map_servercount = servercount;
+                            beacon_map = map.clone(); // Plan 66
                             tracing::info!(map, bsp = %bsp_path, "loading nav graph");
                             // Shared across the fleet: built once per map, reused as Arc.
                             if let Some(map_nav) = nav_cache.get_or_build(cfg, &map) {

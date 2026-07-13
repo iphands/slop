@@ -10,6 +10,9 @@ pub struct Config {
     /// Fleet roster. When present, `qbots run` launches this many bots.
     #[serde(default)]
     pub fleet: Fleet,
+    /// Optional serverframe beacon for qctrl (Plan 66). Absent → disabled.
+    #[serde(default)]
+    pub beacon: BeaconCfg,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -22,6 +25,41 @@ pub struct Server {
 pub struct Paths {
     pub server_cfg: PathBuf,
     pub baseq2: PathBuf,
+}
+
+/// Optional serverframe beacon (Plan 66) — publishes the fleet's view of `sv.framenum`
+/// on a unix socket so qctrl can know the exact age of the running map without
+/// connecting a Q2 client of its own.
+///
+/// **Off by default.** An existing `config.yaml` with no `beacon:` block behaves exactly
+/// as it did before: no socket is created and no task is spawned.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
+pub struct BeaconCfg {
+    pub enabled: bool,
+    /// Unix socket qbots listens on. qctrl connects to it. Note: if the two ever run as
+    /// systemd units with `PrivateTmp=`, `/tmp` is *not* shared — move this to `/run/qbots/`.
+    pub socket_path: PathBuf,
+    /// Heartbeat interval. A level change publishes immediately regardless of this, and
+    /// each line carries `age_ms`, so a slow interval costs no accuracy — only resolution.
+    pub publish_interval_ms: u64,
+    /// Mode applied to the socket file. The beacon carries no secrets (unlike qctrl's
+    /// config, which holds the rcon password), but it is still world-readable telemetry.
+    pub socket_mode: u32,
+    /// Refuse more than this many concurrent readers.
+    pub max_clients: usize,
+}
+
+impl Default for BeaconCfg {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            socket_path: PathBuf::from("/tmp/qbots-beacon.sock"),
+            publish_interval_ms: 1000,
+            socket_mode: 0o666,
+            max_clients: 4,
+        }
+    }
 }
 
 /// Fleet roster — describes N bots spawned by `qbots run` (Plan 09).
@@ -205,5 +243,42 @@ fleet:
         assert_eq!(cfg.fleet.bot_name(5), "bot5");
         assert_eq!(cfg.fleet.qport_base, 28000);
         assert_eq!(cfg.fleet.connect_stagger_ms, 300);
+    }
+
+    /// Every config in the wild predates Plan 66 and has no `beacon:` block. Those configs
+    /// must keep behaving exactly as they did — which means the beacon stays OFF.
+    #[test]
+    fn a_config_without_a_beacon_block_leaves_it_disabled() {
+        let yaml = "\
+server: { host: noir.lan, port: 27910 }
+paths: { server_cfg: /x, baseq2: /y }
+";
+        let cfg: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(!cfg.beacon.enabled);
+        assert_eq!(
+            cfg.beacon.socket_path,
+            PathBuf::from("/tmp/qbots-beacon.sock")
+        );
+        assert_eq!(cfg.beacon.publish_interval_ms, 1000);
+    }
+
+    #[test]
+    fn beacon_settings_are_overridable_and_unspecified_keys_keep_defaults() {
+        let yaml = "\
+server: { host: noir.lan, port: 27910 }
+paths: { server_cfg: /x, baseq2: /y }
+beacon:
+  enabled: true
+  socket_path: /run/qbots/beacon.sock
+";
+        let cfg: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(cfg.beacon.enabled);
+        assert_eq!(
+            cfg.beacon.socket_path,
+            PathBuf::from("/run/qbots/beacon.sock")
+        );
+        // Untouched keys keep their defaults.
+        assert_eq!(cfg.beacon.publish_interval_ms, 1000);
+        assert_eq!(cfg.beacon.max_clients, 4);
     }
 }
