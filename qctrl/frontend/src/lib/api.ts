@@ -53,15 +53,24 @@ export interface QueueResponse {
   queue_size: number;
 }
 
+/** Player as the API sends it: snake_case, unlike the camelCase `Player` we expose. */
+interface ApiPlayer {
+  client_num: number;
+  score: number;
+  address: string;
+  name: string;
+  ping: number;
+}
+
 export async function getStatus(): Promise<StatusResponse> {
   const res = await fetch('/api/status');
   if (!res.ok) {
     throw new Error(`Failed to fetch status: ${res.status} ${res.statusText}`);
   }
-  const data = await res.json();
+  const data: Omit<StatusResponse, 'players'> & { players?: ApiPlayer[] } = await res.json();
   return {
     ...data,
-    players: data.players?.map((p: any) => ({
+    players: data.players?.map((p) => ({
       clientNum: p.client_num,
       score: p.score,
       address: p.address,

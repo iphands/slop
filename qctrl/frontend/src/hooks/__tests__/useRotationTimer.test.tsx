@@ -219,8 +219,9 @@ describe('useRotationTimer', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    // Countdown should be less than 20 min * 60 = 1200 seconds
-    expect(result.current.countdownSeconds).toBeLessThan(1200);
+    // Countdown starts at the full limit (20 min * 60 = 1200 s) and counts down.
+    expect(result.current.countdownSeconds).toBeLessThanOrEqual(1200);
+    expect(result.current.countdownSeconds).toBeGreaterThan(0);
   });
 
   it('handles empty players array', async () => {

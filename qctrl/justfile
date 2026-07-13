@@ -8,6 +8,10 @@ nm_env := env_var_or_default("QCTRL_ENV", `. /etc/os-release 2>/dev/null; echo "
 # NOTE: frontend tools run OUTSIDE just (e.g. an IDE) use whatever frontend/node_modules
 # currently points at. Run `just fe-deps` after switching environments if you bypass just.
 
+# NOTE: use node 22 (see frontend/.nvmrc). Gentoo's system node 24.14 SIGSEGVs inside
+# vite — `npm ci`, `vite build` and `vitest` all die with no output. Node 22 runs all
+# three clean. `just fe-node-check` tells you which node you're on.
+
 # Ensure frontend/node_modules points at the per-env tree (installs on first use)
 _nm:
     #!/usr/bin/env bash
@@ -26,6 +30,17 @@ _nm:
     mv node_modules "$target"                 # stash under per-env name
     echo "$env" > "$marker"
     ln -sfn "$target" node_modules
+
+# Warn when the active node will SIGSEGV inside vite (see note above)
+fe-node-check:
+    #!/usr/bin/env bash
+    major="$(node -p 'process.versions.node.split(".")[0]')"
+    if [ "$major" -ge 24 ]; then
+        echo "WARNING: node v$(node -v | tr -d v) segfaults inside vite on this host."
+        echo "         Use node 22 (frontend/.nvmrc): nvm use 22"
+    else
+        echo "node $(node -v) OK for vite"
+    fi
 
 # Point frontend/node_modules at the current env's tree (installs on first use)
 fe-deps: _nm
