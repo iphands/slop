@@ -852,6 +852,14 @@ async fn bot_supervisor_loop(
         // Per-bot log attribution: instrument the FUTURE (a `span.enter()` inside the
         // async fn leaks across `.await` and cross-tags other bots' events).
         let span = tracing::info_span!("bot", %name, qport);
+        // Plan 65: the reconnect budget guards CONSECUTIVE failed attempts, not lifetime
+        // reconnects — hours of map rotations must not exhaust `max_reconnects` or pin
+        // the backoff at its cap. A task that ran this long had a real session (a failing
+        // handshake exits within connect_timeout_ms), so its exit resets the budget.
+        // Time-based rather than `Ok`-based because a genuine session can still end in
+        // `Err` (e.g. the frame-stall watchdog's ConnectionReset).
+        const BUDGET_RESET_AFTER: Duration = Duration::from_secs(60);
+        let session_start = time::Instant::now();
         match tracing::Instrument::instrument(
             crate::bot_task(
                 addr,
@@ -907,6 +915,10 @@ async fn bot_supervisor_loop(
         }
         if !reconnect.enabled || shared.shutdown.requested() {
             return;
+        }
+        if session_start.elapsed() >= BUDGET_RESET_AFTER {
+            attempts = 0;
+            backoff_ms = 1000;
         }
         attempts += 1;
         if reconnect.max_attempts > 0 && attempts > reconnect.max_attempts {
