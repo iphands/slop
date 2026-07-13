@@ -14,6 +14,11 @@ use crate::{DecodeError, Reader};
 /// `MAX_STATS` (`shared.h:1149`).
 pub const MAX_STATS: usize = 32;
 
+/// `pmtype_t` (`shared.h:633`): `PM_NORMAL=0, PM_SPECTATOR, PM_DEAD, PM_GIB, PM_FREEZE`.
+/// `PM_FREEZE` is what every client's `pm_type` becomes during intermission
+/// (`game/player/client.c:2119`) — the scoreboard after fraglimit/timelimit.
+pub const PM_FREEZE: u8 = 4;
+
 /// `pmove_state_t` — the bit-accurate movement state (no floats; raw fixed-point shorts).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PmoveState {

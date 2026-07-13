@@ -864,6 +864,8 @@ pub(crate) async fn bot_task(
     let mut buf = vec![0u8; 4096];
     let mut ticker = time::interval(Duration::from_millis(100));
     let mut ticks: u32 = 0;
+    // Plan 64: consecutive ticks spent frozen in intermission (PM_FREEZE playerstate).
+    let mut intermission_ticks: u32 = 0;
 
     let mut move_ctrl = MovementController::new();
     // The decision layer (Plan 22): owns combat/FSM/dodge/steering/recovery/skill/roam.
@@ -1121,7 +1123,35 @@ pub(crate) async fn bot_task(
                     }
                 }
 
-                let cmd = if state == ConnState::Active {
+                // Plan 64: intermission — the fraglimit/timelimit scoreboard. Every
+                // client is PM_FREEZE-frozen and the game only exits to the next level
+                // when some client presses a button ≥5 s in (game/player/client.c:2122).
+                // On an all-bot server WE are that client: idle the brain while frozen,
+                // then hold ATTACK past the gate (~6 s at the 10 Hz tick) to advance.
+                let intermission = state == ConnState::Active
+                    && frame_opt
+                        .as_ref()
+                        .is_some_and(|f| f.playerstate.pmove.pm_type == q2proto::PM_FREEZE);
+                if !intermission {
+                    intermission_ticks = 0;
+                }
+
+                let cmd = if intermission {
+                    intermission_ticks = intermission_ticks.saturating_add(1);
+                    if intermission_ticks == 1 {
+                        tracing::info!("intermission — frozen, will press ATTACK to advance the level");
+                    }
+                    let buttons = if intermission_ticks > 60 {
+                        brain::move_ctrl::BUTTON_ATTACK | brain::move_ctrl::BUTTON_ANY
+                    } else {
+                        0
+                    };
+                    Usercmd {
+                        msec: 33,
+                        buttons,
+                        ..Default::default()
+                    }
+                } else if state == ConnState::Active {
                     if let Some(frame) = frame_opt {
                         let view = Worldview::from_frame(&frame, &cs, playernum);
 
