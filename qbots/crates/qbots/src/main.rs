@@ -848,7 +848,9 @@ pub(crate) async fn bot_task(
     // if it never frags/dies (Plan 09 observability).
     stats.register(name);
 
-    let sock = UdpSocket::bind("0.0.0.0:0").await?;
+    // Mutable since Plan 64: a hard server restart (svc_reconnect) rebinds to a fresh
+    // local port so stale packets from the dead connection can't poison the new one.
+    let mut sock = UdpSocket::bind("0.0.0.0:0").await?;
     sock.connect(addr).await?;
     let mut conn = Conn::new(addr, name, qport);
     if let Some(s) = skin {
@@ -930,7 +932,10 @@ pub(crate) async fn bot_task(
 
     loop {
         if shutdown.requested() {
-            if conn.state() == ConnState::Active {
+            // Plan 64: also send the clean disconnect while merely Connected (mid
+            // map-change re-handshake) — otherwise our slot lingers server-side as a
+            // CNCT ghost until the server times it out, eating into maxclients.
+            if matches!(conn.state(), ConnState::Active | ConnState::Connected) {
                 if let Some(pkt) = conn.disconnect() {
                     let _ = sock.send(&pkt).await;
                     let _ = sock.send(&pkt).await;
@@ -948,9 +953,8 @@ pub(crate) async fn bot_task(
                 // freshly-decoded snapshot below and ack it on arrival.
                 let prev_sf = conn.frame.as_ref().map(|f| f.serverframe);
                 let prev_state = conn.state();
-                if let Some(pkt) = conn.on_recv(&buf[..n]) {
-                    let _ = sock.send(&pkt).await;
-                }
+                was_active |= prev_state == ConnState::Active;
+                let reply = conn.on_recv(&buf[..n]);
                 // Plan 64: the server pulled us out of Active — either the soft
                 // map-change stufftext flow ("changing"/"reconnect" → Connected, netchan
                 // kept) or a hard svc_reconnect (rcon `map X` restarts the game and wipes
@@ -964,8 +968,28 @@ pub(crate) async fn bot_task(
                     tracing::info!(state = ?now_state, "map change: re-handshaking");
                     connect_deadline =
                         time::Instant::now() + Duration::from_millis(cfg.fleet.connect_timeout_ms);
+                    // Hard restart: the whole old connection is dead, but its final
+                    // packets are still in flight — SV_FinalMessage sends staggered
+                    // copies of `svc_print "Server restarted" + svc_disconnect`, and we
+                    // rejoin fast enough (~20 ms) that a copy lands AFTER the new netchan
+                    // is up, gets accepted as a huge sequence jump, and makes the bot
+                    // abandon a perfectly live slot (observed live: 32/40 bots dropped,
+                    // ghost slots piled up to "Server is full."). A fresh local port
+                    // makes the stale copies undeliverable, like a real client restart.
+                    if now_state == ConnState::Connecting {
+                        sock = UdpSocket::bind("0.0.0.0:0").await?;
+                        sock.connect(addr).await?;
+                    }
+                }
+                if let Some(pkt) = reply {
+                    let _ = sock.send(&pkt).await;
                 }
                 if conn.state() == ConnState::Disconnected {
+                    // Surface any buffered server prints — the drop reason (e.g.
+                    // "Server restarted", rate-limit kicks) arrives as svc_print.
+                    for text in conn.drain_prints() {
+                        tracing::warn!(text = %text.trim_end(), "server print at disconnect");
+                    }
                     tracing::info!("disconnected");
                     return Ok(());
                 }
@@ -976,11 +1000,16 @@ pub(crate) async fn bot_task(
                         .reject_reason
                         .clone()
                         .unwrap_or_else(|| "connection refused".to_string());
-                    tracing::error!(%reason, "server rejected join");
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::ConnectionRefused,
-                        format!("join rejected: {reason}"),
-                    ));
+                    tracing::error!(%reason, was_active, "server rejected join");
+                    // Plan 64: a rejection on the REJOIN after a map change (e.g. a
+                    // transient "Server is full." while ghost slots time out) is
+                    // retryable; only the initial join stays fatal (Plan 53).
+                    let kind = if was_active {
+                        std::io::ErrorKind::ConnectionReset
+                    } else {
+                        std::io::ErrorKind::ConnectionRefused
+                    };
+                    return Err(std::io::Error::new(kind, format!("join rejected: {reason}")));
                 }
 
                 // Plan 57: ack the just-arrived server frame immediately. The server

@@ -234,6 +234,9 @@ impl Conn {
                 }
                 Ok(SvcEvent::Nop) => {}
                 Ok(SvcEvent::Disconnect) => {
+                    // The reason (if any) rides as svc_print in the same or an earlier
+                    // payload — callers should drain_prints() on seeing Disconnected.
+                    tracing::warn!(state = ?self.state, "server sent svc_disconnect");
                     self.state = ConnState::Disconnected;
                     break;
                 }
