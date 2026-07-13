@@ -1,7 +1,7 @@
 # Serverframe Beacon — Tracker
 
 ## Overview
-- Status: 0% complete
+- Status: 83% complete (T1–T5 committed as `62b003c83`; T6 needs the live server)
 - Start date: 2026-07-13
 - Paired plan: qctrl Plan 13 (`../qctrl/context/plans/13_serverframe_beacon.md`) — the consumer.
   qbots T1–T5 must land before qctrl T5/T7 can be verified live.
@@ -25,15 +25,21 @@ Tests first (Red → Green → Refactor). `just all` and a commit at **every** t
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: pure core — `fold` / `encode` / `should_write` | `crates/qbots/src/beacon.rs` | pending | |
-| 2 | T2: `Beacon` handle (watch + `ActiveBot` RAII) | `crates/qbots/src/beacon.rs` | pending | |
-| 3 | T3: `BeaconCfg` (off by default) | `crates/qbots/src/config.rs` | pending | |
-| 4 | T4: `beacon::serve` (bind / fanout / accept / unlink) | `crates/qbots/src/beacon.rs` | pending | |
-| 5 | T5: wire into fleet + the `:1053` frame hook | `supervisor.rs`, `main.rs` | pending | |
+| 1 | T1: pure core — `fold` / `encode` / `should_write` | `crates/qbots/src/beacon.rs` | done | 19 unit tests; commit `62b003c83` |
+| 2 | T2: `Beacon` handle (watch + `ActiveBot` RAII) | `crates/qbots/src/beacon.rs` | done | `#[tokio::test]` proves ≤10 wakeups for 320 bot reports |
+| 3 | T3: `BeaconCfg` (off by default) | `crates/qbots/src/config.rs` | done | 2 config tests |
+| 4 | T4: `beacon::serve` (bind / fanout / accept / unlink) | `crates/qbots/src/beacon.rs` | done | real-socket test + stale-reclaim + never-steal-a-live-socket |
+| 5 | T5: wire into fleet + the `:1053` frame hook | `supervisor.rs`, `main.rs` | done | `start_beacon()` shared by `run_fleet` + `run_competition`; `connect-one` passes `None` |
 | 6 | T6: live verification (socat, 32 bots) | — | pending | needs the live server |
 
 ## Notes / Deviations
 
+- **T1–T5 landed as one commit** (`62b003c83`), not five. The module is dead code until T5
+  wires it in, so `cargo clippy -D warnings` (RULES Rule A) fails on any partial commit —
+  there is no ordering that makes each task independently clean. RULES Rule B's "unless they
+  are inseparable" clause. Tests are still per-task and were written first.
 - The wire format has **no shared crate** with qctrl by design (a shared crate would make the
   coupling mandatory). The contract is pinned by a golden-line test in each repo; they must be
   edited together.
+- `run_competition` gets the beacon too (via the shared `start_beacon`), since it is also a
+  real fleet on a real server. `connect-one` does not — it is a single-bot dev tool.
