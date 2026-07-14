@@ -309,6 +309,22 @@ pub fn matchup_score(mine: Weapon, theirs: Weapon, dist: f32) -> f32 {
     score_weapon(mine, dist) - score_weapon(theirs, dist)
 }
 
+/// True if `name` is a **pickable gun's** display `pickup_name` — the string behind the
+/// `STAT_PICKUP_STRING` configstring index (`g_items.c:2717`; the stat is set on every item
+/// touch, `g_items.c:1163`). Used to count weapon pickups off our own playerstate (Plan 68).
+///
+/// Case-insensitive: the vendor spells it `HyperBlaster` while [`Weapon::name`] (tuned to the
+/// `use` stringcmd, which the server matches case-insensitively) says `Hyperblaster`.
+/// Deliberately excluded: `Blaster` (no world item — its name only reaches the stat via the
+/// `weapnext`/`cycleweap` commands we never send) and `Grenades` (an `IT_AMMO|IT_WEAPON`
+/// hybrid — counting every grenade-box restock would swamp a weapons counter).
+pub fn is_weapon_pickup_name(name: &str) -> bool {
+    ALL_WEAPONS
+        .into_iter()
+        .filter(|w| *w != Weapon::Blaster)
+        .any(|w| w.name().eq_ignore_ascii_case(name))
+}
+
 /// Score a weapon for use against a target at `distance`. Higher is better.
 /// Returns 0 if unusable at this distance (e.g. splash weapon too close).
 pub fn score_weapon(weapon: Weapon, distance: f32) -> f32 {
@@ -410,6 +426,35 @@ mod tests {
         assert_eq!(Weapon::RocketLauncher.name(), "Rocket Launcher");
         assert_eq!(Weapon::Bfg10k.name(), "BFG10K");
         assert_eq!(Weapon::SuperShotgun.name(), "Super Shotgun");
+    }
+
+    #[test]
+    fn weapon_pickup_names_match_guns_only_any_case() {
+        // The 9 pickable guns, in the vendor's own pickup_name spelling (g_items.c).
+        for n in [
+            "Shotgun",
+            "Super Shotgun",
+            "Machinegun",
+            "Chaingun",
+            "Grenade Launcher",
+            "Rocket Launcher",
+            "HyperBlaster", // vendor casing ≠ Weapon::name()'s "Hyperblaster"
+            "Railgun",
+            "BFG10K",
+        ] {
+            assert!(is_weapon_pickup_name(n), "{n} must count as a weapon");
+        }
+        // Excluded by design: no world item / ammo-hybrid / plain items.
+        for n in [
+            "Blaster",
+            "Grenades",
+            "Bullets",
+            "Slugs",
+            "Body Armor",
+            "Mega Health",
+        ] {
+            assert!(!is_weapon_pickup_name(n), "{n} must NOT count as a weapon");
+        }
     }
 
     #[test]
