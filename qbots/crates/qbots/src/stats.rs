@@ -26,6 +26,10 @@ pub struct BotTally {
     /// Armor *points* gained from pickups (shard/jacket/combat/body), same
     /// detection rule as `health_picked`.
     pub armor_picked: u64,
+    /// Weapons picked up (a *count*, unlike the point-valued fields above) —
+    /// `STAT_PICKUP_STRING` transitions naming a gun (Plan 68; Grenades and
+    /// Blaster excluded, see `brain::weapons::is_weapon_pickup_name`).
+    pub weapons_picked: u64,
 }
 
 impl BotTally {
@@ -120,6 +124,16 @@ impl FleetStats {
             .armor_picked += amount;
     }
 
+    /// Record one weapon picked up by `name` (Plan 68).
+    pub fn record_weapon_pickup(&self, name: &str) {
+        self.bots
+            .lock()
+            .unwrap()
+            .entry(name.to_string())
+            .or_default()
+            .weapons_picked += 1;
+    }
+
     /// Fleet totals across all registered bots.
     pub fn totals(&self) -> BotTally {
         self.bots
@@ -137,6 +151,7 @@ impl FleetStats {
                     env_suicides: env,
                     health_picked: acc.health_picked + t.health_picked,
                     armor_picked: acc.armor_picked + t.armor_picked,
+                    weapons_picked: acc.weapons_picked + t.weapons_picked,
                 }
             })
     }
@@ -256,13 +271,19 @@ mod tests {
         s.record_armor_pickup("a", 2); // shard
         s.record_health_pickup("b", 10);
         s.record_armor_pickup("b", 50);
+        s.record_weapon_pickup("a");
+        s.record_weapon_pickup("a");
+        s.record_weapon_pickup("b");
         let snap: HashMap<String, BotTally> = s.snapshot().into_iter().collect();
         assert_eq!(snap["a"].health_picked, 125);
         assert_eq!(snap["a"].armor_picked, 2);
+        assert_eq!(snap["a"].weapons_picked, 2);
         assert_eq!(snap["b"].health_picked, 10);
         assert_eq!(snap["b"].armor_picked, 50);
+        assert_eq!(snap["b"].weapons_picked, 1);
         let t = s.totals();
         assert_eq!((t.health_picked, t.armor_picked), (135, 52));
+        assert_eq!(t.weapons_picked, 3);
         // Pickups never touch the frag counters.
         assert_eq!((t.kills, t.deaths), (0, 0));
     }

@@ -924,6 +924,7 @@ pub(crate) async fn bot_task(
     let mut last_serverframe: Option<i32> = None;
     let mut last_health: Option<i32> = None; // Track health across frames for damage detection
     let mut last_armor: Option<i32> = None; // Track armor for pickup detection (Plan 67)
+    let mut last_pickup_cs: Option<i16> = None; // Track STAT_PICKUP_STRING for weapon pickups (Plan 68)
     let mut last_frags: Option<i32> = None; // Track frags for kill detection
 
     // Plan 08: per-bot danger/popularity heatmap observer + the origin we were
@@ -1217,6 +1218,23 @@ pub(crate) async fn bot_task(
                         }
                         last_health = Some(current_health);
                     }
+
+                    // Weapon pickups (Plan 68): the server flashes every item touch through
+                    // STAT_PICKUP_STRING as a CS_ITEMS configstring index for 3 s
+                    // (g_items.c:1163; shared.h:1138). A *transition* to a gun's pickup_name
+                    // is a weapon pickup — our plain `use <name>` switching never writes this
+                    // stat (only weapnext/cycleweap do, which we never send).
+                    const STAT_PICKUP_STRING: usize = 8; // vendor shared.h:1138
+                    let pickup_cs = frame.playerstate.stats[STAT_PICKUP_STRING];
+                    if last_pickup_cs.is_some_and(|prev| prev != pickup_cs) && pickup_cs != 0 {
+                        if let Some(item) = cs.get(pickup_cs as usize) {
+                            if brain::weapons::is_weapon_pickup_name(item) {
+                                tracing::debug!(kind = "weapon", item, "EVT pickup");
+                                stats.record_weapon_pickup(name);
+                            }
+                        }
+                    }
+                    last_pickup_cs = Some(pickup_cs);
                 }
 
                 // Plan 64: a servercount other than the one the loaded map came from means
@@ -1243,6 +1261,7 @@ pub(crate) async fn bot_task(
                     last_serverframe = None;
                     last_health = None;
                     last_armor = None;
+                    last_pickup_cs = None;
                     last_frags = None;
                     last_alive_pos = None;
                     stall_mon = brain::StallMonitor::new();

@@ -800,6 +800,8 @@ struct ModeScore {
     health_picked: u64,
     /// Armor points picked up (Plan 67).
     armor_picked: u64,
+    /// Weapons picked up (Plan 68) — a count.
+    weapons_picked: u64,
     bots: usize,
 }
 
@@ -828,6 +830,7 @@ fn mode_scoreboard(stats: &FleetStats, group_tags: &[String]) -> Vec<ModeScore> 
         env: u64,
         hp: u64,
         ap: u64,
+        wp: u64,
         bots: usize,
     }
     let mut by_tag: HashMap<String, Acc> = HashMap::new();
@@ -845,6 +848,7 @@ fn mode_scoreboard(stats: &FleetStats, group_tags: &[String]) -> Vec<ModeScore> 
         e.env += tally.env_total();
         e.hp += tally.health_picked;
         e.ap += tally.armor_picked;
+        e.wp += tally.weapons_picked;
         e.bots += 1;
     }
     let mut rows: Vec<ModeScore> = by_tag
@@ -856,6 +860,7 @@ fn mode_scoreboard(stats: &FleetStats, group_tags: &[String]) -> Vec<ModeScore> 
             env_suicides: a.env,
             health_picked: a.hp,
             armor_picked: a.ap,
+            weapons_picked: a.wp,
             bots: a.bots,
         })
         .collect();
@@ -871,12 +876,12 @@ fn mode_scoreboard(stats: &FleetStats, group_tags: &[String]) -> Vec<ModeScore> 
 /// Log a per-group frag scoreboard. `label` distinguishes the periodic "live" board from "FINAL".
 fn log_competition_scoreboard(stats: &FleetStats, group_tags: &[String], label: &str) {
     tracing::info!(
-        "── competition scoreboard [{label}] (K/D-ranked; env suicides; hp/ap = health/armor points picked up) ──"
+        "── competition scoreboard [{label}] (K/D-ranked; env suicides; hp/ap = health/armor points, wp = weapons picked up) ──"
     );
     for (rank, s) in mode_scoreboard(stats, group_tags).iter().enumerate() {
         let kd = s.kd();
         tracing::info!(
-            "  #{:<2} {:<9} bots={:<2} kills={:<4} deaths={:<4} kd={:.2} env={:<3} hp={:<5} ap={:<4}",
+            "  #{:<2} {:<9} bots={:<2} kills={:<4} deaths={:<4} kd={:.2} env={:<3} hp={:<5} ap={:<4} wp={:<3}",
             rank + 1,
             s.tag,
             s.bots,
@@ -885,7 +890,8 @@ fn log_competition_scoreboard(stats: &FleetStats, group_tags: &[String], label: 
             kd,
             s.env_suicides,
             s.health_picked,
-            s.armor_picked
+            s.armor_picked,
+            s.weapons_picked
         );
     }
 }
@@ -1068,6 +1074,7 @@ fn log_final_stats(stats: &FleetStats) {
         env_suicides = totals.env_total(),
         health_picked = totals.health_picked,
         armor_picked = totals.armor_picked,
+        weapons_picked = totals.weapons_picked,
         bots = stats.bot_count(),
         "fleet final stats"
     );
@@ -1075,20 +1082,22 @@ fn log_final_stats(stats: &FleetStats) {
         let env = t.env_breakdown();
         if env.is_empty() {
             tracing::info!(
-                "{:>3} kills / {:>3} deaths / hp {:>4} ap {:>3}  {}",
+                "{:>3} kills / {:>3} deaths / hp {:>4} ap {:>3} wp {:>2}  {}",
                 t.kills,
                 t.deaths,
                 t.health_picked,
                 t.armor_picked,
+                t.weapons_picked,
                 name
             );
         } else {
             tracing::info!(
-                "{:>3} kills / {:>3} deaths / hp {:>4} ap {:>3}  {}  [{}]",
+                "{:>3} kills / {:>3} deaths / hp {:>4} ap {:>3} wp {:>2}  {}  [{}]",
                 t.kills,
                 t.deaths,
                 t.health_picked,
                 t.armor_picked,
+                t.weapons_picked,
                 name,
                 env
             );
@@ -1121,10 +1130,13 @@ mod tests {
         // Multi-underscore group tag (`<brain>_<mode>_<char>`): the index still splits off the
         // trailing `_`, so this attributes to `q3_astar_grunt`, not `q3_astar`.
         stats.record_kill("q3_astar_grunt_1");
-        // Pickups sum per group across its bots (Plan 67).
+        // Pickups sum per group across its bots (Plans 67/68).
         stats.record_health_pickup("race_1", 25);
         stats.record_health_pickup("race_2", 100);
         stats.record_armor_pickup("race_2", 50);
+        stats.record_weapon_pickup("race_1");
+        stats.record_weapon_pickup("race_2");
+        stats.record_weapon_pickup("race_2");
 
         let group_tags = vec![
             "astar".to_string(),
@@ -1139,6 +1151,7 @@ mod tests {
         assert_eq!(board[0].tag, "race");
         assert_eq!((board[0].kills, board[0].deaths, board[0].bots), (3, 1, 2));
         assert_eq!((board[0].health_picked, board[0].armor_picked), (125, 50));
+        assert_eq!(board[0].weapons_picked, 3);
         assert_eq!(board[1].tag, "q3_astar_grunt");
         assert_eq!((board[1].kills, board[1].deaths, board[1].bots), (1, 0, 1));
         assert_eq!(board[2].tag, "astar");
