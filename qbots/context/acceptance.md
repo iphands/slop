@@ -153,11 +153,14 @@ column per group and the final fleet stats print `[lava:N …]` breakdowns. Gate
 (Plan 63, q2dm6): lava+slime ≤ 2/bot/5min and < 5% of deaths:
 `EVT switch weapon=<w> dist=<d>` · `EVT chase start|convert|abort reason=…` ·
 `EVT traverse done kind=swim|ride|ladder` · `EVT drown` (gate: zero).
-Pickup counters (Plan 67, 2026-07-13): `EVT pickup kind=health|armor amount=N` (debug) —
+Pickup counters (Plans 67/68, 2026-07-13): `EVT pickup kind=health|armor amount=N` (debug) —
 own-playerstate stat *increases while alive* (respawn resets and megahealth rot excluded), so
-the metric is **points gained, not item identity/counts** (the "no direct wire signal" caveat
-only blocks identity). Aggregated in `FleetStats`; the competition scoreboard carries `hp=`/`ap=`
-columns and is **K/D-ranked** (kills as tiebreak) as of the same plan.
+those two are **points gained**, not item counts. Weapons ARE identity-counted:
+`EVT pickup kind=weapon item=<name>` from `STAT_PICKUP_STRING` transitions (the stat's value is
+a `CS_ITEMS` configstring index — `g_items.c:1163` — so pickup identity IS on the wire; the old
+"no direct wire signal" note was wrong about that). Grenades/Blaster excluded; plain-`use`
+switching never writes the stat. Aggregated in `FleetStats`; the competition scoreboard carries
+`hp=`/`ap=`/`wp=` columns and is **K/D-ranked** (kills as tiebreak) as of Plan 67.
 
 ## Showcase (T4) — 5-min `main` vs `q3`, q2dm3, 2026-07-10
 
