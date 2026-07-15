@@ -24,7 +24,9 @@
 //!     skin: female/athena   # optional
 //! ```
 
-use crate::supervisor::{group_tag, GroupChar, GroupSpec};
+use crate::supervisor::{
+    brain_code, char_code, group_tag, mode_code, xon_char_code, GroupChar, GroupSpec, ModeScore,
+};
 
 /// The default per-group bot count when neither the group nor the file sets one — matches the
 /// `--count` CLI default so a roster with bare groups behaves like `competition --count 8`.
@@ -178,6 +180,45 @@ impl RosterGroup {
             tag,
         })
     }
+}
+
+/// Render a **ranked** roster YAML from a finished competition: the `ranked` scoreboard rows
+/// (K/D order, from `mode_scoreboard`) zipped back to their `specs` by tag, each group preceded by
+/// a `# rank N  kd=… kills=… deaths=…` comment. This is the file the operator trims down for the
+/// next round — so it emits only the *competitive identity* (brain/navmode/char/count/custom tag),
+/// **not** skins: the next run assigns fresh distinct skins. serde_yaml can't emit comments, so
+/// this is a hand formatter; the round-trip test proves it re-parses through [`Roster::into_specs`].
+pub fn emit_ranked_yaml(ranked: &[ModeScore], specs: &[GroupSpec]) -> String {
+    let mut out = String::new();
+    out.push_str("# competition roster — ranked by K/D. Delete groups you don't want, edit\n");
+    out.push_str("# counts, then rerun:  qbots competition --roster <this file>\n");
+    out.push_str("groups:\n");
+    for (rank, row) in ranked.iter().enumerate() {
+        let Some(spec) = specs.iter().find(|s| s.tag == row.tag) else {
+            continue; // a scoreboard row with no spec can't happen, but never panic on a dump
+        };
+        out.push_str(&format!(
+            "  # rank {}  kd={:.2} kills={} deaths={}\n",
+            rank + 1,
+            row.kd(),
+            row.kills,
+            row.deaths,
+        ));
+        out.push_str(&format!("  - brain: {}\n", brain_code(spec.brain)));
+        out.push_str(&format!("    navmode: {}\n", mode_code(spec.mode)));
+        match spec.gc {
+            GroupChar::Q3(c) => out.push_str(&format!("    char: {}\n", char_code(c))),
+            GroupChar::Xon(x) => out.push_str(&format!("    xonchar: {}\n", xon_char_code(x))),
+            GroupChar::None => {}
+        }
+        out.push_str(&format!("    count: {}\n", spec.count));
+        // Emit a custom tag only when it isn't the auto `<brain>_<mode>[_<char>]` (which the
+        // loader would reconstruct anyway) — keeps the dump minimal and round-trip-clean.
+        if spec.tag != group_tag(spec.mode, spec.brain, spec.gc) {
+            out.push_str(&format!("    tag: {}\n", spec.tag));
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -337,5 +378,75 @@ mod tests {
         let err =
             specs_from("groups:\n  - brain: mai\n    navmode: as\n    braim: mai\n").unwrap_err();
         assert!(!err.is_empty());
+    }
+
+    fn score(tag: &str, kills: u64, deaths: u64, bots: usize) -> ModeScore {
+        ModeScore {
+            tag: tag.to_string(),
+            kills,
+            deaths,
+            env_suicides: 0,
+            health_picked: 0,
+            armor_picked: 0,
+            weapons_picked: 0,
+            bots,
+        }
+    }
+
+    #[test]
+    fn emitted_roster_round_trips_and_is_ranked() {
+        // Spec order is NOT rank order — the emit must follow the ranking, not the spec list.
+        let specs = vec![
+            GroupSpec {
+                mode: crate::NavMode::HybridSegment,
+                brain: brain::BrainKind::Main,
+                gc: GroupChar::None,
+                count: 2,
+                skin: Some("male/random".into()),
+                tag: "mai_sg".into(),
+            },
+            GroupSpec {
+                mode: crate::NavMode::HybridSegment,
+                brain: brain::BrainKind::Quake3,
+                gc: GroupChar::Q3(brain::CharPreset::Camper),
+                count: 2,
+                skin: None,
+                tag: "q3_sg_cam".into(),
+            },
+            GroupSpec {
+                mode: crate::NavMode::Navmesh,
+                brain: brain::BrainKind::Xon,
+                gc: GroupChar::Xon(brain::XonCharPreset::Sharp),
+                count: 4,
+                skin: None,
+                tag: "shpkings".into(), // custom tag ≠ auto xon_nm_shp
+            },
+        ];
+        // Ranked by K/D: shpkings (2.0) > mai_sg (1.0) > q3_sg_cam (0.5).
+        let ranked = vec![
+            score("shpkings", 8, 4, 4),
+            score("mai_sg", 2, 2, 2),
+            score("q3_sg_cam", 1, 2, 2),
+        ];
+
+        let yaml = emit_ranked_yaml(&ranked, &specs);
+        // Comments are present, in rank order, with the right stats.
+        let r1 = yaml.find("# rank 1  kd=2.00 kills=8 deaths=4").unwrap();
+        let r2 = yaml.find("# rank 2  kd=1.00 kills=2 deaths=2").unwrap();
+        let r3 = yaml.find("# rank 3  kd=0.50 kills=1 deaths=2").unwrap();
+        assert!(r1 < r2 && r2 < r3, "rank comments must be in order");
+        // A custom tag is emitted; the auto tags are omitted (loader reconstructs them).
+        assert!(yaml.contains("    tag: shpkings\n"));
+        assert!(!yaml.contains("tag: mai_sg"));
+        // No skins in the dump — the next run regenerates distinct ones.
+        assert!(!yaml.contains("skin:"));
+
+        // Re-parse → same competitive identity, now in RANK order.
+        let reloaded = specs_from(&yaml).unwrap();
+        assert_eq!(reloaded.len(), 3);
+        let ident = |s: &GroupSpec| (s.mode, s.brain, s.gc, s.count, s.tag.clone());
+        assert_eq!(ident(&reloaded[0]), ident(&specs[2])); // shpkings
+        assert_eq!(ident(&reloaded[1]), ident(&specs[0])); // mai_sg
+        assert_eq!(ident(&reloaded[2]), ident(&specs[1])); // q3_sg_cam
     }
 }

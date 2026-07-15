@@ -750,8 +750,33 @@ pub async fn run_competition(
     }
     status.abort();
     log_competition_scoreboard(&stats, &group_tags, "FINAL");
+    // Plan 69: emit a ranked, ready-to-edit roster of every group — trim it and pass it back via
+    // `--roster` for the next round. Written before `fleet_join_result` so a join-failure run
+    // (which returns Err) still leaves the standings on disk.
+    dump_final_roster(&stats, &group_tags, &specs);
     tracing::info!("competition exited");
     fleet_join_result(&shared)
+}
+
+/// Write the FINAL standings as a ranked roster YAML to `./logs/roster/<unix_ts>.yaml` (Plan 69).
+/// Best-effort: an IO error is logged, never fatal — the competition already ran.
+fn dump_final_roster(stats: &FleetStats, group_tags: &[String], specs: &[GroupSpec]) {
+    let ranked = mode_scoreboard(stats, group_tags);
+    let yaml = crate::roster::emit_ranked_yaml(&ranked, specs);
+    let dir = std::path::Path::new("logs/roster");
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        tracing::warn!("could not create {}: {e}", dir.display());
+        return;
+    }
+    // `::time` (the crate) — module-local `time` is `tokio::time` here.
+    let ts = ::time::OffsetDateTime::now_utc().unix_timestamp().max(0);
+    let path = dir.join(format!("{ts}.yaml"));
+    match std::fs::write(&path, yaml) {
+        Ok(()) => {
+            tracing::info!(path = %path.display(), "wrote ranked roster (edit + --roster for a rematch)")
+        }
+        Err(e) => tracing::warn!("could not write {}: {e}", path.display()),
+    }
 }
 
 /// Log a one-line-per-axis legend mapping the short codes used in bot names back to their full
