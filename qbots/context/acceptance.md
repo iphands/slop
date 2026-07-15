@@ -162,6 +162,47 @@ a `CS_ITEMS` configstring index — `g_items.c:1163` — so pickup identity IS o
 switching never writes the stat. Aggregated in `FleetStats`; the competition scoreboard carries
 `hp=`/`ap=`/`wp=` columns and is **K/D-ranked** (kills as tiebreak) as of Plan 67.
 
+## Roster-file competitions (Plan 69, 2026-07-15)
+
+Two ways to pick the competition lineup:
+
+- **CLI matrix** (unchanged): `competition --brains … --navmodes … --chars … --count …` runs the
+  full cross product.
+- **Roster file**: `competition --roster <file.yaml>` fields an **explicit, hand-picked** group
+  list (mutually exclusive with the matrix switches). This is how you run "the top 8 from
+  yesterday" — only the groups you list appear on the board.
+
+Every competition run (either path) **emits a K/D-ranked roster** to `./logs/roster/<unix_ts>.yaml`
+at FINAL, each group annotated `# rank N  kd=… kills=… deaths=…`. Workflow: run → open the dump →
+delete the groups you don't want, tweak counts → `--roster` it for the next round. Emitted rosters
+carry only competitive identity (brain/navmode/char/count/custom-tag), **not** skins — each run
+assigns fresh distinct skins. The emitted vocabulary is the scoreboard's own short codes, so a dump
+round-trips back through the loader unchanged.
+
+Schema (`crates/qbots/src/roster.rs`):
+
+```yaml
+count: 2            # optional file-wide default per-group count (fallback 8)
+groups:
+  - brain: mai      # short code (mai) or long alias (main)
+    navmode: sg
+  - brain: q3
+    navmode: sg
+    char: cam       # q3 brain only
+  - brain: xon
+    navmode: nm
+    xonchar: shp    # xon brain only
+    count: 4        # per-group override
+    tag: shpkings   # optional custom scoreboard tag (default: auto <brain>_<mode>[_<char>])
+    skin: female/athena   # optional (else the char's skin, else an auto distinct one)
+```
+
+Loader rejects (with the offending group's index): unknown tokens, `runtester`, `char` on a
+non-q3 / `xonchar` on a non-xon brain (or both set), `count: 0`, a tag over Q2's 15-char netname
+budget once `_<count>` is appended, duplicate resolved tags, and unknown keys
+(`deny_unknown_fields`). Verified live 2026-07-15 (noir.lan): a matrix run's dump re-loaded and a
+hand-edited rematch (custom tag + bumped count) fielded exactly the listed groups.
+
 ## Showcase (T4) — 5-min `main` vs `q3`, q2dm3, 2026-07-10
 
 **The counters earned their keep on their first run**: showcase #1 exposed **4179 weapon
