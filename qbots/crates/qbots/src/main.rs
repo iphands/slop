@@ -26,6 +26,7 @@ macro_rules! fatal {
 
 mod beacon;
 mod config;
+mod roster;
 mod scenario;
 mod skins;
 mod stats;
@@ -228,6 +229,12 @@ enum Cmd {
         /// Server address (defaults to config's server).
         #[arg(long)]
         addr: Option<String>,
+        /// Field an explicit hand-picked group list from a YAML file instead of the CLI matrix
+        /// (see `crates/qbots/src/roster.rs` for the schema). Mutually exclusive with
+        /// `--count`/`--navmodes`/`--brains`/`--chars`/`--xonchars`. Every competition run also
+        /// *emits* a ranked roster to `./logs/roster/<ts>.yaml` — trim it and pass it back here.
+        #[arg(long, conflicts_with_all = ["count", "modes", "brains", "chars", "xonchars"])]
+        roster: Option<String>,
         /// Bots to spawn **per group** (default 8), a group = one (navmode, brain) pair. Total =
         /// navmodes × brains × count, clamped by `[fleet].max_bots` (server maxclients headroom).
         #[arg(long, default_value = "8")]
@@ -796,6 +803,27 @@ async fn resolve_addr(addr: &str) -> Result<SocketAddr, String> {
             .ok_or_else(|| format!("no addresses found for '{addr}'")),
         Err(e) => Err(format!("can't resolve '{addr}': {e}")),
     }
+}
+
+/// Load a roster file and lower it to `GroupSpec`s, filling in a distinct skin for every group
+/// that didn't name one (and whose character has no skin of its own) — so hand-picked groups are
+/// tellable apart on sight, the same reason the matrix path assigns one skin per mode. Per-group
+/// (not per-mode) here: a roster often fields several groups on the same navmode, and they should
+/// still look different.
+fn build_roster_specs(
+    path: &str,
+    baseq2: &std::path::Path,
+) -> Result<Vec<supervisor::GroupSpec>, String> {
+    let mut specs = roster::Roster::load(path)?.into_specs()?;
+    let need = specs.iter().filter(|s| s.skin.is_none()).count();
+    if need > 0 {
+        let mut rng = skins::Rng::new();
+        let mut fill = skins::distinct_skins(baseq2, need, &mut rng).into_iter();
+        for s in specs.iter_mut().filter(|s| s.skin.is_none()) {
+            s.skin = fill.next();
+        }
+    }
+    Ok(specs)
 }
 
 /// Wrapper that adds signal handling for graceful shutdown.
@@ -2419,6 +2447,7 @@ async fn main() -> ExitCode {
         }
         Cmd::Competition {
             addr,
+            roster,
             count,
             modes,
             brains,
@@ -2427,39 +2456,51 @@ async fn main() -> ExitCode {
             qport_base,
             loose_botcap,
         } => {
-            if count == 0 {
-                tracing::error!("--count must be >= 1");
-                return ExitCode::FAILURE;
-            }
-            // clap already validated each token against the enums and rendered the possible
-            // values in `--help`; here we only apply the empty-list defaults and reject the
-            // one brain that can't compete.
-            let modes: Vec<NavMode> = if modes.is_empty() {
-                NavMode::value_variants().to_vec()
+            // Two ways to build the group list: a roster file (explicit, hand-picked) or the CLI
+            // matrix. clap's `conflicts_with_all` guarantees they're never both set.
+            let specs = if let Some(path) = roster {
+                match build_roster_specs(&path, &cfg.paths.baseq2) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::error!("roster {path}: {e}");
+                        return ExitCode::FAILURE;
+                    }
+                }
             } else {
-                modes
-            };
-            let brains: Vec<brain::BrainKind> = if brains.is_empty() {
-                vec![brain::BrainKind::Main]
-            } else {
-                // `runtester` is the combat-free movement-scenario brain — it never fires or
-                // frags, so it's meaningless on a frag scoreboard.
-                if brains.contains(&brain::BrainKind::RunTester) {
-                    tracing::error!(
-                        "'runtester' is a non-combat brain and cannot compete (drop it from --brains)"
-                    );
+                if count == 0 {
+                    tracing::error!("--count must be >= 1");
                     return ExitCode::FAILURE;
                 }
-                brains
+                // clap already validated each token against the enums and rendered the possible
+                // values in `--help`; here we only apply the empty-list defaults and reject the
+                // one brain that can't compete.
+                let modes: Vec<NavMode> = if modes.is_empty() {
+                    NavMode::value_variants().to_vec()
+                } else {
+                    modes
+                };
+                let brains: Vec<brain::BrainKind> = if brains.is_empty() {
+                    vec![brain::BrainKind::Main]
+                } else {
+                    // `runtester` is the combat-free movement-scenario brain — it never fires or
+                    // frags, so it's meaningless on a frag scoreboard.
+                    if brains.contains(&brain::BrainKind::RunTester) {
+                        tracing::error!(
+                            "'runtester' is a non-combat brain and cannot compete (drop it from --brains)"
+                        );
+                        return ExitCode::FAILURE;
+                    }
+                    brains
+                };
+                // One distinct skin per mode so the fleets are tellable apart on sight.
+                let mut rng = skins::Rng::new();
+                let skins_per_mode: Vec<Option<String>> =
+                    skins::distinct_skins(&cfg.paths.baseq2, modes.len(), &mut rng)
+                        .into_iter()
+                        .map(Some)
+                        .collect();
+                supervisor::matrix_specs(&modes, &brains, &chars, &xonchars, count, &skins_per_mode)
             };
-            // Q3 personality roster (only fields the `q3` brain). Empty → one default-character group.
-            // One distinct skin per mode so the fleets are tellable apart on sight.
-            let mut rng = skins::Rng::new();
-            let skins_per_mode: Vec<Option<String>> =
-                skins::distinct_skins(&cfg.paths.baseq2, modes.len(), &mut rng)
-                    .into_iter()
-                    .map(Some)
-                    .collect();
             let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
             let addr = match resolve_addr(&addr_str).await {
                 Ok(a) => a,
@@ -2472,14 +2513,6 @@ async fn main() -> ExitCode {
             if let Err(code) = preflight_map(&cfg, addr, None, world::GRID_SPACING, false).await {
                 return code;
             }
-            let specs = supervisor::matrix_specs(
-                &modes,
-                &brains,
-                &chars,
-                &xonchars,
-                count,
-                &skins_per_mode,
-            );
             match supervisor::run_competition(Arc::new(cfg), addr, specs, qport_base, loose_botcap)
                 .await
             {
@@ -2903,6 +2936,68 @@ mod tests {
     use std::time::Duration;
 
     const FLUSH: Duration = Duration::from_secs(5);
+
+    #[test]
+    fn competition_roster_conflicts_with_matrix_switches() {
+        // --roster is mutually exclusive with every matrix switch.
+        for matrix in [
+            ["--brains", "q3"],
+            ["--navmodes", "as"],
+            ["--chars", "cam"],
+            ["--xonchars", "shp"],
+            ["--count", "4"],
+        ] {
+            let res = Cli::try_parse_from([
+                "qbots",
+                "competition",
+                "--roster",
+                "r.yaml",
+                matrix[0],
+                matrix[1],
+            ]);
+            assert!(res.is_err(), "--roster with {} should conflict", matrix[0]);
+        }
+    }
+
+    #[test]
+    fn competition_roster_alone_parses() {
+        let cli = Cli::try_parse_from(["qbots", "competition", "--roster", "r.yaml"]).unwrap();
+        match cli.cmd {
+            Cmd::Competition { roster, .. } => assert_eq!(roster.as_deref(), Some("r.yaml")),
+            _ => panic!("expected competition subcommand"),
+        }
+    }
+
+    #[test]
+    fn competition_matrix_switches_parse_without_roster() {
+        // The matrix path is unaffected — switches still combine freely when --roster is absent.
+        let cli = Cli::try_parse_from([
+            "qbots",
+            "competition",
+            "--brains",
+            "main,q3",
+            "--navmodes",
+            "as,nm",
+            "--count",
+            "3",
+        ])
+        .unwrap();
+        match cli.cmd {
+            Cmd::Competition {
+                roster,
+                brains,
+                modes,
+                count,
+                ..
+            } => {
+                assert!(roster.is_none());
+                assert_eq!(brains.len(), 2);
+                assert_eq!(modes.len(), 2);
+                assert_eq!(count, 3);
+            }
+            _ => panic!("expected competition subcommand"),
+        }
+    }
 
     #[test]
     fn navmode_accepts_short_code_and_long_alias() {
