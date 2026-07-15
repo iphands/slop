@@ -489,7 +489,7 @@ pub(crate) fn mode_tag(mode: crate::NavMode) -> &'static str {
 /// 2-char code for a nav backend, used in competition bot names so `<brain>_<mode>[_<char>]_<i>`
 /// stays within Q2's 15-char `netname` limit (`game/player/client.c` `Q_strlcpy` into
 /// `netname[16]`). Names are the only consumer; the full name is [`mode_tag`].
-fn mode_code(mode: crate::NavMode) -> &'static str {
+pub(crate) fn mode_code(mode: crate::NavMode) -> &'static str {
     match mode {
         crate::NavMode::Astar => "as",
         crate::NavMode::Navmesh => "nm",
@@ -503,7 +503,7 @@ fn mode_code(mode: crate::NavMode) -> &'static str {
 
 /// 3-char code for a brain, used in competition bot names (see [`mode_code`]). The full,
 /// log-facing name is [`brain::brain_tag`]. `q3`/`zb2` keep their already-short iconic forms.
-fn brain_code(brain: brain::BrainKind) -> &'static str {
+pub(crate) fn brain_code(brain: brain::BrainKind) -> &'static str {
     match brain {
         brain::BrainKind::Main => "mai",
         brain::BrainKind::Sentry => "sen",
@@ -517,26 +517,26 @@ fn brain_code(brain: brain::BrainKind) -> &'static str {
 /// The per-group personality axis: q3 groups may carry a Q3 character, xon groups an
 /// Xonotic character; every other brain has none (Plan 62 T1).
 #[derive(Copy, Clone, Debug, PartialEq)]
-enum GroupChar {
+pub(crate) enum GroupChar {
     None,
     Q3(brain::CharPreset),
     Xon(brain::XonCharPreset),
 }
 
 impl GroupChar {
-    fn q3(self) -> Option<brain::CharPreset> {
+    pub(crate) fn q3(self) -> Option<brain::CharPreset> {
         match self {
             GroupChar::Q3(c) => Some(c),
             _ => None,
         }
     }
-    fn xon(self) -> Option<brain::XonCharPreset> {
+    pub(crate) fn xon(self) -> Option<brain::XonCharPreset> {
         match self {
             GroupChar::Xon(x) => Some(x),
             _ => None,
         }
     }
-    fn skin(self) -> Option<String> {
+    pub(crate) fn skin(self) -> Option<String> {
         match self {
             GroupChar::Q3(c) => Some(c.skin().to_string()),
             GroupChar::Xon(x) => Some(x.skin().to_string()),
@@ -547,7 +547,7 @@ impl GroupChar {
 
 /// 3-char code for an Xonotic character (xon brain only) — same 15-char-name budget as
 /// [`char_code`]. The full name is [`brain::XonCharPreset::tag`].
-fn xon_char_code(x: brain::XonCharPreset) -> &'static str {
+pub(crate) fn xon_char_code(x: brain::XonCharPreset) -> &'static str {
     match x {
         brain::XonCharPreset::Rusher => "rus",
         brain::XonCharPreset::Sharp => "shp",
@@ -558,7 +558,7 @@ fn xon_char_code(x: brain::XonCharPreset) -> &'static str {
 
 /// 3-char code for a Q3 character (q3 brain only), used in competition bot names (see
 /// [`mode_code`]). The full, log-facing name is [`brain::CharPreset::tag`].
-fn char_code(char: brain::CharPreset) -> &'static str {
+pub(crate) fn char_code(char: brain::CharPreset) -> &'static str {
     match char {
         brain::CharPreset::Grunt => "gru",
         brain::CharPreset::Major => "maj",
@@ -567,34 +567,34 @@ fn char_code(char: brain::CharPreset) -> &'static str {
     }
 }
 
-/// Run a **competition**: spawn `per_group_count` bots for each `(mode, brain, char?)` group in
-/// a single process, all sharing one `NavCache` (built once, not once per mode), each group wearing
-/// a distinct skin. Bots are named `<brain>_<mode>[_<char>]_<i>` with short codes (e.g. `mai_as_1`,
-/// `q3_rc_1`, `q3_rc_gru_1`) so the name fits Q2's 15-char limit and the per-group frag scoreboard
-/// can group them (a code→full-name legend is logged at launch). Returns when all bots exit
-/// (after shutdown). Reuses the fleet's per-bot supervisor loop (reconnect/backoff/graceful
-/// disconnect) with a **per-bot** `mode`/`brain`/`char`.
-#[allow(clippy::too_many_arguments)]
-pub async fn run_competition(
-    cfg: Arc<Config>,
-    addr: SocketAddr,
-    modes: Vec<crate::NavMode>,
-    brains: Vec<brain::BrainKind>,
-    chars: Vec<brain::CharPreset>,
-    xonchars: Vec<brain::XonCharPreset>,
+/// One competition group: a `(mode, brain, char?)` combo, its per-group bot `count`, the skin all
+/// its bots wear, and the scoreboard `tag`. The CLI-matrix path builds these via [`matrix_specs`];
+/// the `--roster` path builds them from a YAML file (`crate::roster`). `run_competition` consumes a
+/// `Vec<GroupSpec>` and no longer knows which path produced it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct GroupSpec {
+    pub(crate) mode: crate::NavMode,
+    pub(crate) brain: brain::BrainKind,
+    pub(crate) gc: GroupChar,
+    pub(crate) count: usize,
+    pub(crate) skin: Option<String>,
+    pub(crate) tag: String,
+}
+
+/// Expand the CLI matrix (`modes × brains × chars_for`) into the flat group list, preserving the
+/// historical **mode-major, brain-minor, char-innermost** ordering and the `gc.skin().or(mode_skin)`
+/// rule — so the matrix competition path is byte-for-byte what it was before the `GroupSpec`
+/// refactor (see the equivalence test). `skins_per_mode` is positionally indexed by `modes` (as it
+/// was in `run_competition`). Every group gets the same `per_group_count`; roster files vary it.
+pub(crate) fn matrix_specs(
+    modes: &[crate::NavMode],
+    brains: &[brain::BrainKind],
+    chars: &[brain::CharPreset],
+    xonchars: &[brain::XonCharPreset],
     per_group_count: usize,
-    qport_base_override: Option<u16>,
-    skins_per_mode: Vec<Option<String>>,
-    loose_botcap: bool,
-) -> std::io::Result<()> {
-    if modes.is_empty() || brains.is_empty() || per_group_count == 0 {
-        tracing::error!("competition needs at least one mode, one brain, and --count >= 1");
-        return Ok(());
-    }
-    // A group is one (navmode, brain, char?) tuple; the competition spawns `per_group_count`
-    // bots for the full cross product. The `char` axis only expands the `q3` brain (others get a
-    // single `None` sub-group). Group tags are `<mode>_<brain>[_<char>]` (see `group_tag`).
-    // The Q3 personalities that expand a brain into sub-groups (`[None]` = the default character).
+    skins_per_mode: &[Option<String>],
+) -> Vec<GroupSpec> {
+    // The `char` axis only expands the `q3`/`xon` brains (others get a single `None` sub-group).
     let chars_for = |bk: brain::BrainKind| -> Vec<GroupChar> {
         if bk == brain::BrainKind::Quake3 && !chars.is_empty() {
             chars.iter().map(|&c| GroupChar::Q3(c)).collect()
@@ -604,22 +604,62 @@ pub async fn run_competition(
             vec![GroupChar::None]
         }
     };
-    let groups_per_mode: usize = brains.iter().map(|&b| chars_for(b).len()).sum();
-    let num_groups = modes.len() * groups_per_mode;
-    // maxclients guard: clamp the per-group count so `groups × count` leaves human headroom.
-    let mut per_group_count = per_group_count;
-    if cfg.fleet.max_bots > 0 && num_groups * per_group_count > cfg.fleet.max_bots {
-        let clamped = (cfg.fleet.max_bots / num_groups).max(1);
-        tracing::warn!(
-            requested_per_group = per_group_count,
-            groups = num_groups,
-            cap = cfg.fleet.max_bots,
-            clamped_per_group = clamped,
-            "clamping per-group count to fit max_bots"
-        );
-        per_group_count = clamped;
+    let mut specs = Vec::new();
+    for (mi, &mode) in modes.iter().enumerate() {
+        let mode_skin = skins_per_mode.get(mi).cloned().flatten();
+        for &brain in brains {
+            for gc in chars_for(brain) {
+                // A named character wears its own recognizable skin; else the per-mode skin.
+                let skin = gc.skin().or_else(|| mode_skin.clone());
+                specs.push(GroupSpec {
+                    mode,
+                    brain,
+                    gc,
+                    count: per_group_count,
+                    skin,
+                    tag: group_tag(mode, brain, gc),
+                });
+            }
+        }
     }
-    let total = num_groups * per_group_count;
+    specs
+}
+
+/// Run a **competition**: spawn each [`GroupSpec`]'s bots in a single process, all sharing one
+/// `NavCache` (built once, not once per mode), each group wearing a distinct skin. Bots are named
+/// `<tag>_<i>` with short-code tags (e.g. `mai_as_1`, `q3_rc_gru_1`) so the name fits Q2's 15-char
+/// limit and the per-group frag scoreboard can group them (a code→full-name legend is logged at
+/// launch). Returns when all bots exit (after shutdown). Reuses the fleet's per-bot supervisor loop
+/// (reconnect/backoff/graceful disconnect) with a **per-bot** `mode`/`brain`/`char`. Emits a
+/// K/D-ranked roster YAML to `./logs/roster/` on exit (edit it down for the next round).
+pub async fn run_competition(
+    cfg: Arc<Config>,
+    addr: SocketAddr,
+    mut specs: Vec<GroupSpec>,
+    qport_base_override: Option<u16>,
+    loose_botcap: bool,
+) -> std::io::Result<()> {
+    if specs.is_empty() {
+        tracing::error!("competition needs at least one group");
+        return Ok(());
+    }
+    // maxclients guard: clamp per-group counts so the total leaves human headroom. Scale each
+    // group proportionally to its requested count (for uniform counts this is bit-identical to the
+    // old `(max_bots / num_groups).max(1)` — integer identity, asserted in the clamp test).
+    let requested_total: usize = specs.iter().map(|s| s.count).sum();
+    if cfg.fleet.max_bots > 0 && requested_total > cfg.fleet.max_bots {
+        for s in &mut specs {
+            s.count = (s.count * cfg.fleet.max_bots / requested_total).max(1);
+        }
+        tracing::warn!(
+            requested_total,
+            cap = cfg.fleet.max_bots,
+            clamped_total = specs.iter().map(|s| s.count).sum::<usize>(),
+            "clamping per-group counts to fit max_bots"
+        );
+    }
+    let num_groups = specs.len();
+    let total: usize = specs.iter().map(|s| s.count).sum();
 
     // Plan 55: bail out now if the server plainly can't seat this many bots, before we
     // spawn any. Strict (default) exits non-zero; --loose-botcap warns and proceeds.
@@ -641,63 +681,52 @@ pub async fn run_competition(
         loose_botcap,
         beacon: start_beacon(&cfg, addr, &shutdown),
     };
-    // Contiguous per-mode qport blocks (`base + mi*count + i`) are disjoint, so the server's
-    // (ip, qport) slot keys never collide across modes.
+    // Contiguous per-group qport blocks (`base + running_offset + i`) are disjoint, so the
+    // server's (ip, qport) slot keys never collide across groups.
     let qport_base = qport_base_override.unwrap_or_else(crate::default_fleet_qport_base);
     tracing::info!(
-        modes = modes.len(),
-        brains = brains.len(),
         groups = num_groups,
-        per_group_count,
         total,
         qport_base,
         "launching competition to {addr}"
     );
     // Bot names use short codes to fit Q2's 15-char limit; print the legend so the
     // scoreboard's `mai_as`-style tags are readable.
-    log_competition_legend(&modes, &brains, &chars, &xonchars);
+    log_competition_legend(&specs);
 
-    // Stable group ordering (mode-major, brain-minor) → contiguous, disjoint qport blocks.
-    // `group_tags` is the scoreboard's grouping key list, in the same order.
+    // `group_tags` is the scoreboard's grouping key list, in spec order.
     let mut tasks = Vec::new();
     let mut group_tags: Vec<String> = Vec::new();
-    let mut g = 0usize;
-    for (mi, &mode) in modes.iter().enumerate() {
-        let mode_skin = skins_per_mode.get(mi).cloned().flatten();
-        for &bk in &brains {
-            for gc in chars_for(bk) {
-                let tag = group_tag(mode, bk, gc);
-                // A named character wears its own recognizable skin; else the per-mode skin.
-                let skin = gc.skin().or_else(|| mode_skin.clone());
-                group_tags.push(tag.clone());
-                tracing::info!(group = %tag, skin = ?skin, count = per_group_count, "competitor entering");
-                for i in 0..per_group_count {
-                    let name = format!("{tag}_{}", i + 1);
-                    let qport = qport_base.wrapping_add((g * per_group_count + i) as u16);
-                    let bot_skin = skin.clone();
-                    let cfg = Arc::clone(&cfg);
-                    let shared = shared.clone();
-                    tasks.push(tokio::spawn(async move {
-                        bot_supervisor_loop(
-                            addr,
-                            name,
-                            qport,
-                            bot_skin,
-                            cfg,
-                            shared,
-                            reconnect,
-                            mode,
-                            bk,
-                            gc.q3(),
-                            gc.xon(),
-                        )
-                        .await;
-                    }));
-                    time::sleep(Duration::from_millis(stagger)).await;
-                }
-                g += 1;
-            }
+    let mut qport_offset = 0usize;
+    for spec in &specs {
+        group_tags.push(spec.tag.clone());
+        tracing::info!(group = %spec.tag, skin = ?spec.skin, count = spec.count, "competitor entering");
+        for i in 0..spec.count {
+            let name = format!("{}_{}", spec.tag, i + 1);
+            let qport = qport_base.wrapping_add((qport_offset + i) as u16);
+            let bot_skin = spec.skin.clone();
+            let (mode, bk, gc) = (spec.mode, spec.brain, spec.gc);
+            let cfg = Arc::clone(&cfg);
+            let shared = shared.clone();
+            tasks.push(tokio::spawn(async move {
+                bot_supervisor_loop(
+                    addr,
+                    name,
+                    qport,
+                    bot_skin,
+                    cfg,
+                    shared,
+                    reconnect,
+                    mode,
+                    bk,
+                    gc.q3(),
+                    gc.xon(),
+                )
+                .await;
+            }));
+            time::sleep(Duration::from_millis(stagger)).await;
         }
+        qport_offset += spec.count;
     }
 
     // Heartbeat: a live per-group scoreboard every 30 s.
@@ -726,14 +755,29 @@ pub async fn run_competition(
 }
 
 /// Log a one-line-per-axis legend mapping the short codes used in bot names back to their full
-/// names, for the brains/modes/chars actually fielded this run. Keeps the short-code scoreboard
-/// readable without bloating the names themselves.
-fn log_competition_legend(
-    modes: &[crate::NavMode],
-    brains: &[brain::BrainKind],
-    chars: &[brain::CharPreset],
-    xonchars: &[brain::XonCharPreset],
-) {
+/// names, for the brains/modes/chars actually fielded this run (first-seen order over the specs).
+/// Keeps the short-code scoreboard readable without bloating the names themselves.
+fn log_competition_legend(specs: &[GroupSpec]) {
+    // First-seen dedup preserving order (small N; a Vec is simpler than an ordered set).
+    fn push_unique<T: PartialEq>(v: &mut Vec<T>, x: T) {
+        if !v.contains(&x) {
+            v.push(x);
+        }
+    }
+    let mut modes: Vec<crate::NavMode> = Vec::new();
+    let mut brains: Vec<brain::BrainKind> = Vec::new();
+    let mut chars: Vec<brain::CharPreset> = Vec::new();
+    let mut xonchars: Vec<brain::XonCharPreset> = Vec::new();
+    for s in specs {
+        push_unique(&mut modes, s.mode);
+        push_unique(&mut brains, s.brain);
+        if let Some(c) = s.gc.q3() {
+            push_unique(&mut chars, c);
+        }
+        if let Some(x) = s.gc.xon() {
+            push_unique(&mut xonchars, x);
+        }
+    }
     let join = |pairs: Vec<String>| pairs.join(", ");
     let brain_leg = join(
         brains
@@ -774,7 +818,7 @@ fn log_competition_legend(
 /// `<brain>_<mode>[_<char>]` (e.g. `mai_as`, `q3_rc`, `q3_rc_gru`). Short codes keep the
 /// `<tag>_<i>` bot name inside Q2's 15-char `netname` limit. Every token is `_`-free, so the
 /// name still index-splits on its trailing `_` in [`mode_scoreboard`].
-fn group_tag(mode: crate::NavMode, brain: brain::BrainKind, gc: GroupChar) -> String {
+pub(crate) fn group_tag(mode: crate::NavMode, brain: brain::BrainKind, gc: GroupChar) -> String {
     match gc {
         GroupChar::Q3(c) => format!("{}_{}_{}", brain_code(brain), mode_code(mode), char_code(c)),
         GroupChar::Xon(x) => {
@@ -791,24 +835,24 @@ fn group_tag(mode: crate::NavMode, brain: brain::BrainKind, gc: GroupChar) -> St
 
 /// One mode's aggregate competition standing.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ModeScore {
-    tag: String,
-    kills: u64,
-    deaths: u64,
-    env_suicides: u64,
+pub(crate) struct ModeScore {
+    pub(crate) tag: String,
+    pub(crate) kills: u64,
+    pub(crate) deaths: u64,
+    pub(crate) env_suicides: u64,
     /// Health points picked up (Plan 67) — amounts, not item counts.
-    health_picked: u64,
+    pub(crate) health_picked: u64,
     /// Armor points picked up (Plan 67).
-    armor_picked: u64,
+    pub(crate) armor_picked: u64,
     /// Weapons picked up (Plan 68) — a count.
-    weapons_picked: u64,
-    bots: usize,
+    pub(crate) weapons_picked: u64,
+    pub(crate) bots: usize,
 }
 
 impl ModeScore {
     /// Kill/death ratio; a death-less group scores its raw kill count (the
     /// display convention the board has always used).
-    fn kd(&self) -> f32 {
+    pub(crate) fn kd(&self) -> f32 {
         if self.deaths > 0 {
             self.kills as f32 / self.deaths as f32
         } else {
@@ -1115,6 +1159,101 @@ fn log_final_stats(stats: &FleetStats) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::NavMode;
+    use brain::{BrainKind, CharPreset};
+
+    /// The running qport offset each spec's bots start at — the `GroupSpec` analog of the old
+    /// `g * per_group_count` block base. Test helper mirroring `run_competition`'s cumsum.
+    fn qport_offsets(specs: &[GroupSpec]) -> Vec<usize> {
+        let mut offs = Vec::new();
+        let mut acc = 0usize;
+        for s in specs {
+            offs.push(acc);
+            acc += s.count;
+        }
+        offs
+    }
+
+    #[test]
+    fn matrix_specs_reproduces_the_historical_group_order_and_qports() {
+        // modes=[as,nm] × brains=[mai,q3] × chars=[gru,cam], count=2, one skin per mode.
+        let specs = matrix_specs(
+            &[NavMode::Astar, NavMode::Navmesh],
+            &[BrainKind::Main, BrainKind::Quake3],
+            &[CharPreset::Grunt, CharPreset::Camper],
+            &[],
+            2,
+            &[Some("male/grunt".into()), Some("female/athena".into())],
+        );
+        // Mode-major, brain-minor, char-innermost; mai has no char axis (one None group).
+        let tags: Vec<&str> = specs.iter().map(|s| s.tag.as_str()).collect();
+        assert_eq!(
+            tags,
+            [
+                "mai_as",
+                "q3_as_gru",
+                "q3_as_cam",
+                "mai_nm",
+                "q3_nm_gru",
+                "q3_nm_cam"
+            ]
+        );
+        // Uniform count 2 → offsets are exactly the old `g * per_group_count`.
+        assert_eq!(qport_offsets(&specs), [0, 2, 4, 6, 8, 10]);
+    }
+
+    #[test]
+    fn matrix_specs_char_skin_beats_mode_skin() {
+        let specs = matrix_specs(
+            &[NavMode::Astar],
+            &[BrainKind::Main, BrainKind::Quake3],
+            &[CharPreset::Grunt],
+            &[],
+            1,
+            &[Some("male/mode".into())],
+        );
+        // mai (no char) wears the per-mode skin; the q3 char wears its own recognizable skin.
+        let mai = specs.iter().find(|s| s.tag == "mai_as").unwrap();
+        let q3 = specs.iter().find(|s| s.tag == "q3_as_gru").unwrap();
+        assert_eq!(mai.skin.as_deref(), Some("male/mode"));
+        assert_eq!(q3.skin.as_deref(), Some(CharPreset::Grunt.skin()));
+    }
+
+    #[test]
+    fn matrix_specs_empty_xonchars_gives_one_none_xon_group() {
+        let specs = matrix_specs(
+            &[NavMode::Navmesh],
+            &[BrainKind::Xon],
+            &[],
+            &[], // no xonchars → a single default (None) xon group
+            3,
+            &[None],
+        );
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].tag, "xon_nm");
+        assert_eq!(specs[0].gc, GroupChar::None);
+        assert_eq!(specs[0].count, 3);
+    }
+
+    #[test]
+    fn proportional_clamp_matches_old_uniform_formula() {
+        // The old clamp was `(max_bots / num_groups).max(1)`, applied to a uniform count.
+        // The new per-spec clamp is `(count * max_bots / total).max(1)`. For uniform counts
+        // (total = num_groups * count) these are the same integer for every group.
+        for &num_groups in &[1usize, 3, 6, 7] {
+            for &count in &[1usize, 2, 5, 8] {
+                for &max_bots in &[1usize, 4, 16, 30, 64] {
+                    let total = num_groups * count;
+                    let old = (max_bots / num_groups).max(1);
+                    let new = (count * max_bots / total).max(1);
+                    assert_eq!(
+                        old, new,
+                        "clamp mismatch: groups={num_groups} count={count} cap={max_bots}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn mode_scoreboard_groups_by_name_prefix_and_ranks_by_kd_then_kills() {
@@ -1202,8 +1341,6 @@ mod tests {
 
     #[test]
     fn group_tag_uses_short_codes_brain_first() {
-        use crate::NavMode;
-        use brain::{BrainKind, CharPreset};
         // Brain code first, then nav-plan code, then optional character code; underscore-joined.
         assert_eq!(
             group_tag(NavMode::Astar, BrainKind::Main, GroupChar::None),

@@ -2472,19 +2472,16 @@ async fn main() -> ExitCode {
             if let Err(code) = preflight_map(&cfg, addr, None, world::GRID_SPACING, false).await {
                 return code;
             }
-            match supervisor::run_competition(
-                Arc::new(cfg),
-                addr,
-                modes,
-                brains,
-                chars,
-                xonchars,
+            let specs = supervisor::matrix_specs(
+                &modes,
+                &brains,
+                &chars,
+                &xonchars,
                 count,
-                qport_base,
-                skins_per_mode,
-                loose_botcap,
-            )
-            .await
+                &skins_per_mode,
+            );
+            match supervisor::run_competition(Arc::new(cfg), addr, specs, qport_base, loose_botcap)
+                .await
             {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
