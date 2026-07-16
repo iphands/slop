@@ -162,6 +162,14 @@ a `CS_ITEMS` configstring index — `g_items.c:1163` — so pickup identity IS o
 switching never writes the stat. Aggregated in `FleetStats`; the competition scoreboard carries
 `hp=`/`ap=`/`wp=` columns and is **K/D-ranked** (kills as tiebreak) as of Plan 67.
 
+Map-change count (Plan 70, 2026-07-16): the FINAL report emits one aggregated fleet-wide line —
+`run went through N map change(s)  maps=q2dm1 → q2dm3 → …` (or `run stayed on one map`). Every bot
+detects each rotation independently (Plan 64); `FleetStats` dedups them by **servercount**
+(`SV_SpawnServer` bumps it per level spawn), so `N = distinct servercounts − 1` regardless of bot
+count, and the sequence is chronological (`BTreeMap` order). A same-map restart is a distinct
+servercount, so it counts as a change. Verified live 2026-07-16: 2 bots, two rcon `map q2dm1`
+restarts → `2 map change(s) levels=3` (deduped from 4 per-bot detections).
+
 ## Roster-file competitions (Plan 69, 2026-07-15)
 
 Two ways to pick the competition lineup:
