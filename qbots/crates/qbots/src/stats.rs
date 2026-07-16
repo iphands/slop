@@ -8,7 +8,7 @@
 //! report.
 
 use brain::EnvDeath;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
 /// One bot's running kill/death count.
@@ -55,6 +55,11 @@ impl BotTally {
 #[derive(Clone, Default)]
 pub struct FleetStats {
     bots: Arc<Mutex<HashMap<String, BotTally>>>,
+    /// Fleet-wide level log (Plan 70): every distinct `servercount` the fleet observed → the map
+    /// it loaded. Keyed on servercount (`SV_SpawnServer` bumps it per level spawn), so this dedups
+    /// the same level seen by all N bots into one entry, and the `BTreeMap` order is chronological.
+    /// The map-change *count* is `len − 1`.
+    maps: Arc<Mutex<BTreeMap<i32, String>>>,
 }
 
 impl FleetStats {
@@ -132,6 +137,29 @@ impl FleetStats {
             .entry(name.to_string())
             .or_default()
             .weapons_picked += 1;
+    }
+
+    /// Note that the fleet loaded `map` at level `servercount` (Plan 70). Idempotent per
+    /// servercount, so every bot on the same level records the same entry once — the fleet-wide
+    /// dedup. Reconnecting to a level already logged is a no-op (same key, same value).
+    pub fn record_map_load(&self, servercount: i32, map: &str) {
+        self.maps
+            .lock()
+            .unwrap()
+            .entry(servercount)
+            .or_insert_with(|| map.to_string());
+    }
+
+    /// How many map changes the fleet lived through: distinct levels seen minus the first
+    /// (0 if the fleet only ever saw one level, or never connected).
+    pub fn map_changes(&self) -> usize {
+        self.maps.lock().unwrap().len().saturating_sub(1)
+    }
+
+    /// The maps the fleet played, in chronological order (by servercount). A map revisited later
+    /// in a rotation appears again — it's a distinct level spawn.
+    pub fn map_sequence(&self) -> Vec<String> {
+        self.maps.lock().unwrap().values().cloned().collect()
     }
 
     /// Fleet totals across all registered bots.
@@ -296,5 +324,42 @@ mod tests {
         s.register("a");
         let snap: HashMap<String, BotTally> = s.snapshot().into_iter().collect();
         assert_eq!(snap["a"].kills, 1);
+    }
+
+    #[test]
+    fn map_changes_dedup_the_same_level_across_bots() {
+        let s = FleetStats::new();
+        // The whole fleet loads level 3 (q2dm1), then rotates to 4, then 5 — every bot reports.
+        for _ in 0..36 {
+            s.record_map_load(3, "q2dm1");
+        }
+        assert_eq!(s.map_changes(), 0, "one level → zero changes");
+        for _ in 0..36 {
+            s.record_map_load(4, "q2dm3");
+        }
+        for _ in 0..36 {
+            s.record_map_load(5, "q2dm4");
+        }
+        // 3 distinct levels despite 108 records → 2 changes, chronological sequence.
+        assert_eq!(s.map_changes(), 2);
+        assert_eq!(s.map_sequence(), ["q2dm1", "q2dm3", "q2dm4"]);
+    }
+
+    #[test]
+    fn map_changes_counts_a_revisited_map_as_a_new_level() {
+        let s = FleetStats::new();
+        // A→B→A rotation: distinct servercounts, so the revisit is a real change.
+        s.record_map_load(1, "q2dm1");
+        s.record_map_load(2, "q2dm2");
+        s.record_map_load(3, "q2dm1");
+        assert_eq!(s.map_changes(), 2);
+        assert_eq!(s.map_sequence(), ["q2dm1", "q2dm2", "q2dm1"]);
+    }
+
+    #[test]
+    fn map_changes_is_zero_before_any_level_loads() {
+        let s = FleetStats::new();
+        assert_eq!(s.map_changes(), 0);
+        assert!(s.map_sequence().is_empty());
     }
 }

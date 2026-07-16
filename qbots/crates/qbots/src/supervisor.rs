@@ -750,12 +750,33 @@ pub async fn run_competition(
     }
     status.abort();
     log_competition_scoreboard(&stats, &group_tags, "FINAL");
+    log_map_changes(&stats);
     // Plan 69: emit a ranked, ready-to-edit roster of every group — trim it and pass it back via
     // `--roster` for the next round. Written before `fleet_join_result` so a join-failure run
     // (which returns Err) still leaves the standings on disk.
     dump_final_roster(&stats, &group_tags, &specs);
     tracing::info!("competition exited");
     fleet_join_result(&shared)
+}
+
+/// Report how many map changes the run went through — one aggregated fleet-wide number plus the
+/// chronological map sequence (Plan 70). Silent when the run never rotated (a single level).
+fn log_map_changes(stats: &FleetStats) {
+    let changes = stats.map_changes();
+    let seq = stats.map_sequence();
+    if changes == 0 {
+        // Still note the single map for context, but no "changes" fanfare.
+        if let Some(only) = seq.first() {
+            tracing::info!(map_changes = 0, map = %only, "run stayed on one map");
+        }
+        return;
+    }
+    tracing::info!(
+        map_changes = changes,
+        levels = seq.len(),
+        maps = %seq.join(" → "),
+        "run went through {changes} map change(s)"
+    );
 }
 
 /// Write the FINAL standings as a ranked roster YAML to `./logs/roster/<unix_ts>.yaml` (Plan 69).
@@ -1179,6 +1200,7 @@ fn log_final_stats(stats: &FleetStats) {
             "environmental suicides this run"
         );
     }
+    log_map_changes(stats);
 }
 
 #[cfg(test)]

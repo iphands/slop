@@ -1313,6 +1313,12 @@ pub(crate) async fn bot_task(
                             map_loaded = true;
                             map_servercount = servercount;
                             beacon_map = map.clone(); // Plan 66
+                            // Plan 70: note this level fleet-wide. Keyed on servercount, so all N
+                            // bots loading the same level collapse to one entry (dedup); the
+                            // competition FINAL report totals the distinct levels − 1.
+                            if let Some(sc) = servercount {
+                                stats.record_map_load(sc, &map);
+                            }
                             tracing::info!(map, bsp = %bsp_path, "loading nav graph");
                             // Shared across the fleet: built once per map, reused as Arc.
                             if let Some(map_nav) = nav_cache.get_or_build(cfg, &map) {
