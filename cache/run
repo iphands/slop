@@ -1,0 +1,66 @@
+#!/bin/bash
+set -euo pipefail
+
+# Launch (or relaunch) the package caching proxy.
+#
+#     ./run
+#
+# Runs the container detached as APP_UID:APP_GID with the cache on a bind-mounted
+# volume. Auto-detects the container engine and PREFERS podman when present.
+#
+# All knobs are env-overridable, e.g.:
+#     PORT=3142 CACHE_DIR=/srv/apt-cacher-ng ./run
+#     APP_UID=1500 APP_GID=1500 ./run
+
+cd "$(dirname "$0")"
+
+# ---- knobs ------------------------------------------------------------------
+APP_UID="${APP_UID:-1000}"                 # container process uid
+APP_GID="${APP_GID:-1000}"                 # container process gid
+IMAGE="${IMAGE:-iphands/pkgcache}"
+TAG="${TAG:-latest}"
+PORT="${PORT:-8080}"                       # host port -> container :8080
+CACHE_DIR="${CACHE_DIR:-/srv/pkgcache}"    # bind-mounted cache volume
+NAME="${NAME:-pkgcache}"
+EXTRA_ARGS="${EXTRA_ARGS:-}"               # extra engine args, e.g. --userns=keep-id
+# RUNTIME=docker ./run  forces an engine; unset -> prefer podman, then docker.
+
+# ---- container engine (RUNTIME override, else prefer podman) -----------------
+CE="${RUNTIME:-}"
+if [ -z "$CE" ]; then
+    if command -v podman >/dev/null 2>&1; then CE=podman
+    elif command -v docker >/dev/null 2>&1; then CE=docker
+    else echo "error: neither podman nor docker found on PATH" >&2; exit 1; fi
+fi
+command -v "$CE" >/dev/null 2>&1 || { echo "error: RUNTIME=$CE not found on PATH" >&2; exit 1; }
+
+# ---- ensure the cache volume exists and is writable by APP_UID:APP_GID -------
+# nginx runs as APP_UID inside the container and writes the cache tree to this
+# bind mount, so the host dir must be owned by that uid/gid.
+if [ ! -d "$CACHE_DIR" ]; then
+    echo ">> creating $CACHE_DIR"
+    mkdir -p "$CACHE_DIR" 2>/dev/null || sudo mkdir -p "$CACHE_DIR"
+fi
+if [ "$(stat -c '%u:%g' "$CACHE_DIR")" != "${APP_UID}:${APP_GID}" ]; then
+    echo ">> chown $CACHE_DIR -> ${APP_UID}:${APP_GID}"
+    chown "${APP_UID}:${APP_GID}" "$CACHE_DIR" 2>/dev/null \
+        || sudo chown "${APP_UID}:${APP_GID}" "$CACHE_DIR"
+fi
+
+# NOTE (rootless podman): host uid ${APP_UID} is not the in-container uid unless
+# you add  EXTRA_ARGS="--userns=keep-id:uid=${APP_UID},gid=${APP_GID}"  and own
+# CACHE_DIR as your host user. docker and rootful podman need no such flag.
+
+# ---- (re)launch -------------------------------------------------------------
+"$CE" rm -f "$NAME" >/dev/null 2>&1 || true
+
+echo ">> [$CE] starting ${NAME} from ${IMAGE}:${TAG} on :${PORT} as ${APP_UID}:${APP_GID}"
+# shellcheck disable=SC2086  # EXTRA_ARGS is intentionally word-split
+exec "$CE" run -d \
+    --name "$NAME" \
+    --restart unless-stopped \
+    --user "${APP_UID}:${APP_GID}" \
+    -p "${PORT}:8080" \
+    -v "${CACHE_DIR}:/var/cache/nginx" \
+    $EXTRA_ARGS \
+    "${IMAGE}:${TAG}"

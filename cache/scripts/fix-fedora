@@ -1,0 +1,71 @@
+#!/bin/bash
+set -euo pipefail
+
+# Point a Fedora client's dnf at the pkgcache proxy.
+#
+#     sudo ./fix-fedora            # add cache repos, disable metalink, makecache
+#     sudo ./fix-fedora --revert   # remove cache repos, re-enable stock repos
+#     CACHE=http://host:port ./fix-fedora   # different cache endpoint
+#
+# Fedora's dnf uses HTTPS + metalink, which a proxy can't cache. So instead we
+# add explicit baseurl repos pointing at the cache (nginx originates the HTTPS
+# upstream) and disable the stock metalink 'fedora'/'updates' repos. gpgcheck
+# stays on, so packages remain signature-verified over plain HTTP.
+
+CACHE="${CACHE:-http://noir.lan:3129}"
+REPO=/etc/yum.repos.d/fedora-cache.repo
+
+# Need root to edit /etc/yum.repos.d; re-exec under sudo, preserving CACHE.
+if [ "$(id -u)" -ne 0 ]; then exec sudo -E "$0" "$@"; fi
+
+# Enable/disable stock repos across dnf5 (setopt) and dnf4 (--set-*abled).
+set_repo_enabled() {  # $1=0|1  $2..=repo ids
+    local val="$1"; shift
+    local kv=(); for r in "$@"; do kv+=("${r}.enabled=${val}"); done
+    if dnf config-manager setopt "${kv[@]}" >/dev/null 2>&1; then return 0; fi
+    if [ "$val" = "0" ]; then
+        dnf config-manager --set-disabled "$@" >/dev/null 2>&1 || true
+    else
+        dnf config-manager --set-enabled "$@"  >/dev/null 2>&1 || true
+    fi
+}
+
+if [ "${1:-}" = "--revert" ]; then
+    rm -f "$REPO"
+    echo "  removed $REPO"
+    set_repo_enabled 1 fedora updates
+    echo "  re-enabled stock fedora/updates repos"
+    echo ">> dnf makecache"
+    dnf makecache
+    exit 0
+fi
+
+echo ">> pointing dnf at ${CACHE}"
+cat > "$REPO" <<EOF
+# Managed by pkgcache scripts/fix-fedora. Re-run --revert to remove.
+[fedora-cache]
+name=Fedora \$releasever - \$basearch (cached via pkgcache)
+baseurl=${CACHE}/fedora/linux/releases/\$releasever/Everything/\$basearch/os/
+enabled=1
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-\$releasever-\$basearch
+skip_if_unavailable=False
+
+[updates-cache]
+name=Fedora \$releasever - \$basearch - Updates (cached via pkgcache)
+baseurl=${CACHE}/fedora/linux/updates/\$releasever/Everything/\$basearch/
+enabled=1
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-\$releasever-\$basearch
+skip_if_unavailable=False
+EOF
+echo "  wrote $REPO"
+
+# Disable the stock metalink repos so dnf pulls through the cache.
+set_repo_enabled 0 fedora updates
+echo "  disabled stock fedora/updates (metalink) repos"
+
+echo ">> dnf makecache"
+dnf makecache
+echo ">> done. verify a cache hit with:"
+echo "   curl -sI ${CACHE}/fedora/linux/releases/\$(rpm -E %fedora)/Everything/\$(uname -m)/os/repodata/repomd.xml | grep X-Cache-Status"

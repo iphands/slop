@@ -1,0 +1,59 @@
+#!/bin/bash
+set -euo pipefail
+
+# Point a Debian client's apt sources at the pkgcache proxy.
+#
+#     sudo ./fix-debian            # rewrite sources -> cache, then apt update
+#     sudo ./fix-debian --revert   # restore the original sources
+#     CACHE=http://host:port ./fix-debian   # different cache endpoint
+#
+# Rewrites deb.debian.org/ftp.*.debian.org (-> /debian) and security.debian.org
+# (-> /debian-security) to the cache, in both legacy .list and deb822 .sources
+# files. GPG signatures still verify, so plain HTTP to the cache is safe.
+# Third-party repos (PPAs, docker, ...) are left untouched. Idempotent: the
+# original of every file touched is saved once as <file>.pkgcache.orig.
+
+CACHE="${CACHE:-http://noir.lan:3129}"
+
+# Need root to edit /etc/apt; re-exec under sudo, preserving CACHE.
+if [ "$(id -u)" -ne 0 ]; then exec sudo -E "$0" "$@"; fi
+
+shopt -s nullglob
+SOURCES=(/etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources)
+
+if [ "${1:-}" = "--revert" ]; then
+    restored=0
+    for b in /etc/apt/sources.list.pkgcache.orig /etc/apt/sources.list.d/*.pkgcache.orig; do
+        [ -f "$b" ] || continue
+        orig="${b%.pkgcache.orig}"
+        mv -f "$b" "$orig"
+        echo "  restored $orig"
+        restored=1
+    done
+    [ "$restored" -eq 1 ] || { echo "nothing to revert (no .pkgcache.orig backups found)"; exit 0; }
+    echo ">> apt-get update"
+    apt-get update
+    exit 0
+fi
+
+echo ">> pointing apt at ${CACHE}"
+changed=0
+for f in "${SOURCES[@]}"; do
+    [ -f "$f" ] || continue
+    grep -qE 'debian\.org' "$f" || continue
+    [ -f "$f.pkgcache.orig" ] || cp -a "$f" "$f.pkgcache.orig"
+    # security first (more specific path), then any *.debian.org/debian mirror.
+    sed -E -i \
+        -e "s#https?://security\.debian\.org/debian-security#${CACHE}/debian-security#g" \
+        -e "s#https?://[a-z0-9.-]*\.debian\.org/debian#${CACHE}/debian#g" \
+        "$f"
+    echo "  patched $f"
+    changed=1
+done
+
+[ "$changed" -eq 1 ] || { echo "no debian.org sources found to patch"; exit 0; }
+
+echo ">> apt-get update"
+apt-get update
+echo ">> done. verify a cache hit with:"
+echo "   curl -sI ${CACHE}/debian/dists/trixie/InRelease | grep X-Cache-Status"

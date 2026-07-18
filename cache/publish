@@ -1,0 +1,43 @@
+#!/bin/bash
+set -euo pipefail
+
+# Push the built image to Docker Hub. THE HUMAN RUNS THIS.
+#
+#     ./publish
+#
+# Pushes the moving tag (iphands/pkgcache:latest) plus any immutable per-commit
+# tags (iphands/pkgcache:<git-sha>) that exist locally.
+#
+# Prereqs: ./build has been run, and you are logged in
+#   (`docker login`  or  `podman login docker.io`).
+#
+# Auto-detects the container engine and PREFERS podman when both are present.
+# Force one with  RUNTIME=docker ./publish  (or RUNTIME=podman).
+
+cd "$(dirname "$0")"
+
+# Container engine: honor RUNTIME override, else prefer podman, then docker.
+CE="${RUNTIME:-}"
+if [ -z "$CE" ]; then
+    if command -v podman >/dev/null 2>&1; then CE=podman
+    elif command -v docker >/dev/null 2>&1; then CE=docker
+    else echo "error: neither podman nor docker found on PATH" >&2; exit 1; fi
+fi
+command -v "$CE" >/dev/null 2>&1 || { echo "error: RUNTIME=$CE not found on PATH" >&2; exit 1; }
+
+IMAGE="${IMAGE:-iphands/pkgcache}"
+
+if ! "$CE" image inspect "${IMAGE}:latest" >/dev/null 2>&1; then
+    echo "nothing built to publish -- run ./build first" >&2
+    exit 1
+fi
+
+echo ">> [$CE] pushing ${IMAGE}:latest and any ${IMAGE}:<ref> tags"
+"$CE" images --format '{{.Repository}}:{{.Tag}}' "${IMAGE}" \
+    | grep -E "^${IMAGE}:" \
+    | grep -v ':<none>$' \
+    | sort -u \
+    | while read -r t; do
+        echo "   push ${t}"
+        "$CE" push "${t}"
+    done

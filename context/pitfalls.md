@@ -520,3 +520,32 @@ again during Plan 13/66 verification (2026-07-13) by doing precisely what Plan 1
 - qctrl: `crates/api/src/main.rs` (`spawn_sv_maplist_sync`, `spawn_sv_maplist_watchdog`), `crates/api/src/rotator.rs` (module doc — why intermission needs an owner)
 - qbots: `crates/brain` (intermission → press ATTACK), `context/plans/64_map_change_survival_tracker.md` (forensics)
 - yquake2: `src/game/g_main.c` (`EndDMLevel`), `src/game/player/client.c:2122` (`ClientThink` / `exitintermission`), `src/server/sv_init.c` (`SV_SpawnServer` → `Com_Error` on a missing BSP)
+
+# nginx package-cache: regex-location proxy_pass drops the URI rewrite, and temp dirs need one-level paths
+When building an nginx reverse cache for OS package repos (slop/cache, `pkgcache`), two
+non-obvious things bit during verification.
+
+(1) **Nested regex `location` + `proxy_pass` path remap.** To give immutable `.rpm`/`.deb`
+files a long TTL while metadata stays short, you nest a `location ~* \.rpm$ {}` inside a
+prefix `location /fedora/ {}`. But a *regex* location's `proxy_pass` MUST NOT carry a URI
+part — nginx forwards the (normalized) request URI verbatim. So the parent's tidy
+`proxy_pass https://host/pub/fedora/;` remap is LOST in the nested block: `/fedora/x.rpm`
+would hit the upstream as `/fedora/x.rpm` (404) instead of `/pub/fedora/x.rpm`. Fix: re-apply
+the remap explicitly with `rewrite ^/fedora/(.*)$ /pub/fedora/$1 break;` then
+`proxy_pass https://host;` (no URI). Prefix locations *can* use a URI in proxy_pass; regex
+ones cannot. Always test the nested branch, not just the prefix.
+
+(2) **`*_temp_path`/cache dirs are created with a single `mkdir()`.** nginx does not create
+intermediate parents. On a fresh bind-mounted empty volume, `proxy_temp_path
+/var/cache/nginx/tmp/proxy` fails with `mkdir() ... (2: No such file or directory)` because
+`tmp/` doesn't exist. Keep every temp/cache path exactly one level under the volume root
+(`/var/cache/nginx/proxy_temp`, matching the stock image layout) so the single mkdir works.
+
+Bonus (env, not code): rootless podman here failed to even pull the base image — short-name
+resolution off (`no unqualified-search registries`) and a subuid/graphdriver mismatch
+(`potentially insufficient UIDs or GIDs`, vfs-vs-overlay). Fully-qualify FROM with
+`docker.io/...`; the subuid issue is a host setup fix (`podman system migrate`, check
+`/etc/subuid`). Verified the image with docker instead.
+
+## Sources
+- slop/cache: `conf.d/pkgcache.conf` (nested `.rpm`/`.deb` regex locations + `rewrite`), `nginx.conf` (`*_temp_path`), `Dockerfile` (`FROM docker.io/...`)
