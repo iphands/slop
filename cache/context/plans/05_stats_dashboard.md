@@ -80,6 +80,9 @@ it models data *quality* explicitly and refuses to render a number it can't back
 | qctrl stack | React 19, Vite, TS, Tailwind **3** (not 4), React Query 5, vitest | explored 2026-07-18 |
 | qctrl has no chart code at all | greenfield | explored 2026-07-18 |
 | Assets are embedded at build time | `npm run build` must precede `cargo build` | Plan 04 T3 |
+| Package paths are 60–110 chars | show the parsed `name` + `version`, not the path | production log 2026-07-18 |
+| One package can be 27% of an upgrade's bytes | 14 MB of a 50.7 MiB run; sizes span 9,663x | production log 2026-07-18 |
+| apt fetches in bursts | 32 packages in one second — a "last hour" view can be one spike | production log 2026-07-18 |
 | Container engine | **docker** to verify here; **podman** on `noir.lan` (no docker there) | 2026-07-18 |
 
 ---
@@ -199,6 +202,15 @@ greyscale.
 **What to do**: top to bottom — ingest-health banner (only when something is wrong), global
 KPI row, time-series chart with the window picker, client table, top packages / top
 metadata, repo breakdown.
+
+**Top-package lists show the parsed name and version, not the raw path.** Production paths
+run 60–110 characters
+(`/debian/pool/main/libx/libxml2/libxml2-utils_2.12.7+dfsg+really2.9.14-2.1+deb13u3_amd64.deb`),
+which is unreadable in a table and destroys the column layout. Plan 03's `pkgname` module
+supplies `name` / `version` / `arch`; render `libxml2-utils` prominently with the version
+muted beside it, and keep the full path in a `title` attribute for the curious. Size range
+in real traffic is ~9,663x (1.4 KB to 14 MB), so bar lengths need a log scale or explicit
+absolute labels — a linear bar makes 30 of 32 packages invisible.
 
 `IngestHealth` must be loud and specific when `logs_readable === false` — that is the uid
 mismatch, and the whole point of instrumenting it in Plan 03 was to put a sentence on

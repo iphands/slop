@@ -167,6 +167,13 @@ hand-edit it to include the awkward cases the UI must handle:
 - `logs_readable: false`
 - a 300 MB single-package MISS that tanks an otherwise healthy ratio
 - an empty `top_packages` array
+- **real-shaped package paths** — long, percent-decoded, with `+` in the version
+  (`/debian/pool/main/libx/libxml2/libxml2-utils_2.12.7+dfsg+really2.9.14-2.1+deb13u3_amd64.deb`)
+  and an rpm whose name contains dashes
+  (`pipewire-jack-audio-connection-kit-libs-1.6.8-1.fc44.x86_64.rpm`). Synthetic short names
+  like `foo.deb` would let Plan 05 ship a layout that breaks on the first real payload.
+- **a realistic size spread** — production shows ~9,663x between the smallest and largest
+  package in a single run (1.4 KB … 14 MB), with one package at 27% of total bytes
 
 Document the shape in `stats/README.md`. Any later change to it is a breaking change for
 Plan 05 and must update the fixture in the same commit.

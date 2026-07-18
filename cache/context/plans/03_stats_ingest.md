@@ -85,7 +85,11 @@ double-counting hazard, to save single-digit megabytes.
 | Cache-status values | `HIT MISS EXPIRED STALE UPDATING REVALIDATED BYPASS` | nginx docs |
 | Host FS supports WAL | *(read the Plan 02 tracker — if not local, use `journal_mode=TRUNCATE`)* | Plan 02 |
 | `$upstream_bytes_received` can EXCEED `$body_bytes_sent` on a MISS | it includes response headers | **verified live 2026-07-18** |
-| `$request_uri` keeps percent-encoding | `usbmuxd-1.1.1%5e2025….rpm` | verified live + production log |
+| `$request_uri` keeps percent-encoding | **pervasive** — 42 `%2b` in one 32-package apt run | production log 2026-07-18 |
+| Real client IPs | `192.168.10.10` (Debian), `192.168.10.99` (Fedora) — multi-client is real | production log 2026-07-18 |
+| Package size range | **1.4 KB … 14 MB in one run** (9,663x); one package = 27% of a 50.7 MiB upgrade | production log 2026-07-18 |
+| apt/dnf fetch in bursts | 32 requests in the **same second**, all HIT | production log 2026-07-18 |
+| `deb`/`rpm` filename parsers | validated against real filenames incl. dashes-in-name and `+`/`^` in versions | tested 2026-07-18 |
 | Container engine | **docker** to verify here; **podman** on `noir.lan` (no docker there) | 2026-07-18 |
 | First database in the slop family | no rusqlite/sqlx/sled in qbots or qctrl, not even transitively | explored 2026-07-18 |
 | House style | `#[cfg(test)] mod tests` in-file; sentence-style test names; pure fns extracted to be testable | qbots/qctrl, 2026-07-18 |
@@ -138,9 +142,9 @@ is no house precedent to point at.
 
 ### T2: The pure ingest crate
 
-**Files**: `stats/crates/ingest/src/{lib,chunk,line,classify,agg}.rs`
+**Files**: `stats/crates/ingest/src/{lib,chunk,line,classify,pkgname,agg}.rs`
 
-**What to do**: four modules, each with in-file `#[cfg(test)] mod tests` and sentence-style
+**What to do**: five modules, each with in-file `#[cfg(test)] mod tests` and sentence-style
 test names (`a_line_with_eight_fields_is_a_parse_error`).
 
 **`chunk.rs`** — never consume a partial line:
@@ -174,6 +178,42 @@ explicitly**: `/fedora/…/foo.rpm` → repo `fedora`, and add a test asserting 
 `/pub/fedora/…` input is *not* what we expect to see, with a comment pointing at
 `pitfalls.md` — so anyone who "fixes" nginx back to `$uri` gets a red test rather than a
 wrong dashboard.
+
+**Percent-decode the path before storing it.** `$request_uri` preserves the client's
+encoding, and production logs show it is pervasive — **42 occurrences of `%2b` (`+`) in a
+single 32-package apt run**, because Debian version strings are full of `+`
+(`18.2.7+ds-1+deb13u1`). Fedora does the same with `%5e` (`^`). Two consequences if the raw
+form is stored: paths are unreadable in the UI, and any client or tool that encodes
+differently (uppercase `%2B`, or not at all) produces a **second, unrelated row for the same
+package**. Decode once, at classify time; on invalid UTF-8, keep the raw string and count it
+as a parse anomaly rather than dropping the line.
+
+**`pkgname.rs`** — extract a human-readable package identity from a decoded path. Top-N
+lists are useless with 60–110 character paths, and grouping across versions needs the bare
+name. Both parsers are **validated against real production filenames (2026-07-18)**:
+
+```rust
+/// `libxml2-utils_2.12.7+dfsg+really2.9.14-2.1+deb13u3_amd64.deb`
+///   -> ("libxml2-utils", "2.12.7+dfsg+really2.9.14-2.1+deb13u3", "amd64")
+/// Split on '_': deb filenames are name_version_arch.deb. The version may contain
+/// '-' and '+' freely, but never '_', which is what makes this safe.
+pub fn parse_deb(filename: &str) -> Option<(&str, &str, &str)>;
+
+/// `julietaula-montserrat-fonts-9.000-4.fc44.noarch.rpm`
+///   -> ("julietaula-montserrat-fonts", "9.000", "4.fc44", "noarch")
+/// Split from the RIGHT: .rpm, then .arch, then -release, then -version; whatever
+/// remains is the name. Splitting from the left is wrong -- rpm names contain '-'
+/// (see pipewire-jack-audio-connection-kit-libs).
+pub fn parse_rpm(filename: &str) -> Option<(&str, &str, &str, &str)>;
+```
+
+Test cases, all drawn from real traffic and all confirmed working:
+`libgl1-mesa-dri_25.0.7-2+deb13u1_amd64.deb`, the `libxml2-utils` monster above,
+`librbd1_18.2.7+ds-1+deb13u1_amd64.deb`, `python3-idna_3.10-1+deb13u1_all.deb` (arch
+`all`), `usbmuxd-1.1.1^20251205git3ded00c-1.fc44.x86_64.rpm` (`^` in the version),
+`pipewire-jack-audio-connection-kit-libs-1.6.8-1.fc44.x86_64.rpm` (dashes in the name),
+`glib2-2.88.2-1.fc44.x86_64.rpm`. A filename that parses to `None` must fall back to the
+full path rather than being dropped.
 
 **`agg.rs`** — a `Batch` accumulating into two `HashMap`s plus a totals delta:
 ```rust
@@ -219,7 +259,9 @@ cargo clippy --all-targets -- -D warnings
 Tests must cover: 8/9/10-field lines, `-` in fields 6 and 7, every cache-status value, a
 tab escaped as `\x09` inside the URI, `.rpm`/`.deb`/`.udeb`/metadata/`Other` classification,
 query-string stripping, the 512-char cap, an out-of-range `msec`, an empty buffer, a buffer
-with no newline, and a buffer ending mid-line.
+with no newline, and a buffer ending mid-line. **Plus:** percent-decoding (`%2b` -> `+`,
+`%5e` -> `^`) and that raw vs decoded forms of the same package collapse to **one** row;
+and the seven real `parse_deb`/`parse_rpm` cases listed above.
 
 **Commit**: `task(T2): pure ingest crate — parse, classify, aggregate`
 
@@ -457,6 +499,10 @@ cargo test -p pkgcache-stats prune::
 - [ ] T1: `cargo build`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check` all clean
 - [ ] T2: `cargo test -p pkgcache-ingest` green in < 1s with no fixtures and no DB
 - [ ] T2: a `/pub/fedora/…` input has an explicit test documenting it as the *wrong* shape
+- [ ] T2: `%2b`/`%5e` decode; raw and decoded forms of one package collapse to **one** row
+- [ ] T2: `parse_deb`/`parse_rpm` green on all seven real production filenames, including
+      dashes-in-name (`pipewire-jack-audio-connection-kit-libs`) and `+`/`^` in versions
+- [ ] T2: an unparseable package filename falls back to the full path, never dropped
 - [ ] T3: schema is `STRICT`; `PRAGMA journal_mode` → `wal`; `auto_vacuum` → `2`
 - [ ] T3: repeated UPSERT of the same key accumulates rather than replacing
 - [ ] T4: unit tests cover inode change, truncation, rename-adoption, partial line, empty buffer

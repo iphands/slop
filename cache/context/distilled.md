@@ -84,6 +84,37 @@ location blocks reproduced.
   MISS, 404, HEAD, the banner location, and a `%09%22` URI. Framing is robust *because*
   `$request_uri` keeps percent-encoding — a raw tab cannot appear in a valid request line.
 
+## Real traffic shape [LIVE 2026-07-18 — operator-supplied production logs]
+
+Two samples from the live cache (`noir.lan`), one apt run and one dnf run. These are the
+numbers the dashboard has to render well.
+
+- **Multi-client is real**: `192.168.10.10` (Debian 13), `192.168.10.99` (Fedora 44).
+- **apt/dnf fetch in bursts.** 32 packages arrived in the **same second**, all HIT. Two
+  consequences: nginx's atomic single-`write()` per line genuinely matters (32 lines from
+  multiple workers in one second), and an hourly bucket can be one 3-second spike, so a
+  "requests per hour" chart is spiky by nature — not a bug to smooth away.
+- **50.7 MiB saved in that one second**, all from cache.
+- **Package sizes span ~9,663×** — 1,468 B (`linux-image-amd64`, a metapackage) to 14.2 MB
+  (`mesa-vulkan-drivers`). **One package was 27% of the entire run's bytes.** This is the
+  concrete argument for byte-ratio over request-ratio, *and* the reason a linear bar chart
+  of package sizes renders 30 of 32 rows as invisible slivers.
+- **Percent-encoding is pervasive, not exotic**: 42 instances of `%2b` (`+`) in those 32
+  URIs, because Debian versions are full of `+` (`18.2.7+ds-1+deb13u1`,
+  `2.12.7+dfsg+really2.9.14-2.1+deb13u3`). Fedora uses `%5e` (`^`). Both emit **lowercase**
+  hex. **Percent-decode before storing a path**, or the UI is unreadable and any client
+  encoding differently creates a duplicate row for the same package.
+- **`/debian-security/` really is a separate first path segment**
+  (`/debian-security/pool/updates/main/…`), so "repo = first path segment" classifies it
+  correctly with no special case.
+- **Package filename parsing** (validated against the real names above):
+  - `.deb` → split on `_`: `name_version_arch.deb`. Versions contain `-` and `+` freely but
+    never `_`, which is what makes this safe. `python3-idna_3.10-1+deb13u1_all.deb` → arch
+    can be `all`.
+  - `.rpm` → split from the **right**: `.rpm`, then `.arch`, then `-release`, then
+    `-version`; the remainder is the name. Splitting from the left is wrong — rpm names
+    contain `-` (`pipewire-jack-audio-connection-kit-libs-1.6.8-1.fc44.x86_64.rpm`).
+
 ## Cache key & TTL precedence [SOURCE]
 
 - **Default cache key** is `$scheme$proxy_host$request_uri`. `$request_uri` is the
