@@ -66,7 +66,7 @@ needs its own `rewrite … break`. **Always verify by fetching a real package fi
 the cache** — a metadata-only test passes even when this is completely broken.
 
 ## Sources
-- pkgcache: `conf.d/pkgcache.conf` (`/fedora/` and `/debian/` blocks)
+- pkgcache: `proxy/conf.d/pkgcache.conf` (`/fedora/` and `/debian/` blocks)
 - pkgcache: `context/distilled.md` (proxy_pass path-rewriting rule)
 
 ---
@@ -91,7 +91,7 @@ like a flaky network rather than a config decision.
 
 ## Fix / How to avoid
 
-Keep the two-tier split that `conf.d/pkgcache.conf` is built around:
+Keep the two-tier split that `proxy/conf.d/pkgcache.conf` is built around:
 
 - metadata → `proxy_cache_valid 200 302 60s` + `proxy_cache_revalidate on`
   (revalidation makes the refresh a cheap `If-Modified-Since`, usually a `304`)
@@ -103,7 +103,7 @@ working clients are. If someone reports hash mismatches, suspect metadata TTL an
 cache-key bugs *first*, before blaming upstream.
 
 ## Sources
-- pkgcache: `conf.d/pkgcache.conf` (TTL split + header comment)
+- pkgcache: `proxy/conf.d/pkgcache.conf` (TTL split + header comment)
 - pkgcache: `README.md` ("Caching split (correctness-critical)")
 
 ---
@@ -240,7 +240,7 @@ within the hit class only.
 
 ## Problem
 
-There is no compiler here. `./build` exits 0 with a totally invalid `nginx.conf` baked
+There is no compiler here. `./build` exits 0 with a totally invalid `proxy/nginx.conf` baked
 into the image — the config is never parsed at build time. The failure surfaces as a
 container that crash-loops (`docker ps` shows it restarting) or, more insidiously, as a
 container that starts fine and serves 404s or permanent MISSes. "The diff looks right" has
@@ -266,7 +266,7 @@ Test **both** a metadata URL and a package URL for every route touched. A `200` 
 
 ## Sources
 - pkgcache: `context/plans/RULES.md` (Rule A)
-- pkgcache: `Dockerfile`, `build`
+- pkgcache: `proxy/Dockerfile`, `build`
 
 ---
 
@@ -297,7 +297,7 @@ Related: all writable paths must live under the mounted volume or `/tmp` (`pid
 a deeper path fails on a fresh empty mount.
 
 ## Sources
-- pkgcache: `run` (NOTE block), `README.md` ("Rootless podman"), `nginx.conf` (temp paths)
+- pkgcache: `run` (NOTE block), `README.md` ("Rootless podman"), `proxy/nginx.conf` (temp paths)
 
 ---
 
@@ -306,7 +306,7 @@ a deeper path fails on a fresh empty mount.
 ## Problem
 
 `nginxinc/nginx-unprivileged` ships `/etc/nginx/conf.d/default.conf` with a server block
-listening on **8080** — the same port ours uses. Since `nginx.conf` does
+listening on **8080** — the same port ours uses. Since `proxy/nginx.conf` does
 `include /etc/nginx/conf.d/*.conf`, both load, and the stock default (a catch-all
 `server_name _`) can win, serving the nginx welcome page instead of proxying. Looks like
 "my routes did nothing".
@@ -318,12 +318,12 @@ an actual request does.
 
 ## Fix / How to avoid
 
-The Dockerfile does `rm -f /etc/nginx/conf.d/default.conf` before copying ours. Keep that
-line. If you ever change the base image or its tag, re-check what it drops into `conf.d/`
+The proxy/Dockerfile does `rm -f /etc/nginx/conf.d/default.conf` before copying ours. Keep that
+line. If you ever change the base image or its tag, re-check what it drops into `proxy/conf.d/`
 — `docker run --rm --entrypoint ls <image> /etc/nginx/conf.d/`.
 
 ## Sources
-- pkgcache: `Dockerfile`
+- pkgcache: `proxy/Dockerfile`
 
 ---
 

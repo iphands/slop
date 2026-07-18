@@ -5,9 +5,11 @@ downloads for a fleet of **Debian 13 (Trixie)** and **Fedora 44** machines.
 First machine to download a package pulls it from the internet; every machine
 after that gets it from the local cache over the LAN.
 
-- Cache lives on a **bind-mounted volume** (`/srv/pkgcache` by default).
+- Cache lives on a **bind-mounted volume** (`/srv/pkgcache/data` by default).
 - Runs **rootless** as `APP_UID:APP_GID` (default `1000:1000`).
 - `build` / `publish` / `run` **auto-detect podman/docker and prefer podman**.
+- An optional second container serves a **stats dashboard** — per-client hit ratios,
+  bytes saved, top packages. See [Stats dashboard](#stats-dashboard).
 
 ## Why nginx (and not the alternatives)
 
@@ -42,29 +44,48 @@ Each client path prefix maps to a real upstream mirror:
 `InRelease`, `Packages`, `repomd.xml`, `*.xml`, `by-hash/…`) changes constantly
 → cached **60 s** with `proxy_cache_revalidate` (cheap `If-Modified-Since`).
 Serving stale metadata would cause apt/dnf hash-mismatch errors, so the split is
-deliberate — see `conf.d/pkgcache.conf`.
+deliberate — see `proxy/conf.d/pkgcache.conf`.
 
 > `dl.fedoraproject.org` is Fedora's master mirror — fine for a handful of
 > machines. For heavier use, point `/fedora/` at a regional mirror by editing
-> `conf.d/pkgcache.conf`.
+> `proxy/conf.d/pkgcache.conf`.
 
 ## Build / publish / run
 
+Each script takes an optional target — `all` (default), `proxy`, or `stats`:
+
 ```bash
-./build          # -> iphands/pkgcache:latest + iphands/pkgcache:<git-sha>
+./build          # -> iphands/pkgcache{,-stats}:latest + :<git-sha>
+./build proxy    # just the caching proxy
 ./publish        # push to Docker Hub (needs `docker login` / `podman login docker.io`)
-./run            # launch on :8080, cache in /srv/pkgcache, as uid 1000:1000
+./run            # launch both; proxy on :8080, stats on :8081
+./run proxy      # just the proxy
 ```
 
 Common overrides (all env-based):
 
 ```bash
-RUNTIME=docker ./build                 # force docker (default: prefer podman, then docker)
-PORT=3142 ./run                        # different host port
-CACHE_DIR=/mnt/tank/pkgcache ./run     # different cache location
-APP_UID=1500 APP_GID=1500 ./run        # different user
-IMAGE=you/pkgcache ./build ./publish   # your own image name
+RUNTIME=docker ./build                   # force docker (default: prefer podman, then docker)
+PORT=3142 ./run                          # different host port for the proxy
+STATS_PORT=3143 ./run                    # different host port for the dashboard
+CACHE_DIR=/mnt/tank/pkgcache/data ./run  # different cache location
+APP_UID=1500 APP_GID=1500 ./run          # different user
+IMAGE=you/pkgcache ./build ./publish     # your own image name
 ```
+
+### Directory layout
+
+`./run` provisions three directories, one purpose each. `LOGS_DIR` and `STATS_DIR`
+default to siblings of `CACHE_DIR`:
+
+| Directory | proxy | stats | Contents |
+|---|---|---|---|
+| `CACHE_DIR` (`…/data`) | `:/var/cache/nginx` rw | `:/cache` **ro** | nginx's package cache |
+| `LOGS_DIR` (`…/logs`) | `:/logs` rw | `:/logs` rw | the machine-readable access log |
+| `STATS_DIR` (`…/frontend`) | — | `:/data` rw | `stats.sqlite` and friends |
+
+Both containers **must** run as the same uid — nginx writes the log, the stats service
+reads it. `./run` handles that; if you launch by hand, keep them identical.
 
 All three scripts auto-detect the container engine and **prefer podman**; set
 `RUNTIME=docker` (or `RUNTIME=podman`) to force one.
@@ -83,8 +104,8 @@ curl -sI http://<cache-host>:8080/debian/dists/trixie/InRelease | grep X-Cache-S
 ## Client configuration
 
 **Easiest:** copy `scripts/fix-*` to the client and run the fixer for its distro
-(`scripts/noir/` is the *host* deployment recipe — it has no business on a client)
-(defaults to `http://noir.lan:3129`; override with `CACHE=`):
+(defaults to `http://noir.lan:3129`; override with `CACHE=`). Note `scripts/noir/` is the
+*host* deployment recipe and has no business on a client:
 
 ```bash
 sudo ./scripts/fix-debian      # Debian 13: rewrite apt sources -> cache, apt update
@@ -156,4 +177,30 @@ curl -sI http://CACHE:PORT/debian/pool/main/c/cowsay/<file>.deb | grep X-Cache-S
 # X-Cache-Status: HIT
 ```
 
-The cache directory (`/srv/pkgcache`) grows as packages are cached.
+The cache directory (`/srv/pkgcache/data`) grows as packages are cached.
+
+## Stats dashboard
+
+A second, optional container reads the proxy's access log off the shared volume and serves
+a dashboard on **:8081**. It is coupled to the proxy **only through the filesystem** — no
+shared network — so it can never affect package serving, and if it is down for a week it
+simply catches up.
+
+```bash
+./build stats && ./run stats
+curl -f http://<cache-host>:8081/healthz
+```
+
+It shows, split between **packages** and **repo metadata** (which are very different
+populations — metadata has a 60 s TTL and is *supposed* to miss):
+
+- global hit ratio **by bytes** and by requests, plus lifetime bytes saved
+- a per-client table: hit ratio, bytes served, bytes saved, 24 h sparkline
+- traffic and hit-ratio over 24 h / 7 d / 30 d
+- top packages, and a per-client drilldown of what each machine pulled
+- cache fullness against `max_size` — worth watching, since eviction quietly turns
+  HITs back into MISSes
+
+The proxy writes `LOGS_DIR/access-YYYY-MM-DD.log` whether or not the stats container is
+running; the stats service prunes files once they are fully ingested and older than its
+retention window (3 days by default).

@@ -74,7 +74,7 @@ and `context/pitfalls.md` entries you relied on.
 
 ### T1: [Task title]
 
-**File**: `conf.d/pkgcache.conf`
+**File**: `proxy/conf.d/pkgcache.conf`
 
 **What to do**: Detailed instructions.
 
@@ -109,7 +109,7 @@ curl -sI http://localhost:8080/<path> | grep -i x-cache-status   # HIT
 
 | File | Change | Priority |
 |------|--------|----------|
-| `conf.d/pkgcache.conf` | Add the `/<distro>/` route + TTL split | P0 |
+| `proxy/conf.d/pkgcache.conf` | Add the `/<distro>/` route + TTL split | P0 |
 | `scripts/fix-<distro>` | New client fixer with `--revert` | P1 |
 | `README.md` | Document the new route + client setup | P1 |
 | `context/distilled.md` | Record the confirmed upstream path shape | P2 |

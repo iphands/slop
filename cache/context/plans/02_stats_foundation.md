@@ -19,7 +19,7 @@
 
 **Deliverables**:
 1. `SERIES.md` renumbered for the stats subsystem *(done — commit `7d14ecd1f`)*
-2. `proxy/` subdir holding the existing `Dockerfile`, `nginx.conf`, `conf.d/`, `.dockerignore`
+2. `proxy/` subdir holding the existing `Dockerfile`, `proxy/nginx.conf`, `proxy/conf.d/`, `proxy/.dockerignore`
 3. `build` / `run` / `publish` accepting `all|proxy|stats`, and `run` creating + chowning
    the three host directories (`data/`, `logs/`, `frontend/`)
 3b. `scripts/noir/{spec,create.sh,create-stats.sh}` — the host's launch recipe, version
@@ -58,7 +58,7 @@ file when the date changes, and the reader prunes old ones.
 
 ### Why `$request_uri` and not `$uri` — this is the sharpest trap in the plan
 
-`conf.d/pkgcache.conf`'s `.rpm` sub-location does `rewrite ^/fedora/(.*)$ /pub/fedora/$1 break;`
+`proxy/conf.d/pkgcache.conf`'s `.rpm` sub-location does `rewrite ^/fedora/(.*)$ /pub/fedora/$1 break;`
 (it must — see `context/pitfalls.md`, first entry). Therefore **`$uri` for every Fedora
 package is `/pub/fedora/…`**. A downstream classifier that takes "repo = first path segment"
 would file every `.rpm` under a repo named `pub`, while metadata — served by the parent
@@ -212,7 +212,7 @@ the series doc and a `git mv`.
 
 ### T2: Move the proxy into `proxy/`
 
-**Files**: `Dockerfile`, `nginx.conf`, `conf.d/pkgcache.conf`, `.dockerignore` → `proxy/`
+**Files**: `Dockerfile`, `proxy/nginx.conf`, `proxy/conf.d/pkgcache.conf`, `proxy/.dockerignore` → `proxy/`
 
 **What to do**:
 ```bash
@@ -220,13 +220,13 @@ mkdir -p proxy
 git mv Dockerfile nginx.conf .dockerignore proxy/
 git mv conf.d proxy/conf.d
 ```
-Nothing inside those files needs editing — the `Dockerfile`'s `COPY nginx.conf …` and
-`COPY conf.d/pkgcache.conf …` are relative to the build context, which becomes `proxy/`
+Nothing inside those files needs editing — the `Dockerfile`'s `COPY proxy/nginx.conf …` and
+`COPY proxy/conf.d/pkgcache.conf …` are relative to the build context, which becomes `proxy/`
 in T3. Do **not** rename the image: `iphands/pkgcache` is already published and referenced
 by the live deployment.
 
-Update `proxy/.dockerignore` — it currently reads `*` + `!Dockerfile` + `!nginx.conf` +
-`!conf.d/` + `!conf.d/**`, which still works unchanged once the context is `proxy/`.
+Update `proxy/.dockerignore` — it currently reads `*` + `!proxy/Dockerfile` + `!proxy/nginx.conf` +
+`!proxy/conf.d/` + `!proxy/conf.d/**`, which still works unchanged once the context is `proxy/`.
 Confirm rather than assume.
 
 **Verify**:
@@ -262,7 +262,7 @@ New knobs: `STATS_IMAGE="${STATS_IMAGE:-iphands/pkgcache-stats}"`,
 
 `build` builds `proxy/` and/or `stats/` as separate contexts. **`./build stats` must fail
 cleanly with a clear message until Plan 04 adds `stats/Dockerfile`** — do not stub a
-Dockerfile that produces a broken image.
+proxy/Dockerfile that produces a broken image.
 
 `run` gains, **before launching either container** (mirroring `scripts/noir/create.sh`):
 ```bash
@@ -324,7 +324,7 @@ ls -ld /tmp/pkgcache-test/{data,logs,frontend}   # all three exist, right owner
     #   7 cache_status  8 request_time  9 request_uri
     #
     # $request_uri is the ORIGINAL, PRE-rewrite URI. $uri would be /pub/fedora/...
-    # for every .rpm (conf.d/pkgcache.conf rewrites it -- see context/pitfalls.md)
+    # for every .rpm (proxy/conf.d/pkgcache.conf rewrites it -- see context/pitfalls.md)
     # and would file every Fedora package under a repo called "pub". Never $uri.
     #
     # $upstream_bytes_received is what we actually paid upstream; bytes saved is
@@ -355,7 +355,7 @@ fd, which is atomic across workers; buffering would risk losing up to `buffer=` 
 SIGKILL and buys nothing at homelab request rates — `open_log_file_cache` already removed
 the syscall cost that `buffer=` exists to solve.
 
-`conf.d/pkgcache.conf`'s `location = /healthz { access_log off; }` already suppresses
+`proxy/conf.d/pkgcache.conf`'s `location = /healthz { access_log off; }` already suppresses
 *both* logs, which is what we want — the container HEALTHCHECK is ~2,880 requests/day of
 pure noise. **Verified live: `/healthz` appears in neither log.**
 
@@ -374,7 +374,7 @@ skips logging if it is missing.** The only symptom is an `error_log` line per re
         while logging request
 ```
 
-`nginxinc/nginx-unprivileged` has **no `/etc/nginx/html`**, and `conf.d/pkgcache.conf`
+`nginxinc/nginx-unprivileged` has **no `/etc/nginx/html`**, and `proxy/conf.d/pkgcache.conf`
 declares no `root` — every location is a `proxy_pass` or a `return`, so nothing ever
 needed one. The result: nginx starts fine, `nginx -t` passes, the proxy serves and caches
 perfectly, and **the stats log file is never created**. Verified live 2026-07-18: adding a
@@ -386,7 +386,7 @@ server {
     listen [::]:8080;
     server_name _;
 
-    # Required by the dated stats access_log in nginx.conf. nginx tests the root
+    # Required by the dated stats access_log in proxy/nginx.conf. nginx tests the root
     # directory's existence before writing an access_log whose path contains a
     # variable, and SILENTLY SKIPS LOGGING if it is missing -- the image has no
     # /etc/nginx/html. Nothing here serves files from disk; this exists purely to
@@ -447,8 +447,8 @@ docker logs pkgcache | tail -3                           # human /dev/stdout log
 **Files**: `README.md`, `CLAUDE.md`, `context/pitfalls.md`, `context/distilled.md`,
 `context/plans/RULES.md`, `context/plans/NN_example.md`
 
-**What to do**: measured 2026-07-18, **26** references to `Dockerfile` / `nginx.conf` /
-`conf.d/pkgcache.conf` / `.dockerignore` break when those files move:
+**What to do**: measured 2026-07-18, **26** references to `Dockerfile` / `proxy/nginx.conf` /
+`proxy/conf.d/pkgcache.conf` / `proxy/.dockerignore` break when those files move:
 
 | File | Refs |
 |---|---|
@@ -461,7 +461,7 @@ docker logs pkgcache | tail -3                           # human /dev/stdout log
 
 Re-run the grep rather than trusting this table:
 ```bash
-grep -rnoE '(\./)?(conf\.d/pkgcache\.conf|nginx\.conf|Dockerfile|\.dockerignore)' \
+grep -rnoE '(\./)?(conf\.d/pkgcache\.conf|nginx\.conf|proxy/Dockerfile|\proxy/.dockerignore)' \
     README.md CLAUDE.md context/ --include='*.md'
 ```
 
@@ -492,7 +492,7 @@ launch recipe. `README.md` already says "copy `scripts/fix-*` to the client" rat
 
 **Verify**:
 ```bash
-grep -rnE '(^|[^/])(conf\.d/|nginx\.conf|Dockerfile)' README.md CLAUDE.md context/ --include='*.md' \
+grep -rnE '(^|[^/])(conf\.d/|nginx\.conf|proxy/Dockerfile)' README.md CLAUDE.md context/ --include='*.md' \
   | grep -v 'proxy/' | grep -v 'stats/'      # every survivor is intentional
 grep -rn 'not Rust' CLAUDE.md                # gone
 grep -n 'Implementation language' context/high_level.md   # rewritten, not deleted
@@ -544,11 +544,11 @@ files; nothing is tagged `[LIVE]` that was not actually observed.
 | `proxy/nginx.conf` | `map`, `log_format stats`, `open_log_file_cache`, 2nd `access_log` | P0 |
 | `run` | target arg; `mkdir`+`chown` of `stats/{logs,db}`; stats mounts documented | P0 |
 | `build`, `publish` | `all\|proxy\|stats` target arg, `STATS_IMAGE` | P0 |
-| `Dockerfile`, `nginx.conf`, `conf.d/`, `.dockerignore` | `git mv` → `proxy/` | P0 |
+| `Dockerfile`, `proxy/nginx.conf`, `proxy/conf.d/`, `proxy/.dockerignore` | `git mv` → `proxy/` | P0 |
 | `context/plans/SERIES.md` | renumber *(done, T1)* | P0 |
 | `CLAUDE.md`, `context/high_level.md` | Rule D: retire "not Rust" / "no build" | P1 |
 | `README.md`, `context/{pitfalls,distilled}.md`, `plans/{RULES,NN_example}.md` | repoint paths | P1 |
-| `conf.d/pkgcache.conf` | **none** — verify it needs none | P2 |
+| `proxy/conf.d/pkgcache.conf` | **none** — verify it needs none | P2 |
 
 ---
 
@@ -575,10 +575,10 @@ files; nothing is tagged `[LIVE]` that was not actually observed.
    exists. — *Mitigation:* they're ~100 bytes/request; at homelab rates that's under a
    megabyte a day. Acceptable for the days between plans. Note it in the tracker so it
    isn't forgotten if Plan 03 stalls.
-5. **`./build stats` has no Dockerfile until Plan 04.** — *Mitigation:* explicit, friendly
+5. **`./build stats` has no proxy/Dockerfile until Plan 04.** — *Mitigation:* explicit, friendly
    failure, not a stub image.
 6. **The doc-debt task is the most likely to be half-done.** 26 references across 6 files,
-   and `RULES.md`'s own examples use `conf.d/pkgcache.conf` as the canonical `**File**:`
+   and `RULES.md`'s own examples use `proxy/conf.d/pkgcache.conf` as the canonical `**File**:`
    value. — *Mitigation:* T5 ends with a grep whose every survivor must be intentional.
 
 ---

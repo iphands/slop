@@ -83,7 +83,7 @@ One H3 per task, labeled `T1`, `T2`, etc.:
 ````markdown
 ### T1: [Task title]
 
-**File**: `conf.d/pkgcache.conf`
+**File**: `proxy/conf.d/pkgcache.conf`
 
 **What to do**: Detailed instructions.
 
@@ -107,7 +107,7 @@ suite to fall back on.
 
 | File | Change | Priority |
 |------|--------|----------|
-| `conf.d/pkgcache.conf` | Description of change | P0 |
+| `proxy/conf.d/pkgcache.conf` | Description of change | P0 |
 
 Priority values: `P0` = blocking, `P1` = important, `P2` = nice-to-have.
 
@@ -148,7 +148,7 @@ Every non-trivial plan gets a paired tracker: `NN_name_tracker.md`.
 
 | # | Task | File | Status | Notes |
 |---|------|------|--------|-------|
-| 1 | T1: ... | `conf.d/pkgcache.conf` | pending | |
+| 1 | T1: ... | `proxy/conf.d/pkgcache.conf` | pending | |
 
 ## Notes / Deviations
 [Anything the plan asserted that turned out to be wrong. Be blunt — a wrong Key
@@ -166,7 +166,7 @@ These rules apply to **every task** (T1, T2, …) during implementation. They ar
 ### Rule A — Prove it runs and caches (this project's compiler substitute)
 
 There is **no build step that can catch a mistake here.** `./build` happily produces an
-image containing a broken `nginx.conf`; the failure only appears when the container
+image containing a broken `proxy/nginx.conf`; the failure only appears when the container
 crash-loops, or worse, when it starts fine and silently serves 404s or misses.
 
 **Container engine: use `docker` to verify.** This dev machine has docker and its rootless

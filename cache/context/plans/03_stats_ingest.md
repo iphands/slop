@@ -496,7 +496,7 @@ cargo test -p pkgcache-stats prune::
 6. **`--once` on a live log races the writer.** — *Mitigation:* by construction — the
    partial-line rule means an in-flight line is simply not consumed this pass.
 7. **`rusqlite` bundled adds a C compile** to every clean build. — *Mitigation:* accepted;
-   Plan 04's Dockerfile uses a BuildKit cache mount.
+   Plan 04's proxy/Dockerfile uses a BuildKit cache mount.
 
 ---
 

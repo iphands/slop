@@ -21,7 +21,7 @@ snapshot, and ship it as a container wired into `./run`.
 1. Snapshot builder — five `GROUP BY` queries → payload → pre-serialized JSON **and**
    pre-gzipped bytes **and** an ETag, rebuilt every tick
 2. axum router: `/api/stats`, `/api/stats/client/{ip}`, `/healthz`, SPA fallback
-3. Multi-stage Dockerfile → static musl binary, ~15 MB image, non-root
+3. Multi-stage proxy/Dockerfile → static musl binary, ~15 MB image, non-root
 4. `./run stats` launching it with the right mounts and uid
 5. **A frozen payload schema + `stats/frontend/src/lib/fixture.json`** so Plan 05 can start
    in parallel
@@ -280,7 +280,7 @@ curl -f localhost:8081/healthz
 docker inspect --format '{{.State.Health.Status}}' <id>       # healthy
 ```
 
-**Commit**: `task(T4): multi-stage Dockerfile, static musl binary`
+**Commit**: `task(T4): multi-stage proxy/Dockerfile, static musl binary`
 
 ---
 

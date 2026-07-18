@@ -47,15 +47,61 @@ the host's actual setup), falling back to docker. `RUNTIME=` forces either. The 
 the rootless uid-mapping wrinkle documented in `pitfalls.md`; the benefit is not running a
 root daemon to serve `.deb` files.
 
-## Implementation language — none (config + shell)
+## Implementation language — config + shell for the proxy, **Rust for the stats service**
 
-Deliberately no application code. This is nginx config plus `bash` glue; every "feature"
-should first be attempted as a config change. A Go/Rust service would buy custom stats and
-prefetch logic (SERIES Plans 02/05) at the cost of a build, a test suite, a dependency
-tree, and a thing to keep patched.
+**The revisit-if trigger fired (2026-07-18).** This section previously argued for no
+application code at all, with the caveat *"revisit if observability and prefetch land and
+log-parsing shell becomes the ugly part."* Observability (SERIES Plans 02–05) is that
+work, and the shell version does not survive contact with the requirements. Recording the
+reasoning honestly rather than quietly deleting the old position:
 
-**Revisit if:** Plans 02 (observability) and 05 (prefetch) both land and log-parsing shell
-becomes the ugly part. Until then, `log_format cache` + `awk` beats a daemon.
+**What the shell alternative would actually have been.** `awk` over a growing log, run
+from cron. It falls over on every requirement that matters:
+
+| Requirement | Shell |
+|---|---|
+| Don't double-count across runs | needs byte-offset checkpointing — no natural way to do it atomically with the aggregate write |
+| Survive a crash mid-run | no transaction; a partial write silently corrupts totals forever |
+| Per-client × per-repo × per-hour aggregation | nested awk arrays, then re-derived on every run |
+| 30-day retention + rollups | re-scan everything, every time |
+| Serve a dashboard | a second thing entirely |
+| Be *correct* | unverifiable — nothing to test |
+
+The decisive one is the first two: the whole design rests on *aggregate increments and the
+checkpoint offset committing in the same transaction*, and shell has no way to express
+that. Everything else is inconvenience; that one is a correctness ceiling.
+
+**What Rust costs, honestly:** a build, a toolchain, a dependency tree, and something to
+keep patched — exactly what the old text warned about. Mitigations taken: the ingest core
+is a dependency-free crate (`serde` + `thiserror` only) so the logic that matters is
+testable in under a second; the binary is static musl in a ~15 MB image with no runtime
+deps; and the proxy half is untouched, so a stats outage cannot affect package serving.
+
+**What Rust buys beyond feasibility:** the first real test suite in this repo. `RULES.md`
+Rule A exists because nginx config has no compiler; `stats/` does, and the parsing,
+classification and aggregation are pure functions with real unit tests.
+
+**Boundary to hold:** the proxy stays config-only. Every proxy "feature" is attempted as
+an nginx directive first. Rust lives in `stats/` and does not leak back.
+
+## Database — SQLite (`rusqlite`, bundled)
+
+**The first database anywhere in the slop family** — neither qbots nor qctrl has one, not
+even transitively. There was no house precedent to inherit, so the choice was made on
+boring-and-obvious grounds.
+
+| Option | Verdict |
+|---|---|
+| **SQLite** ✅ chosen | Single file, no server, transactional (which the correctness invariant requires), and `rusqlite`'s `bundled` feature vendors the amalgamation so the runtime image needs no `libsqlite3` and the version is pinned to the source tree rather than the base image. |
+| Plain files (JSON/CBOR) | What qctrl does for `favorites.json` / `rotation.yaml`. Fine at that scale; here it cannot give an atomic aggregate-plus-offset write, which is the whole design. |
+| `sled` / `redb` | Embedded KV, no SQL. Would mean hand-rolling every `GROUP BY` the dashboard needs. |
+| Postgres / MySQL | A server to run, back up and patch, for a homelab dataset measured in megabytes. |
+
+Cost: `musl-dev` in the build stage and ~30 s of C compile, cached by a BuildKit mount.
+
+**Revisit if:** the dataset stops fitting the "aggregate on ingest, tiny hourly buckets"
+model — e.g. if per-request retention is ever wanted. It isn't today; 30 days of hourly
+buckets is under a megabyte in practice.
 
 ## Transport: plain HTTP client → cache
 

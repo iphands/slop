@@ -6,9 +6,18 @@ First machine to download a package pulls it from the internet; every machine af
 that is served from the LAN cache.
 
 > **Sibling projects:** [`../qbots`](../qbots/AGENTS.md) and [`../qctrl`](../qctrl/AGENTS.md)
-> are Rust/Q2 projects under the same `slop` umbrella. This one is **not Rust** — it is
-> config + shell. The *workflow discipline* (plans, context/, honesty, commit rules) is
-> shared; the toolchain is not. Don't reach for `cargo` here.
+> are Rust/Q2 projects under the same `slop` umbrella. The *workflow discipline* (plans,
+> context/, honesty, commit rules) is shared with them.
+>
+> **This repo is two halves with two different toolchains — and two different
+> verification gates:**
+>
+> | | Language | Gate |
+> |---|---|---|
+> | `proxy/` | nginx config only, no code | **Rule A** — build, run, and prove MISS→HIT with `curl`. There is no compiler; `nginx -t` passing means almost nothing. |
+> | `stats/` | **Rust** + a React frontend | `cargo test` / `cargo clippy -D warnings` / `npm run build`, **plus** Rule A for the container. |
+>
+> Reach for `cargo` in `stats/` and nowhere else.
 
 ---
 
@@ -70,7 +79,7 @@ If someone reports "apt says hash sum mismatch" or "dnf says repomd.xml doesn't 
 
 ### 2. A nested regex `location` cannot inherit the parent's `proxy_pass` path remap
 
-This is the sharpest edge in `conf.d/pkgcache.conf`. In nginx:
+This is the sharpest edge in `proxy/conf.d/pkgcache.conf`. In nginx:
 
 - A **prefix** `location /fedora/ { proxy_pass https://host/pub/fedora/; }` replaces the
   matched prefix with the `proxy_pass` URI path. Good.
@@ -133,7 +142,7 @@ These two defaults intentionally disagree. When changing one, check the other, a
 
 `/fedora/` points at `dl.fedoraproject.org` (Fedora's **master**). Fine for a handful of
 machines; **rude at scale**. If throughput matters, repoint at a regional mirror in
-`conf.d/pkgcache.conf` — keep the `/pub/fedora/` path shape or fix both the prefix
+`proxy/conf.d/pkgcache.conf` — keep the `/pub/fedora/` path shape or fix both the prefix
 `proxy_pass` and the `.rpm` `rewrite` together.
 
 ### 6. Rootless podman uid mapping
@@ -174,9 +183,9 @@ rather than implying it was tested.
 cache/
 ├── CLAUDE.md            # This file
 ├── README.md            # User-facing docs — KEEP IN SYNC with behavior changes
-├── Dockerfile           # nginx-unprivileged + our config; HEALTHCHECK via busybox wget
-├── nginx.conf           # main: temp paths, proxy_cache_path zone, resolver, log_format
-├── conf.d/
+├── proxy/Dockerfile           # nginx-unprivileged + our config; HEALTHCHECK via busybox wget
+├── proxy/nginx.conf           # main: temp paths, proxy_cache_path zone, resolver, log_format
+├── proxy/conf.d/
 │   └── pkgcache.conf    # server block: the routes + TTL split  <-- the real logic
 ├── build                # -> IMAGE:latest + IMAGE:<git-sha>
 ├── publish              # push to Docker Hub (human runs this)
@@ -221,7 +230,7 @@ cache/
 - `add_header X-Cache-Status $upstream_cache_status always;` — the verification handle.
 - `proxy_cache_lock on` (thundering-herd on a cold `.rpm`) and `proxy_cache_use_stale
   updating error timeout http_5xx` (survive brief upstream outages).
-- Stock `default.conf` is **deleted** in the Dockerfile — it also binds `:8080` and would
+- Stock `default.conf` is **deleted** in the proxy/Dockerfile — it also binds `:8080` and would
   shadow ours.
 
 ---

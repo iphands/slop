@@ -9,7 +9,7 @@ and comments. `[LIVE]` = observed against a running cache — include the date.
 
 ---
 
-## nginx `proxy_pass` path rewriting — the rule that shapes `conf.d/pkgcache.conf` [SOURCE][LIVE 2026-07-18]
+## nginx `proxy_pass` path rewriting — the rule that shapes `proxy/conf.d/pkgcache.conf` [SOURCE][LIVE 2026-07-18]
 
 - **Prefix location, `proxy_pass` WITH a URI part** → nginx replaces the matched location
   prefix with that URI:
@@ -207,11 +207,11 @@ numbers the dashboard has to render well.
 
 - `nginxinc/nginx-unprivileged` listens on **8080**, not 80, and ships a stock
   `/etc/nginx/conf.d/default.conf` that **also** binds 8080 — it is deleted in the
-  Dockerfile or it shadows ours. **[LIVE 2026-07-18]** Two `server` blocks on `:8080`
+  proxy/Dockerfile or it shadows ours. **[LIVE 2026-07-18]** Two `server` blocks on `:8080`
   both with `server_name _` is **not** a config error — `nginx -t` passes clean and the
   first one loaded silently becomes the default server. The failure is invisible to
   validation; only a real request reveals it.
-- **[LIVE 2026-07-18]** This repo's `nginx.conf` + `conf.d/pkgcache.conf` pass
+- **[LIVE 2026-07-18]** This repo's `proxy/nginx.conf` + `proxy/conf.d/pkgcache.conf` pass
   `nginx -t` (`syntax is ok` / `test is successful`) on
   `nginxinc/nginx-unprivileged:1.27-alpine`.
 - Every writable path must be under the mounted volume or `/tmp`: `pid /tmp/nginx.pid`,
