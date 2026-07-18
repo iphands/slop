@@ -298,8 +298,8 @@ docker inspect --format '{{.State.Health.Status}}' <id>       # healthy
 ```
 No shared network, no `--link`, no pod.
 
-**Keep `./run` and `deploy/create-stats.sh` in agreement.** `./run` is the dev-machine
-path (docker, `/tmp/pkgcache-test/{data,logs,frontend}`); `deploy/` is the host recipe
+**Keep `./run` and `scripts/noir/create-stats.sh` in agreement.** `./run` is the dev-machine
+path (docker, `/tmp/pkgcache-test/{data,logs,frontend}`); `scripts/noir/` is the host recipe
 (podman, `/main/docker/cache/{data,logs,frontend}`, containers `cacher` and
 `cacher-stats`). Same mounts, same uid, same semantics — if a task changes one, it changes
 both in the same commit, or the live deploy silently diverges from what was tested.
@@ -380,7 +380,7 @@ curl -s localhost:8081/api/stats | jq '.ingest.logs_readable'   # true
 - [ ] T3: `index.html` served `no-cache`; `/assets/*` served `immutable`
 - [ ] T3: `/healthz` → 503 when the ingest task is stopped, 200 when idle-but-alive
 - [ ] T4: image ≈ 15 MB; runs as `--user 1000:1000`; HEALTHCHECK reports healthy
-- [ ] T5: `./run` and `deploy/create-stats.sh` specify the same mounts, uid and ports
+- [ ] T5: `./run` and `scripts/noir/create-stats.sh` specify the same mounts, uid and ports
 - [ ] T5: `shellcheck run` clean; `./run all` brings up both containers
 - [ ] T5: `logs_readable` is `true` normally, and `false` **with a loud ERROR** when the
       logs dir is unreadable (test the negative case deliberately)

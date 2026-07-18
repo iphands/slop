@@ -82,7 +82,8 @@ curl -sI http://<cache-host>:8080/debian/dists/trixie/InRelease | grep X-Cache-S
 
 ## Client configuration
 
-**Easiest:** copy `scripts/` to the client and run the fixer for its distro
+**Easiest:** copy `scripts/fix-*` to the client and run the fixer for its distro
+(`scripts/noir/` is the *host* deployment recipe — it has no business on a client)
 (defaults to `http://noir.lan:3129`; override with `CACHE=`):
 
 ```bash

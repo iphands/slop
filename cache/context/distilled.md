@@ -87,7 +87,7 @@ location blocks reproduced.
 ## The live deployment [REPO — operator-confirmed 2026-07-18]
 
 `noir:/main/docker/cache/`, launched by `spec` + `create*.sh` (mirrored in the repo's
-`deploy/`). **podman, no docker.** Containers are `cacher` and `cacher-stats`.
+`scripts/noir/`). **podman, no docker.** Containers are `cacher` and `cacher-stats`.
 
 | Host dir | proxy | stats | Purpose |
 |---|---|---|---|

@@ -22,7 +22,7 @@
 2. `proxy/` subdir holding the existing `Dockerfile`, `nginx.conf`, `conf.d/`, `.dockerignore`
 3. `build` / `run` / `publish` accepting `all|proxy|stats`, and `run` creating + chowning
    the three host directories (`data/`, `logs/`, `frontend/`)
-3b. `deploy/{spec,create.sh,create-stats.sh}` — the host's launch recipe, version
+3b. `scripts/noir/{spec,create.sh,create-stats.sh}` — the host's launch recipe, version
    controlled instead of living only on `noir`
 4. `log_format stats` + `map $time_iso8601 $logdate` + `open_log_file_cache` + a second
    `access_log` writing `/logs/access-YYYY-MM-DD.log`, **plus the `root` directive
@@ -145,7 +145,7 @@ operator 2026-07-18:
 
 ```
 /main/docker/cache/
-├── spec                 # host deployment config (mirrored in repo deploy/)
+├── spec                 # host deployment config (mirrored in scripts/noir/)
 ├── create.sh            # proxy launcher
 ├── create-stats.sh      # stats launcher
 ├── data/       → proxy  :/var/cache/nginx  rw    nginx's package cache
@@ -242,7 +242,7 @@ git status --short                                    # only renames, no deletio
 
 ### T3: `build`/`run`/`publish` take `all|proxy|stats`; `run` provisions the stats dirs
 
-**Files**: `build`, `run`, `publish`, `deploy/{spec,create.sh,create-stats.sh}`
+**Files**: `build`, `run`, `publish`, `scripts/noir/{spec,create.sh,create-stats.sh}`
 
 **What to do**:
 
@@ -264,7 +264,7 @@ New knobs: `STATS_IMAGE="${STATS_IMAGE:-iphands/pkgcache-stats}"`,
 cleanly with a clear message until Plan 04 adds `stats/Dockerfile`** — do not stub a
 Dockerfile that produces a broken image.
 
-`run` gains, **before launching either container** (mirroring `deploy/create.sh`):
+`run` gains, **before launching either container** (mirroring `scripts/noir/create.sh`):
 ```bash
 mkdir -p "$CACHE_DIR" "$LOGS_DIR" "$STATS_DIR"
 chown -R "${APP_UID}:${APP_GID}" "$CACHE_DIR" "$LOGS_DIR" "$STATS_DIR"
@@ -276,7 +276,7 @@ This is not optional. nginx will **not** create the log directory itself when th
 contains a variable, and a missing directory produces one `error_log` line *per request*
 plus zero stats — a stderr flood with a non-obvious cause.
 
-The mounts (wired up fully in Plan 04, documented now) — see `deploy/create*.sh`:
+The mounts (wired up fully in Plan 04, documented now) — see `scripts/noir/create*.sh`:
 - proxy: `-v "${CACHE_DIR}:/var/cache/nginx"` (rw) + `-v "${LOGS_DIR}:/logs"` (rw)
 - stats: `-v "${LOGS_DIR}:/logs"` (rw — it prunes) + `-v "${STATS_DIR}:/data"` (rw)
   + `-v "${CACHE_DIR}:/cache:ro"` (size only)
@@ -467,6 +467,11 @@ grep -rnoE '(\./)?(conf\.d/pkgcache\.conf|nginx\.conf|Dockerfile|\.dockerignore)
 
 Also update the repo-layout tree in `CLAUDE.md` and the build/run examples in `README.md`
 for the `all|proxy|stats` argument.
+
+**`scripts/` now serves two audiences** and the docs must not blur them: `scripts/fix-*`
+are *client* scripts you copy onto a Debian/Fedora box; `scripts/noir/` is the *host*
+launch recipe. `README.md` already says "copy `scripts/fix-*` to the client" rather than
+"copy `scripts/`" — keep it that way.
 
 **Two Rule D obligations — statements this work makes false:**
 

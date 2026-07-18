@@ -92,7 +92,7 @@ reading. See Verification below.
 ### 3. The live deployment: `noir:/main/docker/cache/`
 
 The host runs **podman** (no docker) via a `spec` + `create*.sh` pair, mirrored in this
-repo under `deploy/` — **keep them in sync; change the repo copy first** so the recipe is
+repo under `scripts/noir/` — **keep them in sync; change the repo copy first** so the recipe is
 never only on the host. Containers are named `cacher` and `cacher-stats`, not `pkgcache`.
 
 ```
@@ -182,12 +182,12 @@ cache/
 ├── publish              # push to Docker Hub (human runs this)
 ├── run                  # detached container, bind-mounted cache, --user UID:GID
 ├── scripts/
-│   ├── fix-debian       # rewrite apt sources -> cache (+ --revert)
-│   └── fix-fedora       # write baseurl repos, disable metalink (+ --revert)
-├── deploy/              # the HOST launch recipe, version controlled
-│   ├── spec             #   names, ports, uid  (live copy: /main/docker/cache/spec)
-│   ├── create.sh        #   proxy container
-│   └── create-stats.sh  #   stats container
+│   ├── fix-debian       # CLIENT: rewrite apt sources -> cache (+ --revert)
+│   ├── fix-fedora       # CLIENT: baseurl repos, disable metalink (+ --revert)
+│   └── noir/            # HOST: the live launch recipe, version controlled
+│       ├── spec         #   names, ports, uid  (live copy: /main/docker/cache/spec)
+│       ├── create.sh    #   proxy container  (cacher)
+│       └── create-stats.sh  # stats container (cacher-stats)
 ├── context/             # knowledge base — READ BEFORE NEW WORK
 │   ├── plans/
 │   │   ├── RULES.md     # plan format + Rules A–D (authoritative; read in full)

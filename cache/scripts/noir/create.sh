@@ -10,8 +10,11 @@
 #   logs/      the stats TSV access log   (this container: rw, stats: rw)
 #   frontend/  the stats service scratch  (this container: not mounted)
 
+# Resolve spec beside this script, so the same file works from the repo checkout
+# and from /main/docker/cache on the host without editing a hardcoded path.
+cd "$(dirname "$0")" || exit 1
 # shellcheck source=spec disable=SC1091
-source /main/docker/cache/spec
+source ./spec
 
 # ---- provision the directories nginx needs ---------------------------------
 # nginx will NOT create the log directory itself -- the access_log path contains

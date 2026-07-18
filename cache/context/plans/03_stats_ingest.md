@@ -400,7 +400,7 @@ Config from env with the `${VAR:-default}` discipline the shell scripts already 
 `pkg/`; unset disables the cache-size tile), `PKGCACHE_TICK_SECONDS=5`,
 `PKGCACHE_LOG_RETENTION_DAYS=3`, `PKGCACHE_DB_RETENTION_DAYS=30`, `RUST_LOG=info`.
 
-Three separate mounts, one purpose each — see `deploy/create-stats.sh`. The stats service
+Three separate mounts, one purpose each — see `scripts/noir/create-stats.sh`. The stats service
 never reads package *content* from `/cache`, only sizes.
 
 Normalize `::ffff:1.2.3.4` → `1.2.3.4` here or in `classify` — `listen [::]:8080` is in the

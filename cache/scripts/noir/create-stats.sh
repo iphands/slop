@@ -8,8 +8,11 @@
 # Reads nginx's TSV access log, aggregates into SQLite, serves the dashboard.
 # No shared network with the proxy -- the two are coupled only by the filesystem.
 
+# Resolve spec beside this script, so the same file works from the repo checkout
+# and from /main/docker/cache on the host without editing a hardcoded path.
+cd "$(dirname "$0")" || exit 1
 # shellcheck source=spec disable=SC1091
-source /main/docker/cache/spec
+source ./spec
 
 mkdir -p "$ROOT"/logs "$ROOT"/frontend
 chown -R "${RUNAS%%:*}:${RUNAS##*:}" "$ROOT"/logs "$ROOT"/frontend
