@@ -1,0 +1,27 @@
+# pkgcache deployment spec — sourced by create.sh / create-stats.sh
+#
+# The live copy of this file lives at /main/docker/cache/spec on the container
+# host (noir). This copy is the version-controlled reference: keep them in sync,
+# and change this one first so the recipe is never only on the host.
+#
+# The host runs PODMAN and has no docker. The repo's ./build and ./run scripts
+# prefer podman for exactly this reason -- do not "fix" them to prefer docker.
+
+ROOT=/main/docker/cache
+
+# --- proxy (nginx caching reverse proxy) ------------------------------------
+NAME=cacher
+PULL=iphands/pkgcache
+PORT=3129                      # host port -> container 8080
+
+# --- stats (log reader + dashboard) -----------------------------------------
+STATS_NAME=cacher-stats
+STATS_PULL=iphands/pkgcache-stats
+STATS_PORT=3130                # host port -> container 8081
+
+# --- shared ------------------------------------------------------------------
+# BOTH containers must run as this same uid:gid, and must be launched the same
+# way. nginx writes the stats logs; the stats service reads them. A mismatch
+# means the stats container cannot read what nginx wrote, and the failure mode
+# is a dashboard of silent zeros -- not an error. See context/pitfalls.md.
+RUNAS=1000:1000

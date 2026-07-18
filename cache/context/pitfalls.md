@@ -251,7 +251,7 @@ no relationship to whether it works.
 `context/plans/RULES.md` **Rule A** is the substitute for a compiler. Minimum, every time:
 
 ```bash
-# RUNTIME=docker on this dev machine; podman on noir.lan (see CLAUDE.md Critical Fact #6).
+# RUNTIME=docker on this dev machine; podman on noir.lan (see CLAUDE.md Critical Fact #7).
 export RUNTIME=docker
 ./build && docker run --rm --entrypoint nginx iphands/pkgcache:latest -t   # syntax is ok
 PORT=8080 CACHE_DIR=/tmp/pkgcache-test ./run && sleep 2

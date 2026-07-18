@@ -84,6 +84,7 @@ it models data *quality* explicitly and refuses to render a number it can't back
 | One package can be 27% of an upgrade's bytes | 14 MB of a 50.7 MiB run; sizes span 9,663x | production log 2026-07-18 |
 | apt fetches in bursts | 32 packages in one second — a "last hour" view can be one spike | production log 2026-07-18 |
 | Container engine | **docker** to verify here; **podman** on `noir.lan` (no docker there) | 2026-07-18 |
+| `cache_disk` is always present | the `:ro` `/cache` mount is part of the deployment, not opt-in | operator, 2026-07-18 |
 
 ---
 
@@ -200,8 +201,12 @@ greyscale.
 **Files**: `src/pages/Dashboard.tsx`, `src/components/{IngestHealth,TopPaths,RepoBreakdown}.tsx`, `src/lib/api.ts`
 
 **What to do**: top to bottom — ingest-health banner (only when something is wrong), global
-KPI row, time-series chart with the window picker, client table, top packages / top
-metadata, repo breakdown.
+KPI row **including a cache-fullness tile** (`38.4 GB / 100 GB` with free space on the host
+fs, from `cache_disk`), time-series chart with the window picker, client table, top
+packages / top metadata, repo breakdown.
+
+The cache tile matters operationally: `max_size=100g` means nginx starts *evicting* once
+full, which quietly turns HITs back into MISSes. Warn visibly above ~85%.
 
 **Top-package lists show the parsed name and version, not the raw path.** Production paths
 run 60–110 characters

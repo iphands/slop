@@ -5,8 +5,8 @@
 - Start date: *(not started)*
 - Depends on: Plan 02 complete — the proxy must be emitting 9-field TSV logs, and the
   Plan 02 tracker must have the host filesystem type recorded (WAL viability).
-- Test data: `/tmp/pkgcache-test/stats/logs/access-*.log` produced by Plan 02's verification
-- DB under test: `/tmp/pkgcache-test/stats/db/stats.sqlite`
+- Test data: `/tmp/pkgcache-test/logs/access-*.log` produced by Plan 02's verification
+- DB under test: `/tmp/pkgcache-test/frontend/stats.sqlite`
 
 ## Resume Instructions
 

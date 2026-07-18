@@ -89,7 +89,37 @@ This is the sharpest edge in `conf.d/pkgcache.conf`. In nginx:
 **Any edit to the regex sub-locations must be verified with a real fetch**, not by
 reading. See Verification below.
 
-### 3. Port 8080 vs 3129
+### 3. The live deployment: `noir:/main/docker/cache/`
+
+The host runs **podman** (no docker) via a `spec` + `create*.sh` pair, mirrored in this
+repo under `deploy/` — **keep them in sync; change the repo copy first** so the recipe is
+never only on the host. Containers are named `cacher` and `cacher-stats`, not `pkgcache`.
+
+```
+/main/docker/cache/
+├── data/       → proxy :/var/cache/nginx  rw    nginx's package cache
+│                → stats :/cache            ro    statvfs + pkg/ size ONLY
+├── logs/       → proxy :/logs              rw    nginx writes the TSV stats log
+│                → stats :/logs             rw    reads AND prunes consumed files
+└── frontend/   → stats :/data              rw    stats.sqlite, .ingest.lock, labels.json
+```
+
+Three top-level directories, one purpose each. nginx's cache manager (`max_size=100g`,
+`inactive=365d`) walks only `data/pkg/`, so it can never see the logs or the database.
+
+`logs/` is **rw** to the stats container on purpose: it is the only process that knows
+which files are fully ingested, so it is the only one that can prune them safely. `data/`
+is **ro** to it, and read only for sizes — never package content.
+
+Both containers **must** run as the same uid:gid and be launched the same way. A mismatch
+means nginx writes logs the stats container cannot read, and the failure mode is a
+dashboard of silent zeros with no error anywhere.
+
+*(`-e APP_UID` / `-e APP_GID` on the podman command line are no-ops — the image never reads
+them; only `--user` has any effect. They are meaningful only to this repo's `./run`, which
+uses them host-side to chown the volumes.)*
+
+### 4. Port 8080 vs 3129
 
 - The container **always** listens on **8080** internally (unprivileged nginx base).
 - `./run` publishes host `PORT` (default `8080`) → container `8080`.
@@ -99,21 +129,21 @@ reading. See Verification below.
 These two defaults intentionally disagree. When changing one, check the other, and prefer
 `PORT=3129 ./run` on the real host over editing the scripts' default.
 
-### 4. Fedora upstream is the master mirror
+### 5. Fedora upstream is the master mirror
 
 `/fedora/` points at `dl.fedoraproject.org` (Fedora's **master**). Fine for a handful of
 machines; **rude at scale**. If throughput matters, repoint at a regional mirror in
 `conf.d/pkgcache.conf` — keep the `/pub/fedora/` path shape or fix both the prefix
 `proxy_pass` and the `.rpm` `rewrite` together.
 
-### 5. Rootless podman uid mapping
+### 6. Rootless podman uid mapping
 
 Host `APP_UID` is **not** the in-container uid under rootless podman unless you pass
 `EXTRA_ARGS="--userns=keep-id:uid=1000,gid=1000"` and own `CACHE_DIR` as your host user.
 docker and rootful podman need no flag. Permission-denied on the cache tree at startup is
 almost always this.
 
-### 6. Container engine: **docker here, podman in production**
+### 7. Container engine: **docker here, podman in production**
 
 The two environments are opposites, and both matter:
 
@@ -154,6 +184,10 @@ cache/
 ├── scripts/
 │   ├── fix-debian       # rewrite apt sources -> cache (+ --revert)
 │   └── fix-fedora       # write baseurl repos, disable metalink (+ --revert)
+├── deploy/              # the HOST launch recipe, version controlled
+│   ├── spec             #   names, ports, uid  (live copy: /main/docker/cache/spec)
+│   ├── create.sh        #   proxy container
+│   └── create-stats.sh  #   stats container
 ├── context/             # knowledge base — READ BEFORE NEW WORK
 │   ├── plans/
 │   │   ├── RULES.md     # plan format + Rules A–D (authoritative; read in full)
@@ -225,7 +259,7 @@ Scaled to this project's size — RULES.md has the full table:
 Config-only projects fail *at runtime*, so "it looks right" is never done.
 
 ```bash
-# RUNTIME=docker: this machine has docker; noir.lan has podman. See Critical Fact #6.
+# RUNTIME=docker: this machine has docker; noir.lan has podman. See Critical Fact #7.
 export RUNTIME=docker
 ./build && PORT=8080 CACHE_DIR=/tmp/pkgcache-test ./run
 

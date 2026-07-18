@@ -60,7 +60,7 @@ Consequences, which is why it's worth stating as an invariant rather than a set 
   double-count.
 - There is no third state. Durability becomes an optimization rather than a requirement.
 
-Single-writer is enforced with `flock(LOCK_EX|LOCK_NB)` on `/data/db/.ingest.lock` at
+Single-writer is enforced with `flock(LOCK_EX|LOCK_NB)` on `/data/.ingest.lock` at
 startup; on failure log an ERROR naming the file and **exit 1**. Two processes would each
 read `offset=N`, each parse the same bytes, and each apply `+delta` — a silent 2× on every
 number. **SQLite's own locking does not prevent this**; it serializes the writes, it does
@@ -330,9 +330,9 @@ sqlite3 /tmp/t.sqlite 'PRAGMA journal_mode; PRAGMA auto_vacuum;'   # wal | 2
 
 **What to do**: one tick, in order.
 
-1. **flock** `/data/db/.ingest.lock` at startup (`LOCK_EX|LOCK_NB`); ERROR + exit 1 on
+1. **flock** `/data/.ingest.lock` at startup (`LOCK_EX|LOCK_NB`); ERROR + exit 1 on
    failure.
-2. **Discover.** `readdir("/data/logs")`, keep `^access-(\d{4}-\d{2}-\d{2}|nodate)\.log$`,
+2. **Discover.** `readdir("/logs")`, keep `^access-(\d{4}-\d{2}-\d{2}|nodate)\.log$`,
    sort ascending — ISO dates sort chronologically and `nodate` sorts last. Oldest first.
    Worth a comment: ordering is *tidiness, not correctness* — every line carries its own
    `$msec`, so buckets are right regardless of read order. That removes the temptation to
@@ -366,7 +366,7 @@ sqlite3 /tmp/t.sqlite 'PRAGMA journal_mode; PRAGMA auto_vacuum;'   # wal | 2
      UPSERT ingest_state for every advanced file
    COMMIT;
    ```
-8. **Log a loud ERROR if `/data/logs` exists but `readdir` returns EACCES**, and track a
+8. **Log a loud ERROR if `/logs` exists but `readdir` returns EACCES**, and track a
    `logs_readable` flag. This is the single highest-value line of instrumentation in the
    whole subsystem: a uid mismatch between the two containers produces **a dashboard of
    silent zeros with no error anywhere**, and this converts it into one sentence on screen.
@@ -394,8 +394,14 @@ exits 0. This is **not scaffolding** — "did the reader actually see this line?
 question you will ask for the life of the service.
 
 Config from env with the `${VAR:-default}` discipline the shell scripts already use:
-`PKGCACHE_DATA=/data`, `PKGCACHE_TICK_SECONDS=5`, `PKGCACHE_LOG_RETENTION_DAYS=3`,
-`PKGCACHE_DB_RETENTION_DAYS=30`, `RUST_LOG=info`.
+`PKGCACHE_LOGS=/logs` (nginx's TSV logs, rw — the service prunes here),
+`PKGCACHE_DATA=/data` (own scratch: `stats.sqlite`, `.ingest.lock`, `labels.json`),
+`PKGCACHE_CACHE=/cache` (the nginx cache, **ro**, used only for `statvfs` + a size walk of
+`pkg/`; unset disables the cache-size tile), `PKGCACHE_TICK_SECONDS=5`,
+`PKGCACHE_LOG_RETENTION_DAYS=3`, `PKGCACHE_DB_RETENTION_DAYS=30`, `RUST_LOG=info`.
+
+Three separate mounts, one purpose each — see `deploy/create-stats.sh`. The stats service
+never reads package *content* from `/cache`, only sizes.
 
 Normalize `::ffff:1.2.3.4` → `1.2.3.4` here or in `classify` — `listen [::]:8080` is in the
 proxy config, so a dual-stack client otherwise appears as two unrelated rows.
@@ -404,7 +410,7 @@ from `/data/labels.json`, hot-reloaded each tick into `client_label`.
 
 **Verify — this is the strongest gate in the project.** Against one real log file:
 ```bash
-L=/tmp/pkgcache-test/stats/logs/access-2026-07-18.log
+L=/tmp/pkgcache-test/logs/access-2026-07-18.log
 awk -F'\t' '{s+=$5} END {print s}' "$L"                            # bytes served
 sqlite3 db 'SELECT sum(bytes_hit+bytes_miss+bytes_bypass+bytes_none) FROM agg_hour'
 #   ^ these two MUST be equal
@@ -430,7 +436,7 @@ until they agree exactly.
 SIGTERM/SIGINT handler that finishes the in-flight transaction and exits cleanly.
 
 **Hourly**, not per tick:
-- **Log pruning** — delete `access-YYYY-MM-DD.log` only when **all** of: older than
+- **Log pruning** (`/logs` is mounted **rw** precisely so this is possible) — delete `access-YYYY-MM-DD.log` only when **all** of: older than
   `LOG_RETENTION_DAYS` (3); fully ingested (`offset >= size`); and **not** today's or
   yesterday's, unconditionally. That last condition is the safety margin for
   `open_log_file_cache valid=1m` — **delete a file nginx still holds an fd for and it keeps

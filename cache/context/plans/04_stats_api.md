@@ -101,7 +101,8 @@ Structure (see T2 for the JSON):
 - `clients[]` — per-IP, split by kind, with a 24-point sparkline and **top-10** packages
 - `top_packages[]` / `top_metadata[]` — top 25 by bytes
 - `repos[]` — per-repo breakdown
-- `cache_disk` — present only when the opt-in `:ro` mount is enabled
+- `cache_disk` — cache bytes, `max_size` cap, pct full, and free space on the host
+  filesystem, from the `:ro` `/cache` mount (omitted only if `PKGCACHE_CACHE` is unset)
 
 **`bytes_saved` is derived**, never stored — and it is **not** a whole-window subtraction:
 
@@ -291,10 +292,17 @@ docker inspect --format '{{.State.Health.Status}}' <id>       # healthy
 ```
 --user "${APP_UID}:${APP_GID}"
 -p "${STATS_PORT}:8081"
--v "${CACHE_DIR}/stats:/data"
-[ -v "${CACHE_DIR}:/cache:ro"  when STATS_CACHE_RO=1 ]
+-v "${LOGS_DIR}:/logs"          # rw -- the service prunes consumed files
+-v "${STATS_DIR}:/data"         # rw -- stats.sqlite, .ingest.lock, labels.json
+-v "${CACHE_DIR}:/cache:ro"     # ro -- statvfs + pkg/ size only
 ```
 No shared network, no `--link`, no pod.
+
+**Keep `./run` and `deploy/create-stats.sh` in agreement.** `./run` is the dev-machine
+path (docker, `/tmp/pkgcache-test/{data,logs,frontend}`); `deploy/` is the host recipe
+(podman, `/main/docker/cache/{data,logs,frontend}`, containers `cacher` and
+`cacher-stats`). Same mounts, same uid, same semantics — if a task changes one, it changes
+both in the same commit, or the live deploy silently diverges from what was tested.
 
 **The thing that will actually bite:** both containers must run as the same
 `APP_UID:APP_GID` **and be launched with the same userns flags**. Launch one with
@@ -309,7 +317,7 @@ opt-in `:ro` cache mount, and how to verify it.
 **Verify**:
 ```bash
 shellcheck run
-CACHE_DIR=/tmp/pkgcache-test ./run all
+CACHE_DIR=/tmp/pkgcache-test/data ./run all
 docker ps            # both containers Up and healthy
 curl -f localhost:8081/healthz
 curl -s localhost:8081/api/stats | jq '.ingest.logs_readable'   # true
@@ -345,9 +353,10 @@ curl -s localhost:8081/api/stats | jq '.ingest.logs_readable'   # true
 3. **A 5s poll with no ETag support would re-transfer 25 KB forever.** — *Mitigation:*
    the 304 path is in the T3 checklist; verify it rather than assuming React Query sends
    `If-None-Match` (it does, via `fetch`, but confirm).
-4. **The opt-in `:ro` cache mount weakens the isolation story.** — *Mitigation:* it is
-   read-only, off by default, and used only for `statvfs` + a subtree size. Never read
-   package *content* through it.
+4. **Three mounts weaken the "one purpose each" story slightly.** — *Mitigation:* each is
+   scoped: `/logs` rw only so consumed files can be pruned (nothing else can do it safely),
+   `/data` is the service's own, `/cache` is **read-only** and touched only by `statvfs`
+   and a size walk. Never read package *content* through `/cache`.
 5. **Alpine/musl build times** with `rusqlite` bundled. — *Mitigation:* BuildKit cache
    mounts; measure and record the cold and warm build times.
 6. **`/healthz` 503 could flap** if a tick occasionally takes > 60s under heavy backlog. —
@@ -371,6 +380,7 @@ curl -s localhost:8081/api/stats | jq '.ingest.logs_readable'   # true
 - [ ] T3: `index.html` served `no-cache`; `/assets/*` served `immutable`
 - [ ] T3: `/healthz` → 503 when the ingest task is stopped, 200 when idle-but-alive
 - [ ] T4: image ≈ 15 MB; runs as `--user 1000:1000`; HEALTHCHECK reports healthy
+- [ ] T5: `./run` and `deploy/create-stats.sh` specify the same mounts, uid and ports
 - [ ] T5: `shellcheck run` clean; `./run all` brings up both containers
 - [ ] T5: `logs_readable` is `true` normally, and `false` **with a loud ERROR** when the
       logs dir is unreadable (test the negative case deliberately)

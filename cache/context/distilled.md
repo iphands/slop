@@ -84,6 +84,29 @@ location blocks reproduced.
   MISS, 404, HEAD, the banner location, and a `%09%22` URI. Framing is robust *because*
   `$request_uri` keeps percent-encoding — a raw tab cannot appear in a valid request line.
 
+## The live deployment [REPO — operator-confirmed 2026-07-18]
+
+`noir:/main/docker/cache/`, launched by `spec` + `create*.sh` (mirrored in the repo's
+`deploy/`). **podman, no docker.** Containers are `cacher` and `cacher-stats`.
+
+| Host dir | proxy | stats | Purpose |
+|---|---|---|---|
+| `data/` | `:/var/cache/nginx` **rw** | `:/cache` **ro** | nginx package cache; stats reads *sizes only* |
+| `logs/` | `:/logs` **rw** | `:/logs` **rw** | nginx writes the TSV log; stats reads **and prunes** |
+| `frontend/` | — | `:/data` **rw** | `stats.sqlite`, `.ingest.lock`, `labels.json` |
+
+- Three top-level dirs, one purpose each. nginx's cache manager walks only `data/pkg/`, so
+  `max_size=100g` can never see the logs or the DB.
+- **`logs/` is rw to stats deliberately.** The stats service is the only process that knows
+  which files are fully ingested, so it is the only one that can prune safely. A host cron
+  doing `find -mtime +N -delete` would delete un-ingested data silently.
+- **`-e APP_UID` / `-e APP_GID` on the podman command line are no-ops** — the image never
+  reads them; only `--user` has any effect. They *are* meaningful to the repo's `./run`,
+  which uses them host-side to chown volumes.
+- Ports: proxy `3129→8080`, stats `3130→8081`.
+- Both containers must use the **same uid:gid and the same launch flags**, or nginx writes
+  logs stats cannot read — and the symptom is a dashboard of zeros with no error.
+
 ## Real traffic shape [LIVE 2026-07-18 — operator-supplied production logs]
 
 Two samples from the live cache (`noir.lan`), one apt run and one dnf run. These are the

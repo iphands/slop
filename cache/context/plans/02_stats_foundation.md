@@ -21,9 +21,11 @@
 1. `SERIES.md` renumbered for the stats subsystem *(done — commit `7d14ecd1f`)*
 2. `proxy/` subdir holding the existing `Dockerfile`, `nginx.conf`, `conf.d/`, `.dockerignore`
 3. `build` / `run` / `publish` accepting `all|proxy|stats`, and `run` creating + chowning
-   `${CACHE_DIR}/stats/{logs,db}`
+   the three host directories (`data/`, `logs/`, `frontend/`)
+3b. `deploy/{spec,create.sh,create-stats.sh}` — the host's launch recipe, version
+   controlled instead of living only on `noir`
 4. `log_format stats` + `map $time_iso8601 $logdate` + `open_log_file_cache` + a second
-   `access_log` writing `stats/logs/access-YYYY-MM-DD.log`, **plus the `root` directive
+   `access_log` writing `/logs/access-YYYY-MM-DD.log`, **plus the `root` directive
    without which that log is silently never written** (T4a)
 5. All 26 broken doc references fixed, plus the two Rule D doc obligations this work
    falsifies (`CLAUDE.md` "not Rust", `high_level.md` "implementation language — none")
@@ -136,6 +138,38 @@ bytes_saved = Σ over {HIT, REVALIDATED, STALE, UPDATING} of
 This supersedes both earlier proposals (pure status bucket, and pure whole-window
 subtraction). Plan 03 T2 implements it; Plan 04 T1 must not "simplify" it back.
 
+### Host layout — three single-purpose directories
+
+The live deployment (`noir:/main/docker/cache/`) is the authority. Confirmed with the
+operator 2026-07-18:
+
+```
+/main/docker/cache/
+├── spec                 # host deployment config (mirrored in repo deploy/)
+├── create.sh            # proxy launcher
+├── create-stats.sh      # stats launcher
+├── data/       → proxy  :/var/cache/nginx  rw    nginx's package cache
+│                → stats  :/cache            ro    statvfs + pkg/ size ONLY
+├── logs/       → proxy  :/logs              rw    nginx writes the TSV log
+│                → stats  :/logs             rw    reads AND prunes
+└── frontend/   → stats  :/data              rw    stats.sqlite, lock, labels.json
+```
+
+**This supersedes the earlier plan of nesting everything under
+`data/stats/{logs,db}`.** Three separate top-level directories is better: nginx's cache
+manager (enforcing `max_size=100g` and `inactive=365d`) walks only `data/pkg/` and can never
+see the logs or the database, and each mount has exactly one purpose.
+
+**`logs/` is mounted `rw` to the stats container, deliberately.** `:ro` was the instinct,
+but the stats service is the only process that knows which files are fully ingested, so it
+is the only one that can prune safely. Its sole write is deleting a file that satisfies all
+three conditions in Plan 03 T6. Handing pruning to a host cron would let it delete data the
+reader never consumed, silently.
+
+**`data/` is mounted `:ro` to the stats container** purely so the dashboard can answer
+"how full is the cache?" — a `statvfs` plus a size walk of `pkg/`, once a minute. Package
+content is never read. This was half the original motivation for wanting stats at all.
+
 ### Container engine: docker to verify, podman in production
 
 The two environments differ, and both matter:
@@ -208,7 +242,7 @@ git status --short                                    # only renames, no deletio
 
 ### T3: `build`/`run`/`publish` take `all|proxy|stats`; `run` provisions the stats dirs
 
-**Files**: `build`, `run`, `publish`
+**Files**: `build`, `run`, `publish`, `deploy/{spec,create.sh,create-stats.sh}`
 
 **What to do**:
 
@@ -230,19 +264,22 @@ New knobs: `STATS_IMAGE="${STATS_IMAGE:-iphands/pkgcache-stats}"`,
 cleanly with a clear message until Plan 04 adds `stats/Dockerfile`** — do not stub a
 Dockerfile that produces a broken image.
 
-`run` gains, **before launching either container**:
+`run` gains, **before launching either container** (mirroring `deploy/create.sh`):
 ```bash
-mkdir -p "$CACHE_DIR"/stats/logs "$CACHE_DIR"/stats/db
-chown -R "${APP_UID}:${APP_GID}" "$CACHE_DIR"/stats
+mkdir -p "$CACHE_DIR" "$LOGS_DIR" "$STATS_DIR"
+chown -R "${APP_UID}:${APP_GID}" "$CACHE_DIR" "$LOGS_DIR" "$STATS_DIR"
 ```
+with `LOGS_DIR="${LOGS_DIR:-$(dirname "$CACHE_DIR")/logs}"` and
+`STATS_DIR="${STATS_DIR:-$(dirname "$CACHE_DIR")/frontend}"`, so a dev run with
+`CACHE_DIR=/tmp/pkgcache-test/data` produces the same three-directory shape as the host.
 This is not optional. nginx will **not** create the log directory itself when the path
 contains a variable, and a missing directory produces one `error_log` line *per request*
 plus zero stats — a stderr flood with a non-obvious cause.
 
-The stats container's mounts (wired up fully in Plan 04, documented now):
-- `-v "${CACHE_DIR}/stats:/data"` (rw) — it never sees the package cache
-- `-v "${CACHE_DIR}:/cache:ro"` — **opt-in** via `STATS_CACHE_RO=1`, used only for a
-  `statvfs` + `pkg/` subtree size so the dashboard can show "38 GB / 100 GB"
+The mounts (wired up fully in Plan 04, documented now) — see `deploy/create*.sh`:
+- proxy: `-v "${CACHE_DIR}:/var/cache/nginx"` (rw) + `-v "${LOGS_DIR}:/logs"` (rw)
+- stats: `-v "${LOGS_DIR}:/logs"` (rw — it prunes) + `-v "${STATS_DIR}:/data"` (rw)
+  + `-v "${CACHE_DIR}:/cache:ro"` (size only)
 
 **Both containers must run as the same `APP_UID:APP_GID` and be launched with the same
 userns flags.** Add a comment saying so next to `EXTRA_ARGS` — a mismatch means nginx
@@ -255,8 +292,8 @@ shellcheck build run publish                      # clean
 RUNTIME=docker ./build           # builds proxy; reports stats not buildable yet
 RUNTIME=docker ./build stats     # clean failure, actionable message
 RUNTIME=docker ./build bogus     # usage message, exit 2
-RUNTIME=docker PORT=8080 CACHE_DIR=/tmp/pkgcache-test ./run
-ls -ld /tmp/pkgcache-test/stats/logs /tmp/pkgcache-test/stats/db   # exist, right owner
+RUNTIME=docker PORT=8080 CACHE_DIR=/tmp/pkgcache-test/data ./run
+ls -ld /tmp/pkgcache-test/{data,logs,frontend}   # all three exist, right owner
 ```
 
 **Commit**: `task(T3): build/run/publish take all|proxy|stats; run provisions stats dirs`
@@ -307,7 +344,7 @@ ls -ld /tmp/pkgcache-test/stats/logs /tmp/pkgcache-test/stats/db   # exist, righ
     open_log_file_cache max=32 inactive=1m valid=1m min_uses=1;
 
     access_log /dev/stdout cache;                                    # human, unchanged
-    access_log /var/cache/nginx/stats/logs/access-$logdate.log stats;
+    access_log /logs/access-$logdate.log stats;
 ```
 
 **Both `access_log` lines stay at `http` level.** `access_log` is inherited only when the
@@ -372,9 +409,9 @@ was silently empty):
 # RUNTIME=docker: this dev machine has docker, and its rootless podman is broken.
 # The live host (noir.lan) has podman and no docker. See "Container engine" in Context.
 export RUNTIME=docker
-./build proxy && PORT=8080 CACHE_DIR=/tmp/pkgcache-test ./run proxy && sleep 2
+./build proxy && PORT=8080 CACHE_DIR=/tmp/pkgcache-test/data ./run proxy && sleep 2
 
-L=/tmp/pkgcache-test/stats/logs
+L=/tmp/pkgcache-test/logs
 
 # (1) THE T4a CHECK -- do this FIRST. A missing root fails exactly here.
 docker logs pkgcache 2>&1 | grep -i 'existence failed'   # MUST be empty
@@ -548,10 +585,10 @@ files; nothing is tagged `[LIVE]` that was not actually observed.
 - [ ] T2: `nginx -t` in the rebuilt image prints `test is successful`
 - [ ] T3: `shellcheck build run publish` clean
 - [ ] T3: `./build bogus` exits 2 with a usage message; `./build stats` fails clearly
-- [ ] T3: `./run` creates `stats/logs` + `stats/db` owned by `APP_UID:APP_GID`
+- [ ] T3: `./run` creates `data/`, `logs/`, `frontend/` owned by `APP_UID:APP_GID`
 - [ ] T4: container `Up`, no `emerg`/`error` in logs
 - [ ] T4a: **`docker logs pkgcache | grep 'existence failed'` is empty** — check this first
-- [ ] T4a: **`stats/logs/access-YYYY-MM-DD.log` exists and is non-empty** (a missing `root`
+- [ ] T4a: **`logs/access-YYYY-MM-DD.log` exists and is non-empty** (a missing `root`
       fails exactly here, and nowhere else — `nginx -t` and caching both pass regardless)
 - [ ] T4: **all six routes still MISS→HIT** (Rule A — the move must not have broken caching)
 - [ ] T4: `awk -F'\t' '{print NF}' access-*.log | sort -u` prints exactly `9`
