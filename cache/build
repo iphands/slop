@@ -1,18 +1,26 @@
 #!/bin/bash
 set -euo pipefail
 
-# Build the package caching proxy image.
+# Build the container images.
 #
-#     ./build
+#     ./build            # == ./build all
+#     ./build proxy      # the nginx caching proxy
+#     ./build stats      # the stats reader + dashboard
 #
-# Tags the moving  iphands/pkgcache:latest  plus an immutable per-commit
-# iphands/pkgcache:<git-sha>. Then run ./publish to push, and ./run to launch.
+# Tags each moving  <image>:latest  plus an immutable per-commit <image>:<git-sha>.
+# Then run ./publish to push, and ./run to launch.
 #
 # Auto-detects the container engine and PREFERS podman when both are present.
 # Force one with  RUNTIME=docker ./build  (or RUNTIME=podman).
 # Override the image name with  IMAGE=you/name ./build .
 
 cd "$(dirname "$0")"
+
+TARGET="${1:-all}"
+case "$TARGET" in
+    all|proxy|stats) ;;
+    *) echo "usage: $0 [all|proxy|stats]" >&2; exit 2 ;;
+esac
 
 # Container engine: honor RUNTIME override, else prefer podman, then docker.
 CE="${RUNTIME:-}"
@@ -24,11 +32,18 @@ fi
 command -v "$CE" >/dev/null 2>&1 || { echo "error: RUNTIME=$CE not found on PATH" >&2; exit 1; }
 
 IMAGE="${IMAGE:-iphands/pkgcache}"
+STATS_IMAGE="${STATS_IMAGE:-iphands/pkgcache-stats}"
 REF="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"
 export DOCKER_BUILDKIT=1   # no-op under podman/buildah, enables it under docker
 
-echo ">> [$CE] building ${IMAGE}:latest and ${IMAGE}:${REF}"
-exec "$CE" build \
-    -t "${IMAGE}:latest" \
-    -t "${IMAGE}:${REF}" \
-    .
+build_one() {  # $1=context dir  $2=image name
+    if [ ! -f "$1/Dockerfile" ]; then
+        echo "error: $1/Dockerfile does not exist yet -- nothing to build for '$1'" >&2
+        return 1
+    fi
+    echo ">> [$CE] building ${2}:latest and ${2}:${REF}"
+    "$CE" build -t "${2}:latest" -t "${2}:${REF}" "$1"
+}
+
+if [ "$TARGET" = all ] || [ "$TARGET" = proxy ]; then build_one proxy "$IMAGE"; fi
+if [ "$TARGET" = all ] || [ "$TARGET" = stats ]; then build_one stats "$STATS_IMAGE"; fi

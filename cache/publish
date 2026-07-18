@@ -1,9 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# Push the built image to Docker Hub. THE HUMAN RUNS THIS.
+# Push the built image(s) to Docker Hub. THE HUMAN RUNS THIS.
 #
-#     ./publish
+#     ./publish          # == ./publish all
+#     ./publish proxy
+#     ./publish stats
 #
 # Pushes the moving tag (iphands/pkgcache:latest) plus any immutable per-commit
 # tags (iphands/pkgcache:<git-sha>) that exist locally.
@@ -16,6 +18,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+TARGET="${1:-all}"
+case "$TARGET" in
+    all|proxy|stats) ;;
+    *) echo "usage: $0 [all|proxy|stats]" >&2; exit 2 ;;
+esac
+
 # Container engine: honor RUNTIME override, else prefer podman, then docker.
 CE="${RUNTIME:-}"
 if [ -z "$CE" ]; then
@@ -26,18 +34,23 @@ fi
 command -v "$CE" >/dev/null 2>&1 || { echo "error: RUNTIME=$CE not found on PATH" >&2; exit 1; }
 
 IMAGE="${IMAGE:-iphands/pkgcache}"
+STATS_IMAGE="${STATS_IMAGE:-iphands/pkgcache-stats}"
 
-if ! "$CE" image inspect "${IMAGE}:latest" >/dev/null 2>&1; then
-    echo "nothing built to publish -- run ./build first" >&2
-    exit 1
-fi
+push_one() {  # $1=image name
+    if ! "$CE" image inspect "${1}:latest" >/dev/null 2>&1; then
+        echo "nothing built to publish for ${1} -- run ./build first" >&2
+        return 1
+    fi
+    echo ">> [$CE] pushing ${1}:latest and any ${1}:<ref> tags"
+    "$CE" images --format '{{.Repository}}:{{.Tag}}' "${1}" \
+        | grep -E "^${1}:" \
+        | grep -v ':<none>$' \
+        | sort -u \
+        | while read -r t; do
+            echo "   push ${t}"
+            "$CE" push "${t}"
+        done
+}
 
-echo ">> [$CE] pushing ${IMAGE}:latest and any ${IMAGE}:<ref> tags"
-"$CE" images --format '{{.Repository}}:{{.Tag}}' "${IMAGE}" \
-    | grep -E "^${IMAGE}:" \
-    | grep -v ':<none>$' \
-    | sort -u \
-    | while read -r t; do
-        echo "   push ${t}"
-        "$CE" push "${t}"
-    done
+if [ "$TARGET" = all ] || [ "$TARGET" = proxy ]; then push_one "$IMAGE"; fi
+if [ "$TARGET" = all ] || [ "$TARGET" = stats ]; then push_one "$STATS_IMAGE"; fi

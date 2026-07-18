@@ -1,28 +1,49 @@
 #!/bin/bash
 set -euo pipefail
 
-# Launch (or relaunch) the package caching proxy.
+# Launch (or relaunch) the package caching proxy and/or the stats service.
 #
-#     ./run
+#     ./run              # == ./run all
+#     ./run proxy        # just the nginx caching proxy
+#     ./run stats        # just the stats reader + dashboard
 #
-# Runs the container detached as APP_UID:APP_GID with the cache on a bind-mounted
-# volume. Auto-detects the container engine and PREFERS podman when present.
+# Runs the container(s) detached as APP_UID:APP_GID with bind-mounted volumes.
+# Auto-detects the container engine and PREFERS podman when present -- that is
+# what makes this work unchanged on the live host (noir: podman, no docker).
+# On a dev machine with broken rootless podman, use  RUNTIME=docker ./run .
 #
 # All knobs are env-overridable, e.g.:
-#     PORT=3142 CACHE_DIR=/srv/apt-cacher-ng ./run
+#     PORT=3129 CACHE_DIR=/main/docker/cache/data ./run
 #     APP_UID=1500 APP_GID=1500 ./run
+#
+# Three directories, one purpose each (mirrors scripts/noir/):
+#     CACHE_DIR   proxy :/var/cache/nginx rw  |  stats :/cache ro  (sizes only)
+#     LOGS_DIR    proxy :/logs            rw  |  stats :/logs  rw  (reads+prunes)
+#     STATS_DIR   --                          |  stats :/data  rw  (sqlite, lock)
 
 cd "$(dirname "$0")"
+
+TARGET="${1:-all}"
+case "$TARGET" in
+    all|proxy|stats) ;;
+    *) echo "usage: $0 [all|proxy|stats]" >&2; exit 2 ;;
+esac
 
 # ---- knobs ------------------------------------------------------------------
 APP_UID="${APP_UID:-1000}"                 # container process uid
 APP_GID="${APP_GID:-1000}"                 # container process gid
 IMAGE="${IMAGE:-iphands/pkgcache}"
+STATS_IMAGE="${STATS_IMAGE:-iphands/pkgcache-stats}"
 TAG="${TAG:-latest}"
-PORT="${PORT:-8080}"                       # host port -> container :8080
-CACHE_DIR="${CACHE_DIR:-/srv/pkgcache}"    # bind-mounted cache volume
+PORT="${PORT:-8080}"                       # host port -> proxy container :8080
+STATS_PORT="${STATS_PORT:-8081}"           # host port -> stats container :8081
+CACHE_DIR="${CACHE_DIR:-/srv/pkgcache/data}"   # nginx package cache
 NAME="${NAME:-pkgcache}"
+STATS_NAME="${STATS_NAME:-pkgcache-stats}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"               # extra engine args, e.g. --userns=keep-id
+# Siblings of CACHE_DIR unless overridden, so the dev layout matches the host's.
+LOGS_DIR="${LOGS_DIR:-$(dirname "$CACHE_DIR")/logs}"
+STATS_DIR="${STATS_DIR:-$(dirname "$CACHE_DIR")/frontend}"
 # RUNTIME=docker ./run  forces an engine; unset -> prefer podman, then docker.
 
 # ---- container engine (RUNTIME override, else prefer podman) -----------------
@@ -34,33 +55,70 @@ if [ -z "$CE" ]; then
 fi
 command -v "$CE" >/dev/null 2>&1 || { echo "error: RUNTIME=$CE not found on PATH" >&2; exit 1; }
 
-# ---- ensure the cache volume exists and is writable by APP_UID:APP_GID -------
-# nginx runs as APP_UID inside the container and writes the cache tree to this
-# bind mount, so the host dir must be owned by that uid/gid.
-if [ ! -d "$CACHE_DIR" ]; then
-    echo ">> creating $CACHE_DIR"
-    mkdir -p "$CACHE_DIR" 2>/dev/null || sudo mkdir -p "$CACHE_DIR"
-fi
-if [ "$(stat -c '%u:%g' "$CACHE_DIR")" != "${APP_UID}:${APP_GID}" ]; then
-    echo ">> chown $CACHE_DIR -> ${APP_UID}:${APP_GID}"
-    chown "${APP_UID}:${APP_GID}" "$CACHE_DIR" 2>/dev/null \
-        || sudo chown "${APP_UID}:${APP_GID}" "$CACHE_DIR"
-fi
+# ---- ensure the volumes exist and are writable by APP_UID:APP_GID -----------
+# nginx runs as APP_UID inside the container and writes the cache tree AND the
+# stats log to these bind mounts, so the host dirs must be owned by that uid/gid.
+#
+# The log directory in particular is NOT optional: the access_log path contains
+# a variable ($logdate), so nginx will not create it, and a missing directory
+# produces one error_log line per request plus zero stats.
+for d in "$CACHE_DIR" "$LOGS_DIR" "$STATS_DIR"; do
+    if [ ! -d "$d" ]; then
+        echo ">> creating $d"
+        mkdir -p "$d" 2>/dev/null || sudo mkdir -p "$d"
+    fi
+    if [ "$(stat -c '%u:%g' "$d")" != "${APP_UID}:${APP_GID}" ]; then
+        echo ">> chown $d -> ${APP_UID}:${APP_GID}"
+        chown "${APP_UID}:${APP_GID}" "$d" 2>/dev/null \
+            || sudo chown "${APP_UID}:${APP_GID}" "$d"
+    fi
+done
 
 # NOTE (rootless podman): host uid ${APP_UID} is not the in-container uid unless
 # you add  EXTRA_ARGS="--userns=keep-id:uid=${APP_UID},gid=${APP_GID}"  and own
-# CACHE_DIR as your host user. docker and rootful podman need no such flag.
+# the directories as your host user. docker and rootful podman need no such flag.
+#
+# BOTH containers must run as the same uid AND be launched with the same userns
+# flags. nginx writes the logs; the stats service reads them. A mismatch means
+# stats cannot read what nginx wrote, and the failure mode is a dashboard of
+# silent zeros -- not an error. EXTRA_ARGS is applied to both below.
 
-# ---- (re)launch -------------------------------------------------------------
-"$CE" rm -f "$NAME" >/dev/null 2>&1 || true
+run_proxy() {
+    "$CE" rm -f "$NAME" >/dev/null 2>&1 || true
+    echo ">> [$CE] starting ${NAME} from ${IMAGE}:${TAG} on :${PORT} as ${APP_UID}:${APP_GID}"
+    # shellcheck disable=SC2086  # EXTRA_ARGS is intentionally word-split
+    "$CE" run -d \
+        --name "$NAME" \
+        --restart unless-stopped \
+        --user "${APP_UID}:${APP_GID}" \
+        -p "${PORT}:8080" \
+        -v "${CACHE_DIR}:/var/cache/nginx" \
+        -v "${LOGS_DIR}:/logs" \
+        $EXTRA_ARGS \
+        "${IMAGE}:${TAG}"
+}
 
-echo ">> [$CE] starting ${NAME} from ${IMAGE}:${TAG} on :${PORT} as ${APP_UID}:${APP_GID}"
-# shellcheck disable=SC2086  # EXTRA_ARGS is intentionally word-split
-exec "$CE" run -d \
-    --name "$NAME" \
-    --restart unless-stopped \
-    --user "${APP_UID}:${APP_GID}" \
-    -p "${PORT}:8080" \
-    -v "${CACHE_DIR}:/var/cache/nginx" \
-    $EXTRA_ARGS \
-    "${IMAGE}:${TAG}"
+run_stats() {
+    if ! "$CE" image inspect "${STATS_IMAGE}:${TAG}" >/dev/null 2>&1; then
+        echo "error: ${STATS_IMAGE}:${TAG} not found -- run './build stats' first" >&2
+        return 1
+    fi
+    "$CE" rm -f "$STATS_NAME" >/dev/null 2>&1 || true
+    echo ">> [$CE] starting ${STATS_NAME} from ${STATS_IMAGE}:${TAG} on :${STATS_PORT} as ${APP_UID}:${APP_GID}"
+    # shellcheck disable=SC2086  # EXTRA_ARGS is intentionally word-split
+    "$CE" run -d \
+        --name "$STATS_NAME" \
+        --restart unless-stopped \
+        --user "${APP_UID}:${APP_GID}" \
+        -p "${STATS_PORT}:8081" \
+        -v "${LOGS_DIR}:/logs" \
+        -v "${STATS_DIR}:/data" \
+        -v "${CACHE_DIR}:/cache:ro" \
+        $EXTRA_ARGS \
+        "${STATS_IMAGE}:${TAG}"
+}
+
+# Explicit ifs, not `[ a ] || [ b ] && cmd` -- that parses as (a||b)&&cmd and its
+# exit status is 1 when the guard is false, which trips `set -e`.
+if [ "$TARGET" = all ] || [ "$TARGET" = proxy ]; then run_proxy; fi
+if [ "$TARGET" = all ] || [ "$TARGET" = stats ]; then run_stats; fi
