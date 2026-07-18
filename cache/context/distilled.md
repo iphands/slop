@@ -232,22 +232,45 @@ numbers the dashboard has to render well.
 
 ---
 
-## Open Questions (unverified — resolve and re-tag)
+## Upstream `Cache-Control` vs our TTLs — RESOLVED, and it was overriding us [LIVE 2026-07-18]
 
-1. **Does `proxy_cache_valid 200 365d` actually apply to `.deb` files?**
-   `deb.debian.org` is Fastly and is expected to send its own `Cache-Control`. Per the
-   precedence rule above, an upstream `Cache-Control: max-age=<small>` would **override**
-   our 365d and quietly shorten package retention. Same question for
-   `dl.fedoraproject.org` and `.rpm`.
-   **How to settle:** `curl -sI http://deb.debian.org/debian/pool/…/foo.deb` and read
-   `Cache-Control`/`Expires`. If a short max-age is present, the fix is
-   `proxy_ignore_headers Cache-Control Expires;` **inside the package sub-locations only**
-   (never in the metadata locations — there we *want* upstream freshness signals).
-   Record the finding here with `[LIVE]` + date.
-2. **Are the `by-hash/` metadata URLs caught by the 60 s metadata TTL?** They match the
-   parent prefix location (no extension match), so they should be — confirm by fetching
-   one and checking `X-Cache-Status` plus retention.
-3. **Does `X-Cache-Status` appear on responses from the nested regex locations?**
-   `add_header` at `server` level is inherited only if the child block declares no
-   `add_header` of its own — the sub-locations don't, so it should hold. Confirm with a
-   real `.deb`/`.rpm` fetch.
+Measured by reading `valid_sec` out of the nginx cache-file header rather than trusting the
+config. Layout: `ngx_http_file_cache_header_t` starts with `version` (`ngx_uint_t`, 8 bytes
+on 64-bit), then `valid_sec` — a `time_t` at **offset 8**, little-endian, holding an
+**absolute unix expiry**:
+
+```bash
+python3 -c "import struct,time; d=open(F,'rb').read(16); \
+  print(struct.unpack('<q', d[8:16])[0] - int(time.time()))"   # seconds to expiry
+```
+
+| Upstream | Sends | TTL actually applied | Configured |
+|---|---|---|---|
+| `deb.debian.org` packages | `Cache-Control: public, max-age=2592000` | **30 d** | 365 d |
+| `deb.debian.org` metadata | `Cache-Control: public, max-age=120` | **120 s** | 60 s |
+| `security.debian.org` metadata | `max-age=120` + `Expires:` | **120 s** | 60 s |
+| `dl.fedoraproject.org` (both) | **nothing** | 365 d / 60 s ✓ | as configured |
+
+So every Debian package had been cached for 30 days, not the year the config claimed —
+since day one. Fedora was unaffected, which is exactly why nothing looked wrong.
+
+**Fix applied:** `proxy_ignore_headers Cache-Control Expires;` in the three **package**
+sub-locations only. Re-measured on a cold cache: `.deb` **365.0 d** (was 30.0), `.rpm`
+still 365.0 d, Debian metadata still **119 s**.
+
+**Metadata deliberately still defers to upstream.** 120 s is Debian's own considered value
+for their own CDN, `proxy_cache_revalidate` is on, and overriding a freshness signal would
+trade correctness for a hit-ratio number nobody asked for.
+
+**General rule: `proxy_cache_valid` is a fallback, not an instruction.** Any claim about
+retention must be *measured from the cache file*, never read off the config.
+
+## Remaining Open Questions
+
+1. **Are the `by-hash/` metadata URLs caught by the metadata TTL?** They match the parent
+   prefix location (no extension match), so they should be — confirm by fetching one and
+   checking `X-Cache-Status` plus retention.
+2. ~~Does `X-Cache-Status` appear on responses from the nested regex locations?~~
+   **RESOLVED [LIVE 2026-07-18]: yes.** A real `.deb` and a real `.rpm` fetched through the
+   cache both return `X-Cache-Status: HIT` — the server-level `add_header` is inherited
+   because the sub-locations declare none of their own.

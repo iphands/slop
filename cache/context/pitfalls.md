@@ -131,8 +131,17 @@ If a short `max-age` is present, add `proxy_ignore_headers Cache-Control Expires
 **inside the package sub-locations only** — never in the metadata locations, where
 upstream freshness signals are exactly what you want.
 
-**Status: unverified in this repo** — see `context/distilled.md` Open Question 1. Settle
-it and record the result there with a `[LIVE]` tag.
+**Status: CONFIRMED and fixed `[OBSERVED 2026-07-18]`.** This was live in this repo from
+day one. `deb.debian.org` sends `Cache-Control: public, max-age=2592000`, so every `.deb`
+was cached **30 days, not the configured 365**; Debian metadata got 120 s instead of 60 s.
+Fedora sends no `Cache-Control` at all, so its TTLs were correct — which is precisely why
+the bug was invisible. Fixed with `proxy_ignore_headers Cache-Control Expires;` in the
+three package sub-locations only; metadata still defers to upstream on purpose.
+
+**Measure it, don't read the config.** Retention is verifiable from the nginx cache file:
+`valid_sec` is a little-endian `time_t` at byte offset 8 (after the 8-byte `version`),
+holding an absolute unix expiry. Full numbers and the one-liner are in
+`context/distilled.md`.
 
 ## Sources
 - pkgcache: `context/distilled.md` (TTL precedence)
