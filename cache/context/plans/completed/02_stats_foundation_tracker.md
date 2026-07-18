@@ -1,7 +1,7 @@
 # Stats Foundation — Tracker
 
 ## Overview
-- Status: 17% complete (1 of 6 tasks)
+- Status: **100% complete** (6 of 6 tasks)
 - Start date: 2026-07-18
 - Test endpoint: `http://localhost:8080` with `CACHE_DIR=/tmp/pkgcache-test`
 - Live deployment: `noir.lan:3129` (host cache dir `/main/docker/cache/data`) — **not**
@@ -35,11 +35,11 @@ and record it below — Plan 03's SQLite WAL mode depends on it being a local fi
 | # | Task | File | Status | Notes |
 |---|------|------|--------|-------|
 | 1 | T1: renumber SERIES for stats subsystem | `context/plans/SERIES.md` | done | 02–05 stats, backlog → 06–09, prefetch repointed at 05; commit `7d14ecd1f` |
-| 2 | T2: move proxy files into `proxy/` | `Dockerfile`, `nginx.conf`, `conf.d/`, `.dockerignore` | pending | `git mv` only; do not rename the published image |
-| 3 | T3: `all\|proxy\|stats` target arg; provision `stats/{logs,db}` | `build`, `run`, `publish` | pending | `mkdir`+`chown` is mandatory — nginx won't create the log dir |
-| 4 | T4: `log_format stats` + dated access log | `proxy/nginx.conf` | pending | the feature; all verification weight is here |
-| 5 | T5: doc debt — 26 refs + 2 Rule D obligations | 6 `.md` files | pending | most likely task to be half-done |
-| 6 | T6: harvest to `distilled.md` / `pitfalls.md` | `context/*.md` | pending | + answer distilled Open Question 3 |
+| 2 | T2: move proxy files into `proxy/` | → `proxy/` | **done** | `git mv` only; build verified from the new context; `4c71e7fa6` |
+| 3 | T3: target arg; provision the three dirs | `build`, `run`, `publish` | **done** | avoided a `set -e` trap in the guard; `cc3097fe9` |
+| 4 | T4 + T4a: stats log format, dated log, `root` | `proxy/nginx.conf`, `proxy/conf.d/pkgcache.conf` | **done** | 9 fields; `.rpm` URI = `/fedora/`; `94380d511` |
+| 5 | T5: doc debt + 2 Rule D obligations | 9 `.md` files | **done** | 42 refs, not the estimated 26; `a381555f9` |
+| 6 | T6: harvest + resolve open questions | `context/*.md`, `proxy/conf.d/` | **done** | found+fixed a live 30d TTL defect; `2c937c524` |
 
 ## Environment Facts (fill in during execution)
 
@@ -47,7 +47,7 @@ and record it below — Plan 03's SQLite WAL mode depends on it being a local fi
 |---|---|---|
 | `findmnt -no FSTYPE /main/docker/cache/data` | *(unrecorded — check on the live host)* | — |
 | WAL viable for Plan 03? | *(unrecorded — depends on above)* | — |
-| `X-Cache-Status` present on regex sub-locations (distilled OQ3) | *(unrecorded)* | — |
+| `X-Cache-Status` present on regex sub-locations (distilled OQ3) | **yes** — real `.deb` and `.rpm` both return HIT | 2026-07-18 |
 | **`$uri` vs `$request_uri`** | **RESOLVED** — diverge only on `.rpm`; `$uri` gives `/pub/fedora/…`. Use `$request_uri`. | 2026-07-18 |
 | **`escape=default` keeps 9 fields** | **RESOLVED** — held across HIT/MISS/404/HEAD/banner/`%09%22` | 2026-07-18 |
 | **Variable-path `access_log` needs a valid `root`** | **RESOLVED** — logs nothing without it; added T4a | 2026-07-18 |
@@ -92,3 +92,23 @@ and record it below — Plan 03's SQLite WAL mode depends on it being a local fi
   `192.168.10.99` is overwhelmingly `.rpm`, with a healthy HIT/MISS mix and percent-encoded
   filenames (`usbmuxd-1.1.1%5e2025…`). That is precisely the traffic the `$uri` bug would
   have mis-filed.
+
+## Outcome
+
+All six tasks done and verified. Two things the plan did not anticipate:
+
+1. **T5 was bigger than estimated** — 42 stale path references, not 26. The estimate
+   counted only `.md` prose; it missed occurrences inside code blocks and Sources lists.
+   The plan's own advice ("re-run the grep rather than trusting this table") is what
+   caught it.
+
+2. **T6 found a live defect, not just documentation.** Answering the open question about
+   upstream `Cache-Control` revealed that **every Debian package had been cached 30 days
+   instead of the configured 365** since the proxy shipped — Fastly's
+   `max-age=2592000` outranks `proxy_cache_valid`. Fedora sends no `Cache-Control`, so it
+   was correct, which is why the asymmetry stayed invisible. Fixed and re-measured within
+   the task; see `distilled.md`.
+
+**Not verified here and still open:** the `--userns=keep-id` path, which only exists under
+rootless podman. It is unverifiable on this dev machine and stays that way until the first
+live deploy on `noir`.

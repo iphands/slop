@@ -1,6 +1,6 @@
 # Plan 02 — Stats Foundation: repo split + nginx stats log format
 
-> **Status**: in-progress (T1 done)
+> **Status**: done (2026-07-18)
 > **Created**: 2026-07-18
 > **Depends on**: Plan 01 (the shipped proxy)
 > **Goal**: The proxy writes a machine-readable, dated TSV access log into a subtree the future stats container will own, and the repo is split into `proxy/` + `stats/` to hold two images.

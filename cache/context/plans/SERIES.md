@@ -30,7 +30,7 @@ and the backlog rationale.
 | # | Plan | Status | Depends On |
 |---|------|--------|------------|
 | 01 | Initial nginx caching proxy (Debian 13 + Fedora 44) | `done` (pre-plan) | N/A |
-| 02 | Stats foundation: repo split + nginx stats log format | `pending` | 01 |
+| 02 | Stats foundation: repo split + nginx stats log format | `done` | 01 |
 | 03 | Stats: Rust ingest core (log reader → SQLite) | `pending` | 02 |
 | 04 | Stats: API + snapshot + container | `pending` | 03 |
 | 05 | Stats: dashboard frontend | `pending` | 04 |
