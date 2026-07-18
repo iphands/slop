@@ -45,6 +45,45 @@ and comments. `[LIVE]` = observed against a running cache — include the date.
 upstream `/pub/fedora/…`). Any new upstream whose path prefix differs from the client
 prefix needs the same treatment. See `context/pitfalls.md`.
 
+## Logging variables — measured, not assumed [LIVE 2026-07-18]
+
+Probed against `nginxinc/nginx-unprivileged:1.27-alpine` with this repo's Fedora/Debian
+location blocks reproduced.
+
+- **`$uri` is post-`rewrite`; `$request_uri` is the original.** They diverge **only** where
+  a `rewrite` fired — here, only `.rpm`:
+  ```text
+  metadata: uri=[/fedora/…/repomd.xml]        request_uri=[/fedora/…/repomd.xml]      agree
+  .rpm:     uri=[/pub/fedora/…/x-1.0.rpm]     request_uri=[/fedora/…/x-1.0.rpm]       DIVERGE
+  .deb:     uri=[/debian/…/x.deb]             request_uri=[/debian/…/x.deb]           agree
+  ```
+  **Always log `$request_uri`.** See `pitfalls.md`.
+- **`$request_uri` preserves percent-encoding** — `usbmuxd-1.1.1%5e2025….rpm` stays
+  encoded (confirmed in production logs too). A path classifier must not assume decoded
+  text, and two clients encoding differently would produce two distinct rows.
+- **`$upstream_bytes_received` can EXCEED `$body_bytes_sent`.** Measured on a MISS: served
+  5966, upstream 6499 — it counts **response headers**, `$body_bytes_sent` does not. So a
+  whole-window `Σ served − Σ upstream` understates savings by every MISS's header overhead
+  and can go negative. Correct formula:
+  ```
+  bytes_saved = Σ over {HIT,REVALIDATED,STALE,UPDATING} of max(0, body_bytes − upstream_bytes)
+  ```
+  This is right for all three cases: HIT (upstream 0 → full body), REVALIDATED (nets out
+  the ~300-byte 304 round-trip), MISS (contributes 0, not a negative).
+- `$upstream_bytes_received` is `-` on a HIT; `$upstream_cache_status` is `-` on
+  non-proxied locations (`location = /`).
+- **A HEAD request logs `body_bytes_sent=0` with a real cache status** (`HEAD 200 0 - HIT`).
+  Your own `curl -sI` verification traffic therefore inflates hit *counts* while
+  contributing zero bytes — exclude HEAD from byte ratios.
+- `$msec` is epoch-with-milliseconds (`1784416726.694`). **The ingest never infers time
+  from a filename** — `$time_iso8601` is local-with-offset and is used only to name the
+  dated log file.
+- **A variable in the `access_log` path requires an existing `root`** or nginx silently
+  writes nothing. See `pitfalls.md` — this is the highest-deception failure found so far.
+- `log_format … escape=default` with 9 tab-separated fields held its framing across HIT,
+  MISS, 404, HEAD, the banner location, and a `%09%22` URI. Framing is robust *because*
+  `$request_uri` keeps percent-encoding — a raw tab cannot appear in a valid request line.
+
 ## Cache key & TTL precedence [SOURCE]
 
 - **Default cache key** is `$scheme$proxy_host$request_uri`. `$request_uri` is the
@@ -130,6 +169,11 @@ prefix needs the same treatment. See `context/pitfalls.md`.
   `127.0.0.11` = docker/podman embedded DNS; `1.1.1.1` = fallback for host/bridge networks.
 - **Rootless podman:** host `APP_UID` ≠ in-container uid without
   `--userns=keep-id:uid=…,gid=…`. docker and rootful podman need no flag.
+- **Engine split [LIVE 2026-07-18]:** the dev machine has **docker** (its rootless podman
+  is broken — `podman system migrate`); the live host `noir.lan` has **podman and no
+  docker**. Verify with `RUNTIME=docker`; leave the scripts preferring podman so they work
+  unchanged in production. `--userns=keep-id` is therefore **not testable on the dev
+  machine** — it is rootless-podman-only.
 - The alpine base has **busybox `wget`, no `curl`** — the HEALTHCHECK uses `wget`.
 
 ---

@@ -90,8 +90,9 @@ and `context/pitfalls.md` entries you relied on.
 
 **Verify**:
 ```bash
-./build && podman run --rm --entrypoint nginx iphands/pkgcache:latest -t
-PORT=8080 CACHE_DIR=/tmp/pkgcache-test ./run && sleep 2 && podman logs pkgcache
+export RUNTIME=docker    # this machine has docker; noir.lan has podman
+./build && docker run --rm --entrypoint nginx iphands/pkgcache:latest -t
+PORT=8080 CACHE_DIR=/tmp/pkgcache-test ./run && sleep 2 && docker logs pkgcache
 curl -sI http://localhost:8080/<path> | grep -i x-cache-status   # MISS
 curl -sI http://localhost:8080/<path> | grep -i x-cache-status   # HIT
 ```
@@ -139,7 +140,7 @@ Priority values: `P0` = blocking, `P1` = important, `P2` = nice-to-have.
      "Config looks correct" is not an assertion. -->
 
 - [ ] T1: `nginx -t` in the built image prints `test is successful`
-- [ ] T1: container is `Up` after `./run`; `podman logs` shows no `emerg`/`error`
+- [ ] T1: container is `Up` after `./run`; `docker logs` shows no `emerg`/`error`
 - [ ] T1: metadata URL → `MISS` then `HIT` on repeat
 - [ ] T1: **package** URL (regex sub-location) → 200 + `MISS` then `HIT` — *this is the
       one that catches a lost path remap*

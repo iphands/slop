@@ -169,18 +169,27 @@ There is **no build step that can catch a mistake here.** `./build` happily prod
 image containing a broken `nginx.conf`; the failure only appears when the container
 crash-loops, or worse, when it starts fine and silently serves 404s or misses.
 
+**Container engine: use `docker` to verify.** This dev machine has docker and its rootless
+podman is broken (`podman system migrate` needed). The live host `noir.lan` is the reverse
+— podman, no docker. So verify locally with `RUNTIME=docker`, and leave the scripts'
+podman-preferred auto-detection alone; that is what makes them work unchanged in
+production. Substitute `podman` in these commands when running on the live host. One
+consequence: the `--userns=keep-id` path only exists under rootless podman and therefore
+**cannot be verified here** — treat it as unverified until the first live deploy.
+
 After completing each task, in order:
 
 1. **Config parses:**
-   `./build && podman run --rm --entrypoint nginx <IMAGE>:latest -t`
+   `RUNTIME=docker ./build && docker run --rm --entrypoint nginx <IMAGE>:latest -t`
    → must print `syntax is ok` / `test is successful`.
    ⚠️ **`nginx -t` passing means almost nothing here.** It catches syntax and a few
    directive-context errors (e.g. a URI on `proxy_pass` in a regex location) but is blind
    to every semantic failure that matters: a wrong upstream path, a lost `rewrite`, a
-   duplicate `:8080` server block shadowing ours. **Never stop at step 1.**
+   duplicate `:8080` server block shadowing ours, or an `access_log` that silently writes
+   nothing because the server has no `root`. **Never stop at step 1.**
 2. **Container stays up:**
-   `PORT=8080 CACHE_DIR=/tmp/pkgcache-test ./run && sleep 2 && podman ps`
-   → the container is `Up`, not restarting. Check `podman logs pkgcache` for
+   `RUNTIME=docker PORT=8080 CACHE_DIR=/tmp/pkgcache-test ./run && sleep 2 && docker ps`
+   → the container is `Up`, not restarting. Check `docker logs pkgcache` for
    `emerg`/`error` lines.
 3. **Health + routes:** `curl -f http://localhost:8080/healthz` → `ok`.
 4. **Cache actually caches** — for every route the task touched, hit **both** a

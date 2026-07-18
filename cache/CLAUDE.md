@@ -113,6 +113,23 @@ Host `APP_UID` is **not** the in-container uid under rootless podman unless you 
 docker and rootful podman need no flag. Permission-denied on the cache tree at startup is
 almost always this.
 
+### 6. Container engine: **docker here, podman in production**
+
+The two environments are opposites, and both matter:
+
+| | Engine | Notes |
+|---|---|---|
+| **Dev machine** (this one) | **docker** | Rootless podman is broken here — pulls fail with `potentially insufficient UIDs or GIDs available in user namespace`, wanting `podman system migrate`. |
+| **Live host** `noir.lan` | **podman** | No docker installed at all. This is what actually runs the cache. |
+
+**Verify with `RUNTIME=docker`.** Do *not* "fix" `build`/`run`/`publish` to prefer docker —
+their podman-preferred auto-detection is exactly what makes them work unchanged on the live
+host, and `RUNTIME` already overrides it per-invocation.
+
+The cost of this asymmetry: **`--userns=keep-id` cannot be exercised here** (it only applies
+to rootless podman). Anything depending on it is unverified until a live deploy — say so
+rather than implying it was tested.
+
 ---
 
 ## Architecture
@@ -208,10 +225,12 @@ Scaled to this project's size — RULES.md has the full table:
 Config-only projects fail *at runtime*, so "it looks right" is never done.
 
 ```bash
+# RUNTIME=docker: this machine has docker; noir.lan has podman. See Critical Fact #6.
+export RUNTIME=docker
 ./build && PORT=8080 CACHE_DIR=/tmp/pkgcache-test ./run
 
 # nginx accepted the config at all:
-podman logs pkgcache
+docker logs pkgcache
 
 # health + routes:
 curl -f http://localhost:8080/healthz            # -> ok

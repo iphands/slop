@@ -80,6 +80,7 @@ it models data *quality* explicitly and refuses to render a number it can't back
 | qctrl stack | React 19, Vite, TS, Tailwind **3** (not 4), React Query 5, vitest | explored 2026-07-18 |
 | qctrl has no chart code at all | greenfield | explored 2026-07-18 |
 | Assets are embedded at build time | `npm run build` must precede `cargo build` | Plan 04 T3 |
+| Container engine | **docker** to verify here; **podman** on `noir.lan` (no docker there) | 2026-07-18 |
 
 ---
 

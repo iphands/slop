@@ -23,7 +23,8 @@
 3. `build` / `run` / `publish` accepting `all|proxy|stats`, and `run` creating + chowning
    `${CACHE_DIR}/stats/{logs,db}`
 4. `log_format stats` + `map $time_iso8601 $logdate` + `open_log_file_cache` + a second
-   `access_log` writing `stats/logs/access-YYYY-MM-DD.log`
+   `access_log` writing `stats/logs/access-YYYY-MM-DD.log`, **plus the `root` directive
+   without which that log is silently never written** (T4a)
 5. All 26 broken doc references fixed, plus the two Rule D doc obligations this work
    falsifies (`CLAUDE.md` "not Rust", `high_level.md` "implementation language — none")
 6. New findings recorded in `distilled.md` / `pitfalls.md`
@@ -77,19 +78,83 @@ Rule for `distilled.md`: **the ingest never infers time from a filename.**
 
 ### Key Facts
 
+All of the nginx behavior below was **verified live on 2026-07-18** against
+`nginxinc/nginx-unprivileged:1.27-alpine` with a probe config reproducing this repo's
+Fedora and Debian location blocks. It is no longer a set of assumptions to test in T4.
+
 | Fact | Value | How confirmed |
 |---|---|---|
-| `$uri` is post-`rewrite` | `.rpm` requests log `/pub/fedora/…` | nginx docs; **must be confirmed live in T4** |
-| `$request_uri` is pre-`rewrite`, includes query string | `/fedora/…` | nginx docs |
-| `$msec` | epoch seconds with ms, e.g. `1784500000.123` | nginx docs |
-| `$upstream_bytes_received` | bytes read from upstream; `-` on a cache HIT | nginx docs |
-| `$upstream_cache_status` unset on non-proxied locations | logs `-` (sometimes empty) | nginx docs |
-| Variable in `access_log` path ⇒ open/close per request without `open_log_file_cache` | — | nginx docs |
+| **`$uri` is post-`rewrite`; `$request_uri` is not** | see the probe output below — they diverge **only** on `.rpm` | **VERIFIED LIVE 2026-07-18** |
+| **Variable-path `access_log` needs an existing `root`** | logs **nothing** if the server's `root` dir is missing | **VERIFIED LIVE 2026-07-18** — see T4a |
+| `log_format stats` yields exactly 9 fields | across HIT/MISS/404/HEAD/banner requests | **VERIFIED LIVE 2026-07-18** |
+| `$upstream_bytes_received` on a HIT | `-` | **VERIFIED LIVE 2026-07-18** |
+| `$upstream_bytes_received` on a MISS | **larger than `$body_bytes_sent`** (includes response headers) | **VERIFIED LIVE 2026-07-18** — see "bytes saved" below |
+| `$upstream_cache_status` on `location = /` | `-` | **VERIFIED LIVE 2026-07-18** |
+| `/healthz` appears in neither log | `access_log off` suppresses both | **VERIFIED LIVE 2026-07-18** |
+| HEAD request logs `body_bytes_sent=0` with a real cache status | `… HEAD 200 0 - HIT …` | **VERIFIED LIVE 2026-07-18** |
+| `$request_uri` preserves percent-encoding | `usbmuxd-1.1.1%5e2025…rpm` stays encoded | **VERIFIED LIVE 2026-07-18** + production log |
+| `$msec` | epoch seconds with ms, e.g. `1784416726.694` | **VERIFIED LIVE 2026-07-18** |
 | `access_log` declared at `server` level **replaces** the inherited `http` one | — | nginx docs |
-| Regex `location` rejects `proxy_pass` with a URI part | `[emerg]` at parse time | **verified live 2026-07-18** (`distilled.md`) |
-| Duplicate `:8080` `server` blocks are **not** an error | `nginx -t` passes; first wins silently | **verified live 2026-07-18** (`distilled.md`) |
+| Regex `location` rejects `proxy_pass` with a URI part | `[emerg]` at parse time | verified live 2026-07-18 (`distilled.md`) |
+| Duplicate `:8080` `server` blocks are **not** an error | `nginx -t` passes; first wins silently | verified live 2026-07-18 (`distilled.md`) |
 | Doc references that break on the move | **26** across 6 files | `grep -rnoE` 2026-07-18 |
 | `build`/`run`/`publish` contain **no** hardcoded config paths | they use `$(dirname $0)` + `.` build context | `grep` 2026-07-18 |
+| Real client traffic is overwhelmingly `.rpm` | production log, 2026-07-18, `192.168.10.99` | operator-supplied |
+
+**The `$uri` divergence, measured.** A probe logging both variables side by side:
+
+```text
+metadata: uri=[/fedora/…/repomd.xml]           request_uri=[/fedora/…/repomd.xml]        agree
+.rpm:     uri=[/pub/fedora/…/probe-1.0.rpm]    request_uri=[/fedora/…/probe-1.0.rpm]     DIVERGE
+.deb:     uri=[/debian/…/probe.deb]            request_uri=[/debian/…/probe.deb]         agree
+```
+
+Three of four cases agree, which is exactly why this would survive a casual test — and the
+one that diverges is `.rpm`, which the production log shows is nearly all of the Fedora
+traffic. **Use `$request_uri`. This is now measured, not argued.**
+
+### "Bytes saved" — the formula, corrected by real data
+
+The probe produced a MISS with `body_bytes_sent=5966` and `upstream_bytes_received=6499`:
+**upstream bytes exceed served bytes**, because `$upstream_bytes_received` counts response
+headers and `$body_bytes_sent` does not. A naive window-level
+`Σ served − Σ upstream` therefore subtracts every MISS's header overhead from the savings —
+a small but systematic understatement, and it can go negative on a quiet day with few hits.
+
+The correct formula subtracts **within the hit class only**:
+
+```
+bytes_saved = Σ over {HIT, REVALIDATED, STALE, UPDATING} of
+                  max(0, body_bytes_sent − upstream_bytes_received)
+```
+
+- `HIT` → `upstream = 0` → full body counted. Correct.
+- `REVALIDATED` → full body served, ~300 bytes of 304 round-trip subtracted. Correct, and
+  this is what the plain status-bucket heuristic got wrong.
+- `MISS` / `EXPIRED` → contributes **0**, not a negative number. Correct.
+
+This supersedes both earlier proposals (pure status bucket, and pure whole-window
+subtraction). Plan 03 T2 implements it; Plan 04 T1 must not "simplify" it back.
+
+### Container engine: docker to verify, podman in production
+
+The two environments differ, and both matter:
+
+| | Engine | Notes |
+|---|---|---|
+| **Dev machine** (this one) | **docker** | Rootless podman is broken here — image pulls fail with `potentially insufficient UIDs or GIDs available in user namespace … requested 0:42`, wanting `podman system migrate`. |
+| **Live host** (`noir.lan`) | **podman** | No docker installed at all. This is what actually runs the cache. |
+
+So: **verify with `RUNTIME=docker`, and keep `run`/`build`/`publish` preferring podman**,
+because the auto-detection is what makes them work unchanged on the live host. Every
+verification command in this plan uses `docker`; substitute `podman` when running on
+`noir.lan`. The scripts themselves need no change — `RUNTIME` already overrides detection.
+
+The one thing this asymmetry costs: the **`--userns=keep-id` path cannot be verified on the
+dev machine**. It only matters under rootless podman, i.e. only on the live host. Plan 04's
+uid-mismatch instrumentation (`logs_readable` + a loud EACCES ERROR) is the safety net, and
+the first live deploy is where that path actually gets exercised — treat it as unverified
+until then and say so in the tracker.
 
 ---
 
@@ -132,7 +197,7 @@ Confirm rather than assume.
 
 **Verify**:
 ```bash
-./build proxy   # (after T3) or: docker build -t pkgcache:t proxy/
+RUNTIME=docker ./build proxy   # (after T3) or: docker build -t pkgcache:t proxy/
 docker run --rm --entrypoint nginx pkgcache:t -t     # syntax is ok / test is successful
 git status --short                                    # only renames, no deletions
 ```
@@ -187,10 +252,10 @@ silent zeros with no error anywhere.
 **Verify**:
 ```bash
 shellcheck build run publish                      # clean
-./build              # builds proxy; reports stats not buildable yet
-./build stats        # clean failure, actionable message
-./build bogus        # usage message, exit 2
-PORT=8080 CACHE_DIR=/tmp/pkgcache-test ./run
+RUNTIME=docker ./build           # builds proxy; reports stats not buildable yet
+RUNTIME=docker ./build stats     # clean failure, actionable message
+RUNTIME=docker ./build bogus     # usage message, exit 2
+RUNTIME=docker PORT=8080 CACHE_DIR=/tmp/pkgcache-test ./run
 ls -ld /tmp/pkgcache-test/stats/logs /tmp/pkgcache-test/stats/db   # exist, right owner
 ```
 
@@ -200,7 +265,8 @@ ls -ld /tmp/pkgcache-test/stats/logs /tmp/pkgcache-test/stats/db   # exist, righ
 
 ### T4: `log_format stats` + dated access log
 
-**File**: `proxy/nginx.conf` (all of it at `http` level — **not** `conf.d/pkgcache.conf`)
+**Files**: `proxy/nginx.conf` (the log machinery, at `http` level) **and**
+`proxy/conf.d/pkgcache.conf` (one `root` line — see T4a, which is not optional)
 
 **What to do**: add to the `http` block, after the existing `log_format cache`:
 
@@ -252,26 +318,87 @@ fd, which is atomic across workers; buffering would risk losing up to `buffer=` 
 SIGKILL and buys nothing at homelab request rates — `open_log_file_cache` already removed
 the syscall cost that `buffer=` exists to solve.
 
-`conf.d/pkgcache.conf` needs **no change**. Its `location = /healthz { access_log off; }`
-already suppresses *both* logs, which is what we want — the container HEALTHCHECK is
-~2,880 requests/day of pure noise.
+`conf.d/pkgcache.conf`'s `location = /healthz { access_log off; }` already suppresses
+*both* logs, which is what we want — the container HEALTHCHECK is ~2,880 requests/day of
+pure noise. **Verified live: `/healthz` appears in neither log.**
 
-**Verify** (this is the whole point of the plan; `nginx -t` is blind to all of it):
+---
+
+#### T4a: the `root` directive — without it the stats log is silently empty
+
+**File**: `proxy/conf.d/pkgcache.conf`, inside the `server` block
+
+**This is a blocker, not a detail.** When an `access_log` path contains a variable, nginx
+**tests the existence of the server's `root` directory before every write, and silently
+skips logging if it is missing.** The only symptom is an `error_log` line per request:
+
+```text
+[error] testing "/etc/nginx/html" existence failed (2: No such file or directory)
+        while logging request
+```
+
+`nginxinc/nginx-unprivileged` has **no `/etc/nginx/html`**, and `conf.d/pkgcache.conf`
+declares no `root` — every location is a `proxy_pass` or a `return`, so nothing ever
+needed one. The result: nginx starts fine, `nginx -t` passes, the proxy serves and caches
+perfectly, and **the stats log file is never created**. Verified live 2026-07-18: adding a
+`root` pointing at an existing directory was the *only* change needed to make logging work.
+
+```nginx
+server {
+    listen 8080;
+    listen [::]:8080;
+    server_name _;
+
+    # Required by the dated stats access_log in nginx.conf. nginx tests the root
+    # directory's existence before writing an access_log whose path contains a
+    # variable, and SILENTLY SKIPS LOGGING if it is missing -- the image has no
+    # /etc/nginx/html. Nothing here serves files from disk; this exists purely to
+    # give that test something that exists. See context/pitfalls.md.
+    root /tmp;
+    …
+```
+
+`/tmp` is chosen because it exists in the image and is writable by any uid; nothing is ever
+served from it (every location proxies or returns). Do not point it at the cache volume.
+
+**Verify**: this is the whole reason T4's verification checks that the file *exists* rather
+than assuming a clean `nginx -t` means success.
+
+---
+
+**Verify T4 + T4a** (`nginx -t` is blind to every one of these — it passed while the log
+was silently empty):
 ```bash
-./build proxy && PORT=8080 CACHE_DIR=/tmp/pkgcache-test ./run && sleep 2
-docker logs pkgcache | grep -iE 'emerg|error'          # expect nothing
+# RUNTIME=docker: this dev machine has docker, and its rootless podman is broken.
+# The live host (noir.lan) has podman and no docker. See "Container engine" in Context.
+export RUNTIME=docker
+./build proxy && PORT=8080 CACHE_DIR=/tmp/pkgcache-test ./run proxy && sleep 2
+
+L=/tmp/pkgcache-test/stats/logs
+
+# (1) THE T4a CHECK -- do this FIRST. A missing root fails exactly here.
+docker logs pkgcache 2>&1 | grep -i 'existence failed'   # MUST be empty
+ls "$L"/access-*.log                                     # MUST exist and be non-empty
 
 curl -s  http://localhost:8080/debian/dists/trixie/InRelease >/dev/null
 curl -s  http://localhost:8080/fedora/linux/releases/44/Everything/x86_64/os/repodata/repomd.xml >/dev/null
-curl -s 'http://localhost:8080/debian/%09%22weird'          >/dev/null   # tab+quote in URI
-# and one real .rpm and one real .deb
+curl -s 'http://localhost:8080/debian/%09%22weird'          >/dev/null
+# and one real .rpm and one real .deb, each fetched TWICE (MISS then HIT)
 
-L=/tmp/pkgcache-test/stats/logs
-ls "$L"                                            # access-YYYY-MM-DD.log exists
-awk -F'\t' '{print NF}' "$L"/access-*.log | sort -u # MUST print exactly: 9
-awk -F'\t' '$9 ~ /\.rpm$/ {print $9}' "$L"/access-*.log | head
-#   ^ MUST start /fedora/  -- if it starts /pub/fedora/ the log uses $uri, STOP
-grep -c healthz "$L"/access-*.log                  # 0 -- healthz is not logged
+# (2) framing
+awk -F'\t' '{print NF}' "$L"/access-*.log | sort -u      # MUST print exactly: 9
+
+# (3) THE GATE -- $request_uri, not $uri
+awk -F'\t' '$9 ~ /\.rpm/ {print $9}' "$L"/access-*.log | head
+#   ^ MUST start /fedora/ . If it starts /pub/fedora/ the log is using $uri: STOP,
+#     fix it, and do not start Plan 03 -- every Fedora package would be filed under
+#     a repo named "pub". Measured divergence is in this plan's Key Facts.
+
+# (4) the rest
+grep -c healthz "$L"/access-*.log                        # 0
+awk -F'\t' '$7=="HIT"  {print $6}' "$L"/access-*.log | sort -u   # "-"
+awk -F'\t' '$7=="MISS" {print $5, $6}' "$L"/access-*.log | head  # upstream may EXCEED served
+docker logs pkgcache | tail -3                           # human /dev/stdout log still works
 ```
 
 **Commit**: `task(T4): nginx stats log format + dated access log`
@@ -385,13 +512,19 @@ files; nothing is tagged `[LIVE]` that was not actually observed.
 
 ## Open Questions / Risks
 
-1. **`$uri` vs `$request_uri` is asserted from docs, not yet observed.** — *Mitigation:*
-   T4's verification fetches a real `.rpm` and asserts field 9 starts `/fedora/`. If it
-   starts `/pub/fedora/`, stop and fix before proceeding to Plan 03; every downstream
-   number depends on it.
-2. **`escape=default` behavior with tabs in a URI is asserted, not observed.** —
-   *Mitigation:* T4 fetches `/debian/%09%22weird` and asserts the field count stays 9. A
-   silently shifted field 9 would be very hard to diagnose later.
+1. ~~`$uri` vs `$request_uri` is asserted from docs~~ — **RESOLVED 2026-07-18**, measured
+   live; see Key Facts. The T4 check remains as a **regression guard**, not an experiment:
+   if field 9 ever starts `/pub/fedora/`, someone changed the log format and every Fedora
+   number is wrong.
+2. ~~`escape=default` with tabs in a URI is unobserved~~ — **RESOLVED 2026-07-18**: 9 fields
+   held across HIT, MISS, 404, HEAD, banner, and a `%09%22` URI. Note *why* it is safe:
+   `$request_uri` preserves percent-encoding, so a tab arrives as the literal text `%09`
+   and never as a raw tab byte — a raw tab cannot appear in a valid HTTP request line at
+   all. The framing is robust by construction, not by escaping.
+2b. **A missing `root` silently disables the stats log entirely** (T4a). nginx starts,
+   `nginx -t` passes, caching works, and the log file is never created. — *Mitigation:* T4a
+   adds `root /tmp;`, and T4's verification checks `docker logs … | grep 'existence failed'`
+   is empty **and** that the file exists, before checking anything about its contents.
 3. **The host filesystem may not support WAL.** SQLite WAL breaks on NFS/CIFS, and Plan 03
    depends on it. — *Mitigation:* run `findmnt -no FSTYPE /main/docker/cache/data` on the
    real host **during this plan**, while you're there, and record the answer in the
@@ -417,10 +550,14 @@ files; nothing is tagged `[LIVE]` that was not actually observed.
 - [ ] T3: `./build bogus` exits 2 with a usage message; `./build stats` fails clearly
 - [ ] T3: `./run` creates `stats/logs` + `stats/db` owned by `APP_UID:APP_GID`
 - [ ] T4: container `Up`, no `emerg`/`error` in logs
+- [ ] T4a: **`docker logs pkgcache | grep 'existence failed'` is empty** — check this first
+- [ ] T4a: **`stats/logs/access-YYYY-MM-DD.log` exists and is non-empty** (a missing `root`
+      fails exactly here, and nowhere else — `nginx -t` and caching both pass regardless)
 - [ ] T4: **all six routes still MISS→HIT** (Rule A — the move must not have broken caching)
 - [ ] T4: `awk -F'\t' '{print NF}' access-*.log | sort -u` prints exactly `9`
-- [ ] T4: a `.rpm` line's field 9 starts `/fedora/`, **not** `/pub/fedora/`
-- [ ] T4: a URI containing a tab still yields 9 fields
+- [ ] T4: a `.rpm` line's field 9 starts `/fedora/`, **not** `/pub/fedora/` *(regression guard)*
+- [ ] T4: a URI containing `%09%22` still yields 9 fields
+- [ ] T4: `$upstream_bytes_received` is `-` on HIT lines
 - [ ] T4: `/healthz` appears in neither log
 - [ ] T4: `/dev/stdout` human log still works (`docker logs`)
 - [ ] T5: no stale path references survive the grep unintentionally

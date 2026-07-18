@@ -45,12 +45,16 @@ and record it below — Plan 03's SQLite WAL mode depends on it being a local fi
 
 | Fact | Value | When |
 |---|---|---|
-| `findmnt -no FSTYPE /main/docker/cache/data` | *(unrecorded)* | — |
+| `findmnt -no FSTYPE /main/docker/cache/data` | *(unrecorded — check on the live host)* | — |
 | WAL viable for Plan 03? | *(unrecorded — depends on above)* | — |
-| `$uri` vs `$request_uri` confirmed live | *(unrecorded)* | — |
-| `escape=default` keeps 9 fields with a tab in the URI | *(unrecorded)* | — |
 | `X-Cache-Status` present on regex sub-locations (distilled OQ3) | *(unrecorded)* | — |
-| Rootless podman working on the dev host? | **no** — `podman system migrate` needed (subuid); docker used instead | 2026-07-18 |
+| **`$uri` vs `$request_uri`** | **RESOLVED** — diverge only on `.rpm`; `$uri` gives `/pub/fedora/…`. Use `$request_uri`. | 2026-07-18 |
+| **`escape=default` keeps 9 fields** | **RESOLVED** — held across HIT/MISS/404/HEAD/banner/`%09%22` | 2026-07-18 |
+| **Variable-path `access_log` needs a valid `root`** | **RESOLVED** — logs nothing without it; added T4a | 2026-07-18 |
+| **`$upstream_bytes_received` > `$body_bytes_sent` on MISS** | **RESOLVED** — 5966 vs 6499; changed the `bytes_saved` formula | 2026-07-18 |
+| Rootless podman working on the dev host? | **no** — `podman system migrate` needed (subuid) | 2026-07-18 |
+| Container engine for verification | **docker** here; **podman** on `noir.lan` (no docker there) | 2026-07-18 |
+| `--userns=keep-id` path verified? | **no — cannot be, on this machine.** Rootless-podman-only; unverified until the first live deploy. | 2026-07-18 |
 
 ## Notes / Deviations
 
@@ -60,5 +64,31 @@ and record it below — Plan 03's SQLite WAL mode depends on it being a local fi
 - **Rootless podman is currently broken on the dev host** — image pulls fail with
   `potentially insufficient UIDs or GIDs available in user namespace … requested 0:42`,
   suggesting `podman system migrate`. All 2026-07-18 verification was done with `docker`.
-  This matters for T3/T4 verification commands (`docker logs` vs `podman logs`) and it
-  means the `--userns=keep-id` path in `run` is **unverified on this host**.
+  The live host `noir.lan` is the opposite: **podman, no docker**. So verify with
+  `RUNTIME=docker` here, and **do not change the scripts' podman-preferred detection** —
+  that is what makes them work unchanged in production. Consequence: the
+  `--userns=keep-id` path in `run` is **unverifiable here** and stays unverified until the
+  first live deploy.
+
+- **Four Key Facts were resolved live on 2026-07-18, before implementation began**, by
+  probing a config that reproduced this repo's Fedora/Debian location blocks. Two of them
+  changed the plan:
+  1. **`$uri` vs `$request_uri`** — confirmed exactly as feared. Divergence is `.rpm`-only,
+     so 3 of 4 test cases agree and a casual check would have passed. The T4 assertion is
+     now a *regression guard* rather than an experiment.
+  2. **A variable-path `access_log` writes nothing without a valid `root`** — new, and a
+     genuine blocker. nginx starts, `nginx -t` passes, caching works, and the log file is
+     never created; the only signal is `testing "/etc/nginx/html" existence failed` in the
+     error log. The image has no `/etc/nginx/html` and a pure reverse-proxy server block
+     has no reason to declare a `root`. **Added T4a.** Without this the whole stats
+     subsystem would have produced an empty dashboard with everything appearing healthy.
+  3. **`$upstream_bytes_received` exceeds `$body_bytes_sent` on a MISS** (headers are
+     counted) — so the planned whole-window `Σ served − Σ upstream` for "bytes saved" was
+     wrong. Corrected to a hit-class-only subtraction; propagated to Plans 03 and 04.
+  4. **HEAD requests log 0 bytes with a real cache status** — confirms the ratio-distortion
+     risk was real, not theoretical.
+
+- **Operator-supplied production log** (2026-07-18) confirms real traffic from
+  `192.168.10.99` is overwhelmingly `.rpm`, with a healthy HIT/MISS mix and percent-encoded
+  filenames (`usbmuxd-1.1.1%5e2025…`). That is precisely the traffic the `$uri` bug would
+  have mis-filed.

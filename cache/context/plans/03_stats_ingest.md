@@ -84,6 +84,9 @@ double-counting hazard, to save single-digit megabytes.
 | `$upstream_cache_status` | field 7; `-` or empty on non-proxied locations | Plan 02 |
 | Cache-status values | `HIT MISS EXPIRED STALE UPDATING REVALIDATED BYPASS` | nginx docs |
 | Host FS supports WAL | *(read the Plan 02 tracker — if not local, use `journal_mode=TRUNCATE`)* | Plan 02 |
+| `$upstream_bytes_received` can EXCEED `$body_bytes_sent` on a MISS | it includes response headers | **verified live 2026-07-18** |
+| `$request_uri` keeps percent-encoding | `usbmuxd-1.1.1%5e2025….rpm` | verified live + production log |
+| Container engine | **docker** to verify here; **podman** on `noir.lan` (no docker there) | 2026-07-18 |
 | First database in the slop family | no rusqlite/sqlx/sled in qbots or qctrl, not even transitively | explored 2026-07-18 |
 | House style | `#[cfg(test)] mod tests` in-file; sentence-style test names; pure fns extracted to be testable | qbots/qctrl, 2026-07-18 |
 
@@ -180,8 +183,29 @@ impl Batch {
 }
 ```
 `hour_ts = floor(msec/3600)*3600`, `day_ts = floor(msec/86400)*86400`, both UTC.
-`bytes_saved` is **not** stored — it is derived at query time as
-`bytes_served − bytes_upstream`, so it can never disagree with its inputs.
+
+**`bytes_saved` is not stored** — it is derived at query time so it can never disagree with
+its inputs. The formula, **corrected against live data** (see Plan 02 Key Facts):
+
+```
+bytes_saved = Σ over {HIT, REVALIDATED, STALE, UPDATING} of
+                  max(0, body_bytes_sent − upstream_bytes_received)
+```
+
+Do **not** use a whole-window `Σ served − Σ upstream`. Measured live 2026-07-18: a MISS
+logged `body_bytes_sent=5966` with `upstream_bytes_received=6499` — **upstream exceeds
+served**, because `$upstream_bytes_received` includes response headers and
+`$body_bytes_sent` does not. A whole-window subtraction therefore charges every MISS's
+header overhead against the savings, understating them systematically and going negative
+on a quiet day.
+
+Subtracting *within the hit class* gets all three cases right: `HIT` has `upstream = 0` so
+the full body counts; `REVALIDATED` correctly nets out its ~300-byte 304 round-trip; `MISS`
+contributes exactly 0 rather than a negative number.
+
+To make this computable, `agg_hour` needs `bytes_upstream` **split by class** — store
+`bytes_upstream_hit` alongside `bytes_upstream` rather than a single column, or the
+hit-class subtraction cannot be reconstructed at query time.
 
 Cardinality guards live here: **no `agg_path` row when `status >= 400`** (a 404 storm from
 a scanner is the realistic blowup shape and has zero analytical value), and a cap of 5,000
@@ -224,7 +248,8 @@ Tables (all `STRICT`):
   *renamed* file adopt its existing offset, which kills the "someone ran logrotate and
   every number doubled" class outright.
 - **`agg_hour(hour_ts, client_ip, repo, kind, req_hit, req_miss, req_bypass, req_none,
-  req_err, bytes_hit, bytes_miss, bytes_bypass, bytes_none, bytes_upstream, time_sum_ms)`**
+  req_err, bytes_hit, bytes_miss, bytes_bypass, bytes_none, bytes_upstream,
+  bytes_upstream_hit, time_sum_ms)`**
   — `PRIMARY KEY (hour_ts, client_ip, repo, kind)`, `WITHOUT ROWID` (rows are ~120 bytes,
   comfortably under the ~1/20-page guidance). Index `(client_ip, hour_ts)` for the client
   table.

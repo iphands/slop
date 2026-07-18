@@ -6,11 +6,16 @@ Template: `# Title → Problem → Fix / How to avoid → Sources`.
 Cross-cutting, non-pkgcache-specific pitfalls also go up to `../../context/pitfalls.md`
 per the slop convention. nginx/apt/dnf specifics stay here.
 
-> **Seeding note:** the entries below are drawn from the design constraints encoded in
+> **Seeding note:** most entries below are drawn from the design constraints encoded in
 > this repo's config comments and README, plus documented nginx/apt/dnf behavior — they
 > are *hazards the code was written to avoid*, not incidents observed in this project.
 > When one actually bites, add the symptom verbatim and the date. Tag genuinely observed
 > failures with `[OBSERVED YYYY-MM-DD]` so they can be told apart from the seeds.
+>
+> **Two entries are real observations, not seeds** — both found 2026-07-18 while probing
+> the Plan 02 stats log format against a live nginx: *"A variable in the `access_log` path
+> silently logs NOTHING without a valid `root`"* and *"Logging `$uri` mis-files every
+> rewritten request"*. Both would have shipped.
 
 ---
 
@@ -135,13 +140,109 @@ it and record the result there with a `[LIVE]` tag.
 
 ---
 
+# A variable in the `access_log` path silently logs NOTHING without a valid `root`
+
+## Problem
+
+`access_log /path/access-$logdate.log fmt;` looks like it works: nginx starts, `nginx -t`
+prints `test is successful`, the proxy serves and caches perfectly — and **the log file is
+never created**. The only evidence is one line per request in the *error* log:
+
+```text
+[error] testing "/etc/nginx/html" existence failed (2: No such file or directory)
+        while logging request
+```
+
+**Cause:** when an `access_log` path contains a variable, nginx tests the existence of the
+server's **`root` directory** before each write and skips logging entirely if it is missing.
+`nginxinc/nginx-unprivileged` ships **no `/etc/nginx/html`**, and a pure reverse-proxy
+server block has no reason to declare a `root` — every location is a `proxy_pass` or a
+`return`, so nothing ever serves a file from disk.
+
+The failure is maximally deceptive: every other signal says healthy. `[OBSERVED 2026-07-18]`
+while probing the Plan 02 stats log format — the dated log produced zero bytes until a
+`root` was added, which was the **only** change required.
+
+## Fix / How to avoid
+
+Declare a `root` that exists, in any `server` block whose `access_log` path has a variable:
+
+```nginx
+server {
+    listen 8080;
+    root /tmp;      # exists in the image, writable by any uid; nothing is served from it
+    …
+}
+```
+
+`/tmp` is a deliberate choice — it exists, it is uid-agnostic, and no location ever reads
+from it. Do not point it at the cache volume.
+
+**General rule:** whenever an nginx directive path contains a variable, the parent
+directory *and* the server's `root` must exist at request time; nginx will not create them
+and will not fail loudly. Verify a variable-path log by asserting **the file exists and is
+non-empty**, never by a clean `nginx -t`.
+
+## Sources
+- pkgcache: `proxy/conf.d/pkgcache.conf` (`root /tmp;`), `proxy/nginx.conf` (dated `access_log`)
+- pkgcache: `context/plans/02_stats_foundation.md` T4a
+
+---
+
+# Logging `$uri` mis-files every rewritten request
+
+## Problem
+
+`$uri` is the **current** URI — after any `rewrite`. `$request_uri` is the **original**.
+In this repo the `.rpm` sub-location rewrites `/fedora/…` → `/pub/fedora/…` (it has to; see
+the first entry in this file). So a stats/analytics log using `$uri` records every Fedora
+package under a path beginning `/pub/`, and any classifier taking "repo = first path
+segment" files them under a repo named `pub`.
+
+Metadata is unaffected — it is served by the parent location, which does no rewrite — so
+**most of the log looks correct**. Measured `[OBSERVED 2026-07-18]`:
+
+```text
+metadata: uri=[/fedora/…/repomd.xml]           request_uri=[/fedora/…/repomd.xml]      agree
+.rpm:     uri=[/pub/fedora/…/probe-1.0.rpm]    request_uri=[/fedora/…/probe-1.0.rpm]   DIVERGE
+.deb:     uri=[/debian/…/probe.deb]            request_uri=[/debian/…/probe.deb]       agree
+```
+
+Three of four cases agree, so a casual test passes — and the one that diverges is `.rpm`,
+which production logs show is the overwhelming majority of Fedora traffic. The result is a
+dashboard that looks ~90% right while mis-bucketing exactly the high-value data.
+
+## Fix / How to avoid
+
+Log **`$request_uri`**. It is the original, pre-rewrite URI, it is what the cache key uses,
+and it preserves percent-encoding (`usbmuxd-1.1.1%5e2025….rpm` stays encoded). There is no
+case in this project where `$uri` is the right choice for a log.
+
+To catch a regression, assert on real data rather than reading the config:
+```bash
+awk -F'\t' '$9 ~ /\.rpm/ {print $9}' access-*.log | head   # must start /fedora/
+```
+
+Related, same measurement session: **`$upstream_bytes_received` can exceed
+`$body_bytes_sent`** on a MISS (5966 served vs 6499 upstream) because it counts response
+headers. Any "bytes saved" figure computed as a whole-window `Σ served − Σ upstream` is
+therefore biased downward by every MISS's header overhead and can go negative. Subtract
+within the hit class only.
+
+## Sources
+- pkgcache: `proxy/nginx.conf` (`log_format stats`)
+- pkgcache: `context/plans/02_stats_foundation.md` (Key Facts, "bytes saved")
+- pkgcache: this file, first entry (the rewrite that causes it)
+
+---
+
 # A broken nginx config builds fine and only fails at runtime
 
 ## Problem
 
 There is no compiler here. `./build` exits 0 with a totally invalid `nginx.conf` baked
 into the image — the config is never parsed at build time. The failure surfaces as a
-container that crash-loops (`podman ps` shows it restarting) or, more insidiously, as a
+container that crash-loops (`docker ps` shows it restarting) or, more insidiously, as a
 container that starts fine and serves 404s or permanent MISSes. "The diff looks right" has
 no relationship to whether it works.
 
@@ -150,9 +251,11 @@ no relationship to whether it works.
 `context/plans/RULES.md` **Rule A** is the substitute for a compiler. Minimum, every time:
 
 ```bash
-./build && podman run --rm --entrypoint nginx iphands/pkgcache:latest -t   # syntax is ok
+# RUNTIME=docker on this dev machine; podman on noir.lan (see CLAUDE.md Critical Fact #6).
+export RUNTIME=docker
+./build && docker run --rm --entrypoint nginx iphands/pkgcache:latest -t   # syntax is ok
 PORT=8080 CACHE_DIR=/tmp/pkgcache-test ./run && sleep 2
-podman logs pkgcache | grep -iE 'emerg|error'                              # expect nothing
+docker logs pkgcache | grep -iE 'emerg|error'                              # expect nothing
 curl -f http://localhost:8080/healthz                                      # ok
 curl -sI "$URL" | grep -i x-cache-status   # MISS
 curl -sI "$URL" | grep -i x-cache-status   # HIT   <- the actual pass condition
@@ -174,7 +277,7 @@ Test **both** a metadata URL and a package URL for every route touched. A `200` 
 `./run` passes `--user ${APP_UID}:${APP_GID}` and chowns `CACHE_DIR` to match. Under
 **rootless podman** that host uid is *not* the uid the process actually has inside the
 container (user-namespace mapping), so nginx fails to write the cache tree. Symptom:
-permission-denied / `mkdir() failed` in `podman logs` right at startup, or a container
+permission-denied / `mkdir() failed` in the container logs right at startup, or a container
 that starts but never caches anything.
 
 ## Fix / How to avoid
@@ -217,7 +320,7 @@ an actual request does.
 
 The Dockerfile does `rm -f /etc/nginx/conf.d/default.conf` before copying ours. Keep that
 line. If you ever change the base image or its tag, re-check what it drops into `conf.d/`
-— `podman run --rm --entrypoint ls <image> /etc/nginx/conf.d/`.
+— `docker run --rm --entrypoint ls <image> /etc/nginx/conf.d/`.
 
 ## Sources
 - pkgcache: `Dockerfile`

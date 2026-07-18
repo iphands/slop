@@ -76,6 +76,8 @@ idle cache stays healthy.
 | Proxy image name | `iphands/pkgcache` — **already published, do not rename** | Plan 02 |
 | Stats image name | `iphands/pkgcache-stats` | Plan 02 T3 |
 | Base image convention | unprivileged, arbitrary uid, busybox `wget` HEALTHCHECK | `proxy/Dockerfile` |
+| Container engine | **docker** to verify here (rootless podman is broken on this machine); **podman** on `noir.lan`, which has no docker. Use `RUNTIME=docker` locally; the scripts' auto-detection handles the live host. | 2026-07-18 |
+| `--userns=keep-id` is **not verifiable** on the dev machine | it only applies to rootless podman | 2026-07-18 |
 
 ---
 
@@ -101,7 +103,18 @@ Structure (see T2 for the JSON):
 - `repos[]` — per-repo breakdown
 - `cache_disk` — present only when the opt-in `:ro` mount is enabled
 
-**`bytes_saved` is derived**, never stored: `max(0, bytes_served − bytes_upstream)`.
+**`bytes_saved` is derived**, never stored — and it is **not** a whole-window subtraction:
+
+```
+bytes_saved = Σ over {HIT, REVALIDATED, STALE, UPDATING} of
+                  max(0, body_bytes_sent − upstream_bytes_received)
+```
+
+Measured live 2026-07-18: `$upstream_bytes_received` **exceeds** `$body_bytes_sent` on a
+MISS (it counts response headers), so `Σ served − Σ upstream` charges every MISS's header
+overhead against the savings and can go negative on a quiet day. Subtracting within the hit
+class only gets `HIT`, `REVALIDATED` and `MISS` all correct. See Plan 02 Key Facts and
+Plan 03 T3 (`bytes_upstream_hit`). **Do not simplify this back.**
 
 **Every ratio is `Option<f64>` and serializes as `null` when the denominator is zero.**
 Rendering `0%` for "no requests yet" makes a healthy cold cache look broken — exactly the
