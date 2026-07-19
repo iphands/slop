@@ -85,16 +85,35 @@ pub fn parse_path(path: &str) -> Option<PkgName<'_>> {
     }
 }
 
-/// A display label for a path: the package name if parseable, else the bare
-/// filename, else the whole path. Never empty, never drops information silently.
+/// Is this segment a bare content hash? apt's `by-hash/` indices are named
+/// after their own SHA, which is meaningless as a table label.
+fn looks_like_hash(s: &str) -> bool {
+    s.len() >= 32 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// A display label for a path: the package name if parseable, else something a
+/// human can actually read. Never empty, never drops information silently.
+///
+/// The `by-hash` case matters in practice — apt fetches most of its indices that
+/// way, so a naive "last path segment" turns the whole top-metadata list into a
+/// column of indistinguishable 64-character hashes. That is exactly what the
+/// first rendered screenshot of the dashboard showed. Fall back to the
+/// enclosing directory, which names the actual index.
 pub fn display_name(path: &str) -> &str {
     if let Some(p) = parse_path(path) {
         return p.name;
     }
-    path.rsplit('/')
-        .next()
-        .filter(|s| !s.is_empty())
-        .unwrap_or(path)
+    let mut segs = path.rsplit('/').filter(|s| !s.is_empty());
+    let Some(last) = segs.next() else { return path };
+    if looks_like_hash(last) {
+        // .../binary-amd64/by-hash/SHA256/<hash>  ->  "binary-amd64"
+        for seg in segs {
+            if seg != "by-hash" && !seg.eq_ignore_ascii_case("SHA256") && !looks_like_hash(seg) {
+                return seg;
+            }
+        }
+    }
+    last
 }
 
 #[cfg(test)]
@@ -205,6 +224,21 @@ mod tests {
         // ...and display_name still returns something useful.
         assert_eq!(display_name("/debian/dists/trixie/InRelease"), "InRelease");
         assert_eq!(display_name("/"), "/");
+    }
+
+    #[test]
+    fn a_by_hash_index_shows_its_directory_not_a_bare_hash() {
+        // REGRESSION: the first screenshot's "top metadata" list was a column of
+        // indistinguishable 64-char hashes.
+        assert_eq!(
+            display_name(
+                "/debian/dists/trixie/main/binary-amd64/by-hash/SHA256/\
+                 e32a0c328ac8716e71e3f66e87366a172fea8ecb2f452909abcdef0123456789"
+            ),
+            "binary-amd64"
+        );
+        // A normal metadata file is unaffected.
+        assert_eq!(display_name("/debian/dists/trixie/InRelease"), "InRelease");
     }
 
     #[test]

@@ -95,7 +95,14 @@ export function Dashboard() {
         <Kpi
           label="metadata"
           value={bytes(k.metadata.bytes_saved)}
-          sub={`${num(k.metadata.reqs)} requests · low is correct`}
+          // "low is correct" only when it IS low. Metadata has a 60s TTL so it
+          // usually misses, but asserting that next to a 100% ratio reads as a
+          // bug in the dashboard rather than an explanation.
+          sub={
+            k.metadata.hit_ratio_bytes !== null && k.metadata.hit_ratio_bytes < 0.5
+              ? `${num(k.metadata.reqs)} requests · a low ratio is correct here`
+              : `${num(k.metadata.reqs)} requests`
+          }
           ratio={k.metadata.hit_ratio_bytes}
           tone="sky"
         />
@@ -103,8 +110,9 @@ export function Dashboard() {
           <Kpi
             label="cache on disk"
             value={bytes(cache.bytes)}
-            sub={`of ${bytes(CAP)} · ${pct(full)}`}
+            sub={`of ${bytes(CAP)} max_size`}
             ratio={full}
+            ratioLabel="full"
             tone={full > 0.85 ? 'sky' : 'emerald'}
           />
         ) : (

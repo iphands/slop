@@ -93,6 +93,7 @@ export function Kpi({
   value,
   sub,
   ratio,
+  ratioLabel = 'hit ratio',
   spark,
   tone = 'emerald',
 }: {
@@ -100,6 +101,9 @@ export function Kpi({
   value: string;
   sub?: string;
   ratio?: Ratio;
+  /** What the bar measures. NOT always a hit ratio -- the cache-fullness tile
+   *  reuses this component and must not claim its 2.5% is a hit rate. */
+  ratioLabel?: string;
   spark?: number[];
   tone?: 'emerald' | 'sky';
 }) {
@@ -112,7 +116,7 @@ export function Kpi({
       {ratio !== undefined && (
         <div className="mt-2">
           <div className="mb-1 flex justify-between font-mono text-xs tabular-nums text-slate-300">
-            <span>hit ratio</span>
+            <span>{ratioLabel}</span>
             <span>{pct(ratio)}</span>
           </div>
           <RatioBar ratio={ratio} tone={tone} />

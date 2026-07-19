@@ -327,15 +327,21 @@ fn clients(conn: &Connection, now: i64) -> Result<Vec<Client>> {
     let mut label_st =
         conn.prepare_cached("SELECT label FROM client_label WHERE client_ip = ?1")?;
 
-    let first_hour = (now - DAY).div_euclid(HOUR) * HOUR;
+    // Anchor on the CURRENT hour and count backwards, matching series(). The
+    // obvious forward version -- index from (now - 24h) -- is off by one: the
+    // window spans 25 distinct hour buckets, so the current hour lands at
+    // index 24 and is silently dropped. Every sparkline then reads flat while
+    // the KPI tiles show real traffic, which is exactly what the first
+    // screenshot of this dashboard showed.
+    let last_hour = now.div_euclid(HOUR) * HOUR;
     let mut out: Vec<Client> = Vec::new();
     for (ip, mut c) in by_ip {
         let mut q = spark_st.query(rusqlite::params![&ip, since])?;
         while let Some(r) = q.next()? {
             let ts: i64 = r.get(0)?;
-            let idx = ((ts - first_hour) / HOUR) as usize;
-            if idx < 24 {
-                c.spark[idx] += r.get::<_, i64>(1)?;
+            let back = (last_hour - ts.div_euclid(HOUR) * HOUR) / HOUR;
+            if (0..24).contains(&back) {
+                c.spark[(23 - back) as usize] += r.get::<_, i64>(1)?;
             }
         }
         let mut q = repo_st.query(rusqlite::params![&ip, since])?;
@@ -568,6 +574,30 @@ mod tests {
             .find(|t| t.path.ends_with(".rpm"))
             .unwrap();
         assert_eq!(rpm.name, "glib2");
+    }
+
+    #[test]
+    fn the_current_hours_traffic_lands_in_the_last_sparkline_slot() {
+        // REGRESSION. The first rendered screenshot showed every sparkline flat
+        // while the KPI tiles showed 90+ MiB: indexing forward from (now - 24h)
+        // put the current hour at index 24 of a 24-slot array, so all recent
+        // traffic was dropped.
+        let now = now_f();
+        let c = seeded(now);
+        let p = build(&c, now as i64, Ingest::default(), None).unwrap();
+        let busiest = p
+            .clients
+            .iter()
+            .max_by_key(|c| c.package.bytes_served + c.metadata.bytes_served)
+            .unwrap();
+        assert!(
+            busiest.spark.iter().sum::<i64>() > 0,
+            "a client with traffic must have a non-flat sparkline"
+        );
+        assert!(
+            *busiest.spark.last().unwrap() > 0,
+            "traffic in the current hour belongs in the LAST slot"
+        );
     }
 
     #[test]
