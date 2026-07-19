@@ -1,0 +1,34 @@
+[package]
+name    = "pkgcache-stats"
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "pkgcache-stats"
+path = "src/main.rs"
+
+[dependencies]
+pkgcache-ingest = { path = "../ingest" }
+
+serde.workspace              = true
+serde_json.workspace         = true
+anyhow.workspace             = true
+tracing.workspace            = true
+tracing-subscriber.workspace = true
+
+# `bundled` vendors the SQLite amalgamation: the runtime image needs no
+# libsqlite3, and the SQLite version is pinned to this source tree rather than
+# to whatever the base image ships -- which is what guarantees STRICT tables,
+# UPSERT and PRAGMA incremental_vacuum are present. Costs musl-dev in the
+# builder and ~30s of C compile, cached by a BuildKit mount.
+# This is the FIRST database anywhere in the slop family; no house precedent.
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Explicit tokio features, not "full": this crate compiles inside a container on
+# every ./build, and `full` pulls in process/fs/io-util we never use.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
+
+fd-lock = "4"
+
+[dev-dependencies]
+tempfile = "3"
