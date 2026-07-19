@@ -47,22 +47,44 @@ Knobs: `DEST` (default `~/.claude/statusline`), `SETTINGS` (default
 
 Restart Claude Code afterward; the status line is read at startup.
 
-## Pitfall: `~/.claude/statusline/` is still an upstream clone
+## How the live install is wired
 
-On this machine the live script was installed by cloning upstream directly, so
-`~/.claude/statusline/` **is a git working tree with `origin` pointing at upstream** — and
-our customization currently lives there as uncommitted local modifications.
+On this machine `~/.claude/statusline` is a **symlink to this directory**:
 
-Upstream's `INSTALL.md` documents updating with:
-
-```bash
-git -C ~/.claude/statusline pull     # <-- will fight the local edits
+```
+~/.claude/settings.json  → "~/.claude/statusline/statusline.sh"
+~/.claude/statusline     → /home/iphands/prog/slop/statusline   (symlink)
 ```
 
-That pull will conflict with, or discard, the local changes. **This repo's copy is the
-source of truth.** To update against a newer upstream: pull in a scratch clone, re-apply
-the three changes above, verify, and re-vendor here — don't pull in place. Or run
-`./install` from this repo, which overwrites the live script with the vendored copy.
+So the file that actually runs is this repo's tracked copy — edit it here and the change
+is live immediately, with no install step and nothing to keep in sync. `settings.json`
+needs no change if the repo moves; only the symlink does.
+
+It was previously an upstream git clone with our edits sitting in it uncommitted, which
+meant the `git -C ~/.claude/statusline pull` that upstream's `INSTALL.md` recommends would
+have fought or discarded them. That clone is gone.
+
+**Consequence:** there is no local upstream history to merge against anymore. To take a
+newer upstream version, clone it fresh to a scratch directory, re-apply the three changes
+above, verify, and copy the result here — see Verifying below.
+
+**Consequence:** if this repo is moved or deleted, the symlink dangles and the status line
+silently renders nothing (Claude Code does not report the error). Re-point the symlink.
+
+## Verifying
+
+The script reads a JSON blob on stdin, so it can be exercised directly — no Claude Code
+restart needed:
+
+```bash
+for d in "$PWD" /tmp "$HOME" /home/iphands-other; do
+  echo "{\"cwd\":\"$d\",\"model\":{\"display_name\":\"Opus 4.8 (1M context)\"}}" \
+    | ./statusline.sh | sed 's/\x1b\[[0-9;]*m//g'
+done
+```
+
+Expect the `basename@branch` segment only in the git-repo case, and `/home/iphands-other`
+rendered in full rather than as `~-other`.
 
 ## Scope
 

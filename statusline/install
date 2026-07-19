@@ -12,9 +12,11 @@ set -euo pipefail
 # once as <file>.statusline.orig, so --revert restores the true pre-install state
 # no matter how many times this ran. Idempotent.
 #
-# NOTE: if $DEST is an upstream git clone (the default install method upstream
-# documents), this overwrites its statusline.sh. That is intended -- this repo is
-# the source of truth. See README.md.
+# NOTE: if $DEST already resolves to this repo (e.g. ~/.claude/statusline is a
+# symlink here, the setup on iphands' machine) the copy is skipped and --revert
+# will not delete the repo's own file. If $DEST is an upstream git clone, this
+# overwrites its statusline.sh -- intended; this repo is the source of truth.
+# See README.md.
 
 DEST="${DEST:-$HOME/.claude/statusline}"
 SETTINGS="${SETTINGS:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json}"
@@ -35,7 +37,11 @@ if [ "${1:-}" = "--revert" ]; then
         echo "  restored $SETTINGS"
         reverted=1
     fi
-    if [ -f "${DEST}/statusline.sh" ]; then
+    if [ "$(readlink -f "${SRC_DIR}/statusline.sh")" = "$(readlink -f "${DEST}/statusline.sh" 2>/dev/null)" ]; then
+        # $DEST resolves back to this repo -- removing it would delete the
+        # version-controlled source, not an installed copy. Never do that.
+        echo "  kept ${DEST}/statusline.sh (it IS this repo's copy, not an install)"
+    elif [ -f "${DEST}/statusline.sh" ]; then
         rm -f "${DEST}/statusline.sh"
         echo "  removed ${DEST}/statusline.sh"
         reverted=1
@@ -47,7 +53,13 @@ fi
 
 echo ">> installing status line to ${DEST}"
 mkdir -p "$DEST"
-cp -f "${SRC_DIR}/statusline.sh" "${DEST}/statusline.sh"
+# $DEST may be a symlink back to this repo (the setup on iphands' machine), in
+# which case source and destination are the same file and cp would fail.
+if [ "$(readlink -f "${SRC_DIR}/statusline.sh")" = "$(readlink -f "${DEST}/statusline.sh" 2>/dev/null)" ]; then
+    echo "   ${DEST} already resolves to this repo -- nothing to copy"
+else
+    cp -f "${SRC_DIR}/statusline.sh" "${DEST}/statusline.sh"
+fi
 chmod +x "${DEST}/statusline.sh"
 
 echo ">> wiring ${SETTINGS}"
