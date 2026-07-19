@@ -1,0 +1,69 @@
+#!/bin/bash
+set -euo pipefail
+
+# Install this repo's customized Claude Code status line.
+#
+#     ./install            # copy statusline.sh into place, wire settings.json
+#     ./install --revert   # restore the original settings.json, remove the script
+#     DEST=/path ./install # install somewhere other than ~/.claude/statusline
+#
+# Copies statusline.sh to $DEST and merges a "statusLine" key into settings.json
+# with jq, leaving every other key untouched. The original settings.json is saved
+# once as <file>.statusline.orig, so --revert restores the true pre-install state
+# no matter how many times this ran. Idempotent.
+#
+# NOTE: if $DEST is an upstream git clone (the default install method upstream
+# documents), this overwrites its statusline.sh. That is intended -- this repo is
+# the source of truth. See README.md.
+
+DEST="${DEST:-$HOME/.claude/statusline}"
+SETTINGS="${SETTINGS:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json}"
+
+SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKUP="${SETTINGS}.statusline.orig"
+
+command -v jq >/dev/null 2>&1 || {
+    echo "error: jq is required (to merge settings.json, and by statusline.sh at runtime)" >&2
+    echo "       install it with your package manager, e.g. 'apt install jq' / 'dnf install jq'" >&2
+    exit 1
+}
+
+if [ "${1:-}" = "--revert" ]; then
+    reverted=0
+    if [ -f "$BACKUP" ]; then
+        mv -f "$BACKUP" "$SETTINGS"
+        echo "  restored $SETTINGS"
+        reverted=1
+    fi
+    if [ -f "${DEST}/statusline.sh" ]; then
+        rm -f "${DEST}/statusline.sh"
+        echo "  removed ${DEST}/statusline.sh"
+        reverted=1
+    fi
+    [ "$reverted" -eq 1 ] || { echo "nothing to revert"; exit 0; }
+    echo ">> restart Claude Code for the change to take effect"
+    exit 0
+fi
+
+echo ">> installing status line to ${DEST}"
+mkdir -p "$DEST"
+cp -f "${SRC_DIR}/statusline.sh" "${DEST}/statusline.sh"
+chmod +x "${DEST}/statusline.sh"
+
+echo ">> wiring ${SETTINGS}"
+mkdir -p "$(dirname "$SETTINGS")"
+[ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
+
+# Save the original once, so --revert always reaches the true pre-install state.
+[ -f "$BACKUP" ] || cp -p "$SETTINGS" "$BACKUP"
+
+# Merge, never overwrite: settings.json holds unrelated keys.
+tmp="$(mktemp "${SETTINGS}.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
+jq --arg cmd "${DEST}/statusline.sh" \
+   '.statusLine = {type: "command", command: $cmd}' "$SETTINGS" > "$tmp"
+mv -f "$tmp" "$SETTINGS"
+trap - EXIT
+
+echo ">> done -- restart Claude Code, then verify the render with:"
+echo "   echo '{\"cwd\":\"'\"\$PWD\"'\",\"model\":{\"display_name\":\"Opus 4.8\"}}' | ${DEST}/statusline.sh"
