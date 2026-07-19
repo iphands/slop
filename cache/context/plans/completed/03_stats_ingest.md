@@ -1,6 +1,6 @@
 # Plan 03 — Stats: Rust Ingest Core (log reader → SQLite)
 
-> **Status**: pending
+> **Status**: done (2026-07-19)
 > **Created**: 2026-07-18
 > **Depends on**: Plan 02 (the proxy emits 9-field TSV lines)
 > **Goal**: `pkgcache-stats --once` reads the proxy's access logs, aggregates them, and writes numbers into `stats.sqlite` that match `awk` over the same file byte for byte — with no HTTP anywhere.

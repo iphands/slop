@@ -1,7 +1,7 @@
 # Stats Ingest Core — Tracker
 
 ## Overview
-- Status: 0% complete (0 of 6 tasks)
+- Status: **100% complete** (6 of 6 tasks)
 - Start date: *(not started)*
 - Depends on: Plan 02 complete — the proxy must be emitting 9-field TSV logs, and the
   Plan 02 tracker must have the host filesystem type recorded (WAL viability).
@@ -59,7 +59,7 @@ wrong Key Fact recorded honestly here is worth more than a clean-looking tracker
 | 3 | T3 sqlite schema + store | **done** | `be803538a` + `431024d58` | 10 more tests; see the fix commit |
 | 4 | T4 crash-safe tail | **done** | `e003a45e5` | 12 tests: rename adoption, truncation, replacement, partial line, lock |
 | 5 | T5 `--once` + env config | **done** | `9f49a2b0c` + `8080e3fa1` | **GATE PASSED** — and found a real bug |
-| 6 | T6 tick loop + pruning | pending | — | never delete today's/yesterday's log |
+| 6 | T6 tick loop + pruning | **done** | `068f79bb6` | verified live: tailed new traffic, exited 0 on SIGTERM |
 
 ### Deviations so far
 
@@ -114,3 +114,15 @@ The pruning rules are the delicate part: delete a log only when it is older than
 yesterday's, that last condition being the margin for nginx's `open_log_file_cache`, which
 holds an fd for up to a minute after the last write. Unlink a file nginx still holds and it
 appends to an unreachable inode, silently losing every request.
+
+## Outcome
+
+All six tasks done. **98 tests**, clippy `-D warnings` clean, fmt clean.
+
+The plan's central claim held: splitting ingest from HTTP bought a verification gate that
+found a real bug (`$upstream_bytes_received` being multi-valued) which no amount of reading
+the code would have surfaced.
+
+**Not verified, and honestly so:** the `--userns=keep-id` path (rootless-podman-only, and
+this dev machine's podman is broken), and the live host's filesystem type, which decides
+WAL vs TRUNCATE. `PKGCACHE_WAL=0` exists for the NFS/CIFS case but has never run in anger.
