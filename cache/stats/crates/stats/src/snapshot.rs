@@ -11,7 +11,7 @@
 
 use anyhow::Result;
 use rusqlite::Connection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::db;
 
@@ -31,7 +31,7 @@ fn ratio(hit: i64, total: i64) -> Ratio {
 }
 
 /// Counters for one slice (all / package / metadata), as the UI consumes them.
-#[derive(Debug, Default, Clone, Serialize, PartialEq)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Kpi {
     pub reqs: i64,
     pub bytes_served: i64,
@@ -45,14 +45,14 @@ pub struct Kpi {
 }
 
 /// One point in a time series.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Point {
     pub t: i64,
     pub package: Bucket,
     pub metadata: Bucket,
 }
 
-#[derive(Debug, Default, Clone, Serialize, PartialEq)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Bucket {
     pub bytes_hit: i64,
     pub bytes_miss: i64,
@@ -60,13 +60,13 @@ pub struct Bucket {
     pub reqs_miss: i64,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Series {
-    pub bucket: &'static str,
+    pub bucket: String,
     pub points: Vec<Point>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TopPath {
     pub path: String,
     /// Parsed package name, or the bare filename when unparseable. Raw paths run
@@ -80,7 +80,7 @@ pub struct TopPath {
     pub hit_ratio_bytes: Ratio,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Client {
     pub ip: String,
     pub label: Option<String>,
@@ -96,7 +96,7 @@ pub struct Client {
     pub top_packages: Vec<TopPath>,
 }
 
-#[derive(Debug, Default, Clone, Serialize, PartialEq)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Ingest {
     pub last_tick_at: i64,
     pub lag_seconds: i64,
@@ -108,15 +108,15 @@ pub struct Ingest {
     pub db_bytes: u64,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CacheDisk {
     pub bytes: u64,
     pub free_bytes: u64,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Kpis {
-    pub window: &'static str,
+    pub window: String,
     pub all: Kpi,
     pub package: Kpi,
     pub metadata: Kpi,
@@ -128,7 +128,7 @@ pub struct Kpis {
 /// All three windows ship together (~20 KB): window switching becomes pure
 /// client state with zero refetch, and an entire class of "which window is this
 /// snapshot for" bugs disappears.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Payload {
     pub generated_at: i64,
     pub ingest: Ingest,
@@ -232,7 +232,7 @@ fn series(conn: &Connection, since: i64, step: i64, n: usize, now: i64) -> Resul
         })
         .collect();
     Ok(Series {
-        bucket: if step == HOUR { "hour" } else { "day" },
+        bucket: if step == HOUR { "hour" } else { "day" }.to_string(),
         points,
     })
 }
@@ -449,7 +449,7 @@ pub fn build(
         ingest,
         cache_disk: cache_dir.and_then(cache_disk),
         kpis: Kpis {
-            window: "24h",
+            window: "24h".to_string(),
             all: kpi_for(conn, day, None)?,
             package: kpi_for(conn, day, Some("package"))?,
             metadata: kpi_for(conn, day, Some("metadata"))?,
@@ -601,5 +601,57 @@ mod tests {
         assert!(v.get("kpis").is_some());
         assert!(v.get("series_24h").is_some());
         assert!(v.get("clients").is_some());
+    }
+}
+
+#[cfg(test)]
+mod fixture_tests {
+    use super::*;
+
+    /// The committed fixture MUST deserialize into the live payload type.
+    ///
+    /// This is what stops `frontend/src/lib/fixture.json` drifting from the Rust
+    /// schema: Plan 05 builds the entire UI against the fixture with no backend
+    /// running, so a silent divergence would only surface at integration time.
+    #[test]
+    fn the_committed_fixture_matches_the_payload_schema() {
+        let raw = include_str!("../../../frontend/src/lib/fixture.json");
+        let p: Payload = serde_json::from_str(raw).expect("fixture must match Payload");
+
+        assert_eq!(p.series_24h.points.len(), 24);
+        assert_eq!(p.series_7d.points.len(), 168);
+        assert_eq!(p.series_30d.points.len(), 30);
+
+        // The awkward cases the UI has to handle must actually be present, or
+        // the fixture is not doing its job.
+        let zero = p
+            .clients
+            .iter()
+            .find(|c| c.package.reqs == 0 && c.metadata.reqs == 0)
+            .expect("a zero-traffic client, to prove null ratios render as an em dash");
+        assert_eq!(zero.package.hit_ratio_bytes, None);
+
+        assert!(
+            p.clients.iter().any(|c| c.ip.contains(':')),
+            "an IPv6 client, so the table cannot assume dotted quads"
+        );
+        assert!(
+            p.clients.iter().any(|c| c.label.is_some()),
+            "a labelled client AND an unlabelled one"
+        );
+        assert!(p.ingest.parse_errors > 0, "parse errors must be surfaced");
+        assert!(p.cache_disk.is_some(), "the cache-fullness tile");
+        assert!(
+            p.top_packages.iter().any(|t| t.bytes_served > 100_000_000),
+            "one huge package, which tanks an otherwise healthy ratio"
+        );
+        assert!(
+            p.clients.iter().all(|c| c.spark.len() == 24),
+            "every sparkline is exactly 24 slots"
+        );
+        assert!(
+            p.clients.iter().all(|c| c.top_packages.len() <= 10),
+            "the snapshot stays bounded"
+        );
     }
 }

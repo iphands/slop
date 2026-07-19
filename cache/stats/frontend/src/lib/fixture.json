@@ -1,0 +1,3659 @@
+{
+  "generated_at": 1784421080,
+  "ingest": {
+    "last_tick_at": 1784421080,
+    "lag_seconds": 0,
+    "files_tracked": 2,
+    "lines_ingested": 18412,
+    "parse_errors": 3,
+    "logs_readable": true,
+    "db_bytes": 245760
+  },
+  "cache_disk": {
+    "bytes": 41231232000,
+    "free_bytes": 412310000000
+  },
+  "kpis": {
+    "window": "24h",
+    "all": {
+      "reqs": 18,
+      "bytes_served": 14060247,
+      "bytes_upstream": 3514570,
+      "bytes_saved": 10549408,
+      "hit_ratio_bytes": 0.7503415836151385,
+      "hit_ratio_reqs": 0.6666666666666666
+    },
+    "package": {
+      "reqs": 8,
+      "bytes_served": 13259356,
+      "bytes_upstream": 3322302,
+      "bytes_saved": 9938949,
+      "hit_ratio_bytes": 0.7495800701029522,
+      "hit_ratio_reqs": 0.625
+    },
+    "metadata": {
+      "reqs": 10,
+      "bytes_served": 800830,
+      "bytes_upstream": 192268,
+      "bytes_saved": 610459,
+      "hit_ratio_bytes": 0.7630071301025186,
+      "hit_ratio_reqs": 0.7
+    },
+    "lifetime": {
+      "reqs": 19,
+      "bytes_served": 14060247,
+      "bytes_upstream": 3514570,
+      "bytes_saved": 10549408,
+      "hit_ratio_bytes": null,
+      "hit_ratio_reqs": null
+    }
+  },
+  "series_24h": {
+    "bucket": "hour",
+    "points": [
+      {
+        "t": 1784336400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784340000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784343600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784347200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784350800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784354400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784358000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784361600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784365200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784368800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784372400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784376000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784379600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784383200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784386800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784390400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784394000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784397600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784401200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784404800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784408400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784412000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784415600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 3320107,
+          "reqs_hit": 0,
+          "reqs_miss": 2
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 140416,
+          "reqs_hit": 0,
+          "reqs_miss": 1
+        }
+      },
+      {
+        "t": 1784419200,
+        "package": {
+          "bytes_hit": 9938949,
+          "bytes_miss": 300,
+          "reqs_hit": 5,
+          "reqs_miss": 1
+        },
+        "metadata": {
+          "bytes_hit": 611039,
+          "bytes_miss": 49375,
+          "reqs_hit": 7,
+          "reqs_miss": 2
+        }
+      }
+    ]
+  },
+  "series_7d": {
+    "bucket": "hour",
+    "points": [
+      {
+        "t": 1783818000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783821600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783825200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783828800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783832400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783836000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783839600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783843200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783846800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783850400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783854000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783857600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783861200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783864800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783868400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783872000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783875600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783879200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783882800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783886400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783890000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783893600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783897200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783900800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783904400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783908000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783911600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783915200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783918800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783922400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783926000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783929600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783933200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783936800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783940400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783944000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783947600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783951200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783954800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783958400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783962000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783965600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783969200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783972800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783976400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783980000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783983600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783987200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783990800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783994400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783998000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784001600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784005200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784008800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784012400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784016000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784019600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784023200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784026800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784030400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784034000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784037600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784041200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784044800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784048400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784052000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784055600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784059200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784062800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784066400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784070000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784073600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784077200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784080800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784084400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784088000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784091600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784095200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784098800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784102400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784106000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784109600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784113200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784116800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784120400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784124000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784127600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784131200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784134800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784138400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784142000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784145600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784149200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784152800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784156400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784160000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784163600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784167200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784170800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784174400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784178000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784181600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784185200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784188800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784192400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784196000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784199600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784203200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784206800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784210400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784214000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784217600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784221200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784224800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784228400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784232000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784235600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784239200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784242800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784246400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784250000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784253600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784257200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784260800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784264400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784268000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784271600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784275200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784278800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784282400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784286000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784289600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784293200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784296800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784300400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784304000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784307600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784311200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784314800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784318400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784322000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784325600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784329200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784332800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784336400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784340000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784343600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784347200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784350800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784354400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784358000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784361600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784365200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784368800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784372400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784376000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784379600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784383200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784386800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784390400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784394000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784397600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784401200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784404800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784408400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784412000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784415600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 3320107,
+          "reqs_hit": 0,
+          "reqs_miss": 2
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 140416,
+          "reqs_hit": 0,
+          "reqs_miss": 1
+        }
+      },
+      {
+        "t": 1784419200,
+        "package": {
+          "bytes_hit": 9938949,
+          "bytes_miss": 300,
+          "reqs_hit": 5,
+          "reqs_miss": 1
+        },
+        "metadata": {
+          "bytes_hit": 611039,
+          "bytes_miss": 49375,
+          "reqs_hit": 7,
+          "reqs_miss": 2
+        }
+      }
+    ]
+  },
+  "series_30d": {
+    "bucket": "day",
+    "points": [
+      {
+        "t": 1781913600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1782000000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1782086400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1782172800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1782259200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1782345600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1782432000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1782518400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1782604800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1782691200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1782777600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1782864000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1782950400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783036800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783123200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783209600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783296000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783382400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783468800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783555200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783641600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783728000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783814400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783900800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1783987200,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784073600,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784160000,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784246400,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 0,
+          "reqs_hit": 0,
+          "reqs_miss": 0
+        }
+      },
+      {
+        "t": 1784332800,
+        "package": {
+          "bytes_hit": 0,
+          "bytes_miss": 3320107,
+          "reqs_hit": 0,
+          "reqs_miss": 2
+        },
+        "metadata": {
+          "bytes_hit": 0,
+          "bytes_miss": 140416,
+          "reqs_hit": 0,
+          "reqs_miss": 1
+        }
+      },
+      {
+        "t": 1784419200,
+        "package": {
+          "bytes_hit": 9938949,
+          "bytes_miss": 300,
+          "reqs_hit": 5,
+          "reqs_miss": 1
+        },
+        "metadata": {
+          "bytes_hit": 611039,
+          "bytes_miss": 49375,
+          "reqs_hit": 7,
+          "reqs_miss": 2
+        }
+      }
+    ]
+  },
+  "clients": [
+    {
+      "ip": "192.168.10.10",
+      "label": "thinkpad",
+      "last_seen": 1784419200,
+      "package": {
+        "reqs": 8,
+        "bytes_served": 13259356,
+        "bytes_upstream": 3322302,
+        "bytes_saved": 9938949,
+        "hit_ratio_bytes": 0.7495800701029522,
+        "hit_ratio_reqs": 0.625
+      },
+      "metadata": {
+        "reqs": 10,
+        "bytes_served": 800830,
+        "bytes_upstream": 192268,
+        "bytes_saved": 610459,
+        "hit_ratio_bytes": 0.7630071301025186,
+        "hit_ratio_reqs": 0.7
+      },
+      "repos": [
+        "debian",
+        "debian-security",
+        "fedora"
+      ],
+      "spark": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        3460523
+      ],
+      "top_packages": [
+        {
+          "path": "/fedora/linux/updates/44/Everything/x86_64/Packages/g/glib2-2.88.2-1.fc44.x86_64.rpm",
+          "name": "glib2",
+          "version": "2.88.2",
+          "repo": "fedora",
+          "reqs": 3,
+          "bytes_served": 9896205,
+          "bytes_saved": 9896205,
+          "hit_ratio_bytes": 1.0
+        },
+        {
+          "path": "/debian/pool/main/c/cowsay/cowsay_3.03+dfsg2-8_all.deb",
+          "name": "cowsay",
+          "version": "3.03+dfsg2-8",
+          "repo": "debian",
+          "reqs": 2,
+          "bytes_served": 42744,
+          "bytes_saved": 42744,
+          "hit_ratio_bytes": 1.0
+        }
+      ]
+    },
+    {
+      "ip": "fd00:1234:5678::42",
+      "label": null,
+      "last_seen": 1784419200,
+      "package": {
+        "reqs": 8,
+        "bytes_served": 13259356,
+        "bytes_upstream": 3322302,
+        "bytes_saved": 9938949,
+        "hit_ratio_bytes": 0.7495800701029522,
+        "hit_ratio_reqs": 0.625
+      },
+      "metadata": {
+        "reqs": 10,
+        "bytes_served": 800830,
+        "bytes_upstream": 192268,
+        "bytes_saved": 610459,
+        "hit_ratio_bytes": 0.7630071301025186,
+        "hit_ratio_reqs": 0.7
+      },
+      "repos": [
+        "debian",
+        "debian-security",
+        "fedora"
+      ],
+      "spark": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        3460523
+      ],
+      "top_packages": [
+        {
+          "path": "/fedora/linux/updates/44/Everything/x86_64/Packages/g/glib2-2.88.2-1.fc44.x86_64.rpm",
+          "name": "glib2",
+          "version": "2.88.2",
+          "repo": "fedora",
+          "reqs": 3,
+          "bytes_served": 9896205,
+          "bytes_saved": 9896205,
+          "hit_ratio_bytes": 1.0
+        },
+        {
+          "path": "/debian/pool/main/c/cowsay/cowsay_3.03+dfsg2-8_all.deb",
+          "name": "cowsay",
+          "version": "3.03+dfsg2-8",
+          "repo": "debian",
+          "reqs": 2,
+          "bytes_served": 42744,
+          "bytes_saved": 42744,
+          "hit_ratio_bytes": 1.0
+        }
+      ]
+    },
+    {
+      "ip": "192.168.10.77",
+      "label": null,
+      "last_seen": 1784419200,
+      "package": {
+        "reqs": 0,
+        "bytes_served": 0,
+        "bytes_upstream": 0,
+        "bytes_saved": 0,
+        "hit_ratio_bytes": null,
+        "hit_ratio_reqs": null
+      },
+      "metadata": {
+        "reqs": 0,
+        "bytes_served": 0,
+        "bytes_upstream": 0,
+        "bytes_saved": 0,
+        "hit_ratio_bytes": null,
+        "hit_ratio_reqs": null
+      },
+      "repos": [],
+      "spark": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "top_packages": []
+    }
+  ],
+  "top_packages": [
+    {
+      "path": "/debian/pool/main/l/linux-signed-amd64/linux-image-6.12.0-amd64_6.12.95-1_amd64.deb",
+      "name": "linux-image-6.12.0-amd64",
+      "version": "6.12.95-1",
+      "repo": "debian",
+      "reqs": 1,
+      "bytes_served": 314572800,
+      "bytes_saved": 0,
+      "hit_ratio_bytes": 0.0
+    },
+    {
+      "path": "/fedora/linux/updates/44/Everything/x86_64/Packages/g/glib2-2.88.2-1.fc44.x86_64.rpm",
+      "name": "glib2",
+      "version": "2.88.2",
+      "repo": "fedora",
+      "reqs": 3,
+      "bytes_served": 9896205,
+      "bytes_saved": 9896205,
+      "hit_ratio_bytes": 1.0
+    },
+    {
+      "path": "/debian/pool/main/c/cowsay/cowsay_3.03+dfsg2-8_all.deb",
+      "name": "cowsay",
+      "version": "3.03+dfsg2-8",
+      "repo": "debian",
+      "reqs": 2,
+      "bytes_served": 42744,
+      "bytes_saved": 42744,
+      "hit_ratio_bytes": 1.0
+    }
+  ],
+  "top_metadata": [
+    {
+      "path": "/debian/dists/trixie/InRelease",
+      "name": "InRelease",
+      "version": "",
+      "repo": "debian",
+      "reqs": 5,
+      "bytes_served": 561664,
+      "bytes_saved": 561084,
+      "hit_ratio_bytes": 1.0
+    },
+    {
+      "path": "/debian-security/dists/trixie-security/InRelease",
+      "name": "InRelease",
+      "version": "",
+      "repo": "debian-security",
+      "reqs": 2,
+      "bytes_served": 86818,
+      "bytes_saved": 43409,
+      "hit_ratio_bytes": 0.5
+    },
+    {
+      "path": "/fedora/linux/releases/44/Everything/x86_64/os/repodata/repomd.xml",
+      "name": "repomd.xml",
+      "version": "",
+      "repo": "fedora",
+      "reqs": 2,
+      "bytes_served": 11932,
+      "bytes_saved": 5966,
+      "hit_ratio_bytes": 0.5
+    }
+  ]
+}
