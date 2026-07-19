@@ -2,6 +2,70 @@
 
 A place to house random AI assisted experiments. Cool stuff may migrate away from here into standalone projects.
 
+## Git discipline
+
+Applies to every sub-project here — `cache`, `qbots`, `qctrl`, and anything added later.
+
+### Git history is APPEND-ONLY. Never rewrite it.
+
+**Banned outright.** Do not run these unless the human explicitly asks, in that moment:
+
+| Banned | Why |
+|---|---|
+| `git commit --amend` | replaces a commit that may already be public |
+| `git rebase` (any form) | rewrites every commit it touches |
+| `git reset --hard`, or any reset that drops a commit | discards history |
+| `git push --force` / `--force-with-lease` | forces the rewrite onto everyone else |
+| `git revert` | banned here too — corrections are hand-written, not machine-generated |
+| deleting or moving a branch to hide commits | same thing by another name |
+
+**A mistake in a commit — wrong content, wrong message, a claim that turned out false — is
+fixed by a NEW commit that says what was wrong and corrects it.**
+
+```bash
+# WRONG                          # RIGHT
+git commit --amend               <edit the files>
+                                 git commit -m "fix(T6): record the findings the previous
+                                                commit's message overclaimed"
+```
+
+A wrong commit left visible, with a correction after it, is honest history. A rewritten one
+is a lie that also breaks everyone who pulled.
+
+**This holds even when the commit is "obviously" unpushed.** Push state changes without you
+seeing it. Checking it once at the top of a session and assuming it still holds hours later
+is exactly how this goes wrong.
+
+> **Incident, 2026-07-18 (`cache`).** A commit landed whose message claimed two doc files
+> were updated when they were not. The human had already pushed it. It was "fixed" with
+> `git commit --amend`, which diverged `main` from `origin/main` and forced the human to
+> clean up with a force push. A follow-up commit would have corrected the record with zero
+> blast radius.
+
+### Chain edit-then-commit with `&&`
+
+**A failed edit must never be followed by a commit that claims it succeeded.** This is the
+root cause of the incident above — a heredoc script hit an assertion and wrote nothing,
+while the `git commit` on the next line ran regardless.
+
+```bash
+edit_files.sh && git commit -m "..."     # RIGHT — commit cannot run if the edit fails
+edit_files.sh
+git commit -m "..."                      # WRONG — runs even when the edit blew up
+```
+
+### Verify a claim before putting it in a commit message
+
+If the message says a file was updated, re-read that file first. A commit message is a
+factual claim about the tree, and the same honesty rule applies to it as to anything else
+you say.
+
+### Also
+
+- **NEVER push.** The human pushes after review. *(Global rule, `~/.claude/CLAUDE.md`.)*
+- No co-author trailers unless asked.
+- Small, frequent commits — one logical change each.
+
 ## Resources
 
 ### ./vendor

@@ -12,10 +12,67 @@ per the slop convention. nginx/apt/dnf specifics stay here.
 > When one actually bites, add the symptom verbatim and the date. Tag genuinely observed
 > failures with `[OBSERVED YYYY-MM-DD]` so they can be told apart from the seeds.
 >
-> **Two entries are real observations, not seeds** — both found 2026-07-18 while probing
+> **Four entries are real observations, not seeds.** Three found 2026-07-18 while probing
 > the Plan 02 stats log format against a live nginx: *"A variable in the `access_log` path
-> silently logs NOTHING without a valid `root`"* and *"Logging `$uri` mis-files every
-> rewritten request"*. Both would have shipped.
+> silently logs NOTHING without a valid `root`"*, *"Logging `$uri` mis-files every
+> rewritten request"*, and *"`proxy_cache_valid` is the lowest-priority TTL"* (which was
+> live in this repo from day one). The fourth is a **process** failure, not an nginx one:
+> *"A failed edit followed by an unchained commit produces a lying commit message"*.
+
+---
+
+# A failed edit followed by an unchained commit produces a lying commit message
+
+## Problem
+
+`[OBSERVED 2026-07-18]`, Plan 02 T6. A Python heredoc was used to update
+`context/distilled.md` and `context/pitfalls.md`, then `git commit` ran on the next line:
+
+```bash
+python3 - <<'PY'
+...
+assert old_text in s        # <-- this failed
+...
+PY
+git add -A . && git commit -q -F - <<'EOF'   # <-- ran anyway
+```
+
+The assertion failed, so **neither file was written** — but the commit still ran, with a
+message stating that both had been updated. The commit landed containing only an unrelated
+config change, carrying a message that was simply false.
+
+Two things make this nastier than it looks:
+
+1. **The script's failure is invisible in the commit.** `git commit` succeeds, output looks
+   normal, and the lie is only discoverable by reading the diff against the message.
+2. **The "obvious" fix makes it much worse.** The instinct is `git commit --amend`. The
+   human had already pushed, so the amend diverged `main` from `origin/main` and forced
+   them to recover with a force push. See `RULES.md` Rule B2 — history is append-only.
+
+## Fix / How to avoid
+
+**Chain the edit and the commit**, so the commit cannot run if the edit fails:
+
+```bash
+edit_files.sh && git commit -m "..."     # RIGHT
+edit_files.sh                            # WRONG
+git commit -m "..."
+```
+
+Note `set -e` does **not** save you here: the heredoc and the commit are separate top-level
+commands in the tool call, not a single script.
+
+**Verify the claim before writing it.** A commit message is a factual claim about the tree.
+If it says a file was updated, `grep` that file first. `git show --stat HEAD` after
+committing catches it in one line.
+
+**When it happens anyway: fix forward.** A new commit that says *"the previous commit's
+message overclaimed; here are the changes it promised"* is honest, costs nothing, and
+cannot break anyone. Never amend.
+
+## Sources
+- pkgcache: `context/plans/RULES.md` (Rule B2), `../CLAUDE.md` (§ Git discipline)
+- pkgcache: incident commits `c815c54e6` → `2c937c524`, 2026-07-18
 
 ---
 

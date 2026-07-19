@@ -306,6 +306,14 @@ because `./build` still succeeds. Always `./run` and check `logs` before committ
 - Never batch unrelated changes.
 - **Never push** — the human pushes after review. No co-author trailers unless asked.
   *(Global rule, `~/.claude/CLAUDE.md`.)*
+- **Git history is append-only — NEVER rewrite it.** Banned: `git commit --amend`,
+  `git rebase`, `git reset --hard`, `git push --force`/`--force-with-lease`, `git revert`.
+  A bad commit — wrong content, wrong message, a claim that turned out false — is fixed by
+  a **new commit** that says what was wrong. This holds even when the commit looks
+  unpushed; it bit us on 2026-07-18 exactly that way. *(Full rule + incident:
+  [`../CLAUDE.md`](../CLAUDE.md) § Git discipline.)*
+- **Chain edit-then-commit with `&&`**, so a failed edit can never be followed by a commit
+  claiming it worked. That was the root cause of the same incident.
 
 ### 6. Tooling
 - **No `tmp/` scripts.** Helpers become real, documented, reusable scripts at the repo
@@ -332,9 +340,15 @@ because `./build` still succeeds. Always `./run` and check `logs` before committ
    cache dir stay out of git. `vendor/` is cloned, not authored — gitignored.
 7. **README.md is user-facing and must stay true.** Behavior change ⇒ README edit in the
    same commit.
-8. **Honesty.** Do the thing, verify it, then say "done." Never claim something is recorded
+8. **Git history is append-only.** Never `--amend`, `rebase`, `reset --hard`,
+   `push --force`, or `revert`. Fix a bad commit with a **new** commit that says what was
+   wrong. Rewriting history to tidy away a mistake is a *honesty* failure (rule 9) that
+   also breaks anyone who pulled — which is why these two sit together.
+   See [`../CLAUDE.md`](../CLAUDE.md) § Git discipline.
+9. **Honesty.** Do the thing, verify it, then say "done." Never claim something is recorded
    in `distilled.md`/`pitfalls.md`/`CLAUDE.md` unless the bytes are on disk. Never report a
-   cache HIT you didn't actually observe. Be direct.
+   cache HIT you didn't actually observe. **A commit message is a factual claim about the
+   tree — verify it before writing it.** Be direct.
 
 ---
 

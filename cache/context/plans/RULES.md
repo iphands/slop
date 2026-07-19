@@ -230,6 +230,48 @@ NOTE: **Never push.** The human pushes after review. No co-author trailers unles
 
 **MANDATORY** bake commit reminders into the plan TODO / Task lists!
 
+### Rule B2 — Git history is APPEND-ONLY. Fix forward, never rewrite.
+
+**CRITICAL: NEVER REWRITE A COMMIT. NOT EVEN THE ONE YOU JUST MADE.**
+
+Banned outright, unless the human explicitly asks in that moment:
+
+```
+git commit --amend        git rebase (any form)        git revert
+git reset --hard          git push --force[-with-lease]
+```
+
+1. A mistake in a commit — wrong content, wrong message, a claim that turned out false —
+   is fixed by a **NEW commit** that states what was wrong and corrects it:
+   ```bash
+   # WRONG                     # RIGHT
+   git commit --amend          <edit the files>
+                               git commit -m "fix(TN): record the findings the previous
+                                              commit's message overclaimed"
+   ```
+2. **This applies even when the commit looks unpushed.** Push state changes without you
+   seeing it. Verifying it once at the start of a session and assuming it still holds is
+   exactly how this fails.
+3. **Chain edit-then-commit with `&&`.** A failed edit must never be followed by a commit
+   claiming it succeeded:
+   ```bash
+   edit_files.sh && git commit -m "..."   # RIGHT
+   edit_files.sh                          # WRONG -- the commit below runs anyway
+   git commit -m "..."
+   ```
+4. **A commit message is a factual claim about the tree.** If it says a file was updated,
+   re-read that file before writing the message.
+
+> **Why this rule exists (2026-07-18, Plan 02 T6).** A heredoc that was supposed to edit
+> `distilled.md` and `pitfalls.md` hit an assertion and wrote nothing, but the unchained
+> `git commit` on the next line ran anyway — producing a commit whose message claimed
+> updates it did not contain. The human had already pushed it. "Fixing" it with
+> `git commit --amend` diverged `main` from `origin/main` and forced the human to recover
+> with a force push. A follow-up commit would have cost nothing.
+
+Full rule: [`../../../CLAUDE.md`](../../../CLAUDE.md) § Git discipline (applies to all slop
+projects).
+
 ### Rule C — Move completed plans to `completed/`
 
 **CRITICAL: WHEN A PLAN IS 100% COMPLETE, MOVE IT TO `completed/` IMMEDIATELY.**
