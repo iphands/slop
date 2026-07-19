@@ -20,6 +20,7 @@ use anyhow::{Context, Result};
 
 pub mod config;
 pub mod db;
+pub mod prune;
 pub mod tail;
 
 /// Current unix time in seconds. One call site, so tests and the DB layer agree.
@@ -59,8 +60,86 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    tracing::info!("tick loop arrives with T6; use --once for now");
-    Ok(())
+    run_loop(conn, cfg)
+}
+
+/// The tick loop: ingest every `tick_seconds`, prune hourly, exit cleanly.
+#[tokio::main(flavor = "current_thread")]
+async fn run_loop(mut conn: rusqlite::Connection, cfg: config::Config) -> Result<()> {
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs(cfg.tick_seconds));
+    // House convention (qctrl sets this on every interval): after a slow tick,
+    // delay rather than firing a burst to "catch up".
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    let mut last_prune = 0i64;
+    let mut shutdown = std::pin::pin!(shutdown_signal());
+
+    loop {
+        tokio::select! {
+            _ = tick.tick() => {}
+            _ = &mut shutdown => {
+                // The in-flight transaction, if any, has already committed --
+                // select! only cancels at an await point, and tick::run holds
+                // no await. Nothing to drain.
+                tracing::info!("shutdown signal received; exiting cleanly");
+                return Ok(());
+            }
+        }
+
+        match tail::tick(&mut conn, &cfg.logs_dir) {
+            Ok(r) if r.lines > 0 || r.parse_errors > 0 => tracing::info!(
+                lines = r.lines,
+                parse_errors = r.parse_errors,
+                files = r.files_advanced,
+                bytes = r.bytes_read,
+                "ingested"
+            ),
+            Ok(_) => {}
+            // A failed tick must not kill the loop: the next one retries from
+            // the same offsets, because nothing was committed.
+            Err(e) => tracing::error!("ingest tick failed: {e:#}"),
+        }
+
+        let now = now_secs();
+        if now - last_prune >= 3600 {
+            last_prune = now;
+            match prune::run(
+                &mut conn,
+                &cfg.logs_dir,
+                now,
+                cfg.log_retention_days,
+                cfg.db_retention_days,
+            ) {
+                Ok(r)
+                    if r.logs_deleted > 0 || r.hour_rows_deleted > 0 || r.path_rows_deleted > 0 =>
+                {
+                    tracing::info!(?r, "retention pass");
+                }
+                Ok(_) => {}
+                Err(e) => tracing::error!("prune failed: {e:#}"),
+            }
+        }
+    }
+}
+
+/// Resolve on SIGTERM (container stop) or SIGINT (Ctrl-C).
+async fn shutdown_signal() {
+    use tokio::signal::unix::{signal, SignalKind};
+    let mut term = match signal(SignalKind::terminate()) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("cannot install SIGTERM handler: {e}");
+            return std::future::pending().await;
+        }
+    };
+    let mut int = match signal(SignalKind::interrupt()) {
+        Ok(s) => s,
+        Err(_) => return std::future::pending().await,
+    };
+    tokio::select! {
+        _ = term.recv() => {}
+        _ = int.recv()  => {}
+    }
 }
 
 /// Human-readable summary of a `--once` run, plus the lifetime totals.
