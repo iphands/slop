@@ -21,6 +21,58 @@ per the slop convention. nginx/apt/dnf specifics stay here.
 
 ---
 
+# A UI verified only by build, types and curl still ships visible bugs
+
+## Problem
+
+`[OBSERVED 2026-07-19]` The stats dashboard passed everything that could be
+automated — `tsc -b`, `vite build`, 11 unit tests on the pure chart maths, and
+curl checks against every endpoint (200s, correct `Content-Type`, ETag→304,
+gzip, SPA fallback). It was never *looked at*. The first screenshot showed four
+bugs, one of them a real data defect:
+
+1. **Every sparkline was flat** while the KPI tiles beside them showed 90+ MiB.
+   The 24h window spans **25** distinct hour buckets, so indexing forward from
+   `now - 24h` put the current hour at index 24 of a 24-slot array and dropped
+   it. All recent traffic — i.e. all of it — vanished from the sparklines.
+2. **Top-metadata was a column of indistinguishable 64-character hashes**,
+   because apt fetches indices via `by-hash/`, whose files are named after their
+   own SHA. "Last path segment" is the obvious display rule and the wrong one.
+3. A tile reusing the KPI component **labelled cache fullness "hit ratio"**.
+4. An explanatory subtitle ("a low ratio is correct here") printed
+   unconditionally, so it appeared next to a 100% ratio and read as a bug.
+
+None of these could fail a type check, a build, or an endpoint assertion. Every
+one is obvious in a single glance at the rendered page.
+
+## Fix / How to avoid
+
+**Look at the thing.** For any UI, a rendered screenshot is a distinct
+verification step, not a nicety — it is the only check that covers "the numbers
+are present and correct but the picture is wrong".
+
+Specific traps worth carrying forward:
+
+- **Time-bucket fencepost.** A rolling N-hour window touches **N+1** buckets.
+  Anchor a series on the *current* bucket and count backwards; do not index
+  forward from the start. Assert that recent traffic lands in the **last** slot.
+- **A "last path segment" display rule** breaks on content-addressed paths.
+  Check what it renders for `by-hash/`, and fall back to the enclosing directory.
+- **A reused component's hardcoded label** becomes a lie at the second call
+  site. If a component prints a fixed word next to a caller-supplied number,
+  make the word a prop.
+- **An unconditional explanation** is a claim. Gate it on the condition it
+  explains.
+
+## Sources
+- pkgcache: `stats/crates/stats/src/snapshot.rs` (sparkline anchor),
+  `stats/crates/ingest/src/pkgname.rs` (`display_name`)
+- pkgcache: `stats/frontend/src/{components/Primitives,pages/Dashboard}.tsx`
+- pkgcache: `docs/dashboard.jpg` — the screenshot in question
+- pkgcache: fix commit `fa996c222`
+
+---
+
 # A failed edit followed by an unchained commit produces a lying commit message
 
 ## Problem
