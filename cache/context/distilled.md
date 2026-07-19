@@ -72,6 +72,16 @@ location blocks reproduced.
   the ~300-byte 304 round-trip), MISS (contributes 0, not a negative).
 - `$upstream_bytes_received` is `-` on a HIT; `$upstream_cache_status` is `-` on
   non-proxied locations (`location = /`).
+- **`$upstream_*` variables can hold MULTIPLE values.** `[LIVE 2026-07-19]` nginx
+  documents them as carrying one value per upstream connection, "separated by commas and
+  colons like addresses in `$upstream_addr`". A request that hits more than one upstream —
+  a `proxy_next_upstream` retry, or an internal redirect — logs e.g. `0, 908`:
+  ```text
+  1784420365.440 … 404 … 300 … 0, 908 … MISS … /debian/does-not-exist.deb
+  ```
+  Any parser treating the field as a single integer **silently drops the whole line**.
+  Split on `,` and `:`, skip `-` legs, sum. Found by the awk-vs-sqlite gate, which
+  disagreed by exactly one line out of sixteen — nothing else looked wrong.
 - **A HEAD request logs `body_bytes_sent=0` with a real cache status** (`HEAD 200 0 - HIT`).
   Your own `curl -sI` verification traffic therefore inflates hit *counts* while
   contributing zero bytes — exclude HEAD from byte ratios.
