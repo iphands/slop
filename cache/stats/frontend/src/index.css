@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Dark by default: this is an ops dashboard, not a consumer site, so there is
+   no toggle to maintain. */
+body {
+  @apply bg-slate-950 text-slate-100 antialiased;
+}

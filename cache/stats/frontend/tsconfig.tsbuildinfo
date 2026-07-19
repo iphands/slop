@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/components/ClientTable.tsx","./src/components/IngestHealth.tsx","./src/components/Primitives.tsx","./src/lib/api.ts","./src/lib/format.ts","./src/lib/scale.test.ts","./src/lib/scale.ts","./src/pages/Dashboard.tsx"],"version":"5.9.3"}
