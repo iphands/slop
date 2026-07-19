@@ -2,6 +2,8 @@
 
 Reads the proxy's TSV access log, aggregates into SQLite, serves the dashboard.
 
+![The pkgcache stats dashboard](../docs/dashboard.jpg)
+
 ## Dev loop
 
 **Node 22 is required** — node 24 segfaults during `npm install` on this host

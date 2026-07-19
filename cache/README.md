@@ -181,6 +181,8 @@ The cache directory (`/srv/pkgcache/data`) grows as packages are cached.
 
 ## Stats dashboard
 
+![The pkgcache stats dashboard](docs/dashboard.jpg)
+
 A second, optional container reads the proxy's access log off the shared volume and serves
 a dashboard on **:8081**. It is coupled to the proxy **only through the filesystem** — no
 shared network — so it can never affect package serving, and if it is down for a week it
