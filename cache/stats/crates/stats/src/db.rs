@@ -433,7 +433,7 @@ pub fn db_bytes(path: &std::path::Path) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pkgcache_ingest::{Batch, ParseError};
+    use pkgcache_ingest::{Batch, Drained, ParseError};
 
     fn mem_db() -> Connection {
         let mut c = Connection::open_in_memory().unwrap();
@@ -446,13 +446,7 @@ mod tests {
         format!("1784418424.0\t192.168.10.10\tGET\t200\t{body}\t{upstream}\t{cache}\t0.1\t{uri}")
     }
 
-    fn batch(
-        lines: &[String],
-    ) -> (
-        Vec<(HourKey, HourCounters)>,
-        Vec<(PathKey, PathCounters)>,
-        Totals,
-    ) {
+    fn batch(lines: &[String]) -> Drained {
         let mut b = Batch::new();
         for l in lines {
             match pkgcache_ingest::parse_line_at(l, 1_784_418_424.0) {

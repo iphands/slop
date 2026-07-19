@@ -25,7 +25,7 @@ pub mod classify;
 pub mod line;
 pub mod pkgname;
 
-pub use agg::{Batch, HourCounters, HourKey, PathCounters, PathKey, Totals};
+pub use agg::{Batch, Drained, HourCounters, HourKey, PathCounters, PathKey, Totals};
 pub use chunk::split_complete_lines;
 pub use classify::{classify, Classified, Kind};
 pub use line::{parse_line, parse_line_at, CacheClass, Event, ParseError};

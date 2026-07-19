@@ -122,6 +122,16 @@ impl Totals {
     }
 }
 
+/// What [`Batch::drain`] yields: hourly rows, path rows, and the lifetime delta.
+///
+/// A named alias rather than a bare tuple, so callers (and their test helpers)
+/// can spell the type without tripping `clippy::type_complexity`.
+pub type Drained = (
+    Vec<(HourKey, HourCounters)>,
+    Vec<(PathKey, PathCounters)>,
+    Totals,
+);
+
 /// A tick's accumulated deltas.
 #[derive(Debug, Default)]
 pub struct Batch {
@@ -258,14 +268,7 @@ impl Batch {
     }
 
     /// Consume the batch, yielding rows ready to UPSERT.
-    #[allow(clippy::type_complexity)]
-    pub fn drain(
-        self,
-    ) -> (
-        Vec<(HourKey, HourCounters)>,
-        Vec<(PathKey, PathCounters)>,
-        Totals,
-    ) {
+    pub fn drain(self) -> Drained {
         (
             self.hours.into_iter().collect(),
             self.paths.into_iter().collect(),
