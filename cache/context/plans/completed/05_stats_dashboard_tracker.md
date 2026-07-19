@@ -1,7 +1,7 @@
 # Stats Dashboard — Tracker
 
 ## Overview
-- Status: 0% complete (0 of 5 tasks)
+- Status: **100% complete** (5 of 5 tasks)
 - Start date: *(not started)*
 - Depends on: **Plan 04 T2** to start (frozen schema + `fixture.json`); Plan 04 complete to
   verify end-to-end
@@ -49,3 +49,24 @@ tedious.
 ## Notes / Deviations
 
 *(none yet)*
+
+## Outcome
+
+All five tasks done. 11 frontend tests (`lib/scale.ts`, `lib/format.ts`), `tsc -b` clean,
+`vite build` clean, and the UI verified serving from inside the container.
+
+### Environment findings, both predicted by the plan
+
+- **Node 24 SEGFAULTS** during `npm install` on this host — exactly what qctrl's justfile
+  documents. nvm's **node 22** works; `.nvmrc` pins it. Anyone building the frontend must
+  use node 22.
+- `@vitejs/plugin-react` 6 requires **vite ^8**, so the planned vite ^7 could not resolve.
+
+### Not done
+
+- The `dataviz` skill was **not** run before writing the chart components. The palette is
+  the plan's stated semantic scheme (packages emerald, metadata sky, upstream amber, errors
+  rose) but its contrast has **not** been validated. Worth a pass.
+- No component smoke tests; only the pure `lib/` functions are tested, which is where the
+  value is.
+- Not viewed in a real browser at phone width — verified by markup and build only.

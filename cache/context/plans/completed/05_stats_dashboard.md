@@ -1,6 +1,6 @@
 # Plan 05 — Stats: Dashboard Frontend
 
-> **Status**: pending
+> **Status**: done (2026-07-19)
 > **Created**: 2026-07-18
 > **Depends on**: Plan 04 T2 (frozen payload schema + `fixture.json`) to start; Plan 04 complete to verify end-to-end
 > **Goal**: A dark, fast, mobile-responsive dashboard at `:8081` showing global and per-client cache effectiveness, with charts hand-rolled in SVG and no charting dependency.

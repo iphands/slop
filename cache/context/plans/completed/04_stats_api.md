@@ -1,6 +1,6 @@
 # Plan 04 — Stats: API + Snapshot + Container
 
-> **Status**: pending
+> **Status**: done (2026-07-19)
 > **Created**: 2026-07-18
 > **Depends on**: Plan 03 (correct numbers in `stats.sqlite`)
 > **Goal**: `GET :8081/api/stats` serves a pre-serialized snapshot of those numbers in sub-millisecond time, from a self-contained container that runs alongside the proxy.

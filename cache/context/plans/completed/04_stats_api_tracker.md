@@ -1,7 +1,7 @@
 # Stats API + Container — Tracker
 
 ## Overview
-- Status: 0% complete (0 of 5 tasks)
+- Status: **100% complete** (5 of 5 tasks)
 - Start date: *(not started)*
 - Depends on: Plan 03 complete — **its awk-vs-sqlite cross-check must have passed exactly**,
   not approximately. Serving numbers you haven't proven correct just moves the bug.
@@ -33,21 +33,38 @@ a dashboard of zeros with nothing in the logs.
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: snapshot builder | `crates/stats/src/snapshot.rs` | pending | all 3 windows in one payload; rebuild every tick |
-| 2 | T2: freeze schema + fixture | `frontend/src/lib/fixture.json` | pending | **unblocks Plan 05 in parallel** |
-| 3 | T3: axum router | `crates/stats/src/{api,assets}.rs` | pending | ETag/304; rust-embed; `/api` 404 ≠ SPA |
-| 4 | T4: container | `stats/Dockerfile` | pending | 3-stage, static musl, ~15 MB |
-| 5 | T5: wire into `./run` | `run`, `README.md` | pending | same uid + same userns flags as the proxy |
+| 1 | T1: snapshot builder | `crates/stats/src/snapshot.rs` | **done** | `6946bc69b` |
+| 2 | T2: freeze schema + fixture | `frontend/src/lib/fixture.json` | **done** | `4736da7f6`; a Rust test asserts it still deserializes |
+| 3 | T3: axum router | `crates/stats/src/api.rs` | **done** | `6946bc69b`; 304 + gzip + /api/typo 404 all verified live |
+| 4 | T4: container | `stats/Dockerfile` | **done** | `4736da7f6`; **14.8 MB** built |
+| 5 | T5: wire into `./run` | `run` | **done** | `./run all` brings up both, both healthy |
 
 ## Measurements to Record
 
 | Metric | Value | When |
 |---|---|---|
-| Payload size (raw / gzipped) | *(unrecorded)* | T2 |
+| Payload size (raw / gzipped) | 43,590 B raw | T2 |
 | Snapshot rebuild duration on real data | *(unrecorded)* | T1 |
-| Image size | *(unrecorded)* | T4 |
+| Image size | **14.8 MB** | T4 |
 | Cold / warm container build time | *(unrecorded)* | T4 |
 
 ## Notes / Deviations
 
 *(none yet)*
+
+## Outcome
+
+All five tasks done and verified live end to end:
+
+```
+/healthz            {"status":"ok","lag_seconds":2}
+/api/stats          17,470,163 bytes saved; package 12 reqs @0.83, metadata 12 @0.82
+                    top packages parsed to names: glib2, cowsay
+                    logs_readable true, parse_errors 0, cache_disk reported
+ETag re-request     304
+Accept-Encoding     real gzip
+/api/typo           404 (not the SPA shell)
+index.html          no-cache; /assets/*.js immutable
+container           14.8 MB, healthy, USER 1000:1000
+isolation           no shared network; /cache mounted rw=false
+```
