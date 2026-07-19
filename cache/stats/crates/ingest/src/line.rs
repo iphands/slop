@@ -184,7 +184,7 @@ pub fn parse_line_at(line: &str, now: f64) -> Result<Event<'_>, ParseError> {
 
     let status = num::<u16>(f[3], "status")?;
     let body_bytes = num::<u64>(f[4], "body_bytes")?;
-    let upstream_bytes = dash_or_num::<u64>(f[5], "upstream_bytes")?;
+    let upstream_bytes = sum_upstream_bytes(f[5])?;
     let request_ms = seconds_to_ms(f[7])?;
 
     Ok(Event {
@@ -223,15 +223,31 @@ fn num<T: std::str::FromStr>(s: &str, field: &'static str) -> Result<T, ParseErr
     })
 }
 
-/// nginx writes `-` for an unset numeric variable (e.g. upstream bytes on a HIT).
-fn dash_or_num<T: std::str::FromStr + Default>(
-    s: &str,
-    field: &'static str,
-) -> Result<T, ParseError> {
+/// Sum `$upstream_bytes_received`, which is **not always a single number**.
+///
+/// nginx documents the `$upstream_*` variables as carrying one value per
+/// upstream connection, "separated by commas and colons like addresses in the
+/// `$upstream_addr` variable". A request that hit more than one upstream —
+/// a `proxy_next_upstream` retry, or an internal redirect — logs something like
+/// `0, 908`.
+///
+/// Observed live 2026-07-18 on a 404 through `/debian/`, and it was rejecting
+/// the entire line. Any such request would have vanished from the stats.
+///
+/// `-` and empty both mean zero (e.g. a cache HIT, which never went upstream).
+fn sum_upstream_bytes(s: &str) -> Result<u64, ParseError> {
     if s == "-" || s.is_empty() {
-        return Ok(T::default());
+        return Ok(0);
     }
-    num(s, field)
+    let mut total: u64 = 0;
+    for part in s.split([',', ':']) {
+        let p = part.trim();
+        if p.is_empty() || p == "-" {
+            continue; // one leg of a multi-upstream request contributed nothing
+        }
+        total = total.saturating_add(num::<u64>(p, "upstream_bytes")?);
+    }
+    Ok(total)
 }
 
 /// `$request_time` is fractional seconds ("0.266"); we store milliseconds.
@@ -303,6 +319,41 @@ mod tests {
         let ev = parse_line_at(&s, NOW).unwrap();
         assert!(ev.upstream_bytes > ev.body_bytes);
         assert_eq!(ev.saved(), 0, "a MISS must contribute 0, never a negative");
+    }
+
+    #[test]
+    fn a_multi_upstream_bytes_field_is_summed_not_rejected() {
+        // OBSERVED LIVE 2026-07-18. nginx logs one value per upstream connection,
+        // comma/colon separated, when a request hits more than one upstream --
+        // a proxy_next_upstream retry or an internal redirect. This exact line
+        // was silently dropping a 404 from the stats until the awk-vs-sqlite
+        // gate caught the one-line discrepancy.
+        let s = line(&[
+            "1784420365.440",
+            "172.17.0.1",
+            "GET",
+            "404",
+            "300",
+            "0, 908",
+            "MISS",
+            "0.399",
+            "/debian/does-not-exist.deb",
+        ]);
+        let ev = parse_line_at(&s, NOW).unwrap();
+        assert_eq!(ev.upstream_bytes, 908, "0 + 908");
+        assert_eq!(ev.status, 404);
+    }
+
+    #[test]
+    fn upstream_bytes_separators_and_placeholders_are_handled() {
+        assert_eq!(sum_upstream_bytes("-").unwrap(), 0);
+        assert_eq!(sum_upstream_bytes("").unwrap(), 0);
+        assert_eq!(sum_upstream_bytes("512").unwrap(), 512);
+        assert_eq!(sum_upstream_bytes("0, 908").unwrap(), 908);
+        // Colons appear for internal redirects, and a leg may be "-".
+        assert_eq!(sum_upstream_bytes("100 : 200").unwrap(), 300);
+        assert_eq!(sum_upstream_bytes("-, 42").unwrap(), 42);
+        assert!(sum_upstream_bytes("nonsense").is_err());
     }
 
     #[test]
