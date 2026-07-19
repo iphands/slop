@@ -2,6 +2,8 @@
 /target/
 /target-*/
 
+/roster.yaml
+
 # Cargo
 **/*.rs.bk
 
