@@ -171,6 +171,14 @@ CREATE TABLE IF NOT EXISTS client_label (
     Ok(())
 }
 
+/// Create the schema on an in-memory connection. Test-only: production always
+/// goes through [`open`], which also sets the PRAGMAs and runs the integrity
+/// check.
+#[cfg(test)]
+pub fn migrate_for_tests(conn: &mut Connection) {
+    migrate(conn).expect("migrate test db");
+}
+
 /// Every lifetime counter we track, so callers cannot typo a key.
 pub const TOTAL_KEYS: &[&str] = &[
     "reqs",

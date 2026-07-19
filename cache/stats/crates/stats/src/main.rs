@@ -4,6 +4,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod db;
+pub mod tail;
 
 /// Current unix time in seconds. Kept in one place so tests and the DB layer
 /// agree, and so there is exactly one call site to stub if that is ever needed.
