@@ -12,12 +12,14 @@ per the slop convention. nginx/apt/dnf specifics stay here.
 > When one actually bites, add the symptom verbatim and the date. Tag genuinely observed
 > failures with `[OBSERVED YYYY-MM-DD]` so they can be told apart from the seeds.
 >
-> **Four entries are real observations, not seeds.** Three found 2026-07-18 while probing
+> **Five entries are real observations, not seeds.** Three found 2026-07-18 while probing
 > the Plan 02 stats log format against a live nginx: *"A variable in the `access_log` path
 > silently logs NOTHING without a valid `root`"*, *"Logging `$uri` mis-files every
 > rewritten request"*, and *"`proxy_cache_valid` is the lowest-priority TTL"* (which was
-> live in this repo from day one). The fourth is a **process** failure, not an nginx one:
-> *"A failed edit followed by an unchained commit produces a lying commit message"*.
+> live in this repo from day one). One is a **process** failure rather than an nginx one:
+> *"A failed edit followed by an unchained commit produces a lying commit message"*. And
+> one came from finally *looking* at the dashboard: *"A UI verified only by build, types
+> and curl still ships visible bugs"*.
 
 ---
 
