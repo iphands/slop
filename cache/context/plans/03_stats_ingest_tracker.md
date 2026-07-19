@@ -49,3 +49,35 @@ working after T6 adds the tick loop.
 
 *(none yet — record anything the plan asserted that turns out to be wrong, bluntly. A
 wrong Key Fact recorded honestly here is worth more than a clean-looking tracker.)*
+
+## Progress log (live)
+
+| # | Task | Status | Commit | Notes |
+|---|------|--------|--------|-------|
+| 1 | T1 workspace scaffold | **done** | `26619cfe5` | rustc 1.94.1; build/clippy/fmt clean |
+| 2 | T2 pure ingest crate | **done** | `b42d33cbb` | 63 tests, 0.05s, no fixtures |
+| 3 | T3 sqlite schema + store | **done** | `be803538a` + `431024d58` | 10 more tests; see the fix commit |
+| 4 | T4 crash-safe tail | pending | — | flock, inode/offset, single transaction |
+| 5 | T5 `--once` + env config | pending | — | **the awk cross-check gate** |
+| 6 | T6 tick loop + pruning | pending | — | never delete today's/yesterday's log |
+
+### Deviations so far
+
+- **`be803538a` shipped with a false claim in its message** ("clippy clean" — it
+  was not). Cause: `cargo clippy ... | tail -2 && ...` exits with *tail's*
+  status, so a failing clippy returned 0 and the `&&` chain continued. Corrected
+  forward in `431024d58`, per the append-only rule. **All verification now uses
+  `set -o pipefail`.** This is the second instance of the same shape as the
+  heredoc bug behind `c815c54e6` — a check whose failure did not propagate.
+- Two bugs the tests caught, both in my *tests* rather than the code: `ParseError`
+  derived `Eq` while holding an `f64`; and a day-bucket expectation of
+  `1784376000`, which is not a multiple of 86400. Added an assertion that every
+  bucket is an exact multiple of its width.
+- `Drained` type alias added to `agg.rs` to satisfy `clippy::type_complexity`
+  properly, replacing an `#[allow]`.
+
+### Environment
+
+- rustc/cargo **1.94.1** (gentoo). `/tmp` is tmpfs, so WAL is fine for dev tests;
+  the live host's `findmnt -no FSTYPE /main/docker/cache` is **still unrecorded**
+  and gates the WAL-vs-TRUNCATE choice in production.
