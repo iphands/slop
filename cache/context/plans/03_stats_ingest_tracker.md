@@ -57,8 +57,8 @@ wrong Key Fact recorded honestly here is worth more than a clean-looking tracker
 | 1 | T1 workspace scaffold | **done** | `26619cfe5` | rustc 1.94.1; build/clippy/fmt clean |
 | 2 | T2 pure ingest crate | **done** | `b42d33cbb` | 63 tests, 0.05s, no fixtures |
 | 3 | T3 sqlite schema + store | **done** | `be803538a` + `431024d58` | 10 more tests; see the fix commit |
-| 4 | T4 crash-safe tail | pending | — | flock, inode/offset, single transaction |
-| 5 | T5 `--once` + env config | pending | — | **the awk cross-check gate** |
+| 4 | T4 crash-safe tail | **done** | `e003a45e5` | 12 tests: rename adoption, truncation, replacement, partial line, lock |
+| 5 | T5 `--once` + env config | **done** | `9f49a2b0c` + `8080e3fa1` | **GATE PASSED** — and found a real bug |
 | 6 | T6 tick loop + pruning | pending | — | never delete today's/yesterday's log |
 
 ### Deviations so far
@@ -81,3 +81,36 @@ wrong Key Fact recorded honestly here is worth more than a clean-looking tracker
 - rustc/cargo **1.94.1** (gentoo). `/tmp` is tmpfs, so WAL is fine for dev tests;
   the live host's `findmnt -no FSTYPE /main/docker/cache` is **still unrecorded**
   and gates the WAL-vs-TRUNCATE choice in production.
+
+### T5: the gate did its job
+
+Against 16 real lines from the live proxy, `awk` and `sqlite3` disagreed by exactly one
+line. Cause: **`$upstream_bytes_received` is not always a single number.** nginx logs one
+value per upstream connection, comma/colon separated, when a request hits more than one
+upstream (a `proxy_next_upstream` retry or an internal redirect):
+
+```text
+1784420365.440 … 404 … 300 … 0, 908 … MISS … /debian/does-not-exist.deb
+```
+
+The parser rejected the whole line, so every such request would have silently vanished.
+Fixed with `sum_upstream_bytes()` (+2 regression tests, one using the exact line) and
+recorded in `distilled.md`.
+
+This is exactly the class of bug the 03/04 plan split exists to catch: nothing errored, the
+numbers looked plausible, and only summing the same file two independent ways revealed it.
+
+**Gate now passes on real data, all seven metrics to the byte** — lines 16/16,
+bytes_served 10,480,680, bytes_upstream 3,514,280, requests 16/16, hit_requests 9/9,
+errors 1/1, bytes_saved 6,970,131, parse_errors 0. Idempotency confirmed live (three
+further `--once` runs ingest 0 lines, totals unchanged), as is the unreadable-log-dir path
+(`logs readable false` + the loud same-uid warning).
+
+### Next
+
+**T6** — the tick loop, log pruning and DB retention — is the only task left in Plan 03.
+The pruning rules are the delicate part: delete a log only when it is older than
+`LOG_RETENTION_DAYS` **and** fully ingested (`offset >= size`) **and** not today's or
+yesterday's, that last condition being the margin for nginx's `open_log_file_cache`, which
+holds an fd for up to a minute after the last write. Unlink a file nginx still holds and it
+appends to an unreachable inode, silently losing every request.
