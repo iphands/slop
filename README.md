@@ -17,8 +17,6 @@ A place to house random AI-assisted experiments. Cool stuff may migrate away fro
 
 The hard requirement is caching **both** apt and dnf. Fedora's `dnf` fetches over **HTTPS + metalink** (dynamic mirror selection), which rules out forward proxies — nginx is a **reverse cache** that originates upstream TLS itself, so clients speak plain HTTP to it. Packages stay GPG-verified end-to-end.
 
-> **Note:** This project was previously named `llama-proxy` and has been renamed to `cache`.
-
 ---
 
 ### qbots — external Quake 2 bot clients
