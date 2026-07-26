@@ -156,17 +156,15 @@ impl Conn {
                 self.state = ConnState::Connected;
             }
             Some("client_connect") => {}
-            Some("print") => {
-                // The server rejects at `SVC_DirectConnect` — before `client_connect`,
+            Some("print") if self.state == ConnState::Connecting => {
+                // The server rejects at `SVC_Directconnect` — before `client_connect`,
                 // i.e. before a netchan exists. So an OOB `print` received while we are
                 // still `Connecting` is a handshake rejection (`Server is full.`,
                 // `Bad challenge.`, `Connection refused.`, protocol/password), not chat.
                 // Once Active, chat/MOTD arrives in-band as `svc_print` (see `on_payload`).
-                if self.state == ConnState::Connecting {
-                    let reason = line.strip_prefix("print").unwrap_or(line).trim();
-                    self.reject_reason = Some(reason.to_string());
-                    self.state = ConnState::Rejected;
-                }
+                let reason = line.strip_prefix("print").unwrap_or(line).trim();
+                self.reject_reason = Some(reason.to_string());
+                self.state = ConnState::Rejected;
             }
             _ => {}
         }
