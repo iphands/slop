@@ -222,6 +222,8 @@ cache/
 |---|---|---|
 | `/debian/…` | `http://deb.debian.org/debian/…` | HTTP (Fastly CDN) |
 | `/debian-security/…` | `http://security.debian.org/debian-security/…` | HTTP |
+| `/ubuntu/…` | `http://archive.ubuntu.com/ubuntu/…` | HTTP |
+| `/ubuntu-security/…` | `http://security.ubuntu.com/ubuntu/…` | HTTP, **path remap** ⇒ `rewrite` in the `.deb` sub-location |
 | `/fedora/…` | `https://dl.fedoraproject.org/pub/fedora/…` | **nginx originates TLS** |
 | `/healthz` | — | `200 ok` (used by HEALTHCHECK) |
 | `/` | — | route banner |

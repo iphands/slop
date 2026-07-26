@@ -1,7 +1,7 @@
 # Ubuntu 22.04 (jammy) route + client container — Tracker
 
 ## Overview
-- Status: 0% complete
+- Status: 33% complete (T1 done)
 - Start date: 2026-07-25
 - Test endpoint: `http://localhost:8080` (local docker, `CACHE_DIR=/tmp/pkgcache-test`),
   with `containers/ubuntu` built against `CACHE=http://<host-ip>:8080` so the container
@@ -23,10 +23,20 @@
 
 | # | Task | File | Status | Notes |
 |---|------|------|--------|-------|
-| 1 | T1: `/ubuntu/` + `/ubuntu-security/` routes | `proxy/conf.d/pkgcache.conf` | pending | metadata TTL clamp + security-pocket `rewrite` |
+| 1 | T1: `/ubuntu/` + `/ubuntu-security/` routes | `proxy/conf.d/pkgcache.conf` | done | clamp measured 3300s -> 60s; sec `.deb` 200 not 404 |
 | 2 | T2: `containers/ubuntu` image + build/publish | `containers/ubuntu/*` | pending | classic `sources.list`, not deb822 |
 | 3 | T3: docs + Rule D harvest | `README.md`, `CLAUDE.md`, `context/*.md` | pending | SERIES.md marks 06_3 done |
 
 ## Notes / Deviations
 
-- Plan asserted nothing yet. Record here anything that turns out wrong — bluntly.
+- **T1 confirmed the Pre-Identified Bug by measurement, not argument.** A throwaway
+  image with the metadata clamp removed gave `valid_sec - date = 3300`; with it, `60`.
+  The +68 s request returned `REVALIDATED` (it would have said `HIT` for 55 min without
+  the clamp). Both proofs are in the T1 commit message.
+- **Incidental finding, recorded in README:** Debian metadata is cached **120 s**, not the
+  60 s the config appears to say — `deb.debian.org` sends `max-age=120` and upstream
+  Cache-Control outranks `proxy_cache_valid`. Harmless (still short, still revalidated) but
+  the README said 60 s, which was not true. Not "fixed" in the config: 120 s is upstream's
+  own freshness signal and shortening it would only add requests.
+- Local test proxy runs on **:8090**, not :8080 — an unrelated `opencode` container owns
+  8080 on this dev box.

@@ -37,6 +37,8 @@ Each client path prefix maps to a real upstream mirror:
 |---|---|---|
 | `/debian/…` | `http://deb.debian.org/debian/…` | Fastly CDN, HTTP, GPG-signed |
 | `/debian-security/…` | `http://security.debian.org/debian-security/…` | |
+| `/ubuntu/…` | `http://archive.ubuntu.com/ubuntu/…` | HTTP, GPG-signed |
+| `/ubuntu-security/…` | `http://security.ubuntu.com/ubuntu/…` | note the path remap |
 | `/fedora/…` | `https://dl.fedoraproject.org/pub/fedora/…` | nginx originates the HTTPS |
 
 **Caching split (correctness-critical):** package files (`*.deb`, `*.udeb`,
@@ -45,6 +47,13 @@ Each client path prefix maps to a real upstream mirror:
 → cached **60 s** with `proxy_cache_revalidate` (cheap `If-Modified-Since`).
 Serving stale metadata would cause apt/dnf hash-mismatch errors, so the split is
 deliberate — see `proxy/conf.d/pkgcache.conf`.
+
+Upstream `Cache-Control` outranks our metadata TTL, so the effective number is
+whichever is shorter-lived in practice: Debian's upstream says `max-age=120`, so
+Debian metadata is cached 120 s, not 60 s (measured 2026-07-25). Ubuntu's says
+`s-maxage=3300`, which is **longer** than we accept — so the Ubuntu blocks alone
+ignore upstream freshness to clamp it back down to 60 s. Package TTLs are pinned
+to 365 d everywhere for the same reason, in the other direction.
 
 > `dl.fedoraproject.org` is Fedora's master mirror — fine for a handful of
 > machines. For heavier use, point `/fedora/` at a regional mirror by editing
