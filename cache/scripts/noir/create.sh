@@ -24,7 +24,7 @@ mkdir -p "$ROOT"/data "$ROOT"/logs
 chown -R "${RUNAS%%:*}:${RUNAS##*:}" "$ROOT"/data "$ROOT"/logs
 
 # --detach
-podman run --replace --name "$NAME" \
+podman run -d --replace --name "$NAME" \
   --user "$RUNAS" \
   -p "0.0.0.0:${PORT}:8080" \
   -v "$ROOT"/data:/var/cache/nginx \

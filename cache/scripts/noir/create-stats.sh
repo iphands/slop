@@ -18,7 +18,7 @@ mkdir -p "$ROOT"/logs "$ROOT"/frontend
 chown -R "${RUNAS%%:*}:${RUNAS##*:}" "$ROOT"/logs "$ROOT"/frontend
 
 # --detach
-podman run --replace --name "$STATS_NAME" \
+podman run -d --replace --name "$STATS_NAME" \
   --user "$RUNAS" \
   -p "0.0.0.0:${STATS_PORT}:8081" \
   -v "$ROOT"/logs:/logs \
