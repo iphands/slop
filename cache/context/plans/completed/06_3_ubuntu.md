@@ -1,6 +1,6 @@
 # Plan 06_3 — Ubuntu 22.04 (jammy) route + client container
 
-> **Status**: in-progress
+> **Status**: done
 > **Created**: 2026-07-25
 > **Depends on**: Plan 01
 > **Goal**: Cache Ubuntu 22.04 (jammy) packages through the proxy, and ship a

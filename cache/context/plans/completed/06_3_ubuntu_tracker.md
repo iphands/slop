@@ -1,7 +1,7 @@
 # Ubuntu 22.04 (jammy) route + client container — Tracker
 
 ## Overview
-- Status: 67% complete (T1, T2 done)
+- Status: 100% complete (T1, T2, T3 done) — moved to `completed/` per Rule C
 - Start date: 2026-07-25
 - Test endpoint: `http://localhost:8080` (local docker, `CACHE_DIR=/tmp/pkgcache-test`),
   with `containers/ubuntu` built against `CACHE=http://<host-ip>:8080` so the container
@@ -25,7 +25,7 @@
 |---|------|------|--------|-------|
 | 1 | T1: `/ubuntu/` + `/ubuntu-security/` routes | `proxy/conf.d/pkgcache.conf` | done | clamp measured 3300s -> 60s; sec `.deb` 200 not 404 |
 | 2 | T2: `containers/ubuntu` image + build/publish | `containers/ubuntu/*` | done | 22.04 classic + 24.04 deb822 both verified |
-| 3 | T3: docs + Rule D harvest | `README.md`, `CLAUDE.md`, `context/*.md` | pending | SERIES.md marks 06_3 done |
+| 3 | T3: docs + Rule D harvest | `README.md`, `CLAUDE.md`, `context/*.md` | done | 2 pitfalls + distilled subsection + SERIES |
 
 ## Notes / Deviations
 
