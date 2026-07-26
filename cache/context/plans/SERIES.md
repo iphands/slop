@@ -20,7 +20,7 @@ and the backlog rationale.
     ├── 06_additional_distros      (independent; sub-plan per distro)
     │     ├── 06_1_opensuse_zypper
     │     ├── 06_2_arch_pacman
-    │     └── 06_3_ubuntu
+    │     └── 06_3_ubuntu           (done 2026-07-25)
     ├── 07_regional_fedora_mirror  (independent)
     └── 09_cache_tls               (only if the LAN stops being trusted)
 ```
@@ -34,7 +34,8 @@ and the backlog rationale.
 | 03 | Stats: Rust ingest core (log reader → SQLite) | `done` | 02 |
 | 04 | Stats: API + snapshot + container | `done` | 03 |
 | 05 | Stats: dashboard frontend | `done` | 04 |
-| 06 | Additional distros (openSUSE / Arch / Ubuntu / EPEL / rpmfusion) | `pending` | 01 |
+| 06 | Additional distros (openSUSE / Arch / Ubuntu / EPEL / rpmfusion) | `in-progress` | 01 |
+| 06_3 | └ Ubuntu 22.04 route + client container | `done` | 01 |
 | 07 | Regional Fedora mirror instead of the master | `pending` | 01 |
 | 08 | Prefetch / cache warming on a timer | `pending` | 01, 05 |
 | 09 | HTTPS on the cache itself | `pending` | 01 |
@@ -81,7 +82,11 @@ Why each remaining pending plan exists, so whoever picks one up starts with cont
 
 - **06 — Additional distros.** Each is the same shape: a route block with the
   metadata/package TTL split, plus a reversible `scripts/fix-<distro>`. Sub-plan per
-  distro so they can land independently. Note **Arch** differs meaningfully — `pacman`
+  distro so they can land independently. **06_3 (Ubuntu 22.04) is done** — and it shipped a
+  `containers/ubuntu` client image *instead of* `scripts/fix-ubuntu`, which is still
+  unwritten; the host fixer is the obvious follow-up. Its lasting lesson for the remaining
+  distros: **measure the new upstream's `Cache-Control` first** — Ubuntu's `s-maxage=3300`
+  silently stretched the 60 s metadata TTL to 55 minutes (`pitfalls.md`). Note **Arch** differs meaningfully — `pacman`
   mirrors are configured as `Server = …` lines in `/etc/pacman.d/mirrorlist`, and package
   files are `*.pkg.tar.zst`; **EPEL/rpmfusion** are metalink-based like Fedora and slot in
   as extra `baseurl` repos.

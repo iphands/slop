@@ -210,6 +210,31 @@ pkgcache-setup --revert                  # back to the stock metalink repos
 No dnf metadata is baked into the image, and third-party repos
 (`fedora-cisco-openh264`, …) are left alone.
 
+`containers/ubuntu` is the same thing for **Ubuntu 22.04 (jammy)**:
+
+```bash
+cd containers/ubuntu
+./build                                # -> iphands/pkgcache-ubuntu:latest + :22.04 + :<git-sha>
+CACHE=http://localhost:8080 ./build     # bake a different endpoint
+UBUNTU_RELEASE=24.04 ./build            # also works (deb822 sources)
+```
+
+```dockerfile
+FROM iphands/pkgcache-ubuntu:22.04
+RUN apt-get update && apt-get install -y jq && rm -rf /var/lib/apt/lists/*
+```
+
+It repoints `archive.ubuntu.com/ubuntu/` → `$CACHE/ubuntu/` and
+`security.ubuntu.com/ubuntu/` → `$CACHE/ubuntu-security/`, matching those hostnames only,
+so PPAs and other third-party repos keep working untouched. `pkgcache-setup --revert`
+restores the originals. Same knobs as the Fedora image (`PKGCACHE_URL`, re-point at
+runtime, no apt lists baked in).
+
+**Known limitation:** `ports.ubuntu.com` (the arm64/ppc64el archive) and
+`ddebs.ubuntu.com` (debug symbols) have no route on the proxy, so lines pointing there are
+deliberately left going upstream rather than repointed at a route that does not exist. On
+an arm64 client that means apt bypasses the cache entirely.
+
 ## Verifying the cache works
 
 On two different clients, install the same package and watch the second one

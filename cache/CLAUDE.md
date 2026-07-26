@@ -199,10 +199,15 @@ cache/
 │       ├── create.sh    #   proxy container  (cacher)
 │       └── create-stats.sh  # stats container (cacher-stats)
 ├── containers/          # client/base images that come pre-pointed at the cache
-│   └── fedora/          #   fedora:44 + dnf wired to the cache; FROM it in child builds
-│       ├── Dockerfile   #   ARG CACHE baked in, recorded as ENV PKGCACHE_URL
-│       ├── pkgcache-setup   # in-image repo surgery (+ --revert); NOT config-manager
-│       ├── build        #   -> iphands/pkgcache-fedora:{latest,44,<sha>}
+│   ├── fedora/          #   fedora:44 + dnf wired to the cache; FROM it in child builds
+│   │   ├── Dockerfile   #   ARG CACHE baked in, recorded as ENV PKGCACHE_URL
+│   │   ├── pkgcache-setup   # in-image repo surgery (+ --revert); NOT config-manager
+│   │   ├── build        #   -> iphands/pkgcache-fedora:{latest,44,<sha>}
+│   │   └── publish
+│   └── ubuntu/          #   ubuntu:22.04 + apt wired to the cache (same shape)
+│       ├── Dockerfile   #   ARG UBUNTU_RELEASE; 24.04/deb822 also verified
+│       ├── pkgcache-setup   # sources.list + deb822 rewrite (+ --revert)
+│       ├── build        #   -> iphands/pkgcache-ubuntu:{latest,22.04,<sha>}
 │       └── publish
 ├── context/             # knowledge base — READ BEFORE NEW WORK
 │   ├── plans/

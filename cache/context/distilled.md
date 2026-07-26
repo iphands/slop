@@ -275,6 +275,42 @@ trade correctness for a hit-ratio number nobody asked for.
 **General rule: `proxy_cache_valid` is a fallback, not an instruction.** Any claim about
 retention must be *measured from the cache file*, never read off the config.
 
+### Ubuntu: `s-maxage` beats `max-age`, and it beat our metadata TTL too [LIVE 2026-07-25]
+
+Measured the same way when adding the `/ubuntu/` routes (Plan 06_3 T1). Both Ubuntu
+upstreams send, on **metadata and packages alike**:
+
+```text
+Cache-Control: max-age=0, proxy-revalidate, s-maxage=3300
+```
+
+| Upstream | Sends | TTL applied, naive config | After the clamp |
+|---|---|---|---|
+| `archive.ubuntu.com` metadata | `s-maxage=3300` | **3300 s (55 min)** | **60 s** ✓ |
+| `archive.ubuntu.com` packages | `s-maxage=3300` | 3300 s | **365 d** ✓ |
+| `security.ubuntu.com` (both) | `s-maxage=3300` | same | same ✓ |
+
+Three facts worth keeping:
+
+1. **nginx prefers `s-maxage` over `max-age`.** `ngx_http_upstream_process_cache_control`
+   tests `s-maxage=` first and only falls back to `max-age=`. So `max-age=0` in that same
+   header buys nothing — the effective value is 3300.
+2. **`proxy-revalidate` is not implemented by nginx.** It cannot be relied on to force the
+   revalidation its presence implies.
+3. **This is the first case where a metadata TTL had to be clamped *down*.** Debian's
+   `max-age=120` is short enough to defer to (above); Ubuntu's 3300 s is a 55-minute window
+   for `InRelease` and `Packages.gz` to disagree — the apt *hash sum mismatch* the TTL
+   split exists to prevent. So the Ubuntu metadata locations do carry
+   `proxy_ignore_headers Cache-Control Expires`, which reads like a violation of the
+   "metadata defers to upstream" rule above and is not: the rule forbids *lengthening*.
+
+**Proven by counterfactual, not by argument.** A throwaway image built with the metadata
+clamp removed gave `valid_sec - date = 3300` for `/ubuntu/dists/jammy/InRelease`; with the
+clamp, `60`. Independently, the same URL re-requested at **+68 s reported `REVALIDATED`**
+(then `HIT`) — it would have said `HIT` for 55 minutes without the clamp. `REVALIDATED` is
+the observable signature of a `proxy_cache_revalidate` refresh, and is the cheapest way to
+prove a short metadata TTL is real without touching the cache file.
+
 ## Remaining Open Questions
 
 1. **Are the `by-hash/` metadata URLs caught by the metadata TTL?** They match the parent

@@ -514,3 +514,75 @@ Pick one mechanism per direction and stay in it:
 ## Sources
 - pkgcache: `containers/fedora/pkgcache-setup` (`set_section_enabled`, `clear_config_manager_override`)
 - pkgcache: `scripts/fix-fedora` (`set_repo_enabled` — the `setopt`-both-ways version)
+
+---
+
+# Ubuntu's `s-maxage=3300` silently stretches a 60 s metadata TTL to 55 minutes  [OBSERVED 2026-07-25]
+
+## Problem
+
+`/ubuntu/` was first written as a copy of the `/debian/` block — same 60 s metadata TTL,
+same `proxy_cache_revalidate on`, `proxy_ignore_headers` only in the `.deb` sub-location.
+That is correct for Debian and wrong for Ubuntu.
+
+Both Ubuntu upstreams send `Cache-Control: max-age=0, proxy-revalidate, s-maxage=3300`.
+nginx checks **`s-maxage` before `max-age`**, and upstream `Cache-Control` outranks
+`proxy_cache_valid`, so the block that *reads* "60s" actually caches `InRelease` and
+`Packages.gz` for **3300 s**. `max-age=0` does not help; `proxy-revalidate` is not
+implemented by nginx at all. The result is a 55-minute window in which metadata and the
+packages it indexes can disagree — i.e. apt **hash sum mismatch**, the exact failure the
+metadata/package TTL split exists to prevent. Nothing in `nginx -t`, the logs, or a
+MISS→HIT check reveals it; the config looks right.
+
+## Fix / How to avoid
+
+- The Ubuntu **metadata** locations carry `proxy_ignore_headers Cache-Control Expires`
+  alongside `proxy_cache_valid 200 302 60s`. The in-config rule against ignoring
+  `Cache-Control` in metadata locations bans *lengthening* a metadata TTL; clamping 3300 s
+  **down** to 60 s serves the same goal. The config comment now names the direction, so the
+  next reader does not have to re-derive it.
+- **Measure every new upstream's `Cache-Control` before writing its route block**:
+  `curl -sI <upstream-metadata-url> | grep -i cache-control`. Debian says `max-age=120`
+  (fine, defer to it); Ubuntu says `s-maxage=3300` (clamp). Assume nothing from the
+  neighbouring block.
+- **Verify retention, don't read it.** Two cheap proofs, both used here: `valid_sec - date`
+  from the cache-file header (see `distilled.md` for the offsets), and a re-request just
+  past the intended TTL — `REVALIDATED` means the entry really did expire, `HIT` means it
+  did not.
+
+## Sources
+- pkgcache: `proxy/conf.d/pkgcache.conf` (`location /ubuntu/`, `location /ubuntu-security/`)
+- pkgcache: `context/distilled.md` § Ubuntu: `s-maxage` beats `max-age`
+
+---
+
+# A verification grep that matches your own backup file  [OBSERVED 2026-07-25]
+
+## Problem
+
+`containers/ubuntu/pkgcache-setup` rewrites apt's sources, then asserts the stock URLs are
+gone — originally with a recursive `grep` over `/etc/apt/sources.list` **and**
+`/etc/apt/sources.list.d/`. It backs each file up as `<file>.pkgcache-bak` first, and that
+backup legitimately still contains the stock URLs.
+
+On 22.04 this passed: the file is `/etc/apt/sources.list`, so the backup lands *beside* it,
+outside the directory being walked. On 24.04 (deb822) the file is
+`/etc/apt/sources.list.d/ubuntu.sources`, so the backup lands *inside* the walked
+directory — the assertion matched its own backup and aborted a build whose rewrite was
+perfectly correct. The bug was in the check, not the change it was checking.
+
+## Fix / How to avoid
+
+- **Derive the verification set from the same list you edited.** The script now has one
+  `apt_source_files()` producing the exact files apt reads (`sources.list`, `*.list`,
+  `*.sources` — never `*.pkgcache-bak`), and both the rewrite and the assertion iterate it.
+  A recursive `grep -r` over a config directory is almost always wrong once you write
+  backups into it.
+- Corollary for any backup-before-edit script: **know whether your backup lands inside the
+  tree you scan.** It depends on the distro release, which is exactly the sort of thing that
+  passes on the version you tested and fails on the next.
+- The assertion still earned its place — it failed loudly at build time instead of shipping
+  a half-configured image. Keep such checks; just scope them correctly.
+
+## Sources
+- pkgcache: `containers/ubuntu/pkgcache-setup` (`apt_source_files`, `grep_apt_sources`)
