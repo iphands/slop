@@ -1267,4 +1267,26 @@ which uses the actual normal and is sign-correct.
 
 ## Sources
 - qbots: crates/world/src/collision.rs (`closet_world`, `recursive_hull_check`)
+
+---
+
+# RecoveryAction match exhaustiveness → compile errors when adding variants
+
+## Problem
+
+When adding a new variant to `RecoveryAction` (e.g., `BoxedIn`), every match arm
+across the brain crate must be updated. The compiler enforces exhaustiveness,
+but the error surface is spread across 5 files: `recover.rs`, `brains/main.rs`,
+`brains/zb2.rs`, `brains/xon/mod.rs`, `brains/runtester.rs`, and `brains/q3/mod.rs`.
+
+## Fix
+
+Add the new variant to the `label()` method, the `evaluate()` function, and
+every match arm in all brain files. The `BoxedIn` arm in each brain's match
+is a no-op (the bot has no movement to apply when fully enclosed — the
+nav system must re-path or the bot is genuinely stuck).
+
+## Sources
+- qbots: crates/brain/src/recover.rs (`RecoveryAction`, `evaluate`)
+- qbots: crates/brain/src/brains/{main,zb2,xon,runtester,q3}/mod.rs (match arms)
 - vendor: yquake2/src/common/cmodel.c (`CM_RecursiveHullCheck`)
