@@ -1159,13 +1159,41 @@ mod tests {
         ] {
             let end = [dir[0] * 200.0, dir[1] * 200.0, dir[2] * 200.0 + 16.0];
             let t = w.trace(&[0.0, 0.0, 16.0], &end, &[0.0; 3], &[0.0; 3], MASK_SOLID);
-            eprintln!(
-                "trace {label}: fraction={}, startsolid={}, endpos={:?}",
-                t.fraction, t.startsolid, t.endpos
-            );
             assert!(
                 t.fraction < 1.0,
                 "horizontal trace {label} should hit a wall, got fraction {}",
+                t.fraction
+            );
+        }
+    }
+
+    /// Plan 71 T3: a bot at the center of `closet_world` is fully enclosed — every
+    /// horizontal direction hits a wall. This is the fixture `brain::recover` uses
+    /// to test escape logic. Verify the geometry that test depends on: all four
+    /// cardinal traces are blocked, and the origin is not itself solid.
+    #[test]
+    fn closet_world_fully_encloses_center() {
+        let w = closet_world(40.0);
+        let origin = [0.0, 0.0, 16.0];
+        // The center must be air (the bot starts here).
+        assert!(!w.is_solid(&origin));
+        // Every horizontal direction must be blocked — no escape.
+        let dist = 200.0;
+        for (dir, label) in [
+            ([1.0, 0.0, 0.0], "+x"),
+            ([-1.0, 0.0, 0.0], "-x"),
+            ([0.0, 1.0, 0.0], "+y"),
+            ([0.0, -1.0, 0.0], "-y"),
+        ] {
+            let end = [
+                origin[0] + dir[0] * dist,
+                origin[1] + dir[1] * dist,
+                origin[2],
+            ];
+            let t = w.trace(&origin, &end, &[0.0; 3], &[0.0; 3], MASK_SOLID);
+            assert!(
+                t.fraction < 1.0,
+                "closet_world should block {label} escape, got fraction {}",
                 t.fraction
             );
         }
