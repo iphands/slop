@@ -1,0 +1,131 @@
+#!/bin/bash
+set -euo pipefail
+
+# Point this container's apt at the pkgcache proxy.
+#
+#     pkgcache-setup                  # rewrite apt sources, then apt-get update
+#     pkgcache-setup --no-update      # same, minus the network round-trip (build time)
+#     pkgcache-setup --revert         # restore the stock Ubuntu archive URLs
+#     CACHE=http://host:port pkgcache-setup
+#
+# Container-side sibling of ../fedora/pkgcache-setup. Ubuntu is the easy case next
+# to Fedora -- apt already speaks plain HTTP to a fixed host, so there is no
+# metalink problem and nothing to disable; the URLs just get repointed:
+#
+#     http[s]://[REGION.]archive.ubuntu.com/ubuntu/  ->  $CACHE/ubuntu/
+#     http[s]://security.ubuntu.com/ubuntu/          ->  $CACHE/ubuntu-security/
+#
+# The two upstreams are different HOSTS but share the /ubuntu/ path, which is why
+# the cache exposes the security pocket under a distinct /ubuntu-security/ prefix.
+# Packages stay GPG-verified (signed Release + ubuntu-keyring), so the plain-HTTP
+# hop to the cache is safe -- never add [trusted=yes] to "fix" a signature error.
+#
+# Deliberately NOT rewritten:
+#   * ports.ubuntu.com  -- the arm64/ppc64el archive; the proxy has no route for
+#     it, so those lines are left pointing upstream and keep working
+#   * ddebs.ubuntu.com  -- debug symbols, likewise unrouted
+#   * anything else (PPAs, docker, ...) -- third-party repos are never touched
+#
+# Handles both apt source shapes, so it also works if rebased onto 24.04+:
+# classic one-line /etc/apt/sources.list and deb822 sources.list.d/*.sources.
+
+CACHE="${CACHE:-http://noir.lan:3129}"
+BAK=.pkgcache-bak
+
+MODE=update
+case "${1:-}" in
+    "")                          ;;
+    --no-update|--no-makecache)  MODE=quiet ;;   # --no-makecache: name-parity with the Fedora script
+    --revert)                    MODE=revert ;;
+    *) echo "usage: $0 [--no-update|--revert]" >&2; exit 2 ;;
+esac
+
+# Every file apt reads its sources from. Nullglob so an absent sources.list.d or a
+# distro that ships only one of the two shapes is not a fatal glob.
+#
+# This list is the single source of truth for BOTH the rewrite and the verification
+# that follows it. Do not verify with a recursive grep over /etc/apt/sources.list.d/
+# instead: on 24.04 the sources file lives in that directory, so its
+# `.pkgcache-bak` backup does too, and a recursive grep matches the stock URLs in
+# our own backup and reports failure on a perfectly good rewrite. (Observed
+# 2026-07-25 -- it only showed up on the 24.04 rebase because on 22.04 the backup
+# lands beside sources.list, outside the directory. See ../../context/pitfalls.md.)
+# apt itself only reads *.list and *.sources, so the backup sitting there is inert.
+shopt -s nullglob
+apt_source_files() {
+    local f
+    for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+        [ -f "$f" ] && printf '%s\n' "$f"
+    done
+}
+
+# grep the files apt actually reads, never the directory. $1.. = grep args.
+grep_apt_sources() {
+    local -a files=()
+    local f
+    while IFS= read -r f; do files+=("$f"); done < <(apt_source_files)
+    [ ${#files[@]} -gt 0 ] || return 1
+    grep "$@" "${files[@]}"
+}
+
+if [ "$MODE" = revert ]; then
+    restored=0
+    while IFS= read -r f; do
+        if [ -f "${f}${BAK}" ]; then
+            mv -f "${f}${BAK}" "$f"
+            echo "  restored $f"
+            restored=1
+        fi
+    done < <(apt_source_files)
+    if [ "$restored" = 0 ]; then
+        echo "  nothing to restore (no *${BAK} backup found)" >&2
+    fi
+    if grep_apt_sources -qsF "$CACHE"; then
+        echo "error: ${CACHE} still referenced by apt sources after revert" >&2
+        exit 1
+    fi
+    echo ">> apt-get update"
+    apt-get update
+    exit 0
+fi
+
+echo ">> pointing apt at ${CACHE}"
+
+# Anchor on the distro's own hostnames only -- a blanket s|http://|$CACHE/| would
+# also drag PPAs and third-party repos through a cache that has no such upstream,
+# and every apt update would then fail. See ../../context/pitfalls.md.
+changed=0
+while IFS= read -r f; do
+    grep -Eq 'https?://([a-zA-Z0-9.-]+\.)?(archive|security)\.ubuntu\.com/ubuntu/' "$f" || continue
+    [ -f "${f}${BAK}" ] || { cp -a "$f" "${f}${BAK}"; echo "  backed up $f -> $(basename "$f")${BAK}"; }
+    # security first: it is the more specific host, and rewriting the generic
+    # archive pattern first would not touch it -- but keep the order explicit so a
+    # future edit to either regex cannot create the shadowing bug fix-debian hit.
+    sed -i -E \
+        -e "s|https?://security\.ubuntu\.com/ubuntu/|${CACHE}/ubuntu-security/|g" \
+        -e "s|https?://([a-zA-Z0-9.-]+\.)?archive\.ubuntu\.com/ubuntu/|${CACHE}/ubuntu/|g" \
+        "$f"
+    echo "  rewrote $f"
+    changed=1
+done < <(apt_source_files)
+
+if [ "$changed" = 0 ]; then
+    echo "error: no apt source file referenced archive/security.ubuntu.com -- nothing rewritten." >&2
+    echo "       apt sources may already point elsewhere; check /etc/apt/sources.list*" >&2
+    exit 1
+fi
+
+# Prove the rewrite took, rather than trusting sed's exit status.
+if grep_apt_sources -Eqs 'https?://([a-zA-Z0-9.-]+\.)?(archive|security)\.ubuntu\.com/ubuntu/'; then
+    echo "error: stock Ubuntu archive URLs still present after rewrite:" >&2
+    grep_apt_sources -Ens 'https?://([a-zA-Z0-9.-]+\.)?(archive|security)\.ubuntu\.com/ubuntu/' >&2
+    exit 1
+fi
+
+if [ "$MODE" = update ]; then
+    echo ">> apt-get update"
+    apt-get update
+fi
+
+echo ">> done. verify a cache hit with:"
+echo "   curl -sI ${CACHE}/ubuntu/dists/\$(. /etc/os-release; echo \$VERSION_CODENAME)/InRelease | grep X-Cache-Status"

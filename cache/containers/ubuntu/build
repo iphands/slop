@@ -1,0 +1,48 @@
+#!/bin/bash
+set -euo pipefail
+
+# Build the Ubuntu client image -- ubuntu:22.04 with apt already pointed at the
+# pkgcache proxy (see ./Dockerfile).
+#
+#     ./build                                  # against the default cache endpoint
+#     CACHE=http://localhost:8080 ./build      # against a local test proxy
+#     UBUNTU_RELEASE=24.04 ./build             # rebase onto another release (only 22.04 is verified)
+#
+# Tags the moving <image>:latest, the release <image>:<ubuntu-release>, and an
+# immutable per-commit <image>:<git-sha>. Then ./publish to push.
+#
+# Auto-detects the container engine and PREFERS podman when both are present.
+# Force one with  RUNTIME=docker ./build  (or RUNTIME=podman).
+# Override the image name with  IMAGE=you/name ./build .
+
+cd "$(dirname "$0")"
+
+# Container engine: honor RUNTIME override, else prefer podman, then docker.
+CE="${RUNTIME:-}"
+if [ -z "$CE" ]; then
+    if command -v podman >/dev/null 2>&1; then CE=podman
+    elif command -v docker >/dev/null 2>&1; then CE=docker
+    else echo "error: neither podman nor docker found on PATH" >&2; exit 1; fi
+fi
+command -v "$CE" >/dev/null 2>&1 || { echo "error: RUNTIME=$CE not found on PATH" >&2; exit 1; }
+
+IMAGE="${IMAGE:-iphands/pkgcache-ubuntu}"
+CACHE="${CACHE:-http://noir.lan:3129}"        # baked into the image's apt sources
+UBUNTU_RELEASE="${UBUNTU_RELEASE:-22.04}"
+REF="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"
+export DOCKER_BUILDKIT=1   # no-op under podman/buildah, enables it under docker
+
+echo ">> [$CE] building ${IMAGE}:{latest,${UBUNTU_RELEASE},${REF}} against CACHE=${CACHE}"
+"$CE" build \
+    --build-arg "UBUNTU_RELEASE=${UBUNTU_RELEASE}" \
+    --build-arg "CACHE=${CACHE}" \
+    -t "${IMAGE}:latest" \
+    -t "${IMAGE}:${UBUNTU_RELEASE}" \
+    -t "${IMAGE}:${REF}" \
+    .
+
+cat <<EOF
+>> verify it (Rule A -- a real fetch, not a config read):
+   $CE run --rm ${IMAGE}:latest sh -c 'apt-get update && apt-get install -y cowsay'
+   curl -sI ${CACHE}/ubuntu/dists/jammy/InRelease | grep -i x-cache-status
+EOF
