@@ -769,7 +769,9 @@ impl crate::brains::core::Brain for MainBrain {
                     mv.move_side(hside);
                 }
                 RecoveryAction::BoxedIn => {
-                    tracing::debug!(?pos, "boxed in — no escape direction");
+                    tracing::debug!(?pos, "boxed in — jump + replan");
+                    mv.jump();
+                    nav.force_replan();
                 }
             }
 
