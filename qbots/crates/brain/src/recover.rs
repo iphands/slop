@@ -116,13 +116,17 @@ const LEDGE_FRAC: f32 = 0.4;
 /// How far to probe downward when checking for a ledge below the trace endpoint.
 const DOWN_DIST: f32 = 256.0;
 
-/// Test 6 directions fanning out from `view_yaw` (±45°, ±90°, ±135°, 0° — skip ±180°).
+/// Test 7 directions fanning out from `view_yaw` (0°, ±45°, ±90°, ±135° — skip ±180°).
 /// Returns the `(yaw_degrees, score)` of the most open direction, or `None` if all blocked.
 ///
-/// Port of Eraser `botRoamFindBestDirection` (`bot_nav.c:96-176`). (Plan 13 T2)
+/// Port of Eraser `botRoamFindBestDirection` (`bot_nav.c:96-176`), which tests only
+/// `{0, ±45, ±135}` — its `if (i==4) i=6` (`bot_nav.c:127`) deliberately prunes ±90°
+/// despite the "eight compass directions" comment above it. We keep ±90° because a pure
+/// side-step is exactly the escape `StuckLevel::Mild` strafing wants. (Plan 13 T2, Plan 71 T1)
 pub fn find_best_direction(cm: &CollisionModel, origin: Vec3, view_yaw: f32) -> Option<(f32, f32)> {
-    // 6 angular offsets relative to view_yaw (skip ±180°).
-    const OFFSETS_DEG: [f32; 6] = [0.0, 45.0, -45.0, 90.0, -90.0, 135.0];
+    // 7 angular offsets relative to view_yaw, ordered 0° first then outward in ± pairs so
+    // ties favour straight ahead (`is_better` uses strict `>`). Skip ±180°.
+    const OFFSETS_DEG: [f32; 7] = [0.0, 45.0, -45.0, 90.0, -90.0, 135.0, -135.0];
 
     let lifted = [origin.x, origin.y, origin.z + STEPSIZE];
     let mut best: Option<(f32, f32)> = None;
