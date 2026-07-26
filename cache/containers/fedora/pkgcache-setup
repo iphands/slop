@@ -1,0 +1,158 @@
+#!/bin/bash
+set -euo pipefail
+
+# Point this container's dnf at the pkgcache proxy.
+#
+#     pkgcache-setup                  # write cache repos, disable stock repos, makecache
+#     pkgcache-setup --no-makecache   # same, minus the network round-trip (build time)
+#     pkgcache-setup --revert         # restore the stock metalink repos
+#     CACHE=http://host:port pkgcache-setup
+#
+# Container-side sibling of ../../scripts/fix-fedora, and the same idea: Fedora's
+# dnf uses HTTPS + metalink, which a proxy cannot cache, so we add explicit
+# baseurl repos pointing at the cache (nginx originates the upstream TLS) and
+# disable the stock ones. gpgcheck stays on -- packages are still GPG-verified
+# end to end, which is what makes the plain-HTTP hop to the cache acceptable.
+#
+# It differs from fix-fedora where being inside an image build demands it:
+#
+#   * no sudo re-exec -- a Dockerfile RUN is already root, and sudo may be absent
+#
+#   * it does NOT use `dnf config-manager setopt`. That does not edit the .repo
+#     file; dnf5 records the override in /etc/dnf/repos.override.d/99-config_manager.repo
+#     instead, and an override there OUTRANKS the .repo file. Restoring a backed-up
+#     fedora.repo would then leave the repo still disabled -- observed exactly that
+#     way, see ../../context/pitfalls.md. So both directions edit the repo file, and
+#     backup/restore is symmetric. It also means no dnf5-plugins dependency, so this
+#     works on a minimal base image.
+#
+# Third-party repos (fedora-cisco-openh264, rpmfusion, ...) are never touched, so
+# they stay enabled and keep fetching from their own upstreams.
+
+CACHE="${CACHE:-http://noir.lan:3129}"
+REPO_DIR=/etc/yum.repos.d
+CACHE_REPO="$REPO_DIR/fedora-cache.repo"
+BAK=.pkgcache-bak
+
+# The distro's own repos we take over: "<file>:<repo id to flip inside it>".
+STOCK=(fedora.repo:fedora fedora-updates.repo:updates)
+
+MODE=makecache
+case "${1:-}" in
+    "")             ;;
+    --no-makecache) MODE=quiet ;;
+    --revert)       MODE=revert ;;
+    *) echo "usage: $0 [--no-makecache|--revert]" >&2; exit 2 ;;
+esac
+
+# enabled= for one [section] of a .repo file, without touching any other section.
+# A blind s/^enabled=1/enabled=0/ would be wrong on any file whose -debuginfo or
+# -source sections happen to ship enabled=1.
+set_section_enabled() {  # $1=file  $2=section  $3=0|1
+    local tmp="${1}.pkgcache-tmp"
+    awk -v want="[$2]" -v val="$3" '
+        /^[[:space:]]*\[/ { inside = ($0 ~ "^[[:space:]]*\\" want "[[:space:]]*$") }
+        inside && /^[[:space:]]*enabled[[:space:]]*=/ { print "enabled=" val; next }
+        { print }
+    ' "$1" >"$tmp"
+    # cat-over rather than mv, to keep the original mode/owner/inode.
+    cat "$tmp" >"$1"
+    rm -f "$tmp"
+}
+
+# What dnf will actually see for one [section], so a claim of "disabled" is
+# checked and not assumed.
+section_enabled() {  # $1=file  $2=section  -> prints 0/1/empty
+    awk -v want="[$2]" '
+        /^[[:space:]]*\[/ { inside = ($0 ~ "^[[:space:]]*\\" want "[[:space:]]*$") }
+        inside && /^[[:space:]]*enabled[[:space:]]*=/ {
+            sub(/^[^=]*=[[:space:]]*/, ""); print $0; exit
+        }
+    ' "$1"
+}
+
+# A stale override from a previous `dnf config-manager setopt` run outranks the
+# .repo files, so clear the two keys we care about. Best-effort: the plugin is
+# absent on minimal images, and with no override file there is nothing to undo.
+clear_config_manager_override() {
+    [ -f /etc/dnf/repos.override.d/99-config_manager.repo ] || return 0
+    dnf config-manager unsetopt fedora.enabled updates.enabled >/dev/null 2>&1 || true
+}
+
+if [ "$MODE" = revert ]; then
+    rm -f "$CACHE_REPO"
+    echo "  removed $CACHE_REPO"
+    for entry in "${STOCK[@]}"; do
+        f="${REPO_DIR}/${entry%%:*}"; id="${entry##*:}"
+        if [ -f "${f}${BAK}" ]; then
+            mv -f "${f}${BAK}" "$f"
+            echo "  restored $f"
+        elif [ -f "$f" ]; then
+            set_section_enabled "$f" "$id" 1
+            echo "  re-enabled [$id] in $f (no ${BAK} backup to restore)"
+        fi
+    done
+    clear_config_manager_override
+    for entry in "${STOCK[@]}"; do
+        f="${REPO_DIR}/${entry%%:*}"; id="${entry##*:}"
+        [ -f "$f" ] || continue
+        if [ "$(section_enabled "$f" "$id")" != 1 ]; then
+            echo "error: [$id] is still not enabled in $f after revert" >&2
+            exit 1
+        fi
+    done
+    echo ">> dnf makecache"
+    dnf -y makecache
+    exit 0
+fi
+
+echo ">> pointing dnf at ${CACHE}"
+
+# $releasever/$basearch stay literal in the repo file -- dnf expands them, so one
+# image works for any release/arch it is rebased onto.
+cat > "$CACHE_REPO" <<EOF
+# Managed by pkgcache containers/fedora/pkgcache-setup. Run --revert to remove.
+[fedora-cache]
+name=Fedora \$releasever - \$basearch (cached via pkgcache)
+baseurl=${CACHE}/fedora/linux/releases/\$releasever/Everything/\$basearch/os/
+enabled=1
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-\$releasever-\$basearch
+skip_if_unavailable=False
+
+[updates-cache]
+name=Fedora \$releasever - \$basearch - Updates (cached via pkgcache)
+baseurl=${CACHE}/fedora/linux/updates/\$releasever/Everything/\$basearch/
+enabled=1
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-\$releasever-\$basearch
+skip_if_unavailable=False
+EOF
+echo "  wrote $CACHE_REPO"
+
+# Disable the stock metalink repos so dnf pulls through the cache instead.
+# Back up before editing, once -- a second run must not overwrite the pristine
+# copy with the already-disabled one.
+for entry in "${STOCK[@]}"; do
+    f="${REPO_DIR}/${entry%%:*}"; id="${entry##*:}"
+    if [ ! -f "$f" ]; then
+        echo "  note: $f absent, nothing to disable"
+        continue
+    fi
+    [ -f "${f}${BAK}" ] || { cp -a "$f" "${f}${BAK}"; echo "  backed up $f -> $(basename "$f")${BAK}"; }
+    set_section_enabled "$f" "$id" 0
+    if [ "$(section_enabled "$f" "$id")" != 0 ]; then
+        echo "error: failed to disable [$id] in $f" >&2
+        exit 1
+    fi
+    echo "  disabled stock [$id] (metalink) in $f"
+done
+clear_config_manager_override
+
+if [ "$MODE" = makecache ]; then
+    echo ">> dnf makecache"
+    dnf -y makecache
+fi
+
+echo ">> done. verify a cache hit with:"
+echo "   curl -sI ${CACHE}/fedora/linux/releases/\$(rpm -E %fedora)/Everything/\$(uname -m)/os/repodata/repomd.xml | grep X-Cache-Status"

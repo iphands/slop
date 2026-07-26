@@ -16,6 +16,7 @@ that is served from the LAN cache.
 > |---|---|---|
 > | `proxy/` | nginx config only, no code | **Rule A** — build, run, and prove MISS→HIT with `curl`. There is no compiler; `nginx -t` passing means almost nothing. |
 > | `stats/` | **Rust** + a React frontend | `cargo test` / `cargo clippy -D warnings` / `npm run build`, **plus** Rule A for the container. |
+> | `containers/` | Dockerfile + shell | **Rule A** — build it, then a real `dnf`/`apt` install *through the cache* from inside it. Repo config that reads correctly can still be overridden (see `pitfalls.md` on `config-manager setopt`). |
 >
 > Reach for `cargo` in `stats/` and nowhere else.
 
@@ -197,6 +198,12 @@ cache/
 │       ├── spec         #   names, ports, uid  (live copy: /main/docker/cache/spec)
 │       ├── create.sh    #   proxy container  (cacher)
 │       └── create-stats.sh  # stats container (cacher-stats)
+├── containers/          # client/base images that come pre-pointed at the cache
+│   └── fedora/          #   fedora:44 + dnf wired to the cache; FROM it in child builds
+│       ├── Dockerfile   #   ARG CACHE baked in, recorded as ENV PKGCACHE_URL
+│       ├── pkgcache-setup   # in-image repo surgery (+ --revert); NOT config-manager
+│       ├── build        #   -> iphands/pkgcache-fedora:{latest,44,<sha>}
+│       └── publish
 ├── context/             # knowledge base — READ BEFORE NEW WORK
 │   ├── plans/
 │   │   ├── RULES.md     # plan format + Rules A–D (authoritative; read in full)

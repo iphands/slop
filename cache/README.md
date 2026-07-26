@@ -164,6 +164,43 @@ sudo dnf config-manager setopt fedora.enabled=0 updates.enabled=0
 sudo dnf makecache
 ```
 
+> Undo that with `dnf config-manager unsetopt fedora.enabled updates.enabled` (or
+> `setopt …=1`). It does **not** edit `fedora.repo` — dnf5 records it in
+> `/etc/dnf/repos.override.d/99-config_manager.repo`, which outranks the repo file, so
+> restoring a backup of `fedora.repo` will not re-enable the repo.
+
+### Containers — `containers/fedora`
+
+A `fedora:44` image with dnf already pointed at the cache, for building container images
+without hammering a Fedora mirror. `FROM` it and every `dnf install` in the child build
+pulls through the LAN cache; it is also the handiest client for testing the `/fedora/`
+routes.
+
+```bash
+cd containers/fedora
+./build                                # -> iphands/pkgcache-fedora:latest + :44 + :<git-sha>
+CACHE=http://localhost:8080 ./build    # bake a different endpoint (default: noir.lan:3129)
+FEDORA_RELEASE=45 ./build              # rebase onto another release
+./publish                              # push to Docker Hub
+```
+
+```dockerfile
+FROM iphands/pkgcache-fedora:44
+RUN dnf -y install ripgrep && dnf clean all
+```
+
+The endpoint it was built against is in `PKGCACHE_URL`. The repo surgery lives in
+`/usr/local/bin/pkgcache-setup` inside the image, so a running container (or a child
+build) can be re-pointed or reset:
+
+```bash
+CACHE=http://other:3129 pkgcache-setup   # re-point, then makecache
+pkgcache-setup --revert                  # back to the stock metalink repos
+```
+
+No dnf metadata is baked into the image, and third-party repos
+(`fedora-cisco-openh264`, …) are left alone.
+
 ## Verifying the cache works
 
 On two different clients, install the same package and watch the second one

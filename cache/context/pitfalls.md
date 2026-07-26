@@ -475,3 +475,42 @@ Match `scripts/fix-debian` / `scripts/fix-fedora` exactly:
 
 ## Sources
 - pkgcache: `scripts/fix-debian`, `scripts/fix-fedora`
+
+---
+
+# `dnf config-manager setopt` does not edit the `.repo` file — restoring a backup does not undo it  [OBSERVED 2026-07-25]
+
+## Problem
+
+`containers/fedora/pkgcache-setup` disabled the stock repos with
+`dnf config-manager setopt fedora.enabled=0 updates.enabled=0` (copied from
+`scripts/fix-fedora`) and implemented `--revert` by restoring a pristine copy of
+`/etc/yum.repos.d/fedora.repo`. The restore worked — the file on disk read `enabled=1`
+again — and `dnf repolist` still reported `fedora` and `updates` as **disabled**.
+
+dnf5's `setopt` never touches the `.repo` file. It writes
+`/etc/dnf/repos.override.d/99-config_manager.repo`, and an override there **outranks** the
+`.repo` file. So the two mechanisms are not interchangeable: a file-based revert cannot
+undo a `setopt`, and reading the `.repo` file tells you nothing about the effective state.
+
+## Fix / How to avoid
+
+Pick one mechanism per direction and stay in it:
+
+- **Undo with the same tool you did it with.** `setopt fedora.enabled=0` is undone by
+  `dnf config-manager unsetopt fedora.enabled` (or `setopt …=1`), not by restoring a file.
+  `scripts/fix-fedora` is fine — it uses `setopt` both ways.
+- **In an image, edit the file.** `pkgcache-setup` now flips `enabled=` with a
+  section-aware `awk` (only inside `[fedora]` / `[updates]` — a blind
+  `s/^enabled=1/enabled=0/` would also hit `-debuginfo`/`-source` sections in a file where
+  those ship enabled), so backup/restore is symmetric. Bonus: no `dnf5-plugins` dependency,
+  so it works on a minimal base image.
+- It also clears a stale `99-config_manager.repo` override (best-effort `unsetopt`), since
+  one left by an earlier run would silently outrank the file edit.
+- **Verify effective state, not file contents** — `dnf repolist` / `repolist --all`, in a
+  container, was what exposed this. The script now re-reads the section it just wrote and
+  fails loudly instead of trusting the edit.
+
+## Sources
+- pkgcache: `containers/fedora/pkgcache-setup` (`set_section_enabled`, `clear_config_manager_override`)
+- pkgcache: `scripts/fix-fedora` (`set_repo_enabled` — the `setopt`-both-ways version)

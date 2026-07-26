@@ -1,0 +1,48 @@
+#!/bin/bash
+set -euo pipefail
+
+# Build the Fedora client image -- fedora:44 with dnf already pointed at the
+# pkgcache proxy (see ./Dockerfile).
+#
+#     ./build                                  # against the default cache endpoint
+#     CACHE=http://localhost:8080 ./build      # against a local test proxy
+#     FEDORA_RELEASE=45 ./build                # rebase onto another release
+#
+# Tags the moving <image>:latest, the release <image>:<fedora-release>, and an
+# immutable per-commit <image>:<git-sha>. Then ./publish to push.
+#
+# Auto-detects the container engine and PREFERS podman when both are present.
+# Force one with  RUNTIME=docker ./build  (or RUNTIME=podman).
+# Override the image name with  IMAGE=you/name ./build .
+
+cd "$(dirname "$0")"
+
+# Container engine: honor RUNTIME override, else prefer podman, then docker.
+CE="${RUNTIME:-}"
+if [ -z "$CE" ]; then
+    if command -v podman >/dev/null 2>&1; then CE=podman
+    elif command -v docker >/dev/null 2>&1; then CE=docker
+    else echo "error: neither podman nor docker found on PATH" >&2; exit 1; fi
+fi
+command -v "$CE" >/dev/null 2>&1 || { echo "error: RUNTIME=$CE not found on PATH" >&2; exit 1; }
+
+IMAGE="${IMAGE:-iphands/pkgcache-fedora}"
+CACHE="${CACHE:-http://noir.lan:3129}"        # baked into the image's dnf repos
+FEDORA_RELEASE="${FEDORA_RELEASE:-44}"
+REF="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"
+export DOCKER_BUILDKIT=1   # no-op under podman/buildah, enables it under docker
+
+echo ">> [$CE] building ${IMAGE}:{latest,${FEDORA_RELEASE},${REF}} against CACHE=${CACHE}"
+"$CE" build \
+    --build-arg "FEDORA_RELEASE=${FEDORA_RELEASE}" \
+    --build-arg "CACHE=${CACHE}" \
+    -t "${IMAGE}:latest" \
+    -t "${IMAGE}:${FEDORA_RELEASE}" \
+    -t "${IMAGE}:${REF}" \
+    .
+
+cat <<EOF
+>> verify it (Rule A -- a real fetch, not a config read):
+   $CE run --rm ${IMAGE}:latest dnf -y install cowsay
+   curl -sI ${CACHE}/fedora/linux/releases/${FEDORA_RELEASE}/Everything/x86_64/os/repodata/repomd.xml | grep -i x-cache-status
+EOF
