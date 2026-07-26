@@ -158,6 +158,7 @@ impl Brain for RunTesterBrain {
                     mv.move_forward(hfwd);
                     mv.move_side(hside);
                 }
+                RecoveryAction::BoxedIn => {}
             }
         }
 

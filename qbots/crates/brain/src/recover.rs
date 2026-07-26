@@ -194,6 +194,9 @@ pub enum RecoveryAction {
     BackOffThenRepath,
     /// No nav node nearby — steer at the open yaw found by `find_best_direction`.
     UseHeading(f32),
+    /// Fully enclosed: no direction has any free space. The caller should escalate
+    /// (e.g. force a respawn) since movement alone cannot escape.
+    BoxedIn,
 }
 
 impl RecoveryAction {
@@ -216,6 +219,7 @@ impl RecoveryAction {
             }
             RecoveryAction::BackOffThenRepath => Some("backoff"),
             RecoveryAction::UseHeading(_) => Some("heading"),
+            RecoveryAction::BoxedIn => Some("boxed"),
         }
     }
 }
@@ -266,6 +270,8 @@ impl Recovery {
                 if let Some((yaw, _)) = find_best_direction(cm, pos, view_yaw) {
                     return RecoveryAction::UseHeading(yaw);
                 }
+                // No direction has any free space — fully enclosed.
+                return RecoveryAction::BoxedIn;
             }
         }
 
@@ -273,24 +279,16 @@ impl Recovery {
         match level {
             StuckLevel::None => RecoveryAction::None,
             StuckLevel::Mild => {
-                // Stalled ~1 s. Strafe sideways to break the stall regardless of whether
-                // a wall is ahead: a side-step slides the bot off a corner, around a
-                // step, or out of a bot-on-bot stack. Jumping in place ("pogo/hover")
-                // does none of that — it just bounces the bot and can drop it off a
-                // ledge — so it is no longer used as a stuck recovery. Real jumps come
-                // only from nav-graph jump edges (current_edge_is_jump).
                 self.tick_strafe(dt);
                 RecoveryAction::Strafe {
                     dir: self.strafe_dir,
                 }
             }
             StuckLevel::Hard => {
-                // BackOffThenRepath only when not actively fighting (to avoid abandoning combat).
                 if !engaging {
                     self.stuck.reset();
                     RecoveryAction::BackOffThenRepath
                 } else {
-                    // In combat: settle for a strafe rather than repath.
                     self.tick_strafe(dt);
                     RecoveryAction::Strafe {
                         dir: self.strafe_dir,

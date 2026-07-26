@@ -605,6 +605,7 @@ impl Brain for Zb2Brain {
                         mv.move_forward(hf);
                         mv.move_side(hs);
                     }
+                    RecoveryAction::BoxedIn => {}
                 }
                 if route.current_edge_is_jump() {
                     mv.jump();

@@ -308,6 +308,7 @@ impl XonBrain {
                 mv.move_forward(hfwd);
                 mv.move_side(hside);
             }
+            RecoveryAction::BoxedIn => {}
         }
 
         if nav.current_edge_is_jump() && !gates.any() {

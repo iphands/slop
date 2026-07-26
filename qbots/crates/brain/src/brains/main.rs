@@ -768,6 +768,9 @@ impl crate::brains::core::Brain for MainBrain {
                     mv.move_forward(hfwd);
                     mv.move_side(hside);
                 }
+                RecoveryAction::BoxedIn => {
+                    tracing::debug!(?pos, "boxed in — no escape direction");
+                }
             }
 
             // ── 7. Jump-edge activation (Plan 14 T2) — suspended while traversing ─────
