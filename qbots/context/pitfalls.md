@@ -1234,3 +1234,37 @@ rotations and demand it match the roster; count-vs-panic arithmetic pins the cau
 - qbots: crates/brain/src/brains/q3/mod.rs (roam_goal/set_map), main.rs, xon/mod.rs
 - qbots: crates/qbots/src/supervisor.rs (bot_supervisor_loop task boundary)
 - qbots: crates/qbots/src/main.rs (bot_task frame-stall watchdog)
+
+---
+
+# Axial plane `typ` with negative-facing normal → BSP traversal picks the wrong child
+
+## Problem
+
+`CM_RecursiveHullCheck` (vendor/yquake2/src/common/cmodel.c) uses the fast path
+`p[plane->type] - plane->dist` when `plane->type < 3`. That fast path **assumes the
+normal is the positive axis** (`[1,0,0]`, `[0,1,0]`, `[0,0,1]`). If you build a test
+fixture with `normal = [-1,0,0]` but `typ = 0`, the sign of `t1`/`t2` is flipped:
+both endpoints read as "behind" the plane and the trace descends into the wrong
+child, never reaching the solid leaf.
+
+In `closet_world` the -x wall slab's planes P6/P7 had `typ = 0` with `normal =
+[-1,0,0]`. A horizontal trace from origin toward -x therefore walked straight
+through the -x wall into the air leaf (L0) and reported `fraction = 1.0` — a
+"wall doesn't exist" failure that looked like a brush/contents bug.
+
+## Fix
+
+In any `mk` closure that constructs `Plane` values, force `typ = 3`
+(`PLANE_NON_AXIAL`) when the normal component for the given `typ` axis is negative:
+
+```rust
+let typ = if typ < 3 && normal[typ as usize] < 0.0 { 3 } else { typ };
+```
+
+This makes `CM_RecursiveHullCheck` fall through to the general `dist_to` path,
+which uses the actual normal and is sign-correct.
+
+## Sources
+- qbots: crates/world/src/collision.rs (`closet_world`, `recursive_hull_check`)
+- vendor: yquake2/src/common/cmodel.c (`CM_RecursiveHullCheck`)

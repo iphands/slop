@@ -816,6 +816,144 @@ pub fn v_groove_world() -> CollisionModel {
     }
 }
 
+/// A fully enclosed box world for "boxed in" recovery tests (Plan 71 T2/T3):
+/// air inside `|x| < half_extent`, `|y| < half_extent`, `z >= 0`; solid everywhere else.
+/// Four vertical walls + a floor — no ceiling needed (the fan-out traces are horizontal).
+/// `half_space` cannot express this (one plane can't enclose a point). Test-support only —
+/// exposed (doc-hidden) so `brain::recover` tests can build a boxed-in collision model
+/// without a real BSP.
+#[doc(hidden)]
+pub fn closet_world(half_extent: f32) -> CollisionModel {
+    let mk = |normal: [f32; 3], dist: f32, typ: i32| {
+        let sb = (0..3).fold(0u8, |b, j| if normal[j] < 0.0 { b | (1 << j) } else { b });
+        // For axis-aligned planes, the engine's CM_RecursiveHullCheck uses
+        // `p[typ] - dist` when typ < 3. That assumes normal = [1,0,0]/[0,1,0]/[0,0,1].
+        // For negative-facing axial planes we must use the general (non-axial) path
+        // so the sign is correct.
+        let typ = if typ < 3 && normal[typ as usize] < 0.0 {
+            3
+        } else {
+            typ
+        };
+        Plane {
+            normal,
+            dist,
+            typ,
+            signbits: sb,
+        }
+    };
+    let h = half_extent;
+    let t = 1.0; // wall thickness
+                 // Each wall is a thin slab brush (6 planes). 5 walls × 6 planes = 30 planes.
+                 // Brush interior = all half-spaces where normal·p - dist <= 0.
+                 // Wall 0: +x slab (x in [h-t, h], y in [-h, h], z in [0, h+t])
+                 // Wall 1: -x slab (x in [-h, -h+t], y in [-h, h], z in [0, h+t])
+                 // Wall 2: +y slab (y in [h-t, h], x in [-h, h], z in [0, h+t])
+                 // Wall 3: -y slab (y in [-h, -h+t], x in [-h, h], z in [0, h+t])
+                 // Wall 4: floor slab (z in [-t, 0], x in [-h, h], y in [-h, h])
+    let planes: Vec<Plane> = vec![
+        // Wall 0 (+x): 6 planes
+        mk([1.0, 0.0, 0.0], h, 0),         // P0:  x <= h
+        mk([-1.0, 0.0, 0.0], -(h - t), 0), // P1:  x >= h-t
+        mk([0.0, 1.0, 0.0], h, 1),         // P2:  y <= h
+        mk([0.0, -1.0, 0.0], h, 1),        // P3:  y >= -h
+        mk([0.0, 0.0, 1.0], h + t, 2),     // P4:  z <= h+t
+        mk([0.0, 0.0, -1.0], 0.0, 2),      // P5:  z >= 0
+        // Wall 1 (-x): 6 planes
+        mk([-1.0, 0.0, 0.0], h, 0),     // P6:  x >= -h
+        mk([1.0, 0.0, 0.0], -h + t, 0), // P7:  x <= -h+t
+        mk([0.0, 1.0, 0.0], h, 1),      // P8:  y <= h
+        mk([0.0, -1.0, 0.0], h, 1),     // P9:  y >= -h
+        mk([0.0, 0.0, 1.0], h + t, 2),  // P10: z <= h+t
+        mk([0.0, 0.0, -1.0], 0.0, 2),   // P11: z >= 0
+        // Wall 2 (+y): 6 planes
+        mk([0.0, 1.0, 0.0], h, 1),         // P12: y <= h
+        mk([0.0, -1.0, 0.0], -(h - t), 1), // P13: y >= h-t
+        mk([1.0, 0.0, 0.0], h, 0),         // P14: x <= h
+        mk([-1.0, 0.0, 0.0], h, 0),        // P15: x >= -h
+        mk([0.0, 0.0, 1.0], h + t, 2),     // P16: z <= h+t
+        mk([0.0, 0.0, -1.0], 0.0, 2),      // P17: z >= 0
+        // Wall 3 (-y): 6 planes
+        mk([0.0, -1.0, 0.0], h, 1),     // P18: y >= -h
+        mk([0.0, 1.0, 0.0], -h + t, 1), // P19: y <= -h+t
+        mk([1.0, 0.0, 0.0], h, 0),      // P20: x <= h
+        mk([-1.0, 0.0, 0.0], h, 0),     // P21: x >= -h
+        mk([0.0, 0.0, 1.0], h + t, 2),  // P22: z <= h+t
+        mk([0.0, 0.0, -1.0], 0.0, 2),   // P23: z >= 0
+        // Wall 4 (floor): 6 planes
+        mk([0.0, 0.0, 1.0], 0.0, 2), // P24: z <= 0
+        mk([0.0, 0.0, -1.0], t, 2),  // P25: z >= -t
+        mk([1.0, 0.0, 0.0], h, 0),   // P26: x <= h
+        mk([-1.0, 0.0, 0.0], h, 0),  // P27: x >= -h
+        mk([0.0, 1.0, 0.0], h, 1),   // P28: y <= h
+        mk([0.0, -1.0, 0.0], h, 1),  // P29: y >= -h
+    ];
+    // Leaf children encode as -(leaf+1): L0→-1 (air), L1→-2 (solid).
+    // Each wall's solid is on the front side (normal direction); air is on the back.
+    // N0 P0: front(x>=h, solid)→L1, back(x<h, air)→N1.
+    // N1 P6: front(x<=-h, solid)→L1, back(x>-h, air)→N2.
+    // N2 P12: front(y>=h, solid)→L1, back(y<h, air)→N3.
+    // N3 P18: front(y<=-h, solid)→L1, back(y>-h, air)→N4.
+    // N4 P24: front(z<0, solid)→L1, back(z>=0, air)→L0.
+    let nodes = vec![
+        Node {
+            plane: 0,
+            children: [-2, 1],
+        },
+        Node {
+            plane: 6,
+            children: [-2, 2],
+        },
+        Node {
+            plane: 12,
+            children: [-2, 3],
+        },
+        Node {
+            plane: 18,
+            children: [-2, 4],
+        },
+        Node {
+            plane: 24,
+            children: [-1, -2],
+        },
+    ];
+    // 5 brushes, each with 6 sides.
+    let brushsides: Vec<BrushSide> = (0..5)
+        .flat_map(|w| (0..6).map(move |s| BrushSide { plane: w * 6 + s }))
+        .collect();
+    let brushes: Vec<BrushCol> = (0..5)
+        .map(|w| BrushCol {
+            firstside: w * 6,
+            numsides: 6,
+            contents: CONTENTS_SOLID,
+        })
+        .collect();
+    let leafbrushes: Vec<u16> = (0..5).map(|i| i as u16).collect();
+    let leafs = vec![
+        Leaf {
+            contents: 0,
+            cluster: 0,
+            firstleafbrush: 0,
+            numleafbrushes: 0,
+        }, // L0 air
+        Leaf {
+            contents: CONTENTS_SOLID,
+            cluster: -1,
+            firstleafbrush: 0,
+            numleafbrushes: 5,
+        }, // L1 solid (references all 5 wall brushes)
+    ];
+    CollisionModel {
+        planes,
+        nodes,
+        leafs,
+        brushes,
+        brushsides,
+        leafbrushes,
+        headnode: 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -841,6 +979,15 @@ mod tests {
         // Actually Q2 brush planes face OUT of the brush. Build accordingly.
         let mk = |normal: [f32; 3], dist: f32, typ: i32| {
             let sb = (0..3).fold(0u8, |b, j| if normal[j] < 0.0 { b | (1 << j) } else { b });
+            // For axis-aligned planes, the engine's CM_RecursiveHullCheck uses
+            // `p[typ] - dist` when typ < 3. That assumes normal = [1,0,0]/[0,1,0]/[0,0,1].
+            // For negative-facing axial planes we must use the general (non-axial) path
+            // so the sign is correct.
+            let typ = if typ < 3 && normal[typ as usize] < 0.0 {
+                3
+            } else {
+                typ
+            };
             Plane {
                 normal,
                 dist,
@@ -994,5 +1141,33 @@ mod tests {
         // A point behind the plane is solid.
         assert!(w.is_solid(&[-10.0, 0.0, 0.0]));
         assert!(!w.is_solid(&[10.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn closet_world_encloses_point() {
+        let w = closet_world(40.0);
+        // Origin inside the box: air.
+        assert!(!w.is_solid(&[0.0, 0.0, 16.0]));
+        // A point well outside: solid.
+        assert!(w.is_solid(&[200.0, 0.0, 16.0]));
+        // Horizontal traces from origin in each axis direction are all blocked.
+        for (dir, label) in [
+            ([1.0, 0.0, 0.0], "+x"),
+            ([-1.0, 0.0, 0.0], "-x"),
+            ([0.0, 1.0, 0.0], "+y"),
+            ([0.0, -1.0, 0.0], "-y"),
+        ] {
+            let end = [dir[0] * 200.0, dir[1] * 200.0, dir[2] * 200.0 + 16.0];
+            let t = w.trace(&[0.0, 0.0, 16.0], &end, &[0.0; 3], &[0.0; 3], MASK_SOLID);
+            eprintln!(
+                "trace {label}: fraction={}, startsolid={}, endpos={:?}",
+                t.fraction, t.startsolid, t.endpos
+            );
+            assert!(
+                t.fraction < 1.0,
+                "horizontal trace {label} should hit a wall, got fraction {}",
+                t.fraction
+            );
+        }
     }
 }
