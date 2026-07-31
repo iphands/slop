@@ -145,6 +145,65 @@ undifferentiated, self-perturbed data.
 
 ---
 
+# u_trace `print_json`: truncated on unclean exit, and events are not time-ordered **[verified 2026-07-30]**
+
+## Problem
+
+Three traps in `MESA_GPU_TRACES=print_json` output, all of which produce a *plausible*
+wrong answer rather than an obvious failure. Aimed at Plan 02's parser.
+
+**1. The file is only closed on a clean exit.** The top-level `]` is written at driver
+teardown. Kill the app — `timeout`, SIGTERM, a crash, Steam's stop button — and the trace
+is missing exactly one byte and is rejected outright by any strict JSON parser:
+
+```
+killed run : ... "duration_ns": 0\n}\n]\n}\n          <- no final ]
+clean run  : ... "duration_ns": 0\n}\n]\n}\n\n]       <- closed
+```
+
+A game session profiled this way is worthless at the last step, after the play time is
+already spent.
+
+**2. Events within a batch are not sorted by `time_ns`.** Measured across a whole
+`vkcube` capture: **121 of 361 batches (33.5 %)** carry out-of-order events. The pattern
+is systematic, not jitter — `intel_begin_trace_copy_cb` is stamped *later* than the
+events that follow it in file order:
+
+```
+intel_begin_trace_copy_cb  0000901567789635    <- latest
+intel_begin_cmd_buffer     0000901567768697    <- ~21 us EARLIER, appears after it
+intel_begin_btp            0000901567768750
+```
+
+A parser that computes durations by walking the array in order will produce negative or
+nonsensical intervals for a third of all batches — or, worse, small positive ones that
+merely look odd.
+
+**3. Types are inconsistent within one object.** `frame` and `duration_ns` are JSON
+numbers; `time_ns` is a **zero-padded string**. `"0000901570334322"` compares as a string
+in the obvious sort, and a language that quietly coerces will sort lexicographically —
+which happens to be *correct* for equal-width zero-padded values and silently *wrong* the
+moment the width changes.
+
+## Fix / How to avoid
+
+- **Sort every batch's events by `int(time_ns)` before pairing `begin`/`end`.** Never
+  trust file order.
+- **Parse `time_ns` explicitly as an integer**, do not rely on coercion or on the padding
+  staying a fixed width.
+- **Make the parser tolerate a missing final `]`** — treat truncation as expected input,
+  not corruption, since it is what any killed capture produces. This is also the reason to
+  stream rather than `json.load()`: the streaming parser recovers the frames that were
+  written, and Plan 01's captures are large enough to demand streaming anyway
+  (`CLAUDE.md` → "Streaming over slurping").
+- Exit the app cleanly when practical, but do not *depend* on it.
+
+## Sources
+- gpu: `/tmp/ut_clean.json` (`vkcube --c 120`, stock Mesa 26.3.0) vs a SIGTERM-killed run, 2026-07-30
+- gpu: `context/distilled.md` (u_trace output shape), `context/plans/01_profiling_bringup.md` T2/T7
+
+---
+
 # `gputop` is not a scriptable `intel_gpu_top` — it has no machine-readable output **[verified 2026-07-30]**
 
 ## Problem

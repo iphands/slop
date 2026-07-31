@@ -1,7 +1,7 @@
 # Profiling bring-up — Tracker
 
 ## Overview
-- Status: 18% complete (2/11 tasks)
+- Status: 27% complete (3/11 tasks)
 - Start date: 2026-07-30
 - Plan: `01_profiling_bringup.md`
 
@@ -28,9 +28,16 @@ active. See RULES.md Rule E.4.
 
 ## Open unknowns to resolve first
 
-1. Is u_trace compiled into Fedora's stock Mesa? (T2 — decides T7's path)
-2. Does Fedora's `igt-gpu-tools` ship `gputop`? (T3 — decides T5's tool)
-3. Does Vulkan layer injection actually work in Palworld? (T4 — gates Plan 03)
+1. ~~Is u_trace compiled into Fedora's stock Mesa?~~ **RESOLVED (T2): yes.** T7 takes the
+   rich render-stage path; Plan 04 no longer gates it.
+2. ~~Does Fedora's `igt-gpu-tools` ship `gputop`?~~ **RESOLVED (T3): it ships, but it is
+   unscriptable** (`-h/-d/-n` only, empty output when redirected). Replaced by
+   `scripts/gpu-survey.sh` reading `fdinfo` + sysfs, which yields more.
+3. Does Vulkan layer injection actually work in Palworld? (T4 — gates Plan 03) — **open**.
+4. **New, open:** is the live translation layer DXVK (D3D11) or vkd3d-proton (D3D12)?
+   Palworld had *no* launch options set and defaults to D3D11, so the D3D12 assumption is
+   unverified. T4 detects it. If D3D12, **Plan 03's GFXReconstruct capture is at risk** —
+   the vkd3d path is upstream "future work".
 
 ## Measurements
 
@@ -63,7 +70,7 @@ into `SERIES.md`, because Plan 06's target depends on it.)*
 | # | Task | File / Area | Status | Notes |
 |---|------|-------------|--------|-------|
 | 1 | T1: Verify `xe` tool facts | `context/distilled.md` | done | `xe` confirmed. **Docs were wrong**: knob is `dev.xe.observation_paranoid`, not `perf_stream_paranoid`. Corrected in 7 files; new `pitfalls.md` entry |
-| 2 | T2: u_trace availability | `context/distilled.md` | pending | Gates T7's richer path |
+| 2 | T2: u_trace availability | `context/distilled.md` | done | **AVAILABLE** on stock Fedora Mesa 26.3.0 — T7 gets the rich path, Plan 04 de-risked. Event vocabulary + JSON shape recorded; 3 parser traps in `pitfalls.md` |
 | 3 | T3: Install tooling, check `gputop` | `scripts/gpu-survey.sh` | done | Tooling present (igt 2.4, vulkan-tools, mangohud 0.8.2, renderdoc 1.45). **`gputop` unscriptable** — only `-h/-d/-n`, empty output when redirected, exits 0. T5's recipe replaced by the fdinfo/sysfs sampler, which yields more (per-client VRAM + throttle reasons) |
 | 4 | T4: Confirm layer injection | — | pending | Gates Plan 03 |
 | 5 | T5: Whole-session survey + verdict | `scripts/record.sh` | pending | N ≥ 3 sessions |

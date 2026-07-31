@@ -152,7 +152,7 @@ an absolute path.
 
 ---
 
-## `MESA_GPU_TRACES` / u_trace — GPU render-stage timing **[from docs; availability in Fedora's build UNVERIFIED]**
+## `MESA_GPU_TRACES` / u_trace — GPU render-stage timing **[verified 2026-07-30 — AVAILABLE on stock Fedora Mesa]**
 
 Mesa's own tracing framework. Implemented by **ANV and Iris** among Intel drivers.
 
@@ -162,13 +162,47 @@ Mesa's own tracing framework. Implemented by **ANV and Iris** among Intel driver
 | `MESA_GPU_TRACEFILE` | output file instead of stdout |
 | `INTEL_GPU_TRACEPOINT` | per-tracepoint enable/disable, additive/subtractive: `-blit,+render_pass` |
 
-**Open question:** whether Fedora's stock Mesa is built with u_trace compiled in. Test
-cheaply before relying on it:
+**RESOLVED (Plan 01 T2): u_trace IS compiled into Fedora's stock Mesa
+`26.3.0-0.3.20260729`.** No local Mesa build is needed for render-stage tracing, so Plan
+01 T7 gets the rich path and Plan 04 is de-risked.
 
 ```bash
-MESA_GPU_TRACES=print_json MESA_GPU_TRACEFILE=/tmp/ut.json vkcube
-ls -la /tmp/ut.json     # non-empty ⇒ available on stock Mesa
+MESA_GPU_TRACES=print_json MESA_GPU_TRACEFILE=/tmp/ut.json vkcube --c 120
 ```
+
+`vkcube --c 120` produced 121 frames / 361 batches / 249 KB.
+
+### `print_json` output shape **[verified 2026-07-30]**
+
+Top-level is a **JSON array of frame objects**; each frame is
+`{"frame": <int>, "batches": [...]}`; each batch is
+`{"events": [...], "duration_ns": <int>}`; each event is
+`{"event": <str>, "time_ns": <str>, "params": {...}}`.
+
+**Types are inconsistent — do not assume.** `frame` and `duration_ns` are JSON *numbers*;
+`time_ns` is a zero-padded **string** (`"0000901570334322"`).
+
+Event vocabulary observed on ANV, and where the payload lives:
+
+| Event | `params` |
+|---|---|
+| `intel_end_draw` | `count`, **`vs_hash`**, **`fs_hash`** |
+| `intel_end_render_pass` | `width`, `height`, `msaa`, `att_count`, `command_buffer_handle` |
+| `intel_end_blorp` | `op` (e.g. `HIZ_CLEAR`, `CCS_COLOR_CLEAR`), `width`, `height`, `samples`, `shader_pipe`, `src_fmt`, `dst_fmt`, `predicated` |
+| `intel_end_cmd_buffer` | `command_buffer_handle`, `level` |
+| `intel_end_btp` | `addr` |
+| `intel_end_trace_copy_cb` | `count` |
+| `intel_end_frame` | `frame` |
+| every `intel_begin_*` | **empty** — all payload is on the matching `_end_` event |
+
+Two consequences for Plan 02's parser: pair `begin`/`end` to get durations, and read
+identity off the `end` event only. `vs_hash`/`fs_hash` on `intel_end_draw` give shader
+identity for free — that is the hook for attributing cost to a specific shader in Plan 06.
+
+Volume warning: u_trace has **no control fifo**, unlike `INTEL_MEASURE`. It records from
+driver init, so a game session includes menus and loading. Trim with
+`INTEL_GPU_TRACEPOINT` (e.g. `-blit,-copy,+render_pass,+draw,+frame`) and keep sessions
+short.
 
 `print`/`print_json` do **not** require a Perfetto-enabled Mesa; the `perfetto` value
 does (see below). Perfetto traces can be collected without `MESA_GPU_TRACES=perfetto`
