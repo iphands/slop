@@ -69,7 +69,7 @@ saying "wrong driver." Confirmed differences:
 | Thing | `i915` | `xe` (ours) |
 |---|---|---|
 | Engine-busy top | `intel_gpu_top` | **`gputop`** (`intel_gpu_top` is unsupported and has been reported to crash) |
-| OA paranoia sysctl | `dev.i915.perf_stream_paranoid` | **`dev.xe.perf_stream_paranoid`** |
+| OA paranoia sysctl | `dev.i915.perf_stream_paranoid` | **`dev.xe.observation_paranoid`** — renamed; the `perf_stream_paranoid` name does **not** exist under `dev.xe` |
 | Mesa Perfetto data source | `gpu.counters.i915` | **unverified** — see `context/pitfalls.md` |
 
 **Always confirm which driver is bound (`lspci -k -s 03:00.0`) before trusting any
@@ -261,7 +261,7 @@ this project's equivalent of a failing test that reports success.
    They are gigabytes and they are regenerable. If a build command can produce it, it
    does not belong in a commit.
 5. **Respect that this is someone's game.** Profiling runs are on a real Palworld save
-   on a real machine. Don't leave `perf_stream_paranoid=0` set permanently, don't leave
+   on a real machine. Don't leave `observation_paranoid=0` set permanently, don't leave
    the system Mesa swapped out, and don't leave debug env vars in the Steam launch
    options after a session.
 6. **No type suppression. No broken commits. No `tmp/` scripts.** (Above.)

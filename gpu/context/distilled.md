@@ -20,8 +20,29 @@ every session that learns something. Keep it dense.
 | Fused off | `ccs0`, `ccs2`, `ccs3` (one compute engine remains); `vcs1,3,4,5,6,7`; `vecs2,3` |
 | Power | `PL1` supported on channel 1; driver uses register-based power limits |
 | OS / Mesa | Fedora 44, Mesa `26.3.0-0.3.20260729.05.21dc9d4` (git snapshot), i686 + x86_64 |
+| OA paranoia sysctl | **`dev.xe.observation_paranoid`** (= `1` by default). The only knob under `dev.xe`. |
+| Boost / efficient / min clock | `rp0_freq` **2450** MHz, `rpe_freq` 850, `rpn_freq` 300; idles at `act_freq` 850 |
+| Package power limit | `power2_max` = **31.25 W** (`power2_max_interval` 28 s) |
 
-Source: `dmesg | grep 'xe '`, `lspci`, `rpm -qa | grep mesa`.
+Source: `dmesg | grep 'xe '`, `lspci`, `rpm -qa | grep mesa`, `sysctl dev.xe`,
+`/sys/class/drm/card0/device/tile0/gt0/freq0/`, `.../device/hwmon/hwmon2/`.
+
+**Do not use `rpa_freq`** — it reads `627200` while every neighbouring frequency is in MHz
+(850 / 2450 / 300). Units are inconsistent or the value is meaningless; `act_freq` vs
+`rp0_freq` is the pair to compare. **[verified 2026-07-30]**
+
+### Throttle reasons are readable directly **[verified 2026-07-30]**
+
+`xe` exposes the hardware throttle-reason register as sysfs booleans under
+`/sys/class/drm/card0/device/tile0/gt0/freq0/throttle/`:
+
+`reasons` (summary; `none` when clear), `status`, and one file each for `reason_pl1`,
+`reason_pl2`, `reason_pl4`, `reason_prochot`, `reason_ratl`, `reason_thermal`,
+`reason_vr_tdc`, `reason_vr_thermalert`.
+
+This makes CLAUDE.md's "check for the throttle first" a **direct read**, not an inference
+from clock behavior. Sample it every interval during any capture and discard runs where it
+goes non-`none`.
 
 The narrow engine set is the SKU, not a fault — expect few rows in any engine-busy view.
 
@@ -106,7 +127,7 @@ meson compile -C build
 ./tools/ninja -C out/linux
 
 # capture
-sudo sysctl dev.xe.perf_stream_paranoid=0        # xe, NOT i915
+sudo sysctl dev.xe.observation_paranoid=0        # xe, NOT i915 — note the NAME, see below
 sudo ./build/src/tool/pps/pps-producer &
 sudo ./perfetto/out/linux/tracebox --system-sockets --txt \
   -c mesa/src/tool/pps/cfg/system.cfg -o out.perfetto-trace

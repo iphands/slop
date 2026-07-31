@@ -232,7 +232,7 @@ because it gets cited.
 2. Name captures so they are identifiable six months later:
    `<workload>_<date>_<what-varies>.<ext>`. An orphan `capture.gfxr` is a dead capture.
 3. Record in the tracker which capture backs which measurement.
-4. **Restore the system after a session**: unset `perf_stream_paranoid`, remove debug
+4. **Restore the system after a session**: reset `dev.xe.observation_paranoid` to `1`, remove debug
    env vars from Steam launch options, restore the stock Mesa ICD. The next session's
    baseline depends on the machine being in a known state.
 

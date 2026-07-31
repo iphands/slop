@@ -49,7 +49,8 @@ Established while planning; full syntax in `context/distilled.md`.
 - **The box runs `xe`, not `i915`.** Confirmed from `dmesg`: `Initialized xe 1.1.0 for
   0000:03:00.0`, DG2/G11 device `56a6`. This invalidates most Intel profiling recipes
   found online — see `context/pitfalls.md`. Concretely: `gputop` not `intel_gpu_top`,
-  `dev.xe.perf_stream_paranoid` not `dev.i915.*`.
+  `dev.xe.observation_paranoid` not `dev.i915.perf_stream_paranoid` (the knob is **renamed**
+  under `xe`, not merely re-namespaced — see `context/pitfalls.md`).
 - **3.95 GiB usable VRAM** on a UE5 title makes residency a live hypothesis, not a
   footnote. Check it in T5 before blaming shaders.
 - **Palworld ships no kernel anti-cheat** (no EAC/BattlEye/VAC), so Vulkan layer
@@ -88,14 +89,14 @@ not yet verified on the box. Confirm each:
 
 ```bash
 lspci -k -s 03:00.0 | grep -i 'kernel driver'   # expect: xe
-sysctl -a | grep perf_stream_paranoid           # expect: dev.xe.*
+sysctl dev.xe                                   # enumerate; do NOT grep a remembered name
 ```
 
 Promote the confirmed entries in `context/distilled.md` from **[from docs]** to
 **[verified]**. Do not promote what you did not observe.
 
 **Expected observation**:
-- **Confirms**: `xe` bound; `dev.xe.perf_stream_paranoid` exists.
+- **Confirms**: `xe` bound; `dev.xe.observation_paranoid` exists.
 - **Refutes**: an `i915` binding — in which case the whole `xe` section of
   `pitfalls.md` is moot for this session and the plan's tool choices revert to the
   conventional ones. Say so loudly; do not quietly use `i915` tools on an `xe` box or
@@ -333,7 +334,7 @@ Plan 06.
 1. Promote verified facts in `distilled.md`; add any new trap to `pitfalls.md`.
 2. Record the verdict in SERIES.md — **Plan 06's target depends on it**.
 3. Fill in the tracker's Measurements table completely (capture names, N, spread).
-4. **Restore the machine** (RULES.md Rule E.4): unset `perf_stream_paranoid` if set,
+4. **Restore the machine** (RULES.md Rule E.4): reset `dev.xe.observation_paranoid` to `1` if changed,
    clear debug env vars from the Steam launch options, remove the FIFO. The next
    session's baseline depends on a known state.
 
@@ -389,7 +390,7 @@ Plan 06.
 - [ ] T8: per-draw capture is ≤ 10 frames and did not visibly perturb frame time
 - [ ] T9: pass names in the table are Unreal's, not raw handles
 - [ ] T10: `.rdc` opens and shows the frame identified in T6
-- [ ] T11: SERIES.md carries the verdict; `perf_stream_paranoid` unset; Steam launch
+- [ ] T11: SERIES.md carries the verdict; `dev.xe.observation_paranoid` back to `1`; Steam launch
       options clean; no stray FIFO
 
 ---

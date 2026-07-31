@@ -1,7 +1,7 @@
 # Profiling bring-up — Tracker
 
 ## Overview
-- Status: 0% complete (0/11 tasks)
+- Status: 9% complete (1/11 tasks)
 - Start date: 2026-07-30
 - Plan: `01_profiling_bringup.md`
 
@@ -23,7 +23,7 @@ Each task: run it → record numbers in the Measurements table below → **commi
 (RULES.md Rule B: commit before marking anything complete).
 
 **Before any capture session**: confirm the machine is in a known state — no leftover
-`perf_stream_paranoid`, no stale debug env vars in Steam launch options, stock Mesa ICD
+`dev.xe.observation_paranoid`, no stale debug env vars in Steam launch options, stock Mesa ICD
 active. See RULES.md Rule E.4.
 
 ## Open unknowns to resolve first
@@ -62,7 +62,7 @@ into `SERIES.md`, because Plan 06's target depends on it.)*
 
 | # | Task | File / Area | Status | Notes |
 |---|------|-------------|--------|-------|
-| 1 | T1: Verify `xe` tool facts | `context/distilled.md` | pending | |
+| 1 | T1: Verify `xe` tool facts | `context/distilled.md` | done | `xe` confirmed. **Docs were wrong**: knob is `dev.xe.observation_paranoid`, not `perf_stream_paranoid`. Corrected in 7 files; new `pitfalls.md` entry |
 | 2 | T2: u_trace availability | `context/distilled.md` | pending | Gates T7's richer path |
 | 3 | T3: Install tooling, check `gputop` | — | pending | fdinfo fallback if absent |
 | 4 | T4: Confirm layer injection | — | pending | Gates Plan 03 |

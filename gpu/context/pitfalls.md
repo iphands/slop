@@ -26,7 +26,7 @@ Known divergences:
 | Thing | `i915` | `xe` (ours) |
 |---|---|---|
 | Engine-busy top | `intel_gpu_top` | **`gputop`** — `intel_gpu_top` is unsupported on `xe` and has been reported to crash |
-| OA paranoia sysctl | `dev.i915.perf_stream_paranoid` | **`dev.xe.perf_stream_paranoid`** |
+| OA paranoia sysctl | `dev.i915.perf_stream_paranoid` | **`dev.xe.observation_paranoid`** — *renamed*, see the next entry |
 | Mesa Perfetto data source | `gpu.counters.i915` | **unresolved** — Mesa docs name only the i915 source; whether the PPS producer speaks `xe` OA is untested. See the next entry. |
 
 The insidious part: an `i915`-only tool that reports zeros looks exactly like a GPU that
@@ -52,6 +52,55 @@ fallback, but see the cross-driver comparison pitfall below.
 - [intel_gpu_top(1) man page](https://man.archlinux.org/man/extra/intel-gpu-tools/intel_gpu_top.1.en)
 - [Arch forums: intel_gpu_top crashes on the xe kernel driver](https://bbs.archlinux.org/viewtopic.php?id=295732)
 - [Mesa: Perfetto Tracing](https://docs.mesa3d.org/perfetto.html)
+
+---
+
+# The `xe` OA paranoia knob is `observation_paranoid`, not `perf_stream_paranoid` **[verified 2026-07-30]**
+
+## Problem
+
+Every Perfetto/OA recipe — including, until now, our own `distilled.md` and the table
+above — tells you to run:
+
+```bash
+sudo sysctl dev.xe.perf_stream_paranoid=0
+```
+
+**That sysctl does not exist.** `xe` calls it `observation_paranoid`:
+
+```
+$ sysctl dev.xe
+dev.xe.observation_paranoid = 1
+
+$ sysctl dev.xe.perf_stream_paranoid
+sysctl: cannot stat /proc/sys/dev/xe/perf_stream_paranoid: No such file or directory
+```
+
+`i915` keeps the old name, and on this box `/proc/sys/dev/i915/perf_stream_paranoid` **is
+present** even though `i915` is bound to nothing (module loaded, refcount 0). So
+`sysctl -a | grep perf_stream_paranoid` returns a confident-looking hit — for the wrong,
+inactive driver.
+
+Two ways this bites. The `cannot stat` error reads as "this kernel has no OA support",
+prompting a hunt for a missing feature that is present under another name. Or you grep,
+find the `i915` entry, set *that* to `0`, observe no change in behavior, and conclude OA
+is unavailable on `xe`.
+
+## Fix / How to avoid
+
+**Enumerate the namespace instead of grepping for a remembered name:**
+
+```bash
+sysctl dev.xe            # authoritative: shows exactly what xe exposes
+```
+
+Generally: when porting an `i915` recipe to `xe`, treat every identifier as renamed until
+observed. `xe` renamed the whole `perf` subsystem to `observation`. A `grep` across both
+namespaces will happily match the inactive driver and give a false positive.
+
+## Sources
+- gpu: `sysctl dev.xe` / `ls /proc/sys/dev/{xe,i915}/` on `station-lan`, 2026-07-30
+- gpu: `context/distilled.md` (Perfetto + PPS section), `context/plans/01_profiling_bringup.md` T1
 
 ---
 

@@ -102,7 +102,7 @@ working copy, `distilled.md` is the permanent record.
    workload, and is the expected effect larger than it? If not, this plan cannot
    succeed as written — say so now, not after the work.
 3. **Does it survive a reboot?** Thermal state, ASLR, shader cache warmth, and
-   `perf_stream_paranoid` all reset. Anything measured in one session only is provisional.
+   `dev.xe.observation_paranoid` all reset. Anything measured in one session only is provisional.
 4. **Does it hold on the other kernel driver?** If the finding is `xe`-specific, say so;
    if it should port to `i915`, that is a claim requiring evidence.
 
