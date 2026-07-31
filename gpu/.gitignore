@@ -1,0 +1,34 @@
+# Vendored reference trees (cloned, not authored — mesa, perfetto, dxvk, ...)
+/vendor/
+
+# Captures & traces — gigabytes, regenerable, NEVER commit (RULES.md Rule E)
+/captures/*
+!/captures/README.md
+*.gfxr
+*.rdc
+*.perfetto-trace
+*.trace
+
+# INTEL_MEASURE / u_trace output
+*.measure.csv
+/prof/
+
+# Rust build output
+/target/
+/target-*/
+**/*.rs.bk
+
+# Python scratch
+__pycache__/
+*.pyc
+.venv/
+
+# Local Mesa / Perfetto build trees, if kept in-tree
+/mesa/
+/perfetto/
+
+# Editor / OS cruft
+/.idea/
+/.vscode/
+*.swp
+.DS_Store
