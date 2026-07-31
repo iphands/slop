@@ -549,3 +549,44 @@ resolution off (`no unqualified-search registries`) and a subuid/graphdriver mis
 
 ## Sources
 - slop/cache: `conf.d/pkgcache.conf` (nested `.rpm`/`.deb` regex locations + `rewrite`), `nginx.conf` (`*_temp_path`), `Dockerfile` (`FROM docker.io/...`)
+
+---
+
+# `set -e` plus `[[ cond ]] && assign` silently truncates a script
+
+A statement of the form `[[ cond ]] && var=value` returns non-zero when the condition is
+false. Under `set -e` that non-zero status is the exit status of a top-level statement, so
+**the shell exits right there** — no error, no message, exit code 0 from the trap or 1
+from the shell. The idiom is safe inside an `if` condition or as a non-final element of a
+`&&`/`||` chain, which is why it looks fine in review and in most of the places it is
+copied from.
+
+Concretely, in a GPU sampler:
+
+```bash
+set -euo pipefail
+[[ -r "$hwmon/energy1_input" ]] && energy_file="$hwmon/energy1_input"   # file absent
+emit "$header"        # never runs; script already exited
+```
+
+The observed symptom was a capture script that produced an **empty file and exited 0**.
+For measurement tooling this is the worst possible failure: it is indistinguishable from
+"the thing being measured was idle", and it silently truncates every run that takes an
+optional-probe branch. The bug only fires on machines where the optional file is missing,
+so it survives testing on the developer's box.
+
+## Fix / How to avoid
+
+Use an explicit `if` block for conditional assignment, or terminate the statement with
+`|| true` when the guard is genuinely optional:
+
+```bash
+if [[ -r "$hwmon/energy1_input" ]]; then energy_file="$hwmon/energy1_input"; fi
+```
+
+Rule of thumb: under `set -e`, never let `[[ ... ]] &&` be the *last* command of a
+statement. Grep for `^\s*\[\[.*\]\] &&` before shipping any script that writes data a
+human will later trust.
+
+## Sources
+- slop/gpu: `scripts/gpu-survey.sh`, `scripts/record.sh`, `scripts/launch-game-debug.sh`

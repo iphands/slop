@@ -1,7 +1,7 @@
 # Profiling bring-up — Tracker
 
 ## Overview
-- Status: 9% complete (1/11 tasks)
+- Status: 18% complete (2/11 tasks)
 - Start date: 2026-07-30
 - Plan: `01_profiling_bringup.md`
 
@@ -64,7 +64,7 @@ into `SERIES.md`, because Plan 06's target depends on it.)*
 |---|------|-------------|--------|-------|
 | 1 | T1: Verify `xe` tool facts | `context/distilled.md` | done | `xe` confirmed. **Docs were wrong**: knob is `dev.xe.observation_paranoid`, not `perf_stream_paranoid`. Corrected in 7 files; new `pitfalls.md` entry |
 | 2 | T2: u_trace availability | `context/distilled.md` | pending | Gates T7's richer path |
-| 3 | T3: Install tooling, check `gputop` | — | pending | fdinfo fallback if absent |
+| 3 | T3: Install tooling, check `gputop` | `scripts/gpu-survey.sh` | done | Tooling present (igt 2.4, vulkan-tools, mangohud 0.8.2, renderdoc 1.45). **`gputop` unscriptable** — only `-h/-d/-n`, empty output when redirected, exits 0. T5's recipe replaced by the fdinfo/sysfs sampler, which yields more (per-client VRAM + throttle reasons) |
 | 4 | T4: Confirm layer injection | — | pending | Gates Plan 03 |
 | 5 | T5: Whole-session survey + verdict | `scripts/record.sh` | pending | N ≥ 3 sessions |
 | 6 | T6: Per-frame capture, find scenario | `captures/` | pending | |

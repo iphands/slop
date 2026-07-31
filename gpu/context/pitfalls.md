@@ -145,6 +145,51 @@ undifferentiated, self-perturbed data.
 
 ---
 
+# `gputop` is not a scriptable `intel_gpu_top` — it has no machine-readable output **[verified 2026-07-30]**
+
+## Problem
+
+Our own `CLAUDE.md` and the table above present `gputop` as the `xe` replacement for
+`intel_gpu_top`. It is — *interactively*. It is not a replacement for
+`intel_gpu_top -J`, and Plan 01 T5 was written around a command that cannot exist:
+
+```bash
+sudo gputop -J -s 200 > captures/gputop_baseline.json    # -J and -s are not options
+```
+
+Fedora's `igt-gpu-tools-2.4` `gputop` accepts **only** `-h/--help`, `-d/--delay`, and
+`-n/--iterations`. There is no JSON, no CSV, no interval-in-ms flag.
+
+The dangerous part is the failure mode. Redirected to a file it exits **0** and writes a
+few ANSI cursor-home/clear-screen escapes and nothing else:
+
+```
+$ gputop -n 2 -d 1 > out.json ; echo $?
+0
+$ cat out.json
+^[[H^[[J^[[H^[[J
+```
+
+A zero exit and a non-empty file look like success. A script that then reports "0 %
+engine busy" is reporting the absence of a parser, not the state of the GPU — which is
+this project's central hazard wearing a different hat.
+
+## Fix / How to avoid
+
+Read `fdinfo` and sysfs directly; it is where `gputop` gets its numbers anyway, it needs
+no root, and it yields strictly more (per-client VRAM, throttle reasons). That is what
+`scripts/gpu-survey.sh` does — see `distilled.md` for the field map.
+
+Generally: before building a capture step on a tool's flags, run `--help` on the version
+actually installed. Do not trust a flag because a man page for another distro, another
+release, or the other kernel driver documents it.
+
+## Sources
+- gpu: `gputop --help`, `igt-gpu-tools-2.4-1.fc44` on `station-lan`, 2026-07-30
+- gpu: `context/plans/01_profiling_bringup.md` T5, `scripts/gpu-survey.sh`
+
+---
+
 # Comparing measurements across kernel drivers measures the wrong thing **[from docs]**
 
 ## Problem

@@ -48,6 +48,50 @@ The narrow engine set is the SKU, not a fault — expect few rows in any engine-
 
 ---
 
+## Whole-session survey without root — `fdinfo` + sysfs **[verified 2026-07-30]**
+
+`gputop` cannot be scripted (see `pitfalls.md`). Everything the layer-0 survey needs is
+readable directly, unprivileged. Implemented in `scripts/gpu-survey.sh`.
+
+### Engine busy — `/proc/<pid>/fdinfo/<drm fd>`
+
+Per engine `E` in `rcs, bcs, vcs, vecs, ccs`:
+
+```
+busy_pct(E) = Δ drm-cycles-E / Δ drm-total-cycles-E × 100
+```
+
+`drm-total-cycles-E` is a wall-clock reference that advances at the same rate for every
+client, so it is the denominator, **not** something to sum.
+
+**Deduplicate by `drm-client-id`, never by fd.** One process holds several DRM fds with
+*distinct* client-ids — `vkcube` showed 3 fds (`card0`, `renderD128` ×2) with client-ids
+777 / 778 / 782. Summing per-fd double-counts. Sum `drm-cycles-*` across distinct
+client-ids; take the max of `drm-total-cycles-*`.
+
+Also present per client: `drm-total-vram0`, `drm-resident-vram0`, `drm-shared-vram0`,
+plus `-gtt` and `-system` variants. **Values carry units** (`36288 KiB`, `4 MiB`, or a
+bare `0`) — parse them, don't `atoi`.
+
+There is no global VRAM-used counter in sysfs; total usage means summing across clients.
+
+### Clocks, throttle, thermals — `/sys/class/drm/card0/device/`
+
+| Path | Meaning |
+|---|---|
+| `tile0/gt0/freq0/act_freq` | actual clock; **reads `0` when the GT is idle-parked** — not a failed read |
+| `tile0/gt0/freq0/cur_freq` | requested clock |
+| `tile0/gt0/freq0/rp0_freq` | max boost, 2450 MHz — the number `act_freq` is judged against |
+| `tile0/gt0/freq0/throttle/reasons` | `none` when clear; else the active reason |
+| `hwmon/hwmon2/temp2_input` | °C ×1000 |
+| `hwmon/hwmon2/fan1_input` | RPM |
+| `hwmon/hwmon2/energy2_input` | µJ, monotonic — **there is no `power*_input`; derive watts from Δenergy/Δt** |
+
+Observed idle-to-light-load baseline (`vkcube`, 2026-07-30): `rcs` ≈ 0.7 %, 35.4 MiB
+VRAM, 39 °C, ~12.6 W against the 31.25 W limit, `reasons=none`.
+
+---
+
 ## `INTEL_MEASURE` — per-interval GPU timestamps to CSV **[from docs]**
 
 Collects GPU timestamps over intervals and writes a CSV. Overhead is the **flush required
@@ -73,6 +117,38 @@ Comma-separated options:
 whole-session-at-draw-granularity capture into an armed, on-demand one.
 
 Type values are mutually exclusive.
+
+### `control=` fifo semantics **[verified from Mesa source 2026-07-30; not yet exercised in-game]**
+
+Read out of `src/intel/common/intel_measure.c` rather than inferred from the envvar docs,
+because the exact wording matters for building a deferred-start capture:
+
+| Fact | Source |
+|---|---|
+| Mesa **creates** the fifo itself if absent (`mkfifoat`), tolerating `EEXIST` | `:149-155` |
+| Opened `O_RDONLY \| O_NONBLOCK`, held for process lifetime | `:157-158` |
+| **With `control=` set, capture starts DISABLED** (`config.enabled = false`) | `:165-168` |
+| The fifo is polled once per frame transition | `:349-353` |
+| `echo N` (N > 0) → `enabled = true`, `end_frame = frame + N` | `:374-377` |
+| **`echo 0` → `enabled = false`, stops immediately**, overriding any pending count | `:372-373` |
+| Non-numeric input → disables capture and logs an error | `:366-371` |
+| Several counts may be written at once; they are parsed in a loop | `:363-380` |
+
+Two consequences this project relies on:
+
+1. **Deferred start is real.** Launch the game with `control=` set and menus, shaders
+   compiling and the walk to the test spot cost nothing. This is what lets a capture be
+   armed only once the interesting scenario is on screen.
+2. **Open-ended capture with a clean stop** is spelled: arm with an N you will never
+   reach, then `echo 0` to end. That is how `scripts/record.sh` maps the capture onto
+   Ctrl-C.
+
+`read()` returning 0 (no writer) is treated as "no data", not as EOF-and-stop, so a
+persistent reader survives repeated open/write/close cycles by the shell. Verified against
+a reader mimicking Mesa's flags: `echo N` then `echo 0` both land.
+
+Note `mkfifoat` is called with a **relative-to-CWD** path if the option is relative — pass
+an absolute path.
 
 ---
 
