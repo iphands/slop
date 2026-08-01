@@ -171,8 +171,16 @@ cleanup() {
     echo "record: window $window_start .. $(date -Is)"
     echo "record: survey CSV   $survey_out"
     if [[ -n ${capture_file:-} ]]; then
-        if [[ -f $capture_file ]]; then
-            echo "record: capture      $capture_file ($(wc -l <"$capture_file") lines, $(du -h "$capture_file" | cut -f1))"
+        # With --pid-files the driver expands %p per process, so the literal path never
+        # exists and there is one file per ANV client. Report every one; the game's is the
+        # big one, the rest are the helpers that used to corrupt the shared file.
+        shopt -s nullglob
+        produced=( ${capture_file//%p/*} )
+        shopt -u nullglob
+        if [[ ${#produced[@]} -gt 0 ]]; then
+            for cf in "${produced[@]}"; do
+                echo "record: capture      $cf ($(wc -l <"$cf") lines, $(du -h "$cf" | cut -f1))"
+            done
         else
             echo "record: WARNING expected capture $capture_file does not exist — nothing was written." >&2
             echo "record: check $CAPTURES/last-launch.log to confirm INTEL_MEASURE reached the game." >&2

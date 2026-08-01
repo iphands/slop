@@ -1,0 +1,539 @@
+station-lan
+    description: Desktop Computer
+    product: OptiPlex 7090 (0A52)
+    vendor: Dell Inc.
+    serial: FN9RNF3
+    width: 64 bits
+    capabilities: smbios-3.4.0 dmi-3.4.0 smp vsyscall32
+    configuration: boot=normal chassis=desktop family=OptiPlex sku=0A52 uuid=4c4c4544-004e-3910-8052-c6c04f4e4633
+  *-core
+       description: Motherboard
+       product: 073Y7Y
+       vendor: Dell Inc.
+       physical id: 0
+       version: A00
+       serial: /FN9RNF3/CNFCW0016U025K/
+     *-firmware
+          description: BIOS
+          vendor: Dell Inc.
+          physical id: 1
+          version: 1.31.0
+          date: 12/11/2024
+          size: 1MiB
+          capacity: 32MiB
+          capabilities: pci pnp upgrade shadowing cdboot bootselect edd int5printscreen int9keyboard int14serial int17printer acpi usb biosbootspecification netboot uefi
+     *-cpu
+          description: CPU
+          product: Intel(R) Core(TM) i7-10700 CPU @ 2.90GHz
+          vendor: Intel Corp.
+          physical id: 400
+          bus info: cpu@0
+          version: 6.165.5
+          slot: U3E1
+          size: 4700MHz
+          capacity: 4800MHz
+          width: 64 bits
+          clock: 100MHz
+          capabilities: lm fpu fpu_exception wp vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe syscall nx pdpe1gb rdtscp x86-64 constant_tsc art arch_perfmon pebs bts rep_good nopl xtopology nonstop_tsc cpuid aperfmperf pni pclmulqdq dtes64 monitor ds_cpl vmx smx est tm2 ssse3 sdbg fma cx16 xtpr pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm abm 3dnowprefetch cpuid_fault epb ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid mpx rdseed adx smap clflushopt intel_pt xsaveopt xsavec xgetbv1 xsaves dtherm ida arat pln pts hwp hwp_notify hwp_act_window hwp_epp vnmi pku ospke md_clear flush_l1d arch_capabilities cpufreq
+          configuration: cores=8 enabledcores=8 microcode=256 threads=16
+        *-cache:0
+             description: L1 cache
+             physical id: 700
+             slot: L1 Cache
+             size: 512KiB
+             capacity: 512KiB
+             capabilities: synchronous internal write-back
+             configuration: level=1
+        *-cache:1
+             description: L2 cache
+             physical id: 701
+             slot: L2 Cache
+             size: 2MiB
+             capacity: 2MiB
+             capabilities: synchronous internal write-back unified
+             configuration: level=2
+        *-cache:2
+             description: L3 cache
+             physical id: 702
+             slot: L3 Cache
+             size: 16MiB
+             capacity: 16MiB
+             capabilities: synchronous internal write-back unified
+             configuration: level=3
+     *-memory
+          description: System Memory
+          physical id: 1000
+          slot: System board or motherboard
+          size: 128GiB
+        *-bank:0
+             description: DIMM DDR4 Synchronous 2667 MHz (0.4 ns)
+             product: M378A4G43MB1-CTD
+             vendor: Samsung
+             physical id: 0
+             serial: 01ACCCFA
+             slot: DIMM3
+             size: 32GiB
+             width: 64 bits
+             clock: 2667MHz (0.4ns)
+        *-bank:1
+             description: DIMM DDR4 Synchronous 2667 MHz (0.4 ns)
+             product: M378A4G43MB1-CTD
+             vendor: Samsung
+             physical id: 1
+             serial: 01ACCD4E
+             slot: DIMM1
+             size: 32GiB
+             width: 64 bits
+             clock: 2667MHz (0.4ns)
+        *-bank:2
+             description: DIMM DDR4 Synchronous 2667 MHz (0.4 ns)
+             product: M378A4G43MB1-CTD
+             vendor: Samsung
+             physical id: 2
+             serial: 01ACCD73
+             slot: DIMM4
+             size: 32GiB
+             width: 64 bits
+             clock: 2667MHz (0.4ns)
+        *-bank:3
+             description: DIMM DDR4 Synchronous 2667 MHz (0.4 ns)
+             product: M378A4G43MB1-CTD
+             vendor: Samsung
+             physical id: 3
+             serial: 01ACCE47
+             slot: DIMM2
+             size: 32GiB
+             width: 64 bits
+             clock: 2667MHz (0.4ns)
+     *-pci
+          description: Host bridge
+          product: 10th Gen Core Processor Host Bridge/DRAM Registers
+          vendor: Intel Corporation
+          physical id: 100
+          bus info: pci@0000:00:00.0
+          version: 05
+          width: 32 bits
+          clock: 33MHz
+          configuration: driver=skl_uncore
+          resources: irq:0
+        *-pci:0
+             description: PCI bridge
+             product: 6th-10th Gen Core Processor PCIe Controller (x16)
+             vendor: Intel Corporation
+             physical id: 1
+             bus info: pci@0000:00:01.0
+             version: 05
+             width: 32 bits
+             clock: 33MHz
+             capabilities: pci pm msi pciexpress normal_decode bus_master cap_list
+             configuration: driver=pcieport
+             resources: irq:120 memory:70000000-710fffff ioport:4000000000(size=4303355904)
+           *-pci
+                description: PCI bridge
+                product: Intel Corporation
+                vendor: Intel Corporation
+                physical id: 0
+                bus info: pci@0000:01:00.0
+                version: 01
+                width: 64 bits
+                clock: 33MHz
+                capabilities: pci pm msi pciexpress normal_decode bus_master cap_list
+                configuration: driver=pcieport
+                resources: iomemory:410-40f irq:16 memory:4100000000-41007fffff memory:70000000-710fffff ioport:4000000000(size=4294967296)
+              *-pci:0
+                   description: PCI bridge
+                   product: Intel Corporation
+                   vendor: Intel Corporation
+                   physical id: 1
+                   bus info: pci@0000:02:01.0
+                   version: 00
+                   width: 32 bits
+                   clock: 33MHz
+                   capabilities: pci pciexpress pm normal_decode bus_master cap_list
+                   configuration: driver=pcieport
+                   resources: irq:0 memory:70000000-70ffffff ioport:4000000000(size=4294967296)
+                 *-display
+                      description: VGA compatible controller
+                      product: DG2 [Arc A310]
+                      vendor: Intel Corporation
+                      physical id: 0
+                      bus info: pci@0000:03:00.0
+                      version: 05
+                      width: 64 bits
+                      clock: 33MHz
+                      capabilities: pciexpress msi pm vga_controller bus_master cap_list rom
+                      configuration: driver=xe latency=0
+                      resources: iomemory:400-3ff irq:148 memory:70000000-70ffffff memory:4000000000-40ffffffff
+              *-pci:1
+                   description: PCI bridge
+                   product: Intel Corporation
+                   vendor: Intel Corporation
+                   physical id: 4
+                   bus info: pci@0000:02:04.0
+                   version: 00
+                   width: 32 bits
+                   clock: 33MHz
+                   capabilities: pci pciexpress pm normal_decode bus_master cap_list
+                   configuration: driver=pcieport
+                   resources: irq:0 memory:71000000-710fffff
+                 *-multimedia
+                      description: Audio device
+                      product: DG2 Audio Controller
+                      vendor: Intel Corporation
+                      physical id: 0
+                      bus info: pci@0000:04:00.0
+                      logical name: card1
+                      logical name: /dev/snd/controlC1
+                      logical name: /dev/snd/hwC1D2
+                      logical name: /dev/snd/pcmC1D3p
+                      logical name: /dev/snd/pcmC1D7p
+                      logical name: /dev/snd/pcmC1D8p
+                      logical name: /dev/snd/pcmC1D9p
+                      version: 00
+                      width: 64 bits
+                      clock: 33MHz
+                      capabilities: pm msi pciexpress hda_compatible bus_master cap_list
+                      configuration: driver=snd_hda_intel latency=0
+                      resources: irq:153 memory:71000000-71003fff
+                    *-input:0
+                         product: HDA Intel PCH HDMI/DP,pcm=7
+                         physical id: 0
+                         logical name: input10
+                         logical name: /dev/input/event10
+                    *-input:1
+                         product: HDA Intel PCH HDMI/DP,pcm=8
+                         physical id: 1
+                         logical name: input11
+                         logical name: /dev/input/event11
+                    *-input:2
+                         product: HDA Intel PCH HDMI/DP,pcm=9
+                         physical id: 2
+                         logical name: input12
+                         logical name: /dev/input/event12
+                    *-input:3
+                         product: HDA Intel PCH HDMI/DP,pcm=3
+                         physical id: 3
+                         logical name: input9
+                         logical name: /dev/input/event9
+        *-usb
+             description: USB controller
+             product: 500 Series Chipset Family USB 3.2 Gen 2x2 (20 Gbs) xHCI Host Controller
+             vendor: Intel Corporation
+             physical id: 14
+             bus info: pci@0000:00:14.0
+             version: 11
+             width: 64 bits
+             clock: 33MHz
+             capabilities: pm msi xhci bus_master cap_list
+             configuration: driver=xhci_hcd latency=0
+             resources: iomemory:410-40f irq:123 memory:4100900000-410090ffff
+           *-usbhost:0
+                product: xHCI Host Controller
+                vendor: Linux 7.1.5-201.fc44.x86_64 xhci-hcd
+                physical id: 0
+                bus info: usb@1
+                logical name: usb1
+                version: 7.01
+                capabilities: usb-2.00
+                configuration: driver=hub slots=16 speed=480Mbit/s
+              *-usb:0
+                   description: USB hub
+                   product: Generic USB Hub
+                   vendor: ALCOR
+                   physical id: 6
+                   bus info: usb@1:6
+                   version: 3.12
+                   capabilities: usb-1.10
+                   configuration: driver=hub maxpower=100mA slots=4 speed=12Mbit/s
+                 *-usb
+                      description: Mouse
+                      product: USB Optical Mouse
+                      vendor: Primax Electronics, Ltd
+                      physical id: 1
+                      bus info: usb@1:6.1
+                      logical name: input4
+                      logical name: /dev/input/event4
+                      logical name: /dev/input/mouse0
+                      version: 2.00
+                      capabilities: usb-2.00 usb
+                      configuration: driver=usbhid maxpower=100mA speed=2Mbit/s
+              *-usb:1
+                   description: Human interface device
+                   product: Logitech G29 Driving Force Racing Wheel
+                   vendor: Logitech
+                   physical id: 9
+                   bus info: usb@1:9
+                   logical name: input3
+                   logical name: /dev/input/event3
+                   logical name: /dev/input/js0
+                   version: 64.00
+                   capabilities: usb-2.00 usb
+                   configuration: driver=usbhid maxpower=200mA speed=12Mbit/s
+              *-usb:2
+                   description: Keyboard
+                   product: USB Multimedia Keyboard
+                   vendor: LITEON Technology
+                   physical id: a
+                   bus info: usb@1:a
+                   version: 1.01
+                   capabilities: usb-1.10
+                   configuration: driver=usbhid maxpower=70mA speed=2Mbit/s
+           *-usbhost:1
+                product: xHCI Host Controller
+                vendor: Linux 7.1.5-201.fc44.x86_64 xhci-hcd
+                physical id: 1
+                bus info: usb@2
+                logical name: usb2
+                version: 7.01
+                capabilities: usb-3.10
+                configuration: driver=hub slots=8 speed=10000Mbit/s
+        *-memory UNCLAIMED
+             description: RAM memory
+             product: 500 Series Chipset Family Shared SRAM
+             vendor: Intel Corporation
+             physical id: 14.2
+             bus info: pci@0000:00:14.2
+             version: 11
+             width: 64 bits
+             clock: 33MHz (30.3ns)
+             capabilities: pm cap_list
+             configuration: latency=0
+             resources: iomemory:410-40f iomemory:410-40f memory:4100914000-4100917fff memory:410091b000-410091bfff
+        *-serial:0
+             description: Serial bus controller
+             product: 500 Series Chipset Family I2C #0
+             vendor: Intel Corporation
+             physical id: 15
+             bus info: pci@0000:00:15.0
+             version: 11
+             width: 64 bits
+             clock: 33MHz
+             capabilities: pm bus_master cap_list
+             configuration: driver=intel-lpss latency=0
+             resources: irq:27 memory:410091a000-410091afff
+        *-communication
+             description: Communication controller
+             product: 500 Series Chipset Family CSME HECI #1
+             vendor: Intel Corporation
+             physical id: 16
+             bus info: pci@0000:00:16.0
+             version: 11
+             width: 64 bits
+             clock: 33MHz
+             capabilities: pm msi bus_master cap_list
+             configuration: driver=mei_me latency=0
+             resources: iomemory:410-40f irq:131 memory:4100919000-4100919fff
+        *-sata
+             description: SATA controller
+             product: 500 Series Chipset Family SATA Controller (AHCI) (Server/Desktop)
+             vendor: Intel Corporation
+             physical id: 17
+             bus info: pci@0000:00:17.0
+             version: 11
+             width: 32 bits
+             clock: 66MHz
+             capabilities: sata msi pm ahci_1.0 bus_master cap_list
+             configuration: driver=ahci latency=0
+             resources: irq:122 memory:71520000-71521fff memory:71524000-715240ff ioport:3040(size=8) ioport:3048(size=4) ioport:3020(size=32) memory:71523000-715237ff
+        *-pci:1
+             description: PCI bridge
+             product: 500 Series Chipset Family PCIe Root Port #17
+             vendor: Intel Corporation
+             physical id: 1b
+             bus info: pci@0000:00:1b.0
+             version: 11
+             width: 32 bits
+             clock: 33MHz
+             capabilities: pci pciexpress msi pm normal_decode bus_master cap_list
+             configuration: driver=pcieport
+             resources: irq:121 memory:71400000-714fffff
+           *-nvme
+                description: NVMe device
+                product: Samsung SSD 970 PRO 512GB
+                vendor: Samsung Electronics Co Ltd
+                physical id: 0
+                bus info: pci@0000:05:00.0
+                logical name: /dev/nvme0
+                version: 1B2QEXP7
+                serial: S463NF0KA19862H
+                width: 64 bits
+                clock: 33MHz
+                capabilities: nvme pm msi pciexpress msix nvm_express bus_master cap_list
+                configuration: driver=nvme latency=0 nqn=nqn.2014.08.org.nvmexpress:144d144dS463NF0KA19862H     Samsung SSD 970 PRO 512GB state=live
+                resources: irq:16 memory:71400000-71403fff
+              *-namespace:0
+                   description: NVMe disk
+                   physical id: 0
+                   logical name: hwmon0
+              *-namespace:1
+                   description: NVMe disk
+                   physical id: 2
+                   logical name: /dev/ng0n1
+              *-namespace:2
+                   description: NVMe disk
+                   physical id: 1
+                   bus info: nvme@0:1
+                   logical name: /dev/nvme0n1
+                   size: 476GiB (512GB)
+                   capabilities: gpt-1.00 partitioned partitioned:gpt
+                   configuration: guid=da73cc65-58bd-4387-940f-7fc450700cd0 logicalsectorsize=512 sectorsize=512 wwid=eui.0025385a81b04d96
+                 *-volume:0
+                      description: Windows FAT volume
+                      vendor: mkfs.fat
+                      physical id: 1
+                      bus info: nvme@0:1,1
+                      logical name: /dev/nvme0n1p1
+                      logical name: /boot/efi
+                      version: FAT32
+                      serial: bc33-668d
+                      size: 598MiB
+                      capacity: 599MiB
+                      capabilities: boot fat initialized
+                      configuration: FATs=2 filesystem=fat mount.fstype=vfat mount.options=rw,relatime,fmask=0077,dmask=0077,codepage=437,iocharset=ascii,shortname=winnt,errors=remount-ro name=EFI System Partition state=mounted
+                 *-volume:1
+                      description: EXT4 volume
+                      vendor: Linux
+                      physical id: 2
+                      bus info: nvme@0:1,2
+                      logical name: /dev/nvme0n1p2
+                      logical name: /boot
+                      version: 1.0
+                      serial: 0660f43c-5836-4b2d-b9c6-b8126f506f27
+                      size: 1GiB
+                      capabilities: journaled extended_attributes large_files huge_files dir_nlink recover 64bit extents ext4 ext2 initialized
+                      configuration: created=2022-10-08 19:02:49 filesystem=ext4 lastmountpoint=/boot modified=2026-07-31 23:45:23 mount.fstype=ext4 mount.options=rw,noatime mounted=2026-07-31 23:45:23 state=mounted
+                 *-volume:2
+                      description: EFI partition
+                      physical id: 3
+                      bus info: nvme@0:1,3
+                      logical name: /dev/nvme0n1p3
+                      logical name: /
+                      logical name: /home
+                      serial: a423e176-3aaf-46b2-9498-fe4f92e6e4f7
+                      capacity: 464GiB
+                      configuration: mount.fstype=btrfs mount.options=rw,noatime,nodiratime,compress=zstd:1,ssd,discard=async,noacl,space_cache=v2,subvolid=257,subvol=/home state=mounted
+        *-isa
+             description: ISA bridge
+             product: Q570 Chipset eSPI Controller
+             vendor: Intel Corporation
+             physical id: 1f
+             bus info: pci@0000:00:1f.0
+             version: 11
+             width: 32 bits
+             clock: 33MHz
+             capabilities: isa bus_master
+             configuration: latency=0
+        *-multimedia
+             description: Audio device
+             product: Intel Corporation
+             vendor: Intel Corporation
+             physical id: 1f.3
+             bus info: pci@0000:00:1f.3
+             logical name: card0
+             logical name: /dev/snd/controlC0
+             logical name: /dev/snd/hwC0D0
+             logical name: /dev/snd/pcmC0D0c
+             logical name: /dev/snd/pcmC0D0p
+             logical name: /dev/snd/pcmC0D2c
+             version: 11
+             width: 64 bits
+             clock: 33MHz
+             capabilities: pm msi hda_compatible bus_master cap_list
+             configuration: driver=snd_hda_intel latency=64
+             resources: iomemory:410-40f iomemory:410-40f irq:152 memory:4100910000-4100913fff memory:4100800000-41008fffff
+           *-input:0
+                product: HDA Intel PCH Headphone Mic
+                physical id: 0
+                logical name: input13
+                logical name: /dev/input/event13
+           *-input:1
+                product: HDA Intel PCH Line Out
+                physical id: 1
+                logical name: input14
+                logical name: /dev/input/event14
+        *-serial:1
+             description: SMBus
+             product: 500 Series Chipset Family SMBus
+             vendor: Intel Corporation
+             physical id: 1f.4
+             bus info: pci@0000:00:1f.4
+             version: 11
+             width: 64 bits
+             clock: 33MHz
+             configuration: driver=i801_smbus latency=0
+             resources: iomemory:410-40f irq:16 memory:4100918000-41009180ff ioport:efa0(size=32)
+        *-serial:2
+             description: Serial bus controller
+             product: 500 Series Chipset Family SPI (flash) Controller
+             vendor: Intel Corporation
+             physical id: 1f.5
+             bus info: pci@0000:00:1f.5
+             version: 11
+             width: 32 bits
+             clock: 33MHz
+             configuration: driver=intel-spi latency=0
+             resources: irq:0 memory:71100000-71100fff
+        *-network
+             description: Ethernet interface
+             product: 500 Series Chipset Family GbE Controller (Corporate/vPro)
+             vendor: Intel Corporation
+             physical id: 1f.6
+             bus info: pci@0000:00:1f.6
+             logical name: enp0s31f6
+             version: 11
+             serial: d0:8e:79:03:41:c6
+             size: 1Gbit/s
+             capacity: 1Gbit/s
+             width: 32 bits
+             clock: 33MHz
+             capabilities: pm msi bus_master cap_list ethernet physical tp 10bt 10bt-fd 100bt 100bt-fd 1000bt-fd autonegotiation
+             configuration: autonegotiation=on broadcast=yes driver=e1000e driverversion=7.1.5-201.fc44.x86_64 duplex=full firmware=0.4-4 ip=192.168.10.14 latency=0 link=yes multicast=yes port=twisted pair speed=1Gbit/s
+             resources: irq:151 memory:71500000-7151ffff
+  *-power UNCLAIMED
+       physical id: 1
+       capacity: 32768mWh
+  *-input:0
+       product: Power Button
+       physical id: 2
+       logical name: input0
+       logical name: /dev/input/event0
+       capabilities: platform
+  *-input:1
+       product: Sleep Button
+       physical id: 3
+       logical name: input1
+       logical name: /dev/input/event1
+       capabilities: platform
+  *-input:2
+       product: Power Button
+       physical id: 4
+       logical name: input2
+       logical name: /dev/input/event2
+       capabilities: platform
+  *-input:3
+       product: LITEON Technology USB Multimedia Keyboard
+       physical id: 5
+       logical name: input5
+       logical name: /dev/input/event5
+       logical name: input5::capslock
+       logical name: input5::numlock
+       logical name: input5::scrolllock
+       capabilities: usb
+  *-input:4
+       product: PC Speaker
+       physical id: 6
+       logical name: input6
+       logical name: /dev/input/event6
+       capabilities: isa
+  *-input:5
+       product: Dell Privacy Driver
+       physical id: 7
+       logical name: input7
+       logical name: /dev/input/event7
+       capabilities: platform
+  *-input:6
+       product: Dell WMI hotkeys
+       physical id: 8
+       logical name: input8
+       logical name: /dev/input/event8
+       capabilities: platform

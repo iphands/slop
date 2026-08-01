@@ -1,0 +1,165 @@
+From c4773e06d8af83d4c54a280f4beae1ddd04c9752 Mon Sep 17 00:00:00 2001
+From: Ian Page Hands <iphands@gmail.com>
+Date: Sat, 1 Aug 2026 10:41:35 -0700
+Subject: [PATCH] util,intel: expand %p to the pid in debug output paths
+
+MESA_GPU_TRACEFILE and INTEL_MEASURE=file= are both opened with
+fopen(path, "w") against a fixed name. When more than one process of an
+application loads the driver, they all truncate and then write to that one
+path at independent file offsets. The result is a sparse file in which one
+process's output has overwritten another's, with no diagnostic of any kind.
+
+This is not a corner case. A Proton prefix routinely runs several Vulkan
+clients alongside the game -- a CEF helper, an accessibility shim, a crash
+reporter -- and every one of them opens the trace file. Capturing a two
+minute session of a game under Proton produced a 2.0 GB sparse file whose
+first extent was 4 KB of another process's empty "[\n\n]" and whose real
+trace began 1.8 GB in; roughly 90% of the capture had been destroyed, and
+only the final 15.6 s survived.
+
+Add debug_expand_path_pid(), which expands "%p" in a path to the process id
+and "%%" to a literal '%', and use it for both sinks. Paths without a token
+are unaffected, so existing invocations behave exactly as before, and a
+multi-process capture becomes possible by writing e.g.
+
+    MESA_GPU_TRACEFILE=/tmp/trace.%p.json
+
+Signed-off-by: Ian Page Hands <iphands@gmail.com>
+---
+ src/intel/common/intel_measure.c |  7 +++--
+ src/util/perf/u_trace.c          |  6 +++-
+ src/util/u_debug.c               | 51 ++++++++++++++++++++++++++++++++
+ src/util/u_debug.h               |  9 ++++++
+ 4 files changed, 70 insertions(+), 3 deletions(-)
+
+diff --git a/src/intel/common/intel_measure.c b/src/intel/common/intel_measure.c
+index 2f0c8a3..8a3cead 100644
+--- a/src/intel/common/intel_measure.c
++++ b/src/intel/common/intel_measure.c
+@@ -662,12 +662,15 @@ intel_measure_print(struct intel_measure_device *device,
+                     const struct intel_device_info *info)
+ {
+    if (unlikely(config.deferred_create_filename)) {
+-      config.file = fopen(config.deferred_create_filename, "w");
++      char *filename = debug_expand_path_pid(config.deferred_create_filename);
++      config.file = filename ? fopen(filename, "w") : NULL;
+       if (!config.file) {
+          fprintf(stderr, "INTEL_MEASURE failed to open output file %s: %s\n",
+-                  config.deferred_create_filename, strerror(errno));
++                  filename ? filename : config.deferred_create_filename,
++                  strerror(errno));
+          abort();
+       }
++      free(filename);
+       free(config.deferred_create_filename);
+       config.deferred_create_filename = NULL;
+ 
+diff --git a/src/util/perf/u_trace.c b/src/util/perf/u_trace.c
+index d047016..120faf1 100644
+--- a/src/util/perf/u_trace.c
++++ b/src/util/perf/u_trace.c
+@@ -332,7 +332,11 @@ u_trace_state_init_once(void)
+       debug_get_flags_option("MESA_GPU_TRACES", config_control, 0);
+    const char *tracefile_name = debug_get_option_trace_file();
+    if (tracefile_name && __normal_user()) {
+-      u_trace_state.trace_file = fopen(tracefile_name, "w");
++      char *expanded = debug_expand_path_pid(tracefile_name);
++      if (expanded != NULL) {
++         u_trace_state.trace_file = fopen(expanded, "w");
++         free(expanded);
++      }
+       if (u_trace_state.trace_file != NULL) {
+          atexit(trace_file_fini);
+       }
+diff --git a/src/util/u_debug.c b/src/util/u_debug.c
+index 45ea231..d7867e0 100644
+--- a/src/util/u_debug.c
++++ b/src/util/u_debug.c
+@@ -37,6 +37,13 @@
+ #include <limits.h> /* CHAR_BIT */
+ #include <ctype.h> /* isalnum */
+ 
++#if DETECT_OS_WINDOWS
++#include <process.h> /* _getpid */
++#define debug_getpid() _getpid()
++#else
++#define debug_getpid() getpid()
++#endif
++
+ #ifdef _WIN32
+ #include <windows.h>
+ #include <stdlib.h>
+@@ -153,6 +160,50 @@ debug_get_option_should_print(void)
+ }
+ 
+ 
++char *
++debug_expand_path_pid(const char *path)
++{
++   if (path == NULL)
++      return NULL;
++
++   char pid[32];
++   const int pid_len = snprintf(pid, sizeof(pid), "%d", (int) debug_getpid());
++   if (pid_len < 0 || pid_len >= (int) sizeof(pid))
++      return NULL;
++
++   size_t len = 0;
++   for (const char *s = path; *s != '\0'; s++) {
++      if (s[0] == '%' && (s[1] == 'p' || s[1] == '%')) {
++         len += s[1] == 'p' ? (size_t) pid_len : 1;
++         s++;
++      } else {
++         len++;
++      }
++   }
++
++   char *out = malloc(len + 1);
++   if (out == NULL)
++      return NULL;
++
++   char *d = out;
++   for (const char *s = path; *s != '\0'; s++) {
++      if (s[0] == '%' && s[1] == 'p') {
++         memcpy(d, pid, pid_len);
++         d += pid_len;
++         s++;
++      } else if (s[0] == '%' && s[1] == '%') {
++         *d++ = '%';
++         s++;
++      } else {
++         *d++ = *s;
++      }
++   }
++   *d = '\0';
++
++   return out;
++}
++
++
+ const char *
+ debug_get_option(const char *name, const char *dfault)
+ {
+diff --git a/src/util/u_debug.h b/src/util/u_debug.h
+index 2e4d5e3..61f7f36 100644
+--- a/src/util/u_debug.h
++++ b/src/util/u_debug.h
+@@ -359,6 +359,15 @@ comma_separated_list_contains(const char *list, const char *s);
+ const char *
+ debug_get_option(const char *name, const char *dfault);
+ 
++/**
++ * Expand "%p" in a debug output path to the process id, and "%%" to a literal '%'.
++ *
++ * Returns a newly allocated string that the caller must free(), or NULL if @path is
++ * NULL or allocation fails.
++ */
++char *
++debug_expand_path_pid(const char *path);
++
+ const char *
+ debug_get_option_cached(const char *name, const char *dfault);
+ 
+-- 
+2.55.0
+

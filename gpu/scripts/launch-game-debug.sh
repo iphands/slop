@@ -32,6 +32,7 @@ markers=0
 no_fifo=0
 batch_size=""
 tracepoints=""
+pid_files=0
 
 tracepoint_help() {
     cat <<'EOF'
@@ -79,6 +80,11 @@ Usage: launch-game-debug.sh [--mode MODE] [--dx12] [--markers] [--no-fifo]
                 Default is unset, i.e. Mesa's defaults (everything but `stall`). Unknown
                 names are IGNORED SILENTLY by Mesa -- see --tracepoint-help.
   --tracepoint-help   list the 40 real toggle names and exit.
+  --pid-files   put %p in the capture filename so each process writes its own file.
+                REQUIRES patches/mesa/0001-*.patch to be built and installed -- stock
+                Mesa treats %p literally, which is harmless but pointless. Without it,
+                every ANV process in the prefix truncates the one shared capture; that
+                cost ~90%% of a 2 GB u_trace on 2026-08-01 (context/pitfalls.md).
 
 The mode is fixed at LAUNCH, not at record time, because INTEL_MEASURE's granularity flag
 is read from the environment once at driver init. To change it, quit and relaunch.
@@ -93,6 +99,7 @@ while [[ $# -gt 0 ]]; do
         --no-fifo)    no_fifo=1; shift ;;
         --batch-size) batch_size="$2"; shift 2 ;;
         --tracepoints) tracepoints="$2"; shift 2 ;;
+        --pid-files)  pid_files=1; shift ;;
         --tracepoint-help) tracepoint_help; exit 0 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "launch-game-debug: unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -163,6 +170,15 @@ EOF
     fi
 fi
 
+# One fewer process opening the capture file. Proton only sets PROTON_USE_XALIA when it
+# is not already in the environment (see `proton` ~line 1857), so this sticks. It does not
+# solve the shared-file problem -- EpicWebHelper and CrashReportClient still open it -- it
+# just removes one of the writers until patches/mesa/0001 is installed.
+pid_tag=""
+if [[ $pid_files -eq 1 ]]; then
+    pid_tag=".%p"
+fi
+
 # --- build the session environment ---------------------------------------------------
 : >"$SESSION_ENV"
 {
@@ -175,13 +191,14 @@ fi
     echo "VKD3D_LOG_FILE=$CAPTURES/vkd3d_${STAMP}.log"
     echo "DXVK_LOG_LEVEL=info"
     echo "DXVK_LOG_PATH=$CAPTURES"
+    echo "PROTON_USE_XALIA=0"
 } >>"$SESSION_ENV"
 
 measure_file=""
 case "$mode" in
     off) ;;
     frame|rt|draw)
-        measure_file="$CAPTURES/measure_${mode}_${STAMP}.csv"
+        measure_file="$CAPTURES/measure_${mode}_${STAMP}${pid_tag}.csv"
         # BARE TOKEN, NOT type=<mode>. Mesa parses this with util/u_debug.c
         # parse_debug_string(), which splits on ", \n" and requires an EXACT token match:
         #     strlen(control->string) == n && !strncmp(control->string, s, n)
@@ -206,7 +223,7 @@ case "$mode" in
         echo "INTEL_MEASURE=${measure_opts},file=${measure_file}" >>"$SESSION_ENV"
         ;;
     utrace)
-        measure_file="$CAPTURES/utrace_${STAMP}.json"
+        measure_file="$CAPTURES/utrace_${STAMP}${pid_tag}.json"
         # Token names verified against mesa src/util/perf/u_trace.c:305-316 — same
         # exact-match parser that made INTEL_MEASURE's `type=` a silent no-op.
         echo "MESA_GPU_TRACES=print_json" >>"$SESSION_ENV"
