@@ -151,7 +151,19 @@ cleanup() {
         fi
     fi
     if [[ -n ${sampler_pid:-} ]] && kill -0 "$sampler_pid" 2>/dev/null; then
-        kill -INT "$sampler_pid" 2>/dev/null || true
+        # Ctrl-C already delivered SIGINT to the whole foreground process group, so the
+        # sampler is almost certainly inside its own finish(), which clears its trap as
+        # its first act. A second kill -INT then lands on the DEFAULT disposition and
+        # kills it mid-cleanup — that is how survey_2026-07-31_195254.csv lost its
+        # "# VERDICT:" trailer. Give it a grace period; only signal if genuinely stuck.
+        for _ in $(seq 20); do
+            kill -0 "$sampler_pid" 2>/dev/null || break
+            sleep 0.1
+        done
+        if kill -0 "$sampler_pid" 2>/dev/null; then
+            echo "record: sampler still alive after 2 s — signalling" >&2
+            kill -INT "$sampler_pid" 2>/dev/null || true
+        fi
         wait "$sampler_pid" 2>/dev/null || true
     fi
 

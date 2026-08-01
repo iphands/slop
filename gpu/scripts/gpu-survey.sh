@@ -212,6 +212,7 @@ prev_time=""
 throttle_trips=0
 samples=0
 first_throttle_reason=""
+last_reasons=""
 
 finish() {
     trap - INT TERM
@@ -255,7 +256,17 @@ while true; do
         if [[ -z $first_throttle_reason ]]; then
             first_throttle_reason="$reasons"
         fi
-        echo "gpu-survey: WARNING throttle active: $reasons" >&2
+    fi
+    # Warn on TRANSITION only. At 5 Hz a sustained pl2 cap emitted one line per sample —
+    # 196 lines in a 160 s run — which buries the sampler's own output and tells you
+    # nothing the end-of-run verdict doesn't. The count is what matters, not the stream.
+    if [[ $reasons != "$last_reasons" ]]; then
+        if [[ $throttled -eq 1 ]]; then
+            echo "gpu-survey: throttle ON  ($reasons) at t=${t_rel:-0}s" >&2
+        elif [[ -n $last_reasons ]]; then
+            echo "gpu-survey: throttle OFF ($last_reasons ended) at t=${t_rel:-0}s" >&2
+        fi
+        last_reasons="$reasons"
     fi
 
     temp=""; fan=""; power=""
