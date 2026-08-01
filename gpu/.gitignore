@@ -1,6 +1,12 @@
 # Vendored reference trees (cloned, not authored — mesa, perfetto, dxvk, ...)
 /vendor
 
+# Packages — a stray `dnf download` in the repo root put a 104 MB .src.rpm one
+# `git add -A` away from a commit (2026-07-31). Rule 4: if a command can produce it,
+# it does not belong in a commit.
+*.rpm
+*.src.rpm
+
 # Captures & traces — gigabytes, regenerable, NEVER commit (RULES.md Rule E)
 /captures/*
 !/captures/README.md
