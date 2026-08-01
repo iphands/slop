@@ -29,10 +29,12 @@ STAMP="$(date +%F_%H%M%S)"
 mode="frame"
 dx12=""
 markers=0
+no_fifo=0
+batch_size=""
 
 usage() {
     cat <<'EOF'
-Usage: launch-game-debug.sh [--mode MODE] [--dx12] [--markers]
+Usage: launch-game-debug.sh [--mode MODE] [--dx12] [--markers] [--no-fifo] [--batch-size N]
 
   --mode MODE   what record.sh will be able to capture (default: frame)
                   off     no Mesa instrumentation; MangoHud overlay only
@@ -42,6 +44,15 @@ Usage: launch-game-debug.sh [--mode MODE] [--dx12] [--markers]
                   utrace  MESA_GPU_TRACES=print_json  richest; see the volume warning below
   --dx12        append -dx12 so the game runs D3D12/vkd3d-proton instead of D3D11/DXVK
   --markers     turn on UE5 pass-name markers (VKD3D_CONFIG=debug_utils + MESA_GPU_TRACES=markers)
+  --no-fifo     drop INTEL_MEASURE's control= fifo: capture is LIVE FROM DRIVER INIT and
+                record.sh only marks the window instead of arming. Use this when the fifo
+                write itself crashes the game (see context/pitfalls.md) — writing to the
+                fifo is the only thing record.sh does to the game process, and Palworld
+                has aborted in vkQueueSubmit2 every time it was written.
+  --batch-size N  INTEL_MEASURE snapshot slots per command buffer (driver default 65536).
+                Each command buffer allocates N*8 bytes of mapped VRAM plus ~72*N host, so
+                on a 4 GiB card the default is 512 KiB of VRAM per command buffer. 2048 is
+                ample for frame/rt and is the cheap test of the allocation hypothesis.
 
 The mode is fixed at LAUNCH, not at record time, because INTEL_MEASURE's type= is read
 from the environment once at driver init. To change granularity, quit and relaunch.
@@ -50,9 +61,11 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --mode)    mode="$2"; shift 2 ;;
-        --dx12)    dx12="-dx12"; shift ;;
-        --markers) markers=1; shift ;;
+        --mode)       mode="$2"; shift 2 ;;
+        --dx12)       dx12="-dx12"; shift ;;
+        --markers)    markers=1; shift ;;
+        --no-fifo)    no_fifo=1; shift ;;
+        --batch-size) batch_size="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "launch-game-debug: unknown argument: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -131,8 +144,22 @@ case "$mode" in
     off) ;;
     frame|rt|draw)
         measure_file="$CAPTURES/measure_${mode}_${STAMP}.csv"
-        [[ -p $FIFO ]] || { rm -f "$FIFO"; mkfifo -m 0600 "$FIFO"; }
-        echo "INTEL_MEASURE=type=${mode},control=${FIFO},file=${measure_file}" >>"$SESSION_ENV"
+        measure_opts="type=${mode}"
+        if [[ -n $batch_size ]]; then
+            measure_opts+=",batch_size=${batch_size}"
+        fi
+        # The control fifo is what record.sh writes to. Flipping intel_measure's global
+        # `enabled` mid-flight is the one thing record.sh does to the game process, and it
+        # is the only suspect for the vkQueueSubmit2 abort (context/pitfalls.md). --no-fifo
+        # omits it so measurement is live from driver init and nothing transitions.
+        if [[ $no_fifo -eq 1 ]]; then
+            rm -f "$FIFO"
+            FIFO=""
+        else
+            [[ -p $FIFO ]] || { rm -f "$FIFO"; mkfifo -m 0600 "$FIFO"; }
+            measure_opts+=",control=${FIFO}"
+        fi
+        echo "INTEL_MEASURE=${measure_opts},file=${measure_file}" >>"$SESSION_ENV"
         ;;
     utrace)
         measure_file="$CAPTURES/utrace_${STAMP}.json"

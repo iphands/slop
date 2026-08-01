@@ -27,13 +27,17 @@ DRAW_FRAME_CAP=10
 interval=0.2
 label=""
 draw_frames=$DRAW_FRAME_CAP
+no_arm=0
 
 usage() {
     cat <<'EOF'
-Usage: record.sh [--interval SEC] [--label TEXT] [--draw-frames N]
+Usage: record.sh [--interval SEC] [--label TEXT] [--draw-frames N] [--no-arm]
 
   --interval SEC    sampler period (default 0.2 = 5 Hz)
   --label TEXT      free-text note stored in the CSV header (e.g. "base at dusk, 12 pals")
+  --no-arm          run the sampler ONLY; never write the control fifo. The fifo write is
+                    the sole thing this script does to the game process, so this is the
+                    safe mode while the vkQueueSubmit2 abort is unexplained.
   --draw-frames N   frames to capture in draw mode (default 10; raising this is how you
                     turn a 2-minute session into gigabytes of self-perturbed CSV)
 EOF
@@ -44,6 +48,7 @@ while [[ $# -gt 0 ]]; do
         --interval)    interval="$2"; shift 2 ;;
         --label)       label="$2"; shift 2 ;;
         --draw-frames) draw_frames="$2"; shift 2 ;;
+        --no-arm)      no_arm=1; shift ;;
         -h|--help)     usage; exit 0 ;;
         *) echo "record: unknown argument: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -88,7 +93,15 @@ survey_out="$CAPTURES/survey_${STAMP}.csv"
 
 # --- arm ------------------------------------------------------------------------------
 arm_frames=""
-if [[ $mode != "off" && -n ${fifo:-} && -p ${fifo:-} ]]; then
+if [[ $no_arm -eq 1 ]]; then
+    echo "record: --no-arm — NOT touching the control fifo; sampler only."
+    echo "record: (writing the fifo is the only thing this script does to the game, and it"
+    echo "record:  is the open suspect for the vkQueueSubmit2 abort — context/pitfalls.md)"
+elif [[ $mode != "off" && -z ${fifo:-} ]]; then
+    echo "record: mode=$mode launched with --no-fifo — INTEL_MEASURE has been capturing"
+    echo "record: since driver init. Nothing to arm; the window below is just a marker."
+    echo "record: capture -> ${capture_file:-?}"
+elif [[ $mode != "off" && -n ${fifo:-} && -p ${fifo:-} ]]; then
     if [[ $mode == "draw" ]]; then
         arm_frames="$draw_frames"
         echo "record: mode=draw — arming for $arm_frames frames only (hard cap; per-draw"
