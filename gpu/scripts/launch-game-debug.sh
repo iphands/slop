@@ -63,9 +63,34 @@ mkdir -p "$CAPTURES"
 # --- sanity: is the wrapper actually wired into Steam's launch options? --------------
 # This is the "a build that never loaded measures as a perfect no-op" failure mode from
 # context/pitfalls.md, in launch-option form. Cheap to check, expensive to miss.
+#
+# Steam keeps one localconfig.vdf per account that has logged in on this box, and there
+# are several here — most of them years stale. Taking `ls | head -1` picked a 2025 profile
+# and reported the wrapper missing while it was set on the account actually in use. So:
+# check every profile, and scope the match to Palworld's appid block rather than a bare
+# grep, so launch options belonging to some other game cannot satisfy the check either.
+wrapper_is_wired() {
+    local f
+    for f in "$HOME"/.local/share/Steam/userdata/*/config/localconfig.vdf \
+             "$HOME"/.steam/steam/userdata/*/config/localconfig.vdf; do
+        [[ -r $f ]] || continue
+        awk -v appid="\"$APPID\"" -v needle="proton-profile-wrapper.sh" '
+            $1 == appid && !inblk            { pending = 1; next }
+            pending && $1 == "{"             { inblk = 1; depth = 1; pending = 0; next }
+            inblk {
+                if ($1 == "\"LaunchOptions\"" && index($0, needle)) { found = 1; exit }
+                depth += gsub(/\{/, "{") - gsub(/\}/, "}")
+                if (depth <= 0) inblk = 0
+            }
+            END { exit found ? 0 : 1 }
+        ' "$f" && return 0
+    done
+    return 1
+}
+
 localconfig=$(ls -1 "$HOME"/.local/share/Steam/userdata/*/config/localconfig.vdf 2>/dev/null | head -1 || true)
 if [[ -n $localconfig ]]; then
-    if ! grep -qF "proton-profile-wrapper.sh" "$localconfig" 2>/dev/null; then
+    if ! wrapper_is_wired; then
         cat >&2 <<EOF
 
   ┌─ LAUNCH OPTIONS NOT SET ────────────────────────────────────────────────────┐
