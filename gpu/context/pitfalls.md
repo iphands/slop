@@ -461,6 +461,51 @@ instrumented code path never executed at all.
 
 ---
 
+# `file=` has no pid in it, and a second ANV process will truncate your capture **[verified 2026-08-01 — cost 1.8 GB of a 2.0 GB trace]**
+
+## Problem
+
+Mesa opens both `INTEL_MEASURE=file=` and `MESA_GPU_TRACEFILE=` with a plain
+`fopen(path, "w")` — no pid in the name, no `O_APPEND`, no locking
+(`intel_measure.c:664`). A Proton prefix runs **several** processes that load ANV:
+`Palworld-Win64-Shipping.exe`, `EpicWebHelper.exe --type=gpu-process`, `xalia`,
+`CrashReportClient`. They all open the same path, each keeps its own file offset, and
+`"w"` **truncates**.
+
+Observed on the first real u_trace capture, `utrace_2026-08-01_095938.json`:
+
+```
+size 2,015,212,563 bytes, sparse
+  data @             0   len         4,096    <- '[\n\n][\n\n]' : two EMPTY traces
+  data @ 1,816,555,520   len   198,657,043    <- the game's trace
+```
+
+A short-lived client truncated the file to zero after the game had written ~1.8 GB; the
+game's next write landed at its own still-advancing offset, re-extending the file with a
+1.8 GB hole. **Roughly 90% of the capture was destroyed**, and what survived is the last
+15.6 s of a ~2 minute session.
+
+Nothing reports this. The file is huge, `wc -l` is large, and a parser that opens it
+normally reads a few bytes of another process's empty array and stops.
+
+## Fix / How to avoid
+
+- **Read the largest data extent, not the start of the file.** `analyze/*.py` do this with
+  `lseek(SEEK_DATA/SEEK_HOLE)`; anything else will parse the wrong 4 KB.
+- **Check what you actually got** — `frames` and `trace span` in `utrace_summary.py`
+  output against how long you actually played. A 2-minute session that reports 15 s was
+  truncated.
+- The real fix is a pid in the filename, which is a small ANV patch and a good first
+  candidate for `patches/mesa/` — this is exactly the kind of thing this project exists to
+  fix rather than work around.
+
+## Sources
+- mesa `src/intel/common/intel_measure.c:664` (`fopen(deferred_create_filename, "w")`),
+  `src/util/perf/u_trace.c:319` (`MESA_GPU_TRACEFILE`)
+- gpu: `captures/utrace_2026-08-01_095938.json` extent map, 2026-08-01
+
+---
+
 # `INTEL_MEASURE=rt` and u_trace are **not** interchangeable — only u_trace can name passes **[verified 2026-07-31, from source]**
 
 ## Problem
