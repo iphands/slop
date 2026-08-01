@@ -104,7 +104,28 @@ namespaces will happily match the inactive driver and give a false positive.
 
 ---
 
-# `INTEL_MEASURE` defaults to per-draw and will destroy a long capture **[from docs]**
+# `INTEL_MEASURE` defaults to per-draw and will destroy a long capture **[from docs; syntax corrected 2026-07-31]**
+
+> **Correction, 2026-07-31.** This entry documented the granularity selector as
+> `INTEL_MEASURE=type=frame`, taken from the Mesa envvars page. **That syntax does not
+> work.** Mesa parses the variable with `util/u_debug.c parse_debug_string()`, which
+> splits on `", \n"` and requires an **exact token match**:
+>
+> ```c
+> if (!strncmp("all", s, n) ||
+>     (strlen(control->string) == n && !strncmp(control->string, s, n)))
+> ```
+>
+> `type=frame` is one 10-character token; `frame` is 5. Nothing matches, `config.flags`
+> comes back **0**, and `intel_measure.c` then does
+> `if (!config.flags) config.flags = INTEL_MEASURE_DRAW;` — so *every* capture written
+> with `type=` was silently **per-draw**, i.e. the exact failure mode this entry warns
+> about. The token must be bare: `INTEL_MEASURE=frame,file=out.csv`.
+>
+> Cost of the bug on `station-lan`: a "frame" capture that produced **1.7 GB in 160 s**
+> (rows are per-dispatch, `event_count=1`), and it is the leading explanation for the
+> `vkQueueSubmit2` abort — arming per-draw instrumentation, which inserts a CS stall at
+> every draw, mid-flight on a UE5 workload. Fixed in `scripts/launch-game-debug.sh`.
 
 ## Problem
 

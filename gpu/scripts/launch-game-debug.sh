@@ -144,7 +144,13 @@ case "$mode" in
     off) ;;
     frame|rt|draw)
         measure_file="$CAPTURES/measure_${mode}_${STAMP}.csv"
-        measure_opts="type=${mode}"
+        # BARE TOKEN, NOT type=<mode>. Mesa parses this with util/u_debug.c
+        # parse_debug_string(), which splits on ", \n" and requires an EXACT token match:
+        #     strlen(control->string) == n && !strncmp(control->string, s, n)
+        # "type=frame" is a single 10-char token and matches nothing, so flags come back 0
+        # and intel_measure.c does `if (!config.flags) config.flags = INTEL_MEASURE_DRAW`.
+        # Every capture taken with type= was silently per-DRAW. See context/pitfalls.md.
+        measure_opts="${mode}"
         if [[ -n $batch_size ]]; then
             measure_opts+=",batch_size=${batch_size}"
         fi
