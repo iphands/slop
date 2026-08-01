@@ -45,8 +45,18 @@ Two consequences that shape every plan here:
 
 ## Project Goal
 
-Find real, measurable performance wins for Arc Alchemist on modern game workloads, and
-land them in ANV where possible.
+**Ship patches.** Study the rendering pipeline until we know exactly where the time goes,
+then read the code that spends it and write real optimisations — to Mesa/ANV, to the `xe`
+kernel driver, to whatever else turns out to be responsible. Profiling is how we find the
+target; the deliverable is a diff.
+
+That ordering is the whole discipline. A patch written before the measurement justifies it
+is a guess, and this hardware punishes guesses (see *The One Thing That Makes This Hard*).
+But the measurement is not the point either — a beautiful profile that never becomes a
+patch is a hobby.
+
+Everything we author is a **patch against the source this box actually runs**, kept in
+`patches/` under git and applied at RPM build time. See *Source & Build Environment*.
 
 ### Core Features
 - **A profiling funnel**: layered capture from near-zero-overhead whole-session
@@ -55,8 +65,9 @@ land them in ANV where possible.
   compare with known noise bounds.
 - **Trace analysis tooling**: aggregate `INTEL_MEASURE` CSV and u_trace JSON into
   ranked pass-cost tables. This is the only part not already provided by existing tools.
-- **A local Mesa build loop**: patch ANV, rebuild, replay, compare — without disturbing
-  the system Mesa.
+- **A source-RPM build loop**: rebuild the exact installed Mesa and kernel from their
+  source RPMs, with our patches applied, and install the result — so the thing we
+  measure, the thing we read, and the thing we change are all the same build.
 
 ---
 
@@ -114,11 +125,70 @@ gpu/
 │   ├── distilled.md          # Confirmed tool/driver/hardware facts (read before new work)
 │   ├── pitfalls.md           # Bugs & measurement traps (read before new work)
 │   └── high_level.md         # Tool & library pros/cons
-├── vendor/                   # READ-ONLY reference clones (gitignored)
-├── scripts/                  # Capture wrappers (record.sh, measure-ctl.sh)
+├── vendor/                   # Extracted source RPMs — GITIGNORED, regenerable
+│   ├── srpms/                #   downloaded .src.rpm files
+│   ├── mesa/                 #   rpmbuild topdir: SPECS/ SOURCES/ BUILD/ RPMS/
+│   └── kernel/               #   same
+├── patches/                  # OUR CHANGES — git-controlled. Read patches/README.md
+│   ├── mesa/                 #   0001-*.patch + optional `series`
+│   └── kernel/
+├── scripts/                  # Capture wrappers + the vendor-*.sh build loop
 ├── analyze/                  # Trace aggregation tooling
 └── captures/                 # Trace/capture output — GITIGNORED, never commit
 ```
+
+---
+
+## Source & Build Environment
+
+**We rebuild the exact packages this box runs, from their source RPMs.** Reading upstream
+git tells you what upstream does; it does not tell you what the binary in your address
+space does. Fedora carries patches, the Mesa here is a COPR snapshot, and both move.
+
+| Component | Installed from | Source of truth |
+|---|---|---|
+| Mesa / ANV | COPR `xxmitsu/mesa-git` | that COPR's SRPM |
+| kernel (`xe`) | Fedora `updates` | `updates-source`, or koji when pruned |
+
+### The loop
+
+```bash
+./scripts/vendor-prep.sh                          # fetch + extract SRPMs, install builddeps
+./scripts/vendor-build.sh --component mesa        # apply patches/mesa/*, rpmbuild
+./scripts/vendor-install.sh --component mesa      # install, prints the revert command
+```
+
+`vendor-prep.sh` is also the **resync** step: re-run it after any `dnf update` that moves
+Mesa or the kernel.
+
+### Two rules that make this correct
+
+1. **Pin to the installed build, never to a package name.** `dnf download --srpm
+   mesa-vulkan-drivers` resolves the *newest available*, which is not what you are running.
+   Observed 2026-07-31: installed `…20260801.00.6c306fd`, dnf offered `…20260729.05.21dc9d4`
+   — a three-day-old snapshot, silently. The scripts pin to `%{SOURCERPM}` of the installed
+   binary, and for the kernel to `uname -r` rather than the newest installed kernel.
+2. **Always `--refresh`.** With stale metadata even the correct pinned NEVRA reports "no
+   package available". Same session: the installed EVR resolved only after `--refresh`.
+
+### Patches
+
+Nothing we author goes in `vendor/` — it is gitignored and gets re-extracted on every RPM
+update. `vendor-build.sh` injects `patches/<component>/*` into a **copy** of the distro
+spec (`%autosetup` → `Patch NNNN:` declarations; `%setup` → declarations plus explicit
+`%patch -P` in `%prep`; Fedora kernel → the `linux-kernel-test.patch` slot). An
+unrecognised spec shape is a **hard error**: silently building unpatched would "measure" as
+a patch with no effect, which is the same failure class as a driver that never loaded.
+
+Build the pristine baseline with `--no-patches` and compare against **that**, not against
+the distro RPM — same toolchain, same box, one variable.
+
+> **Status: the scripts are verified, a full build is not.** Verified 2026-07-31: SRPM
+> resolution for both components (including the stale-metadata trap), patch injection into
+> both `%autosetup` and `%setup` specs parsing cleanly under `rpmbuild --nobuild`,
+> `--no-patches` producing a byte-identical spec, and a missing `series` entry failing
+> hard. **Not yet run:** a real `vendor-prep.sh` download, a full Mesa or kernel build, or
+> an install. Update this note once they have been.
 
 ---
 
@@ -131,9 +201,9 @@ Run wide-and-cheap first; each layer earns the next. **Never start at the bottom
 | Layer | Tool | Window | Overhead | Answers |
 |---|---|---|---|---|
 | 0 | `gputop`, MangoHud | full session | ~none | GPU-bound? CPU-bound? throttled? VRAM-capped? |
-| 1 | `INTEL_MEASURE=type=frame` | full session | low | *Which frames* are bad? |
-| 2 | `INTEL_MEASURE=type=rt` / u_trace | full session | moderate | *Which passes* dominate? |
-| 3 | `INTEL_MEASURE=type=draw` + control FIFO | seconds | high | *Which draws*? |
+| 1 | `INTEL_MEASURE=frame` | full session | low | *Which frames* are bad? |
+| 2 | `INTEL_MEASURE=rt` / u_trace | full session | moderate | *Which passes* dominate? |
+| 3 | `INTEL_MEASURE=draw` + control FIFO | seconds | high | *Which draws*? |
 | 4 | RenderDoc | one frame | n/a (offline) | Everything about that frame |
 | 5 | Perfetto + PPS counters | timed window | moderate | *Why* — EU / sampler / bandwidth bound |
 
@@ -151,17 +221,30 @@ By default your traces show DXVK's Vulkan objects, not Unreal's passes. UE5 emit
 `BasePass is 40% of frame time` is actionable; `render target 0x7f2a… is 40%` is not.
 Turn markers on before doing any pass-level analysis.
 
-### Vendor Map (`vendor/`, gitignored — clone what you need)
+### Vendor Map (`vendor/`, gitignored)
+
+Two kinds of tree live here, and the difference matters.
+
+**Rebuildable — from source RPMs, via `scripts/vendor-prep.sh`.** These are what this box
+actually runs, and what we patch:
+
+| Tree | Read it for |
+|---|---|
+| `mesa/BUILD/mesa-*/` | ANV — `src/intel/vulkan/`. The subject of this project. Also `src/tool/pps/` for the Perfetto producer. |
+| `kernel/BUILD/kernel-*/` | `xe` — `drivers/gpu/drm/xe/`. Engine busy, VM_BIND, power/freq management. |
+
+**Reference-only — plain clones, for reading.** Not rebuilt, not patched:
 
 | Clone | Read it for |
 |---|---|
-| `mesa/` | ANV source — `src/intel/vulkan/`. The subject of this project. Also `src/tool/pps/` for the Perfetto producer. |
 | `perfetto/` | Trace config format, UI. Pin a release tag. |
 | `dxvk/` | What D3D11 calls become in Vulkan; the `DXVK_DEBUG` / HUD options. |
 | `vkd3d-proton/` | Same for D3D12. `VKD3D_CONFIG` options move between releases — read the version you have. |
 | `igt-gpu-tools/` | `gputop` internals; how `xe` engine busy is actually derived from fdinfo. |
 
-Source beats API docs for all of these. Read the C.
+Source beats API docs for all of these. Read the C. For Mesa and the kernel, read the
+*extracted SRPM*, not an upstream clone — a distro patch you did not know about is exactly
+the kind of thing that makes a measurement inexplicable.
 
 ---
 
@@ -216,9 +299,10 @@ this project's equivalent of a failing test that reports success.
 ### 5. Build Verification — never commit broken code
 - **Our Rust:** `cargo build` exits 0 with **zero warnings**, `cargo clippy` clean,
   `cargo test` green, `cargo fmt` applied — *before every commit*.
-- **Mesa patches:** `meson compile -C build` exits 0 and introduces **zero new
-  warnings** in touched files, and the built driver actually loads
-  (`vulkaninfo | grep driverInfo` reports your build).
+- **Mesa / kernel patches:** `./scripts/vendor-build.sh --component <c>` exits 0 and
+  introduces **zero new warnings** in touched files, and the installed build actually
+  loads — `vulkaninfo | grep driverInfo` for Mesa, `uname -r` for the kernel. Verifying
+  the load is not optional: a build that never loaded measures as a perfect no-op.
 - If the build breaks, **fix it first.** Do not claim "done" on broken code.
 - `context/plans/RULES.md` Rule A is authoritative and stricter; defer to it.
 
@@ -241,7 +325,7 @@ this project's equivalent of a failing test that reports success.
   (parsers). If you ran it twice, it belongs in the repo.
 
 ### 8. Delegation
-- Stuck on driver behavior? **Read `vendor/mesa/src/intel/` first** — the answer is in C.
+- Stuck on driver behavior? **Read `vendor/mesa/BUILD/mesa-*/src/intel/` first** — the answer is in C, in the build this box runs.
 - Then `context/distilled.md` / `pitfalls.md`. Only then ask.
 
 ---
@@ -252,14 +336,26 @@ this project's equivalent of a failing test that reports success.
    workload is actually GPU-and-shader-bound. This is the default failure mode.
 2. **A number without provenance and variance is not a result.** See Measurement
    Discipline above. This is the one rule that, if broken, wastes everything else.
-3. **Never disturb the system Mesa.** Local builds run via
-   `VK_DRIVER_FILES=/path/to/build/…/intel_icd.x86_64.json`. Do not `ninja install`
-   over the distro's Mesa — you will lose the ability to boot into a known-good state,
-   which is the reference every measurement is against.
+3. **Replacing the system Mesa is allowed, but never casually.** *(Amended 2026-07-31.
+   This rule previously said "never" and required `VK_DRIVER_FILES` side-loading. That
+   does not survive contact with the kernel half of the project: `xe` cannot be
+   side-loaded, and running a patched Mesa against a stock kernel — or vice versa — makes
+   the two halves incomparable. `scripts/vendor-install.sh` now installs system-wide.)*
+   The obligations that replace it:
+   - Know the way back **before** you install. `vendor-install.sh` records the outgoing
+     NEVRAs to `vendor/installed-<component>.log` and prints the `dnf history undo` id.
+   - Never install a build you have not compared against a `--no-patches` baseline built
+     the same way.
+   - Kernels are parallel-installable — the distro kernel stays bootable, so a panic is
+     recoverable at the boot menu. Mesa is not. Treat a Mesa install as the higher-risk
+     one, not the lower.
+   - `VK_DRIVER_FILES` side-loading is still the right tool for a quick Mesa-only A/B
+     that does not need a matching kernel. Use it when it fits.
 4. **Never commit captures, traces, or build output.** `.gfxr`, `.rdc`,
-   `.perfetto-trace`, `INTEL_MEASURE` CSVs, and `vendor/` clones are all gitignored.
+   `.perfetto-trace`, `INTEL_MEASURE` CSVs, and everything under `vendor/` are gitignored.
    They are gigabytes and they are regenerable. If a build command can produce it, it
-   does not belong in a commit.
+   does not belong in a commit. **The exception is `patches/`** — that is authored, not
+   generated, and it is the point of the project.
 5. **Respect that this is someone's game.** Profiling runs are on a real Palworld save
    on a real machine. Don't leave `observation_paranoid=0` set permanently, don't leave
    the system Mesa swapped out, and don't leave debug env vars in the Steam launch
