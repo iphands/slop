@@ -307,3 +307,103 @@ hand, so it cannot be skipped when you're in a hurry.
 ## Sources
 - gpu: `context/plans/RULES.md` Rule A.2
 - [Mesa: Perfetto Tracing](https://docs.mesa3d.org/perfetto.html) (build layout)
+
+---
+
+# Arming `INTEL_MEASURE` mid-session killed Palworld: Wine aborts on any non-`VK_SUCCESS` from `vkQueueSubmit2` **[verified 2026-07-31, n=1, root cause NOT identified]**
+
+## Problem
+
+First real use of `scripts/record.sh` against Palworld (mode=`frame`, control fifo,
+`INTEL_MEASURE` armed with `100000000` frames) ended in a Wine modal ~12 s later:
+
+```
+Assertion failed!  Program: Palworld-Win64-Shipping.exe
+File: ../src-wine/dlls/winevulkan/loader_thunks.c  Line: 6767
+Expression: "!status && \"vkQueueSubmit2\""
+```
+
+`winevulkan`'s generated thunks `assert()` that the ICU returns `VK_SUCCESS`. **Any**
+error VkResult from the driver — including ones a native Linux app would handle — becomes
+a hard abort under Proton. So the visible crash is Wine's reaction, not the fault itself.
+
+What the evidence does and does not support:
+
+| Established | How |
+|---|---|
+| The error came out of ANV | wine unwind: `libvulkan_intel.so + 0x472bf5` below `winevulkan.so` |
+| It was **not** a GPU hang/reset | no `devcoredump` under `/sys/class/drm/card*/device/`; `dmesg` needs root and was **not** read — this is only partial |
+| It was **not** device-loss | `_vk_device_set_lost()` logs unconditionally via `__vk_errorv`, and Mesa's log *does* reach the Proton log (`MESA: warning: … Xe KMD` lines are present); no device-lost line appears |
+| Not thermal/VRAM-cliff | `captures/survey_2026-07-31_192201.csv`: `throttle_reasons=none`, VRAM flat at 3099.8 MiB of ~3949, 18 samples |
+| Timing correlates with arming | crash at Proton-log t=412.055, game start t≈372.6; sampler armed 19:22:02, fdinfo columns go empty at t=12.18 → 19:22:14 |
+
+Remaining candidate: a silent allocation failure. Arming makes `anv_measure_init()` alloc,
+**per command buffer**, a 512 KiB mapped BO (`batch_size` 64K × 8 B) plus ~4.5 MiB host
+(64K × 72 B `intel_measure_snapshot`). Host RAM is 128 GiB so that side is not credible;
+VRAM had ~850 MiB free, which is ~1700 command buffers' worth. **Unproven.** n=1.
+
+## Fix / How to avoid
+
+- **Save the game before running `record.sh`.** Treat an armed capture as crash-prone
+  until this is understood.
+- Do not read "it crashed" as "the driver is broken" — get the actual VkResult first. It
+  is not in the Proton log; the assert message does not carry `status`.
+- The discriminating run is: launch, `record.sh`, and **do not arm** (survey only). If
+  that survives and an armed run dies again, the correlation is real. Until then it is
+  one sample against a stack that already warns
+  `MESA: warning: Support for this platform is experimental with Xe KMD`.
+- Shrinking `batch_size=1024` in `INTEL_MEASURE` is the cheap test of the allocation
+  hypothesis.
+
+## Sources
+- gpu: `~/steam-1623730.log` (Proton, 2026-07-31 session), `captures/survey_2026-07-31_192201.csv`
+- mesa `src/intel/vulkan/anv_measure.c` (`anv_measure_init`, `_anv_measure_submit`),
+  `src/vulkan/runtime/vk_device.c` (`_vk_device_set_lost`)
+
+---
+
+# `vkcube` cannot be used to test `INTEL_MEASURE` — ANV refuses to timestamp SIMULTANEOUS_USE command buffers **[verified 2026-07-31]**
+
+## Problem
+
+`vkcube` is the obvious minimal app for checking an `INTEL_MEASURE` recipe without
+launching a game. It is useless for that purpose, and it fails *silently*: the run
+completes, the CSV is created, and it contains **only the header row**.
+
+Measured on `station-lan`, 600 frames each, all four combinations:
+
+| config | rows |
+|---|---|
+| `type=frame` | 1 (header) |
+| `type=draw` | 1 (header) |
+| `type=frame,control=…` armed | 1 (header) |
+| `type=draw,control=…` armed | 1 (header) |
+
+Cause is in `anv_measure.c`, first check in `state_changed()`:
+
+```c
+if (cmd_buffer->usage_flags & VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT)
+   /* can't record timestamps in this mode */
+   return false;
+```
+
+`Vulkan-Tools/cube/cube.c` begins its command buffers with exactly that flag
+(lines 893 and 1000). Every snapshot is filtered out before it is taken.
+
+The trap is that a header-only CSV looks identical to "the workload had nothing to
+measure", so a green-looking vkcube run can be read as "the recipe works" when the
+instrumented code path never executed at all.
+
+## Fix / How to avoid
+
+- Do not validate `INTEL_MEASURE` plumbing with `vkcube`. A negative result there says
+  nothing about the driver, the fifo, or the env var.
+- **A header-only `INTEL_MEASURE` CSV means zero snapshots were taken, not zero work.**
+  Check row count, never file existence.
+- Note this also applies to the real workload: any DXVK/vkd3d command buffer submitted
+  with `SIMULTANEOUS_USE` is invisible to `INTEL_MEASURE` by design.
+
+## Sources
+- gpu: vkcube matrix on `station-lan`, 2026-07-31 (Mesa 26.2.99, `xe`, A310)
+- mesa `src/intel/vulkan/anv_measure.c` (`state_changed`)
+- `KhronosGroup/Vulkan-Tools` `cube/cube.c:893,1000`

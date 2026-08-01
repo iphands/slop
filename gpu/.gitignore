@@ -1,5 +1,5 @@
 # Vendored reference trees (cloned, not authored — mesa, perfetto, dxvk, ...)
-/vendor/
+/vendor
 
 # Captures & traces — gigabytes, regenerable, NEVER commit (RULES.md Rule E)
 /captures/*
