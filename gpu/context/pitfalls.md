@@ -458,3 +458,52 @@ instrumented code path never executed at all.
 - gpu: vkcube matrix on `station-lan`, 2026-07-31 (Mesa 26.2.99, `xe`, A310)
 - mesa `src/intel/vulkan/anv_measure.c` (`state_changed`)
 - `KhronosGroup/Vulkan-Tools` `cube/cube.c:893,1000`
+
+---
+
+# `INTEL_MEASURE=rt` and u_trace are **not** interchangeable — only u_trace can name passes **[verified 2026-07-31, from source]**
+
+## Problem
+
+The profiling funnel lists Layer 2 as "`INTEL_MEASURE=rt` / u_trace", which reads as two
+routes to the same answer. They are not. Only one of them can produce the thing Layer 2
+exists for — a table that says `BasePass`, not `render target 0x7f2a…`.
+
+In `src/intel/vulkan/anv_measure.c`, an event's name comes from exactly one place:
+
+```c
+if (event_name == NULL)
+   event_name = intel_measure_snapshot_string(type);
+```
+
+and the file **never references debug-utils labels at all**. So every `INTEL_MEASURE` row
+is named by hardware event *type*. Confirmed in a real capture
+(`measure_frame_2026-07-31_201013.csv`): the only names that appear are `draw indexed`,
+`compute`, `copy`, `ccs color clear`, `linear surface clear`.
+
+`src/intel/vulkan/anv_utrace.c` is the file that implements
+`anv_CmdBeginDebugUtilsLabelEXT` / `anv_CmdEndDebugUtilsLabelEXT` and reads
+`cmd_buffer->vk.labels`. The application's pass names reach the trace **only** through
+that path.
+
+Setting `DXVK_DEBUG=markers` and then capturing with `INTEL_MEASURE` is therefore a silent
+no-op: the markers are emitted, ANV receives them, and `INTEL_MEASURE` discards them. You
+get a plausible, complete-looking CSV with no pass names in it, and nothing warns you.
+
+## Fix / How to avoid
+
+- **Pass-level analysis means u_trace**, not `INTEL_MEASURE=rt`:
+  `MESA_GPU_TRACES=print_json,markers` paired with `DXVK_DEBUG=markers`
+  (`--mode utrace --markers`).
+- `INTEL_MEASURE=rt` is still useful — it is cheap and it bounds *how much* time goes to
+  render-target-delimited work. It just cannot tell you *which* pass, ever.
+- Verify the marker option against the binary you actually have rather than a doc. On
+  `station-lan`: `strings .../dxvk/x86_64-windows/d3d11.dll` shows `DXVK_DEBUG`,
+  `markers`, `dxvk.enableDebugUtils` and the `vkCmdBeginDebugUtilsLabelEXT` import —
+  DXVK v2.7.1-491-g0a70623d, shipped in Proton 11.0.
+
+## Sources
+- mesa `src/intel/vulkan/anv_measure.c` (`anv_measure_start_snapshot`),
+  `src/intel/vulkan/anv_utrace.c` (`anv_CmdBeginDebugUtilsLabelEXT`)
+- gpu: `captures/measure_frame_2026-07-31_201013.csv` — event names observed
+- gpu: `strings` on Proton 11.0's bundled DXVK, 2026-07-31

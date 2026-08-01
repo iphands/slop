@@ -15,7 +15,7 @@ or completes.** Status values: `pending` | `in-progress` | `done` | `blocked` |
 
 | Plan | Title | Depends on | Status | Milestone / Notes |
 |------|-------|-----------|--------|-------------------|
-| **01** | Profiling bring-up | — | pending | Verify the box (`xe` tool divergence, u_trace availability, layer injection), then run the full funnel on a real 2-minute Palworld session. **Deliverable: a ranked pass-cost table + a GPU-bound/CPU-bound/throttled verdict.** Everything downstream is gated on this verdict. |
+| **01** | Profiling bring-up | — | in-progress | Verify the box (`xe` tool divergence, u_trace availability, layer injection), then run the full funnel on a real 2-minute Palworld session. **Deliverable: a ranked pass-cost table + a GPU-bound/CPU-bound/throttled verdict.** Everything downstream is gated on this verdict. |
 | **02** | Trace aggregation tooling | 01 | pending | The only code not already provided by existing tools: stream-parse `INTEL_MEASURE` CSV and u_trace JSON into ranked pass-cost tables. Must handle multi-GB inputs without slurping. |
 | **03** | Deterministic replay harness | 01 | pending | GFXReconstruct capture → replay against N driver builds. **Includes measuring replay stability itself** — the run-to-run spread this number establishes is the noise floor every later plan is judged against. Without this, no patch can be evaluated. |
 | **04** | Local Mesa build loop | 01 | pending | Out-of-tree Mesa with `-Dperfetto=true -Dbuildtype=debugoptimized`, run via `VK_DRIVER_FILES` without touching system Mesa. Gate: `vulkaninfo` reports the local build. |

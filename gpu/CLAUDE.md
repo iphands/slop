@@ -202,7 +202,7 @@ Run wide-and-cheap first; each layer earns the next. **Never start at the bottom
 |---|---|---|---|---|
 | 0 | `gputop`, MangoHud | full session | ~none | GPU-bound? CPU-bound? throttled? VRAM-capped? |
 | 1 | `INTEL_MEASURE=frame` | full session | low | *Which frames* are bad? |
-| 2 | `INTEL_MEASURE=rt` / u_trace | full session | moderate | *Which passes* dominate? |
+| 2 | u_trace (`--mode utrace --markers`) | full session | moderate | *Which passes* dominate? **Only u_trace can name them** — `INTEL_MEASURE=rt` bounds the cost but never says which pass (`pitfalls.md`). |
 | 3 | `INTEL_MEASURE=draw` + control FIFO | seconds | high | *Which draws*? |
 | 4 | RenderDoc | one frame | n/a (offline) | Everything about that frame |
 | 5 | Perfetto + PPS counters | timed window | moderate | *Why* — EU / sampler / bandwidth bound |
