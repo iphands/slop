@@ -29,8 +29,10 @@ Usage: vendor-install.sh --component NAME [--yes]
   --component NAME  mesa | kernel
   --yes             do not prompt before the dnf transaction
 
-Installs the RPMs most recently built into vendor/<component>/RPMS. Debug and devel
-subpackages are skipped: they are large, and nothing here needs them to run.
+Installs the RPMs most recently built into vendor/<component>/RPMS. Only -debuginfo and
+-debugsource are skipped. -devel IS installed: the local build carries a different release
+than the distro package, and devel subpackages require an exact version-release match, so
+leaving them behind would break dependency resolution.
 
 After installing mesa, VERIFY the build actually loaded before trusting any measurement:
 
@@ -64,7 +66,7 @@ fi
 # frequently larger than everything else combined.
 mapfile -t rpms < <(
     find "$RPM_DIR" -name '*.rpm' \
-        ! -name '*-debuginfo-*' ! -name '*-debugsource-*' ! -name '*-devel-*' \
+        ! -name '*-debuginfo-*' ! -name '*-debugsource-*' \
         | sort
 )
 

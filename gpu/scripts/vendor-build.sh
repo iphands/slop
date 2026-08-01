@@ -99,6 +99,7 @@ fi
 # Sourced rather than hardcoded so the policy sits next to the patches it is built with.
 BUILD_OPTFLAGS=""; MESA_DISABLE_GLOBALS=""; MESA_BLANK_GLOBALS=""
 MESA_GALLIUM_DROP=""; MESA_FILES_DROP=""
+BUILD_DIST_SUFFIX=""; BUILD_RPM_DEFINES=""
 build_conf="$PATCH_ROOT/$component/build.conf"
 if [[ -r $build_conf ]]; then
     # shellcheck source=/dev/null
@@ -265,6 +266,16 @@ fi
 
 # --- build ------------------------------------------------------------------------------
 opts=(--define "_topdir $TOPDIR")
+if [[ -n $BUILD_DIST_SUFFIX ]]; then
+    # %{dist} is evaluated here rather than hardcoded, so this keeps working across a
+    # Fedora upgrade. Sorts newer than the stock release, so it installs as an upgrade.
+    opts+=(--define "dist ${BUILD_DIST_SUFFIX}$(rpm --eval '%{?dist}')")
+    echo "vendor-build: dist       ${BUILD_DIST_SUFFIX}$(rpm --eval '%{?dist}')"
+fi
+if [[ -n $BUILD_RPM_DEFINES ]]; then
+    opts+=(--define "$BUILD_RPM_DEFINES")
+    echo "vendor-build: define     $BUILD_RPM_DEFINES"
+fi
 if [[ -n $BUILD_OPTFLAGS ]]; then
     # %optflags feeds %build_cflags / %build_cxxflags / %build_fflags, so one define
     # covers C, C++ and Fortran. Verified with `rpm --define ... --eval '%{build_cxxflags}'`.
