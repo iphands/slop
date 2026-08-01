@@ -103,10 +103,10 @@ Comma-separated options:
 | Option | Effect |
 |---|---|
 | `file=PATH` | write CSV to PATH instead of stderr |
-| `type=draw` | snapshot per render call — **the default**, and the trap (see `pitfalls.md`) |
-| `type=rt` | snapshot on render-target change — good proxy for "one engine pass" |
+| `draw` | snapshot per render call — **the default**, and the trap (see `pitfalls.md`) |
+| `rt` | snapshot on render-target change — good proxy for "one engine pass" |
 | `type=batch` | snapshot at batch submission |
-| `type=frame` | snapshot at frame boundaries — cheapest useful granularity |
+| `frame` | snapshot at frame boundaries — cheapest useful granularity |
 | `start=N` | begin capturing at frame N |
 | `count=N` | capture only N frames (`start=15,count=23` → frames 15–37) |
 | `interval=N` | combine N events into one record; single start/end submitted where possible |

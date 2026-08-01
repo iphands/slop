@@ -38,9 +38,9 @@ Usage: launch-game-debug.sh [--mode MODE] [--dx12] [--markers] [--no-fifo] [--ba
 
   --mode MODE   what record.sh will be able to capture (default: frame)
                   off     no Mesa instrumentation; MangoHud overlay only
-                  frame   INTEL_MEASURE=type=frame   ~7200 rows / 2 min, negligible cost
-                  rt      INTEL_MEASURE=type=rt      per render-target change
-                  draw    INTEL_MEASURE=type=draw    HIGH COST - record.sh caps it at 10 frames
+                  frame   INTEL_MEASURE=frame   ~7200 rows / 2 min, negligible cost
+                  rt      INTEL_MEASURE=rt      per render-target change
+                  draw    INTEL_MEASURE=draw    HIGH COST - record.sh caps it at 10 frames
                   utrace  MESA_GPU_TRACES=print_json  richest; see the volume warning below
   --dx12        append -dx12 so the game runs D3D12/vkd3d-proton instead of D3D11/DXVK
   --markers     turn on UE5 pass-name markers (VKD3D_CONFIG=debug_utils + MESA_GPU_TRACES=markers)
@@ -54,8 +54,8 @@ Usage: launch-game-debug.sh [--mode MODE] [--dx12] [--markers] [--no-fifo] [--ba
                 on a 4 GiB card the default is 512 KiB of VRAM per command buffer. 2048 is
                 ample for frame/rt and is the cheap test of the allocation hypothesis.
 
-The mode is fixed at LAUNCH, not at record time, because INTEL_MEASURE's type= is read
-from the environment once at driver init. To change granularity, quit and relaunch.
+The mode is fixed at LAUNCH, not at record time, because INTEL_MEASURE's granularity flag
+is read from the environment once at driver init. To change it, quit and relaunch.
 EOF
 }
 

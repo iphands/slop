@@ -69,9 +69,9 @@ Each layer is cheaper and wider than the next, and each earns the next:
 | Task | Tool | Window | Overhead | Answers |
 |---|---|---|---|---|
 | T5 | `gputop`, MangoHud | full session | ~none | GPU-bound? throttled? VRAM-capped? |
-| T6 | `INTEL_MEASURE=type=frame` | full session | low | Which *frames* are bad? |
-| T7 | `INTEL_MEASURE=type=rt` / u_trace | full session | moderate | Which *passes* dominate? |
-| T8 | `INTEL_MEASURE=type=draw` + FIFO | seconds | high | Which *draws*? |
+| T6 | `INTEL_MEASURE=frame` | full session | low | Which *frames* are bad? |
+| T7 | `INTEL_MEASURE=rt` / u_trace | full session | moderate | Which *passes* dominate? |
+| T8 | `INTEL_MEASURE=draw` + FIFO | seconds | high | Which *draws*? |
 | T10 | RenderDoc | one frame | offline | Everything about that frame |
 
 Going in the other order is how the week gets wasted.
@@ -123,7 +123,7 @@ ls -la /tmp/ut.json
 - **Confirms**: `/tmp/ut.json` is non-empty → u_trace works on stock Mesa, T7 can use the
   richer render-stage path.
 - **Refutes**: empty or absent → u_trace is not built in. T7 falls back to
-  `INTEL_MEASURE=type=rt` only, and render-stage tracing moves to Plan 04. **This is not
+  `INTEL_MEASURE=rt` only, and render-stage tracing moves to Plan 04. **This is not
   a blocker** — record it and continue.
 
 **Commit**: `task(T2): record u_trace availability on stock Fedora Mesa`
@@ -205,7 +205,7 @@ Record in the tracker's Measurements table with N ≥ 3 sessions (RULES.md Rule 
 **What to do**:
 
 ```
-INTEL_MEASURE=type=frame,file=/home/you/prof/frames.csv mangohud %command%
+INTEL_MEASURE=frame,file=/home/you/prof/frames.csv mangohud %command%
 ```
 
 ~7200 rows for two minutes — trivial volume, negligible overhead. Sort by duration,
@@ -228,7 +228,7 @@ what T7 is looking for.
 
 Always available:
 ```
-INTEL_MEASURE=type=rt,file=/home/you/prof/rt.csv mangohud %command%
+INTEL_MEASURE=rt,file=/home/you/prof/rt.csv mangohud %command%
 ```
 
 Richer, if T2 passed:
@@ -260,7 +260,7 @@ believing the ranking.
 mkfifo /tmp/measure.fifo
 ```
 ```
-INTEL_MEASURE=type=draw,control=/tmp/measure.fifo,file=/home/you/prof/draws.csv mangohud %command%
+INTEL_MEASURE=draw,control=/tmp/measure.fifo,file=/home/you/prof/draws.csv mangohud %command%
 ```
 
 Play to the bad scenario, then from another terminal:
@@ -357,7 +357,7 @@ Plan 06.
 
 ## Open Questions / Risks
 
-1. **u_trace may not be in Fedora's build** (T2). *Mitigation*: `INTEL_MEASURE=type=rt`
+1. **u_trace may not be in Fedora's build** (T2). *Mitigation*: `INTEL_MEASURE=rt`
    covers the same question less richly; render stages move to Plan 04. Not a blocker.
 2. **`gputop` may not be in Fedora's `igt-gpu-tools`** (T3). *Mitigation*: read
    `fdinfo` directly — same data source, no root needed.
@@ -379,7 +379,7 @@ Plan 06.
 
 - [ ] T1: `lspci -k` output recorded; `distilled.md` `xe` entries marked [verified]
 - [ ] T2: `/tmp/ut.json` non-empty, **or** u_trace recorded as unavailable and T7 scoped
-      to `INTEL_MEASURE=type=rt`
+      to `INTEL_MEASURE=rt`
 - [ ] T3: `gputop` reports non-zero engine busy under known load
 - [ ] T4: MangoHud overlay renders in Palworld
 - [ ] T5: `gputop` JSON covers the full 120 s with no gaps; verdict recorded; N ≥ 3

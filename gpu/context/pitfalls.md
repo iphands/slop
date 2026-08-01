@@ -144,14 +144,16 @@ becomes the bottleneck, producing numbers that look plausible and are meaningles
 
 **Match boundary granularity to capture duration.** Coarse for long, fine for short:
 
-- Whole session → `type=frame` (~7200 rows for 2 min, negligible overhead)
-- Whole session, mid-grain → `type=rt` (snapshots on render-target change)
-- Seconds → `type=draw`, and **gate it with the control FIFO** rather than running it for
+- Whole session → `frame` (~7200 rows for 2 min, negligible overhead)
+- Whole session, mid-grain → `rt` (snapshots on render-target change)
+- Seconds → `draw`, and **gate it with the control FIFO** rather than running it for
   the whole session:
 
 ```bash
 mkfifo /tmp/measure.fifo
-# launch with INTEL_MEASURE=type=draw,control=/tmp/measure.fifo,file=out.csv
+# launch with INTEL_MEASURE=draw,control=/tmp/measure.fifo,file=out.csv
+#                            ^^^^ bare token — `type=draw` silently means draw anyway,
+#                                 but `type=frame` ALSO silently means draw
 echo 10 > /tmp/measure.fifo   # capture next 10 frames, then stop
 ```
 
