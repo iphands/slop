@@ -95,6 +95,17 @@ if [[ $apply_patches -eq 1 && -d $patch_dir ]]; then
     fi
 fi
 
+# Optional, git-controlled build configuration: compiler flags and driver trimming.
+# Sourced rather than hardcoded so the policy sits next to the patches it is built with.
+BUILD_OPTFLAGS=""; MESA_DISABLE_GLOBALS=""; MESA_BLANK_GLOBALS=""
+MESA_GALLIUM_DROP=""; MESA_FILES_DROP=""
+build_conf="$PATCH_ROOT/$component/build.conf"
+if [[ -r $build_conf ]]; then
+    # shellcheck source=/dev/null
+    source "$build_conf"
+    echo "vendor-build: config     ${build_conf#"$REPO_DIR/"}"
+fi
+
 echo "vendor-build: component  $component"
 echo "vendor-build: spec       ${pristine_spec##*/}"
 if [[ ${#patches[@]} -eq 0 ]]; then
@@ -187,8 +198,79 @@ if [[ ${#patches[@]} -gt 0 ]]; then
     fi
 fi
 
+# --- driver trimming ----------------------------------------------------------------
+# Compiler flags go through --define optflags (below) and need no spec edit. Driver
+# selection does: the spec sets `%global with_X 1` itself, and a %global beats a
+# command-line --define, so the values have to be rewritten in our copy.
+#
+# Every edit asserts it matched. Silently failing to trim would produce a build that
+# still contains every vendor's driver while claiming otherwise, and silently failing to
+# drop a %files line turns into a confusing "File not found" an hour into the build.
+if [[ -n $MESA_DISABLE_GLOBALS$MESA_BLANK_GLOBALS$MESA_GALLIUM_DROP$MESA_FILES_DROP ]]; then
+    python3 - "$work_spec" "$MESA_DISABLE_GLOBALS" "$MESA_BLANK_GLOBALS" \
+             "$MESA_GALLIUM_DROP" "$MESA_FILES_DROP" <<'TRIM'
+import re, sys
+spec, disable, blank, gallium_drop, files_drop = sys.argv[1:6]
+text = open(spec, encoding="utf-8").read()
+report = []
+
+for name in disable.split():
+    # %undefine, NOT "%global x 0". The spec selects drivers with %{?with_x:,drv}, which
+    # tests whether the macro is DEFINED, not whether it is true -- `%global with_r300 0`
+    # still expands to ",r300". Undefining satisfies both forms: %{?with_x:...} vanishes,
+    # and the %files guards, which are `%if 0%{?with_x}`, read 0 and stay false.
+    pat = re.compile(rf"^%global\s+{re.escape(name)}\s+.*$", re.M)
+    text, n = pat.subn(f"%undefine {name}", text)
+    if not n:
+        sys.exit(f"vendor-build: spec has no '%global {name}' to disable")
+    report.append(f"-{name}")
+
+for name in blank.split():
+    pat = re.compile(rf"^%global\s+{re.escape(name)}\s+.*$", re.M)
+    text, n = pat.subn(f"%undefine {name}", text)
+    if not n:
+        sys.exit(f"vendor-build: spec has no '%global {name}' to blank")
+    report.append(f"-{name}")
+
+for drv in gallium_drop.split():
+    # Only the hardcoded part of the list; the macro-guarded entries follow the globals.
+    before = text
+    # The next character may be ',', whitespace, '\\' or the start of a %{?with_x:...}
+    # macro, so match on "not a word character" rather than enumerating separators.
+    # A whole conditional entry (e.g. "%{?with_vulkan_hw:,zink}") must go FIRST. Removing
+    # only the ",zink" would leave "%{?with_vulkan_hw:}", and rpm expands a conditional
+    # with an empty body to the MACRO VALUE -- yielding "...,iris1" instead of "...,iris".
+    # Verified: rpm --define 'x 1' --eval 'A%{?x:}B'  ->  A1B
+    text = re.sub(rf"%\{{\?[A-Za-z0-9_]+:,{re.escape(drv)}\}}", "", text)
+    text = re.sub(rf",{re.escape(drv)}(?![A-Za-z0-9_])", "", text)
+    text = re.sub(rf"(-Dgallium-drivers=){re.escape(drv)},", r"\1", text)
+    if text == before:
+        sys.exit(f"vendor-build: '{drv}' not found in any -Dgallium-drivers list")
+    report.append(f"-{drv}")
+
+for line in files_drop.splitlines():
+    line = line.strip()
+    if not line:
+        continue
+    pat = re.compile(rf"^[ \t]*{re.escape(line)}[ \t]*\n", re.M)
+    text, n = pat.subn("", text)
+    if n != 1:
+        sys.exit(f"vendor-build: expected exactly one %files line '{line}', found {n}")
+    report.append(f"files-{line.rsplit('/', 1)[-1]}")
+
+open(spec, "w", encoding="utf-8").write(text)
+print("vendor-build: trimmed    " + " ".join(report))
+TRIM
+fi
+
 # --- build ------------------------------------------------------------------------------
 opts=(--define "_topdir $TOPDIR")
+if [[ -n $BUILD_OPTFLAGS ]]; then
+    # %optflags feeds %build_cflags / %build_cxxflags / %build_fflags, so one define
+    # covers C, C++ and Fortran. Verified with `rpm --define ... --eval '%{build_cxxflags}'`.
+    opts+=(--define "optflags $BUILD_OPTFLAGS")
+    echo "vendor-build: optflags   $BUILD_OPTFLAGS"
+fi
 if [[ $component == kernel && ${#rpmbuild_extra[@]} -eq 0 ]]; then
     # We boot exactly one kernel flavour and never use the debug variants; building them
     # roughly doubles an already long build for artefacts that go straight to the bin.
