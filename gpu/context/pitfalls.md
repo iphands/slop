@@ -310,12 +310,17 @@ hand, so it cannot be skipped when you're in a hurry.
 
 ---
 
-# Arming `INTEL_MEASURE` mid-session killed Palworld: Wine aborts on any non-`VK_SUCCESS` from `vkQueueSubmit2` **[verified 2026-07-31, n=1, root cause NOT identified]**
+# Palworld aborts ~40 s in via DXVK -> `vkQueueSubmit2`; Wine turns any error VkResult into a fatal assert **[verified 2026-07-31, n=3, root cause NOT identified]**
+
+> **Correction, same session.** This entry first blamed `record.sh` arming `INTEL_MEASURE`,
+> on a single run whose timing appeared to line up. That attribution was wrong and is
+> retracted. Three crash dumps later show an identical callstack and a consistent 33-57 s
+> time-to-crash, and the timestamps are not clean enough to place arming before or after
+> the abort. `INTEL_MEASURE` is a suspect, not the cause. See "What the dumps show" below.
 
 ## Problem
 
-First real use of `scripts/record.sh` against Palworld (mode=`frame`, control fifo,
-`INTEL_MEASURE` armed with `100000000` frames) ended in a Wine modal ~12 s later:
+Palworld aborts within the first minute of engine uptime, repeatably, with a Wine modal:
 
 ```
 Assertion failed!  Program: Palworld-Win64-Shipping.exe
@@ -327,38 +332,61 @@ Expression: "!status && \"vkQueueSubmit2\""
 error VkResult from the driver — including ones a native Linux app would handle — becomes
 a hard abort under Proton. So the visible crash is Wine's reaction, not the fault itself.
 
-What the evidence does and does not support:
+`winevulkan`'s generated thunks `assert()` that the ICD returns `VK_SUCCESS`. **Any**
+error VkResult from the driver — including ones a native Linux app would handle — becomes
+a hard abort under Proton. So the visible crash is Wine's reaction, not the fault itself,
+and the assert message does **not** carry the `status` value.
+
+### What the dumps show
+
+UE writes `CrashContext.runtime-xml` next to `UEMinidump.dmp` under
+`…/compatdata/1623730/pfx/…/Pal/Saved/Crashes/UECC-*/`. Three crashes, one session:
+
+| engine uptime | ErrorMessage | callstack (`<PCallStack>`) |
+|---|---|---|
+| 40 s | Abort signal received | `ucrtbase` ← `winevulkan +0x18984` ← `d3d11 +0x15554d` ← `d3d11 +0xacf0b` |
+| 57 s | Unhandled Exception: 0x80000003 | same, `d3d11 +0xacfbd` |
+| 33 s | Abort signal received | same, `d3d11 +0xacf0b` |
+
+Identical shape every time: **DXVK's submit path → `vkQueueSubmit2` → error → assert →
+abort**, always inside the first minute. `<MemoryStats.bIsOOM>` is 0 and `<IsStall>` false
+in all three — but note `bIsOOM` is UE's *system RAM* check, it says nothing about VRAM.
 
 | Established | How |
 |---|---|
 | The error came out of ANV | wine unwind: `libvulkan_intel.so + 0x472bf5` below `winevulkan.so` |
-| It was **not** a GPU hang/reset | no `devcoredump` under `/sys/class/drm/card*/device/`; `dmesg` needs root and was **not** read — this is only partial |
-| It was **not** device-loss | `_vk_device_set_lost()` logs unconditionally via `__vk_errorv`, and Mesa's log *does* reach the Proton log (`MESA: warning: … Xe KMD` lines are present); no device-lost line appears |
-| Not thermal/VRAM-cliff | `captures/survey_2026-07-31_192201.csv`: `throttle_reasons=none`, VRAM flat at 3099.8 MiB of ~3949, 18 samples |
-| Timing correlates with arming | crash at Proton-log t=412.055, game start t≈372.6; sampler armed 19:22:02, fdinfo columns go empty at t=12.18 → 19:22:14 |
+| **Not** a GPU hang/reset | no `devcoredump` under `/sys/class/drm/card*/device/`; `dmesg` needs root and was **not** read — partial |
+| **Not** device-loss | `_vk_device_set_lost()` logs unconditionally via `__vk_errorv`, and Mesa's log *does* reach the Proton log (`MESA: warning: … Xe KMD` lines present); no device-lost line appears |
+| **Not** thermal | `captures/survey_*.csv`: `throttle_reasons=none` throughout |
+| GPU was **idle** before the abort | `survey_2026-07-31_193843.csv`: `busy_rcs_pct` 0.00 for all 106 samples, 850–900 MHz, ~13.9 W, VRAM flat at 3029.8 MiB of ~3949 |
 
-Remaining candidate: a silent allocation failure. Arming makes `anv_measure_init()` alloc,
-**per command buffer**, a 512 KiB mapped BO (`batch_size` 64K × 8 B) plus ~4.5 MiB host
-(64K × 72 B `intel_measure_snapshot`). Host RAM is 128 GiB so that side is not credible;
-VRAM had ~850 MiB free, which is ~1700 command buffers' worth. **Unproven.** n=1.
+That last row matters: the game was not rendering during the minute preceding the abort.
+Whatever fails, it is not a heavy-workload effect.
+
+Unresolved: the actual VkResult. It is not in the Proton log, not in the UE dump (which
+only records "Abort signal received" — UE catching Wine's `SIGABRT`), and DXVK never sees
+it because Wine asserts before returning.
 
 ## Fix / How to avoid
 
-- **Save the game before running `record.sh`.** Treat an armed capture as crash-prone
-  until this is understood.
-- Do not read "it crashed" as "the driver is broken" — get the actual VkResult first. It
-  is not in the Proton log; the assert message does not carry `status`.
-- The discriminating run is: launch, `record.sh`, and **do not arm** (survey only). If
-  that survives and an armed run dies again, the correlation is real. Until then it is
-  one sample against a stack that already warns
-  `MESA: warning: Support for this platform is experimental with Xe KMD`.
-- Shrinking `batch_size=1024` in `INTEL_MEASURE` is the cheap test of the allocation
-  hypothesis.
+Do **not** attribute this to whatever you happened to change most recently — see the
+correction at the top of this entry. Order the tests by what they eliminate:
+
+1. **`launch-game-debug.sh --mode off`, and a run with Steam launch options cleared.**
+   Until this is answered, nothing else is interpretable: it decides whether our profiling
+   environment is in the picture at all.
+2. **`--dx12`** — routes through vkd3d-proton instead of DXVK over the same ANV. If D3D12
+   survives, the fault is in the DXVK↔ANV interaction, not ANV alone.
+3. **VRAM.** 3.0–3.1 GiB resident of ~3.95 GiB on a 4 GiB card, before gameplay. Drop
+   texture/resolution settings and re-run. `bIsOOM:0` does not rule this out.
+
+Only after those: `INTEL_MEASURE=…,batch_size=1024` to test whether the per-command-buffer
+allocation it adds (512 KiB BO + ~4.5 MiB host each) is implicated.
 
 ## Sources
-- gpu: `~/steam-1623730.log` (Proton, 2026-07-31 session), `captures/survey_2026-07-31_192201.csv`
-- mesa `src/intel/vulkan/anv_measure.c` (`anv_measure_init`, `_anv_measure_submit`),
-  `src/vulkan/runtime/vk_device.c` (`_vk_device_set_lost`)
+- gpu: `…/Pal/Saved/Crashes/UECC-*/CrashContext.runtime-xml` ×3, 2026-07-31 session
+- gpu: `~/steam-1623730.log` (Proton), `captures/survey_2026-07-31_19{2201,3843}.csv`
+- mesa `src/intel/vulkan/anv_measure.c`, `src/vulkan/runtime/vk_device.c` (`_vk_device_set_lost`)
 
 ---
 
