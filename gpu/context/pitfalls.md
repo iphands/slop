@@ -507,3 +507,58 @@ get a plausible, complete-looking CSV with no pass names in it, and nothing warn
   `src/intel/vulkan/anv_utrace.c` (`anv_CmdBeginDebugUtilsLabelEXT`)
 - gpu: `captures/measure_frame_2026-07-31_201013.csv` — event names observed
 - gpu: `strings` on Proton 11.0's bundled DXVK, 2026-07-31
+
+---
+
+# Mesa's tracepoint filter ignores unknown names silently — and `blit`/`copy` are not names **[verified 2026-07-31, from source]**
+
+## Problem
+
+`INTEL_GPU_TRACEPOINT` selects which u_trace tracepoints fire. It is parsed by
+`util/u_debug.c parse_enable_string()`, whose inner loop is:
+
+```c
+for (const struct debug_control *c = control; c->string != NULL; c++) {
+   if (strlen(c->string) == n && !strncmp(c->string, s, n)) { ... }
+}
+```
+
+An unrecognised token matches nothing and **falls out of the loop without a word** — no
+warning, no non-zero exit, nothing in any log. The capture then comes back looking
+entirely complete.
+
+This project shipped `INTEL_GPU_TRACEPOINT=-blit,-copy,+render_pass,+draw,+frame` for a
+week. `blit` and `copy` are not tracepoint names — the toggle table in
+`src/intel/ds/intel_tracepoints.py` has no such entries. The whole `-blit,-copy` half was
+a no-op, and the `+` half merely re-enabled things that are on by default anyway.
+
+Worse than useless: the work it was *aiming* at is called **`blorp`** (Intel's
+blit/clear/resolve path), and our own frame capture showed BLORP-type events leading
+**658 of 1231 gameplay frames**. Had the filter worked as intended it would have hidden
+the single most prominent thing in the capture.
+
+The 40 real toggles are: `frame render_pass draw compute compute_indirect batch
+cmd_buffer cmd_buffer_annotation queue_annotation barrier stall blorp btp sba xfb rays
+query_clear_blorp query_clear_cs query_copy_cs query_copy_shader generate_cmds_pre
+generate_cmds_post generate_draws trace_copy trace_copy_cb write_buffer_marker`, plus
+thirteen `as_*` acceleration-structure ones. **All are enabled by default except
+`stall`.**
+
+## Fix / How to avoid
+
+- **Do not filter until volume proves you must**, and then only with a name from
+  `./scripts/launch-game-debug.sh --tracepoint-help`.
+- The general rule, third time this has bitten: **every Mesa env var in this stack parses
+  by exact token match and says nothing when it does not recognise one.** `INTEL_MEASURE`
+  falls back to per-draw; `MESA_GPU_TRACES` yields flags 0; `INTEL_GPU_TRACEPOINT`
+  silently keeps the defaults. Read the token table in the source before trusting any of
+  them — `docs/envvars.rst` has already been wrong once.
+- Verify a filter did what you meant by checking the trace contains the event types you
+  expected, not by checking the file is non-empty.
+
+## Sources
+- mesa `src/util/u_debug.c` (`parse_enable_string`), `src/intel/ds/intel_tracepoints.py`
+  (toggle table, `trace_toggle_name='intel_gpu_tracepoint'`),
+  `src/util/perf/u_trace.c:305-319` (`MESA_GPU_TRACES` tokens, `MESA_GPU_TRACEFILE`)
+- gpu: `captures/measure_frame_2026-07-31_201013.csv` — BLORP-type events lead 658/1231
+  gameplay frames
