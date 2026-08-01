@@ -607,3 +607,58 @@ thirteen `as_*` acceleration-structure ones. **All are enabled by default except
   `src/util/perf/u_trace.c:305-319` (`MESA_GPU_TRACES` tokens, `MESA_GPU_TRACEFILE`)
 - gpu: `captures/measure_frame_2026-07-31_201013.csv` — BLORP-type events lead 658/1231
   gameplay frames
+
+---
+
+# Replacing `%optflags` breaks the PIE contract, and meson blames the wrong thing **[verified 2026-08-01]**
+
+## Problem
+
+Fedora's build flags are two halves of one agreement. `%build_ldflags` forces PIE with
+`-specs=/usr/lib/rpm/redhat/redhat-hardened-ld`, and `%optflags` supplies the matching
+`-fPIE` at compile time via `-specs=/usr/lib/rpm/redhat/redhat-hardened-cc1`.
+
+Override `%optflags` wholesale — which is the clean way to force your own `-march`/`-O`
+(it propagates to `%build_cflags`, `%build_cxxflags` and `%build_fflags` in one define) —
+and you drop the cc1 half while `rpmbuild` keeps applying the ld half. Objects come out
+non-PIE, the linker still demands PIE:
+
+```
+ld.bfd: relocation R_X86_64_32 against `.rodata' can not be used when making a PIE
+        object; recompile with -fPIE
+```
+
+**The error you actually see is unrelated to any of that.** meson's first probe is
+`sizeof(void*)`, which is a compile-*and-link* test. It fails, meson records the size as
+`-1`, and the build dies several checks later with:
+
+```
+meson.build:379:4: ERROR: Feature intel-rt cannot be enabled:
+                          Intel Ray Tracing requires 64-bit architectures
+```
+
+on an x86_64 box. Nothing in that message points at flags, PIE, or the linker. The real
+cause is 200 lines earlier in `meson-logs/meson-log.txt`.
+
+## Fix / How to avoid
+
+Append the cc1 spec to your replacement flags:
+
+```
+-specs=/usr/lib/rpm/redhat/redhat-hardened-cc1
+```
+
+Use the spec rather than a bare `-fPIE`: it expands to
+`%{!r:%{!fpie:%{!fPIE:%{!fpic:%{!fPIC:%{!fno-pic:-fPIE}}}}}}`, i.e. it injects `-fPIE`
+only when no other pic/pie flag is present, so it defers to the `-fPIC` meson passes for
+shared library targets. A bare `-fPIE` would fight that.
+
+Generally: when a configure step reports an absurd fact about the machine — pointer size
+`-1`, "not 64-bit" on an x86_64 host, a missing header that exists — **read the config
+log, not the error**. The error is downstream of a probe that failed for an unrelated
+reason, and the probe's compiler invocation is in the log with the exact flags used.
+
+## Sources
+- gpu: `vendor/mesa/BUILD/.../meson-logs/meson-log.txt`, first Mesa build attempt 2026-08-01
+- `/usr/lib/rpm/redhat/redhat-hardened-cc1`, `rpm --eval '%{build_ldflags}'`
+- gpu: `patches/mesa/build.conf`
