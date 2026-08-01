@@ -21,6 +21,7 @@ or completes.** Status values: `pending` | `in-progress` | `done` | `blocked` |
 | **04** | Local Mesa build loop | 01 | pending | Out-of-tree Mesa with `-Dperfetto=true -Dbuildtype=debugoptimized`, run via `VK_DRIVER_FILES` without touching system Mesa. Gate: `vulkaninfo` reports the local build. |
 | **05** | Hardware counters (Perfetto + PPS) | 04 | pending | Resolve the open `xe`-vs-`i915` PPS question (see `pitfalls.md`). Answers *why* a pass is slow: EU / sampler / bandwidth bound. Blocked on 04 because the PPS producer comes from the Mesa build. |
 | **06+** | ANV optimization work | 02, 03, 04, 05 | pending | Unwritten by design — the target is chosen by what 01 and 05 actually find, not guessed in advance. Candidate directions if the data supports them: shader spilling in Lumen/post-process, pipeline-compile hitching, VRAM residency on a 3.95 GiB part. |
+| **07** | GPU power limits | — | in-progress | Does the A310's 31.25 W `power2_max` (PL1) actually bind under load, and can it be raised? **Diagnosis only — no kernel patches.** Off the 01–05 critical path, but feeds Plan 01's GPU-bound / CPU-bound / **throttled** verdict. Started 2026-08-01. |
 
 ---
 
