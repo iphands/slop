@@ -590,3 +590,25 @@ human will later trust.
 
 ## Sources
 - slop/gpu: `scripts/gpu-survey.sh`, `scripts/record.sh`, `scripts/launch-game-debug.sh`
+
+# bash `set -e` silently kills loops that use `((i++))` as a counter
+
+Under `set -euo pipefail`, a bare arithmetic command `((i++))` used as a statement is a
+*command* whose exit status is derived from the arithmetic *result*, not from success. Post-
+increment evaluates to the OLD value, so the very first `((ok++))` when `ok=0` evaluates to
+0 → exit status 1 → `set -e` terminates the script on the spot. The failure is invisible: no
+error message, no non-zero exit at top level if it happens inside a function whose output is
+already partially printed. Symptom in the affinity script: the per-user summary line and the
+entire second user's section just never printed, while the header line did. It looks like a
+logic/data bug (`the second user has no processes`), not a shell bug.
+
+Avoid: never use `((i++))`/`((i--))` as a standalone statement in a `set -e` script. Use
+`i=$((i + 1))`, or `((i++)) || true`, or pre-increment `((++i))` (which evaluates to the new
+value — still lands on this trap whenever the new value is 0, e.g. counting up from -1).
+Note the related-but-safe case: in an `a && b` list where `a` fails, `set -e` does NOT exit,
+because only the command following the *final* `&&`/`||` is checked. So `((VERBOSE)) &&
+printf ...` and `[[ -z $x ]] && x=foo` are fine as-is; the bare `((...))` is the hazard.
+Same trap applies to `let i++` and to `((flag))` used as a standalone truth test.
+
+## Sources
+- slop/affinity: `bin/game-affinity` (`apply_to_user` ok/fail counters, `cmd_watch` pass counter)

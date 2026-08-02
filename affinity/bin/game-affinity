@@ -1,0 +1,445 @@
+#!/usr/bin/env bash
+#
+# game-affinity — pin two users' game process trees to disjoint sets of CPUs.
+#
+# Built for a shared-box couch/LAN setup: two people playing (PalWorld via Steam
+# Proton) on one machine, and neither one's game threads should ever land on a
+# CPU the other is using.
+#
+# What it does
+#   1. Walks /proc and finds "seed" processes for each user (steam, proton,
+#      wine, gamescope, Palworld, ...).
+#   2. Expands each seed to its ENTIRE descendant tree, so anything Steam or
+#      the Proton reaper spawns later is caught too.
+#   3. Applies sched_setaffinity to every process AND every thread
+#      (taskset --all-tasks) with that user's CPU list.
+#
+# Safety
+#   - Refuses to run if the two CPU sets overlap.
+#   - Refuses to run if the two CPU sets share SMT siblings (two logical CPUs
+#     on the SAME physical core -> a real collision even though the CPU
+#     numbers differ). This is why 0-7 / 16-23 is NOT a valid split here.
+#   - Warns if the two sets share an L3 cache domain (CCD/CCX).
+#   - Non-root => automatic dry run. Only root can set affinity for another
+#     user's processes.
+#
+# Usage
+#   game-affinity                 # apply (dry run unless root)
+#   sudo game-affinity            # actually pin
+#   game-affinity status          # show current affinity of matched procs
+#   game-affinity plan            # show the CPU split + topology, touch nothing
+#   sudo game-affinity reset      # give every matched proc all CPUs back
+#   sudo game-affinity watch      # re-apply every 5s (catches new procs)
+#
+# Options
+#   -p, --profile ccd|cores       CPU split preset            (default: ccd)
+#   -A, --cpus-a LIST             explicit CPU list for user A
+#   -B, --cpus-b LIST             explicit CPU list for user B
+#   -a, --user-a NAME             first user                  (default: iphands)
+#   -b, --user-b NAME             second user                 (default: merozas)
+#   -i, --interval SEC            watch interval              (default: 5)
+#   -n, --dry-run                 never touch anything
+#   -f, --force                   ignore the SMT-sibling veto (don't)
+#   -v, --verbose                 list every pid, not just a summary
+#   -h, --help                    this text
+#
+set -euo pipefail
+
+PROG=${0##*/}
+
+# ---------------------------------------------------------------- defaults ---
+USER_A=${AFFINITY_USER_A:-iphands}
+USER_B=${AFFINITY_USER_B:-merozas}
+PROFILE=${AFFINITY_PROFILE:-ccd}
+CPUS_A=${AFFINITY_CPUS_A:-}
+CPUS_B=${AFFINITY_CPUS_B:-}
+INTERVAL=5
+DRY_RUN=0
+FORCE=0
+VERBOSE=0
+CMD=apply
+
+# Seed matching. A process is a seed if its comm matches SEED_COMM_RE or its
+# full cmdline matches SEED_CMD_RE. Extend without editing this file via
+# AFFINITY_EXTRA_MATCH='regex'.
+SEED_COMM_RE='^(steam|steam\.sh|steamwebhelper|steamerrorrepor|steamservice|reaper|srt-bwrap|pv-bwrap|pressure-vessel.*|proton.*|wine.*|wineserver|winedevice\.exe|explorer\.exe|services\.exe|Palworld.*|PalServer.*|gamescope.*|gamemoded|gamemoderun|mangohud)$'
+SEED_CMD_RE='steamapps|SteamApps|[Pp]alworld|[Pp]alServer|[Pp]roton|pressure-vessel|wineserver|ubuntu12_32|ubuntu12_64|/steam(/|$| )|steam\.sh|SteamLinuxRuntime'
+EXTRA_MATCH=${AFFINITY_EXTRA_MATCH:-}
+
+# ------------------------------------------------------------------ colors ---
+if [[ -t 1 ]]; then
+  C_RST=$'\e[0m'; C_B=$'\e[1m'; C_DIM=$'\e[2m'
+  C_RED=$'\e[31m'; C_GRN=$'\e[32m'; C_YEL=$'\e[33m'; C_BLU=$'\e[34m'; C_CYA=$'\e[36m'
+else
+  C_RST=; C_B=; C_DIM=; C_RED=; C_GRN=; C_YEL=; C_BLU=; C_CYA=
+fi
+
+die()  { printf '%s%s: error:%s %s\n' "$C_RED" "$PROG" "$C_RST" "$*" >&2; exit 1; }
+warn() { printf '%s%s: warning:%s %s\n' "$C_YEL" "$PROG" "$C_RST" "$*" >&2; }
+info() { printf '%s\n' "$*"; }
+
+usage() { sed -n '3,45p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+
+# -------------------------------------------------------------- cpu helpers ---
+
+# "0-3,8" -> "0 1 2 3 8"
+expand_list() {
+  local part lo hi out=()
+  IFS=, read -ra _parts <<<"$1"
+  for part in "${_parts[@]}"; do
+    [[ -z $part ]] && continue
+    if [[ $part == *-* ]]; then
+      lo=${part%%-*}; hi=${part##*-}
+      [[ $lo =~ ^[0-9]+$ && $hi =~ ^[0-9]+$ ]] || die "bad cpu range: $part"
+      ((lo <= hi)) || die "inverted cpu range: $part"
+      for ((c = lo; c <= hi; c++)); do out+=("$c"); done
+    else
+      [[ $part =~ ^[0-9]+$ ]] || die "bad cpu number: $part"
+      out+=("$part")
+    fi
+  done
+  printf '%s\n' "${out[@]}"
+}
+
+# "0 1 2 3 8" -> "0-3,8"
+compact_list() {
+  local -a cpus
+  mapfile -t cpus < <(printf '%s\n' "$@" | sort -n -u)
+  ((${#cpus[@]})) || { printf '(none)'; return; }
+  local out= start=${cpus[0]} prev=${cpus[0]} c
+  for c in "${cpus[@]:1}"; do
+    if ((c == prev + 1)); then prev=$c; continue; fi
+    out+="${out:+,}$(range_str "$start" "$prev")"
+    start=$c; prev=$c
+  done
+  out+="${out:+,}$(range_str "$start" "$prev")"
+  printf '%s' "$out"
+}
+range_str() { if (($1 == $2)); then printf '%s' "$1"; else printf '%s-%s' "$1" "$2"; fi; }
+
+siblings_of() { # logical cpu -> its SMT siblings (incl. itself)
+  local f=/sys/devices/system/cpu/cpu$1/topology/thread_siblings_list
+  [[ -r $f ]] && expand_list "$(<"$f")" || printf '%s\n' "$1"
+}
+l3_of() {
+  local f=/sys/devices/system/cpu/cpu$1/cache/index3/shared_cpu_list
+  [[ -r $f ]] && cat "$f" || printf 'unknown'
+}
+core_of() {
+  local f=/sys/devices/system/cpu/cpu$1/topology/core_id
+  [[ -r $f ]] && cat "$f" || printf '?'
+}
+online_cpus() {
+  local f=/sys/devices/system/cpu/online
+  [[ -r $f ]] && cat "$f" || printf '0-%s' "$(($(nproc) - 1))"
+}
+
+# ------------------------------------------------------------------ profiles ---
+# Resolve PROFILE into CPUS_A / CPUS_B unless the user gave both explicitly.
+#
+#   ccd   - a whole CCD each: 8 physical cores + their SMT siblings.
+#           Separate L3, zero shared silicon. Recommended.
+#   cores - strictly 8 logical CPUs each, one per physical core, SMT siblings
+#           left idle. Fewer threads, but every thread owns a full core.
+resolve_profile() {
+  [[ -n $CPUS_A && -n $CPUS_B ]] && return 0
+
+  local -a ccd0=() ccd1=()
+  local ncpu; ncpu=$(nproc)
+  local first_l3; first_l3=$(l3_of 0)
+  local c
+  for ((c = 0; c < ncpu; c++)); do
+    if [[ $(l3_of "$c") == "$first_l3" ]]; then ccd0+=("$c"); else ccd1+=("$c"); fi
+  done
+
+  if ((${#ccd1[@]} == 0)); then
+    # Single L3 domain: fall back to a plain halves split by physical core.
+    warn "only one L3 domain detected; falling back to a straight halves split"
+    ccd0=(); ccd1=()
+    for ((c = 0; c < ncpu; c++)); do
+      if ((c < ncpu / 2)); then ccd0+=("$c"); else ccd1+=("$c"); fi
+    done
+  fi
+
+  case $PROFILE in
+    ccd)
+      CPUS_A=${CPUS_A:-$(compact_list "${ccd0[@]}")}
+      CPUS_B=${CPUS_B:-$(compact_list "${ccd1[@]}")}
+      ;;
+    cores)
+      # one logical cpu per physical core, taken from each CCD
+      local -A seen_a=() seen_b=()
+      local -a pa=() pb=() k
+      for c in "${ccd0[@]}"; do k=$(core_of "$c"); [[ -n ${seen_a[$k]:-} ]] || { seen_a[$k]=1; pa+=("$c"); }; done
+      for c in "${ccd1[@]}"; do k=$(core_of "$c"); [[ -n ${seen_b[$k]:-} ]] || { seen_b[$k]=1; pb+=("$c"); }; done
+      CPUS_A=${CPUS_A:-$(compact_list "${pa[@]}")}
+      CPUS_B=${CPUS_B:-$(compact_list "${pb[@]}")}
+      ;;
+    *) die "unknown profile '$PROFILE' (want: ccd, cores)" ;;
+  esac
+}
+
+# ------------------------------------------------------------- validation ---
+validate_split() {
+  local -a a b
+  mapfile -t a < <(expand_list "$CPUS_A")
+  mapfile -t b < <(expand_list "$CPUS_B")
+  ((${#a[@]})) || die "user A ($USER_A) has an empty CPU set"
+  ((${#b[@]})) || die "user B ($USER_B) has an empty CPU set"
+
+  local ncpu; ncpu=$(nproc)
+  local c
+  for c in "${a[@]}" "${b[@]}"; do
+    ((c < ncpu)) || die "cpu $c does not exist (machine has $ncpu: $(online_cpus))"
+  done
+
+  # 1. hard overlap
+  local -A inb=()
+  for c in "${b[@]}"; do inb[$c]=1; done
+  local -a dup=()
+  for c in "${a[@]}"; do [[ -n ${inb[$c]:-} ]] && dup+=("$c"); done
+  ((${#dup[@]} == 0)) || die "CPU sets overlap on: $(compact_list "${dup[@]}") — that is exactly the collision you asked to prevent"
+
+  # 2. SMT sibling overlap — different cpu numbers, same physical core
+  local -a sib_clash=() s
+  for c in "${a[@]}"; do
+    while read -r s; do
+      [[ -n ${inb[$s]:-} ]] && sib_clash+=("$c/$s")
+    done < <(siblings_of "$c")
+  done
+  if ((${#sib_clash[@]})); then
+    local msg="CPU sets share SMT siblings (same physical core): ${sib_clash[*]}
+       Those pairs are two hyperthreads of ONE core — the two users would fight
+       over the same execution units. Pick sets that don't share a core, e.g.
+       --profile ccd. Override with --force if you really mean it."
+    ((FORCE)) && warn "$msg" || die "$msg"
+  fi
+
+  # 3. L3 domain sharing — legal, but noisy neighbours in cache
+  local la lb; la=$(l3_of "${a[0]}"); lb=$(l3_of "${b[0]}")
+  if [[ $la == "$lb" && $la != unknown ]]; then
+    warn "both sets live in the same L3 domain ($la); they will still evict each other's cache"
+  fi
+}
+
+# ------------------------------------------------------- process discovery ---
+declare -A P_PPID P_NAME P_UID P_CMD P_KIDS
+
+snapshot_procs() {
+  P_PPID=(); P_NAME=(); P_UID=(); P_CMD=(); P_KIDS=()
+  local d pid name ppid uid key val cmd
+  for d in /proc/[0-9]*; do
+    pid=${d#/proc/}
+    [[ -r $d/status ]] || continue
+    name=; ppid=; uid=
+    while IFS=$'\t' read -r key val; do
+      case $key in
+        Name:) name=$val ;;
+        PPid:) ppid=$val ;;
+        Uid:)  uid=${val%%$'\t'*}; break ;;
+      esac
+    done <"$d/status" 2>/dev/null || continue
+    [[ -n $ppid && -n $uid ]] || continue
+    cmd=$(tr '\0' ' ' <"$d/cmdline" 2>/dev/null || true)
+    [[ -z $cmd ]] && cmd="[$name]"          # kernel thread
+    P_PPID[$pid]=$ppid
+    P_NAME[$pid]=$name
+    P_UID[$pid]=$uid
+    P_CMD[$pid]=$cmd
+    P_KIDS[$ppid]="${P_KIDS[$ppid]:-} $pid"
+  done
+}
+
+is_seed() { # $1 = pid
+  local n=${P_NAME[$1]} c=${P_CMD[$1]}
+  [[ $c == \[*\] ]] && return 1                       # kernel thread
+  [[ $n =~ $SEED_COMM_RE ]] && return 0
+  [[ $c =~ $SEED_CMD_RE ]] && return 0
+  [[ -n $EXTRA_MATCH && ( $n =~ $EXTRA_MATCH || $c =~ $EXTRA_MATCH ) ]] && return 0
+  return 1
+}
+
+# Seeds owned by $1 (uid), plus every descendant of those seeds.
+# Prints pids, one per line, sorted.
+tree_for_uid() {
+  local uid=$1
+  local -A picked=()
+  local pid kid
+  local -a queue=()
+
+  for pid in "${!P_UID[@]}"; do
+    [[ ${P_UID[$pid]} == "$uid" ]] || continue
+    is_seed "$pid" || continue
+    picked[$pid]=1; queue+=("$pid")
+  done
+
+  while ((${#queue[@]})); do
+    pid=${queue[0]}; queue=("${queue[@]:1}")
+    for kid in ${P_KIDS[$pid]:-}; do
+      [[ -n ${picked[$kid]:-} ]] && continue
+      picked[$kid]=1; queue+=("$kid")
+    done
+  done
+
+  ((${#picked[@]})) && printf '%s\n' "${!picked[@]}" | sort -n
+}
+
+uid_of_user() { id -u "$1" 2>/dev/null || die "no such user: $1"; }
+
+current_affinity() { taskset -pc "$1" 2>/dev/null | sed 's/.*: //' || printf '?'; }
+
+# ------------------------------------------------------------------ actions ---
+
+# apply_to_user <label> <user> <uid> <cpulist>
+apply_to_user() {
+  local label=$1 user=$2 uid=$3 list=$4
+  local -a pids
+  mapfile -t pids < <(tree_for_uid "$uid")
+
+  printf '%s%s %s%s  cpus=%s%s%s  procs=%s\n' \
+    "$C_B" "$label" "$user" "$C_RST" "$C_CYA" "$list" "$C_RST" "${#pids[@]}"
+
+  ((${#pids[@]})) || { printf '  %s(nothing running)%s\n' "$C_DIM" "$C_RST"; return; }
+
+  local pid ok=0 fail=0 before
+  for pid in "${pids[@]}"; do
+    [[ -d /proc/$pid ]] || continue
+    before=$(current_affinity "$pid")
+    if ((DRY_RUN)); then
+      ((VERBOSE)) && printf '  %s[dry-run]%s %-7s %-24.24s %s -> %s\n' \
+        "$C_DIM" "$C_RST" "$pid" "${P_NAME[$pid]}" "$before" "$list" || true
+      ok=$((ok + 1))
+    else
+      if taskset --all-tasks --cpu-list --pid "$list" "$pid" >/dev/null 2>&1; then
+        ok=$((ok + 1))
+        ((VERBOSE)) && printf '  %sok%s      %-7s %-24.24s %s -> %s\n' \
+          "$C_GRN" "$C_RST" "$pid" "${P_NAME[$pid]}" "$before" "$list" || true
+      else
+        fail=$((fail + 1))
+        printf '  %sFAIL%s    %-7s %-24.24s (%s)\n' \
+          "$C_RED" "$C_RST" "$pid" "${P_NAME[$pid]}" \
+          "$([[ $EUID -ne 0 ]] && echo 'need root' || echo 'exited or not permitted')"
+      fi
+    fi
+  done
+
+  local verb='pinned'
+  ((DRY_RUN)) && verb='would pin'
+  printf '  %s%s %d%s%s\n' "$C_DIM" "$verb" "$ok" \
+    "$( ((fail)) && printf ', failed %d' "$fail")" "$C_RST"
+}
+
+cmd_apply() {
+  local uid_a uid_b
+  uid_a=$(uid_of_user "$USER_A"); uid_b=$(uid_of_user "$USER_B")
+  snapshot_procs
+  apply_to_user "A" "$USER_A" "$uid_a" "$CPUS_A"
+  apply_to_user "B" "$USER_B" "$uid_b" "$CPUS_B"
+}
+
+cmd_status() {
+  local uid_a uid_b
+  uid_a=$(uid_of_user "$USER_A"); uid_b=$(uid_of_user "$USER_B")
+  snapshot_procs
+  local user uid want pid
+  for pair in "$USER_A:$uid_a:$CPUS_A" "$USER_B:$uid_b:$CPUS_B"; do
+    IFS=: read -r user uid want <<<"$pair"
+    printf '%s%s%s  want=%s\n' "$C_B" "$user" "$C_RST" "$want"
+    local -a pids; mapfile -t pids < <(tree_for_uid "$uid")
+    ((${#pids[@]})) || { printf '  %s(nothing running)%s\n' "$C_DIM" "$C_RST"; continue; }
+    local cur mark
+    for pid in "${pids[@]}"; do
+      cur=$(current_affinity "$pid")
+      if [[ $cur == "$want" ]]; then mark="${C_GRN}ok ${C_RST}"; else mark="${C_YEL}off${C_RST}"; fi
+      printf '  %s %-7s %-24.24s %s\n' "$mark" "$pid" "${P_NAME[$pid]:-?}" "$cur"
+    done
+  done
+}
+
+cmd_reset() {
+  local all; all=$(online_cpus)
+  local uid_a uid_b
+  uid_a=$(uid_of_user "$USER_A"); uid_b=$(uid_of_user "$USER_B")
+  snapshot_procs
+  info "resetting both trees to all CPUs ($all)"
+  CPUS_A=$all CPUS_B=$all
+  apply_to_user "A" "$USER_A" "$uid_a" "$all"
+  apply_to_user "B" "$USER_B" "$uid_b" "$all"
+}
+
+cmd_plan() {
+  local ncpu; ncpu=$(nproc)
+  printf '%smachine%s  %s logical CPUs, online %s\n' "$C_B" "$C_RST" "$ncpu" "$(online_cpus)"
+  printf '%sprofile%s  %s\n\n' "$C_B" "$C_RST" "$PROFILE"
+  local label user list
+  for pair in "A:$USER_A:$CPUS_A" "B:$USER_B:$CPUS_B"; do
+    IFS=: read -r label user list <<<"$pair"
+    local -a cpus; mapfile -t cpus < <(expand_list "$list")
+    local -A cores=(); local c
+    for c in "${cpus[@]}"; do cores[$(core_of "$c")]=1; done
+    printf '%s%s %-10s%s cpus %-16s  %2d logical, %2d physical cores, L3 %s\n' \
+      "$C_B" "$label" "$user" "$C_RST" "$list" "${#cpus[@]}" "${#cores[@]}" "$(l3_of "${cpus[0]}")"
+  done
+  printf '\n%sSMT map%s (logical -> physical core)\n' "$C_B" "$C_RST"
+  local c owner x
+  local -A own=()
+  while read -r x; do own[$x]=A; done < <(expand_list "$CPUS_A")
+  while read -r x; do own[$x]=B; done < <(expand_list "$CPUS_B")
+  for ((c = 0; c < ncpu; c++)); do
+    owner=${own[$c]:-.}
+    case $owner in
+      A) printf '%scpu%-3s core %-3s %s%s\n' "$C_BLU" "$c" "$(core_of "$c")" "A:$USER_A" "$C_RST" ;;
+      B) printf '%scpu%-3s core %-3s %s%s\n' "$C_CYA" "$c" "$(core_of "$c")" "B:$USER_B" "$C_RST" ;;
+      *) printf '%scpu%-3s core %-3s free%s\n' "$C_DIM" "$c" "$(core_of "$c")" "$C_RST" ;;
+    esac
+  done
+}
+
+cmd_watch() {
+  info "watching every ${INTERVAL}s — ctrl-c to stop"
+  local n=0
+  while :; do
+    n=$((n + 1))
+    printf '\n%s--- pass %d (%s) ---%s\n' "$C_DIM" "$n" "$(date +%T)" "$C_RST"
+    cmd_apply
+    sleep "$INTERVAL"
+  done
+}
+
+# --------------------------------------------------------------- arg parse ---
+while (($#)); do
+  case $1 in
+    apply|status|reset|watch|plan) CMD=$1 ;;
+    -p|--profile)  PROFILE=${2:?}; shift ;;
+    -A|--cpus-a)   CPUS_A=${2:?}; shift ;;
+    -B|--cpus-b)   CPUS_B=${2:?}; shift ;;
+    -a|--user-a)   USER_A=${2:?}; shift ;;
+    -b|--user-b)   USER_B=${2:?}; shift ;;
+    -i|--interval) INTERVAL=${2:?}; shift ;;
+    -n|--dry-run)  DRY_RUN=1 ;;
+    -f|--force)    FORCE=1 ;;
+    -v|--verbose)  VERBOSE=1 ;;
+    -h|--help)     usage ;;
+    *) die "unknown argument: $1 (try --help)" ;;
+  esac
+  shift
+done
+
+command -v taskset >/dev/null || die "taskset not found (install util-linux)"
+
+resolve_profile
+[[ $CMD == reset ]] || validate_split
+
+if ((EUID != 0)) && [[ $CMD != status && $CMD != plan ]]; then
+  DRY_RUN=1
+  printf '%s%s: not root — DRY RUN. Re-run with sudo to actually pin.%s\n\n' \
+    "$C_YEL" "$PROG" "$C_RST"
+fi
+
+case $CMD in
+  apply)  cmd_apply ;;
+  status) cmd_status ;;
+  reset)  cmd_reset ;;
+  watch)  cmd_watch ;;
+  plan)   cmd_plan ;;
+esac
