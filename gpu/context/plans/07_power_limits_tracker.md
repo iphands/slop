@@ -1,7 +1,7 @@
 # GPU Power Limits — Tracker
 
 ## Overview
-- Status: 4/7 tasks. **The central question is answered** — see T4. T4b (raise PL2, unsupported), T5, and the Palworld half of T3 remain.
+- Status: 5/7 tasks. **Answered: the 31.2 W cap cannot be raised from software** — PL1, PL2 and both together all leave it at 31.2 W (T4, T4b). T5 and the Palworld half of T3 remain, neither likely to change that.
 - Start date: 2026-08-01
 - Plan: `context/plans/07_power_limits.md`
 
@@ -62,6 +62,53 @@ Reference source is gitignored: run `scripts/vendor-prep.sh` to repopulate
 **The first three rows do not load the GPU.** The fourth does, but is one run — a pilot
 that shaped the hypothesis, not a result. The admissible N ≥ 3 results are in the T3 and T4
 sections below.
+
+### T4b — does raising PL2 move the cap? **No. Nothing in software does.** 2026-08-02
+
+Run by the human as `./scripts/power-pl2-experiment.sh --confirm --target-w 45 --runs 1
+--duration 10`. `--duration 10` is below `power-load-run.sh`'s 60 s floor, so **no vkmark
+capture was produced** — the evidence is the human's direct observation in Palworld via
+MangoHud, not a CSV. Recorded as such.
+
+**State confirmed by readback afterwards:**
+
+| | Value | Watts |
+|---|---|---|
+| PL1 (`power2_max` sysfs) | `45000000` | 45 W |
+| PL2 (`0x1459A4`) | `0x00dc8168` | 45 W |
+
+Both limits accepted and held 45 W. **Palworld still drew 31.2 W.**
+
+**Conclusion: the 31.2 W cap is not reachable from software.** PL1 alone (T4), PL2 alone,
+and both together all produce exactly 31.2 W. The RAPL registers accept and retain our
+writes and the PCU ignores them. Whatever enforces 31.2 W is not PL1 or PL2 — candidates
+are PL4 (its sticky bit is set), VR current limits, or a PCU-internal value, consistent
+with `PKG_POWER_SKU` reading 0 in both dwords.
+
+**This also weakens the T4 conclusion**, which named PL2 as "the binding limit" on the
+strength of the throttle reason being `pl2`. The reason register says `pl2`; raising the
+PL2 register does not help. Either `0x1459A4` is not the value the PCU enforces, or the
+PCU clamps PL2 to its own internal maximum. Do not describe PL2 as "the cap" without that
+caveat.
+
+**Open — cheap to close:** nobody has checked `throttle/reasons` *while* PL2 is raised. If
+it still reports `pl2` at 45 W, that is direct evidence the PCU is ignoring the register
+rather than honouring a different limit. One `cat` during gameplay, no root needed.
+
+**Script bug — the restore did not run.** Both limits were left at 45 W after the first
+invocation; the second refused to start because PL2 was not at stock (that guard worked as
+designed). `power-pl2-experiment.sh` has `trap restore EXIT INT TERM` and `restore()`
+writes both registers before any unguarded command, so it should have fired when
+`power-load-run.sh` exited 2 on the duration check. **Cause not determined** — the terminal
+output of that run was not captured. Do not trust the trap until this is understood; verify
+with `sudo ./scripts/power-regs.sh --raw` after every run.
+
+Manual restore:
+```bash
+sudo intel_reg write mmio:0x1459a4 0x00dc80fa
+echo 31250000 | sudo tee /sys/class/drm/card0/device/hwmon/hwmon2/power2_max
+```
+A reboot also resets both.
 
 ### T4 — is a raised PL1 honoured? **The register accepts it; the cap does not move.** 2026-08-02 07:11–07:16
 
@@ -215,7 +262,7 @@ read time (a load run was between iterations). Raw values:
 | 2 | T2: Read the hardware power fuses | `scripts/power-regs.sh` | done | 2026-08-01 21:15. All five predictions resolved; see the register table above. Script updated afterwards to detect the `0x1459a4` alias rather than decode it as PL2. |
 | 3 | T3: Does PL1 bind under load? | `scripts/power-load-run.sh`, `analyze/power_summary.py` | done | 2026-08-01. **Yes** — 31.20 W across 3 runs, spread 0.00 W, exactly at the 31.25 W setting. Not thermal, not frequency-limited. |
 | 4 | T4: Is a raised PL1 honored? | `scripts/power-pl1-experiment.sh` | done | 2026-08-02. **No.** PL1 50 W -> plateau still 31.20 W, spread 0.00 W. `0x1459a4` did not move with `0x1459a0`, so it is PL2 = 31.25 W and it is the real cap. |
-| 4b | T4b: Raise PL2 directly | `scripts/power-pl2-experiment.sh` | pending | **Unsupported path** — intel_reg writes a register the driver never touches. Needs sudo + `--confirm`. Raises PL1 **and** PL2 (PL2 alone does nothing; PL1 would just bind instead). Start at 35 W. |
+| 4b | T4b: Raise PL2 directly | `scripts/power-pl2-experiment.sh` | done | 2026-08-02. **No effect.** PL1 45 W + PL2 45 W -> Palworld still 31.2 W. Cap is not software-reachable. Script's restore trap did NOT fire — cause unknown, verify state manually after each run. |
 | 5 | T5: PL1-disable writability probe | `scripts/power-pl1-disable-probe.sh` | pending | Needs sudo. Script samples temps, writes 0, captures exit status + new dmesg, reads back, restores from a trap. Deliberately runs the GPU **idle** — the question is whether the register accepts the write. |
 | 6 | T6: Record findings | `context/pitfalls.md`, `context/distilled.md` | pending | Now **four** pitfalls entries — see below. |
 
