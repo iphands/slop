@@ -1,41 +1,42 @@
 # GPU Power Limits — Tracker
 
 ## Overview
-- Status: 33% complete (2/6 tasks; T3 tooling built, T3 measurement **not** collected)
+- Status: 67% complete (4/6 tasks). **The central question is answered** — see T4. T5 and the Palworld half of T3 remain.
 - Start date: 2026-08-01
 - Plan: `context/plans/07_power_limits.md`
 
 ## Resume Instructions
 
-**Pick up at T3.** The harness is written and exercised; the N ≥ 3 measurement is not
-collected. The session was stopped mid-run at the human's request (they were using the
-machine). Run:
+**The central question is answered — read T4 first.** The A310 is capped at 31.20 W by
+**PL2** (`0x1459A4`, 31.25 W), not PL1. `power2_max` writes land, persist, and are simply
+irrelevant to the ceiling: raising PL1 to 50 W left the plateau at 31.20 W with spread
+0.00 W over 3 runs. `xe` neither exposes nor writes PL2 on DG2.
 
-```bash
-./scripts/power-load-run.sh --label t3-baseline --duration 75 --runs 3 --cooldown 25
-```
+**Two things remain, neither on the critical path:**
 
-That writes `captures/survey_t3-baseline_*_runN.csv` and prints the
-`analyze/power_summary.py` verdict. Takes ~6 min and **puts a vkmark window on screen the
-whole time** — do not start it while the machine is in use.
+1. **T5, the PL1-disable probe** — `./scripts/power-pl1-disable-probe.sh`. Seconds, GPU
+   idle, needs sudo. Now largely of academic interest: T4 already showed the RAPL register
+   accepts and holds our writes, so "is it writable" is mostly answered. Still the only
+   operation the driver verifies, and it would confirm whether `PWR_LIM_EN` specifically can
+   be cleared.
+2. **The Palworld half of T3** — see the gap note in the T3 section. This is the one that
+   actually matters for the wider project: if Palworld never reaches 31.2 W, the cap is
+   irrelevant to frame rate and Plan 01's CPU-bound/GPU-bound question is the real one.
 
-**T2 needs root** and has not been run against real hardware:
+**The obvious next experiment, deliberately NOT run:** write PL2 directly with
+`sudo intel_reg write mmio:0x1459a4 0x00dc8190` and re-run the load. That is the only known
+way to move this card's ceiling. It is out of plan 07's diagnose-only scope, it bypasses the
+driver entirely, and **A310 boards are commonly 75 W slot-powered with no PCIe connector**
+— check for an external connector before considering it. Restore with
+`sudo intel_reg write mmio:0x1459a4 0x00dc80fa`.
 
-```bash
-sudo ./scripts/power-regs.sh
-```
+Anything that modifies `power2_max` must restore it to `31250000` — T5 in particular leaves
+the attribute invisible on the next driver reload if `PWR_LIM_EN` is left clear
+(`xe_hwmon.c:1085-1092`). Both scripts restore from an EXIT trap.
 
-It is read-only. Its `0x1459A4` (PL2) read has become the most important line in this plan
-— see the hypothesis below.
-
-**The hypothesis to test has changed since the plan was written.** The trial run says the
-limiter is **PL2**, not PL1, and `power2_max` does not control PL2. So T4's expected
-observation is now "raising PL1 changes nothing", and the interesting question moved to
-whether PL2 is readable at `0x1459A4` and what value it holds. Do not skip T2.
-
-T4 and T5 both modify `power2_max`. **Always restore it to `31250000` afterwards** — T5 in
-particular leaves the attribute invisible on the next driver reload if `PWR_LIM_EN` is left
-clear (`xe_hwmon.c:1085-1092`).
+Reruns: `./scripts/power-load-run.sh --label X --duration 75 --runs 3` (~6 min, puts a
+vkmark window on screen). Pass `--no-hud` to stay comparable with the hud=off
+`t3-baseline` / `t4-raised` captures.
 
 Reference source is gitignored: run `scripts/vendor-prep.sh` to repopulate
 `vendor/kernel/BUILD/linux-7.1.5/drivers/gpu/drm/xe/`.
@@ -49,8 +50,46 @@ Reference source is gitignored: run `scripts/vendor-prep.sh` to repopulate
 | 2026-07-30 | `vkcube`, via `distilled.md:92` | package power, light load | ~12.6 W, `reasons=none` | 1 | n/a |
 | 2026-08-01 | `captures/survey_trial_2026-08-01_110202.csv`, `vkmark -b shading:duration=20`, kernel `7.1.5-201.fc44`, Mesa `26.3.0-0.3.20260801.10.a5ab305`, stock `power2_max` 31250000 µW | plateau package power (skip 5 s, trim 2 s) | **30.71 W**, sd 0.96, max 31.48; `act_freq` 2407 MHz, `cur_freq` 2450 (pinned at rp0); throttle **`pl2` in 70% of plateau samples**; temp_max 55 °C | **1** | n/a — **single run, NOT admissible under Rule D.1** |
 
-**The first three rows do not load the GPU.** The fourth does, but is one run — it is a
-pilot that shaped the hypothesis, not a result. The N ≥ 3 measurement is still outstanding.
+**The first three rows do not load the GPU.** The fourth does, but is one run — a pilot
+that shaped the hypothesis, not a result. The admissible N ≥ 3 results are in the T3 and T4
+sections below.
+
+### T4 — is a raised PL1 honoured? **The register accepts it; the cap does not move.** 2026-08-02 07:11–07:16
+
+`./scripts/power-pl1-experiment.sh` (hud=off — predates the HUD default). PL1 31.25 → 50 W.
+
+| Run | Capture | Plateau | sd | act_freq | temp_max | `pl2` share |
+|---|---|---|---|---|---|---|
+| 1 | `captures/survey_t4-raised_2026-08-02_071157_run1.csv` | 31.20 W | 0.03 | 2375 MHz | 64 °C | 94% |
+| 2 | `…_run2.csv` | 31.20 W | 0.03 | 2345 MHz | 67 °C | 100% |
+| 3 | `…_run3.csv` | 31.20 W | 0.03 | 2334 MHz | 68 °C | 100% |
+
+**Across 3 runs: 31.20 W, spread 0.00 W — identical to the T3 baseline at 31.25 W PL1.**
+Raising PL1 by 60% moved the plateau by nothing.
+
+**The write landed and persisted.** `0x1459A0`: `0x00dc80fa` → `0x00dc8190` after the write,
+and still `0x00dc8190` after all three loads. The punit did **not** revert it — so the
+"maybe the punit rewrites the register" hypothesis from T2 is dead too.
+
+**`0x1459A4` did NOT move — it stayed `0x00dc80fa` while `0x1459A0` changed.** That refutes
+the T2 alias inference outright. They are independent registers, and `0x1459A4` bits [15:0]
+= `0x80fa` = `EN` | 250 = **PL2 = 31.25 W**, matching the standard RAPL 64-bit layout
+(PL2 value [46:32], enable [47]).
+
+**Conclusion: PL2 is the binding limit, and `xe` provides no way to reach it.** The driver
+defines no fields above bit 23 of the RAPL register and gates `power2_cap` out of sysfs at
+`xe_hwmon.c:1080`. That is the complete answer to the original question — `power2_max`
+writes work perfectly and are simply irrelevant to the ceiling.
+
+**Corroboration from the sticky bits.** `GT0_PERF_LIMIT_REASONS` read `0x09000000` today
+(sticky pl4 + pl2) versus `0x0d000000` yesterday (pl4 + pl1 + pl2). The pl1 sticky bit is
+**absent** after the reboot — PL1 never fired at all during these runs, exactly as expected
+once it was raised to 50 W. Also shows sticky bits clear on reboot.
+
+**Incidental:** `FREQ_INFO_REC` read `0x31001100`, `0x31001200`, `0x31001400` across the
+three register dumps — RPe moving 850 → 900 → 1000 MHz within five minutes, independent
+confirmation that RPe is dynamic. Bits [31:24] stayed `0x31` throughout, confirming the
+`rpa_freq` mask finding a third time.
 
 ### T3 — does PL1 bind? **Yes.** 2026-08-01 21:16–21:21
 
@@ -115,7 +154,13 @@ read time (a load run was between iterations). Raw values:
 
 **Five findings, in order of how much they change the plan:**
 
-1. **`0x1459a4` is an alias of `0x1459a0`, not PL2.** Byte-identical, *including* the
+1. ~~**`0x1459a4` is an alias of `0x1459a0`, not PL2.**~~ **REFUTED by T4 on 2026-08-02 —
+   see the T4 section above. The two are independent registers and `0x1459a4` really is
+   PL2.** The reasoning below was sound but the conclusion was wrong: I inferred register
+   identity from two values being equal at rest. Left in place as the record of a wrong
+   call. Original text follows.
+
+   Byte-identical, *including* the
    time-window bits (x=3, y=14 → 28 s). PL2 encodes its own window independently and it is
    normally far shorter than PL1's, so an exact 24-bit match is the signature of the address
    aliasing back — not of PL2 coincidentally equalling PL1. **PL2's value remains unknown
@@ -160,7 +205,7 @@ read time (a load run was between iterations). Raw values:
 | 1 | T1: Create plan 07, tracker, SERIES row | `context/plans/07_power_limits*.md`, `SERIES.md` | done | 2026-08-01 |
 | 2 | T2: Read the hardware power fuses | `scripts/power-regs.sh` | done | 2026-08-01 21:15. All five predictions resolved; see the register table above. Script updated afterwards to detect the `0x1459a4` alias rather than decode it as PL2. |
 | 3 | T3: Does PL1 bind under load? | `scripts/power-load-run.sh`, `analyze/power_summary.py` | done | 2026-08-01. **Yes** — 31.20 W across 3 runs, spread 0.00 W, exactly at the 31.25 W setting. Not thermal, not frequency-limited. |
-| 4 | T4: Is a raised PL1 honored? | `scripts/power-pl1-experiment.sh` | pending | Needs sudo. Expectation **revised again**: the plateau tracks PL1 exactly, so it may well move. Both outcomes informative. |
+| 4 | T4: Is a raised PL1 honored? | `scripts/power-pl1-experiment.sh` | done | 2026-08-02. **No.** PL1 50 W -> plateau still 31.20 W, spread 0.00 W. `0x1459a4` did not move with `0x1459a0`, so it is PL2 = 31.25 W and it is the real cap. |
 | 5 | T5: PL1-disable writability probe | `scripts/power-pl1-disable-probe.sh` | pending | Needs sudo. Script samples temps, writes 0, captures exit status + new dmesg, reads back, restores from a trap. Deliberately runs the GPU **idle** — the question is whether the register accepts the write. |
 | 6 | T6: Record findings | `context/pitfalls.md`, `context/distilled.md` | pending | Now **four** pitfalls entries — see below. |
 

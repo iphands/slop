@@ -49,17 +49,34 @@ setting — a changed value there means someone set it.)
 
 ---
 
-## Power limits — the A310 is power-capped at ~31.2 W **[verified 2026-08-01]**
+## Power limits — the A310 is capped at ~31.2 W by **PL2**, which `xe` never exposes **[verified 2026-08-02]**
 
-**PL1 binds.** Under sustained `vkmark` load, package power plateaus at **31.20 W across 3
-runs, run-to-run spread 0.00 W** (`captures/survey_t3-baseline_2026-08-01_211654_run{1,2,3}.csv`).
-The configured PL1 is 31.25 W; the 0.05 W gap is below one register quantum (1/8 W) and so
-unresolvable. Not thermal — 70 °C peak, `reason_thermal` never set. Not frequency-limited —
-`cur_freq` stays pinned at `rp0` 2450 while `act_freq` is held to ~2380.
+**The cap is real and `power2_max` does not control it.** Under sustained `vkmark` load,
+package power plateaus at **31.20 W across 3 runs, run-to-run spread 0.00 W**. Raising PL1
+from 31.25 W to **50 W changed nothing**: 31.20 W again, spread 0.00 W, throttle reason
+`pl2` in 94–100 % of plateau samples.
 
-**The reported reason is `pl2`, in 93–98 % of plateau samples, even though the value
-enforced equals PL1.** Likely reading: PL2 is the fast-acting limiter the PCU uses to hold
-the 28 s average at the PL1 target.
+| PL1 setting | Plateau | Spread | Runs | Captures |
+|---|---|---|---|---|
+| 31.25 W | 31.20 W | 0.00 W | 3 | `captures/survey_t3-baseline_2026-08-01_211654_run{1,2,3}.csv` |
+| 50.00 W | 31.20 W | 0.00 W | 3 | `captures/survey_t4-raised_2026-08-02_071157_run{1,2,3}.csv` |
+
+Not thermal (68 °C peak, `reason_thermal` never set). Not frequency-limited — `cur_freq`
+stays pinned at `rp0` 2450 throughout while `act_freq` is held to ~2340–2380. The write
+*did* land and *did* persist: `0x1459A0` read `0x00dc8190` before and after the load, so
+the punit never reverted it.
+
+**Why: PL2 at `0x1459A4` is set to 31.25 W and is the binding limit.** Writing PL1 moved
+`0x1459A0` (`0x00dc80fa` → `0x00dc8190`) and left `0x1459A4` at `0x00dc80fa` — two
+independent registers, which is also what disproves the earlier alias guess. `0x1459A4`
+bits [15:0] = `0x80fa` = `EN` | 250 = 31.25 W, exactly the standard RAPL 64-bit layout
+(PL2 value [46:32], enable [47]).
+
+`xe` never reads, writes or exposes that dword: `regs/xe_mchbar_regs.h` defines no fields
+above bit 23, and `power2_cap` is gated out of sysfs by `else if (attr != PL2_HWMON_ATTR)`
+at `xe_hwmon.c:1080`. **So there is no supported way to raise this card's power ceiling.**
+The unsupported way is `intel_reg write mmio:0x1459a4 …` — untested, and see the slot-power
+warning below.
 
 ### Register map (MCHBAR mirror, base `0x140000`) — read with `scripts/power-regs.sh`
 
@@ -69,7 +86,7 @@ the 28 s average at the PL1 target.
 | `PKG_POWER_SKU` hi | `0x145934` | `0x00000000` | `PKG_MAX_PWR` — **unpopulated** |
 | `PKG_POWER_SKU_UNIT` | `0x145938` | `0x000a0e03` | power 1/8 W, energy 1/16384 J, time 1/1024 s |
 | `PKG_RAPL_LIMIT` | `0x1459A0` | `0x00dc80fa` | PL1 250 (31.25 W), `EN`=1, tau x=3 y=14 → 28 s |
-| `PKG_RAPL_LIMIT` +4 | `0x1459A4` | `0x00dc80fa` | **aliases the low dword — not PL2** |
+| `PKG_RAPL_LIMIT` +4 | `0x1459A4` | `0x00dc80fa` | **PL2 = 31.25 W**, `EN`=1 — a separate register, and the real cap |
 | `RP_STATE_CAP` | `0x145998` | `0x00062f31` | RP0 49, RP1 47, RPn 6 (× 50 MHz) |
 | `GT0_PERF_LIMIT_REASONS` | `0x1381A8` | `0x0d000000` | live bits clear; sticky bits 24/26/27 |
 
@@ -78,15 +95,21 @@ the 28 s average at the PL1 target.
 1. **`PKG_POWER_SKU` reads 0 in both dwords**, so the hardware's own declared ceiling
    cannot be learned from MMIO at all, `power2_rated_max` is (correctly) hidden, and the
    driver's read-path clamp is inert.
-2. **`0x1459A4` is an alias, not PL2.** It reads byte-identical to `0x1459A0` including the
-   tau bits, which PL2 encodes independently and normally much shorter. **PL2's value is
-   unknown and unreachable** — `xe` also never exposes it, gated out by
-   `else if (attr != PL2_HWMON_ATTR)` at `xe_hwmon.c:1080`.
-3. **`GT0_PERF_LIMIT_REASONS` has sticky log bits the driver never reads.** `xe` masks with
-   `0xde3` (`xe_gt_throttle.c:93-97`), covering only bits 0–11. Bits 24/26/27 were set with
-   all live bits clear — the sticky positions for **pl4, pl1, pl2**, i.e. all three have
-   fired since boot. Cumulative and never cleared, so not attributable to one run, but it is
-   the only way to ask "did this ever throttle?" — sysfs cannot.
+2. **`0x1459A4` holds PL2 and is a separate register.** Proven by writing PL1 and watching
+   only `0x1459A0` move. An earlier note here claimed the two aliased, inferred from their
+   reading identically at rest — **that was wrong**, and the write is what settled it. Do
+   not infer register identity from equal values; change one and look.
+3. **`GT0_PERF_LIMIT_REASONS` has sticky log bits the driver never reads, and they clear on
+   reboot.** `xe` masks with `0xde3` (`xe_gt_throttle.c:93-97`), covering only bits 0–11.
+   Observed `0x0d000000` on 2026-08-01 (sticky pl4, pl1, pl2) and `0x09000000` after a
+   reboot on 2026-08-02 (pl4, pl2 — **pl1 absent**, corroborating that PL1 never binds).
+   Sticky bit N sits at N+16. This is the only way to ask "did this ever throttle?"; sysfs
+   cannot. Cumulative since boot, so never attribute one to a single run.
+
+> **Slot power.** Before raising PL2: this pkg domain is capped at 31.25 W, and total board
+> draw is higher than the pkg figure. A310 boards are commonly 75 W slot-powered with no
+> PCIe power connector, in which case there is little headroom above stock. Check whether
+> the card has an external connector before writing a larger PL2.
 
 There is **no instantaneous power sensor**: `xe`'s `hwmon_info[]` declares no
 `HWMON_P_INPUT`/`HWMON_P_AVERAGE` on any platform. Derive watts from `Δenergy2_input/Δt`
