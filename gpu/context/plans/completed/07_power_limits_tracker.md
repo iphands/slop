@@ -1,7 +1,7 @@
 # GPU Power Limits — Tracker
 
 ## Overview
-- Status: 5/7 tasks. **Answered: the 31.2 W cap cannot be raised from software** — PL1, PL2 and both together all leave it at 31.2 W (T4, T4b). T5 and the Palworld half of T3 remain, neither likely to change that.
+- Status: **DONE** — 6 tasks done, T5 skipped with reason. **The 31.2 W cap cannot be raised from software** (T4, T4b), and it **binds in Palworld continuously** (T3). Closed 2026-08-02.
 - Start date: 2026-08-01
 - Plan: `context/plans/07_power_limits.md`
 
@@ -179,19 +179,22 @@ This makes T4 more likely to move the needle than the pilot suggested. If the pl
 tracks the PL1 setting, raising PL1 should raise it. If it stays at 31.20 W, the PCU is
 clamping to something of its own. **Both outcomes are informative; do not skip T4.**
 
-**Gap — the Palworld half of T3 was never run.** The plan called for the synthetic load
-*and* a real Palworld session. Only the synthetic ran. That is enough to answer "is this
-card power-limited" (definitively: yes), because a fixed load is the better evidence for
-that question. It does **not** answer "does PL1 bind during actual gameplay" — Palworld may
-not sustain enough GPU load to reach 31.2 W, in which case the cap is irrelevant to the
-frame rate and Plan 01's CPU-bound/GPU-bound question is the one that matters. To close it:
+**Palworld half of T3 — CLOSED 2026-08-02, by the human's direct observation.**
+Palworld reaches 31.2 W constantly during normal play, reported unambiguously ("CERTAINLY
+reaches 31.2 All day... not a question AT ALL") and read off MangoHud's `gpu_power`, which
+T4b established is accurate on `xe`. No CSV; this is an eyewitness reading of a
+now-trusted instrument, recorded as such rather than dressed up as a measured run.
 
-```bash
-./scripts/gpu-survey.sh --match Palworld --interval 0.5 --out captures/survey_palworld_pl1.csv
-./analyze/power_summary.py --limit-w 31.25 captures/survey_palworld_pl1.csv
-```
+**This is the finding with the widest consequences in the plan.** The synthetic `vkmark`
+result was never in doubt; what mattered was whether the cap touches the real workload. It
+does, continuously. Therefore:
 
-Needs ≥ 3 sessions of ≥ 105 s each to satisfy Rule D.1.
+- **Palworld on this card is GPU-bound and power-limited**, not CPU-bound, at least in the
+  scenes that matter. That is a Plan 01 deliverable answered from here.
+- Since the ceiling cannot be raised (T4, T4b), **the only route to more frames is less GPU
+  work per frame.** On a power-capped part every joule saved converts directly into
+  headroom — which is precisely what Plans 02–06 exist to find. This makes the ANV
+  optimisation work the main line, not a follow-up.
 
 ### T2 — register read, 2026-08-01 21:15, `sudo ./scripts/power-regs.sh`
 
@@ -264,7 +267,7 @@ read time (a load run was between iterations). Raw values:
 | 3 | T3: Does PL1 bind under load? | `scripts/power-load-run.sh`, `analyze/power_summary.py` | done | 2026-08-01. **Yes** — 31.20 W across 3 runs, spread 0.00 W, exactly at the 31.25 W setting. Not thermal, not frequency-limited. |
 | 4 | T4: Is a raised PL1 honored? | `scripts/power-pl1-experiment.sh` | done | 2026-08-02. **No.** PL1 50 W -> plateau still 31.20 W, spread 0.00 W. `0x1459a4` did not move with `0x1459a0`, so it is PL2 = 31.25 W and it is the real cap. |
 | 4b | T4b: Raise PL2 directly | `scripts/power-pl2-experiment.sh` | done | 2026-08-02. **No effect.** PL1 45 W + PL2 45 W -> Palworld still 31.2 W. Cap is not software-reachable. Script's restore trap did NOT fire — cause unknown, verify state manually after each run. |
-| 5 | T5: PL1-disable writability probe | `scripts/power-pl1-disable-probe.sh` | pending | Needs sudo. Script samples temps, writes 0, captures exit status + new dmesg, reads back, restores from a trap. Deliberately runs the GPU **idle** — the question is whether the register accepts the write. |
+| 5 | T5: PL1-disable writability probe | `scripts/power-pl1-disable-probe.sh` | **skipped** | **Skipped 2026-08-02 with reason:** T4 already proved the RAPL register accepts and holds our writes, and T4b proved PL1 is not the limiter. Clearing `PWR_LIM_EN` would therefore answer a question whose useful part is already known, while risking leaving `power2_max` invisible until reboot. Script is kept for whoever wants it. |
 | 6 | T6: Record findings | `context/pitfalls.md`, `context/distilled.md` | pending | Now **four** pitfalls entries — see below. |
 
 ## Negative / Inconclusive Results
