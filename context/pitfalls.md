@@ -646,6 +646,12 @@ moves. Under `amd_pstate` (and other drivers that do not implement `cpuinfo_cur_
 it neither proves boost is working nor proves it is not. Two separate attempts to confirm a
 boost cap from sysfs were inconclusive because of this.
 
+The mirror-image trap on the same box: `/proc/cpuinfo` "cpu MHz" *is* aperf/mperf-derived,
+but an **idle** core has no recent delta and falls back to reporting exactly the policy
+maximum. So idle cores read 5086.181 MHz (precisely `cpuinfo_max_freq`) and busy cores read
+the true 3368 MHz — which looks exactly like working boost that "drops under load", and is
+the reverse of the truth. Two readings that disagree in opposite directions, both wrong.
+
 Avoid: measure clock from the cycle counter, which cannot be cached.
 `perf stat -e cycles -- taskset -c 3 bash -c 'end=$((SECONDS+3)); while [ $SECONDS -lt $end ]; do :; done'`
 then divide the cycle count by the elapsed seconds perf prints — that gave 9.695e9 / 2.8817 s
@@ -656,3 +662,25 @@ and load, should be treated as a constant until a second independent method agre
 
 ## Sources
 - slop/affinity: `perf_notes.md` (Finding 1, Finding 2)
+
+# EINVAL from a cpufreq sysfs write does not mean the value was invalid
+Writing `1` to `/sys/devices/system/cpu/cpufreq/boost` as root returned `Invalid argument`,
+which reads like a rejected value and sent the investigation looking for a syntax or
+permissions problem. It is neither. `store_boost()` in `drivers/cpufreq/cpufreq.c` validates
+the value, then calls `cpufreq_boost_trigger_state()` and collapses **any** driver-side
+failure into `-EINVAL` -- so a driver returning `-ENOTSUPP` surfaces to userspace as
+"Invalid argument". On this box `amd_pstate` refused because `X86_FEATURE_CPB` (the `cpb`
+flag in `/proc/cpuinfo`) was absent: firmware had masked Core Performance Boost, so no
+sysfs, module-parameter or governor change could ever have worked.
+
+Avoid: when a cpufreq (or similar) sysfs write returns EINVAL, read `dmesg` immediately --
+the kernel logs the real reason next to the failure, here
+`cpufreq: store_boost: Cannot enable BOOST!`. Then check whether the CPU even advertises the
+capability (`grep -x cpb` over `/proc/cpuinfo` flags for AMD boost) before hunting for a
+userspace culprit. Generally: a sysfs errno is whatever the last layer chose to return, not
+a description of your input; treat `dmesg` as the actual error message. Boost gated this way
+is fixable only in BIOS (Core Performance Boost = Auto), or at runtime by clearing
+`MSR_K7_HWCR` (0xC0010015) bit 25 CPBDIS.
+
+## Sources
+- slop/affinity: `perf_notes.md` (Finding 1)
