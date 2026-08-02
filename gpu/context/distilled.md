@@ -49,7 +49,7 @@ setting — a changed value there means someone set it.)
 
 ---
 
-## Power limits — the A310 is capped at ~31.2 W by **PL2**, which `xe` never exposes **[verified 2026-08-02]**
+## Power limits — the A310 is pinned at 31.2 W and **neither PL1 nor PL2 moves it** **[verified 2026-08-02]**
 
 **The cap is real and `power2_max` does not control it.** Under sustained `vkmark` load,
 package power plateaus at **31.20 W across 3 runs, run-to-run spread 0.00 W**. Raising PL1
@@ -58,8 +58,9 @@ from 31.25 W to **50 W changed nothing**: 31.20 W again, spread 0.00 W, throttle
 
 | PL1 setting | Plateau | Spread | Runs | Captures |
 |---|---|---|---|---|
-| 31.25 W | 31.20 W | 0.00 W | 3 | `captures/survey_t3-baseline_2026-08-01_211654_run{1,2,3}.csv` |
-| 50.00 W | 31.20 W | 0.00 W | 3 | `captures/survey_t4-raised_2026-08-02_071157_run{1,2,3}.csv` |
+| PL1 31.25 / PL2 31.25 | 31.20 W | 0.00 W | 3 | `captures/survey_t3-baseline_2026-08-01_211654_run{1,2,3}.csv` |
+| PL1 50.00 / PL2 31.25 | 31.20 W | 0.00 W | 3 | `captures/survey_t4-raised_2026-08-02_071157_run{1,2,3}.csv` |
+| **PL1 45 / PL2 45** (both raised, `intel_reg`) | **31.2 W** | — | Palworld, observed in MangoHud | T4b, 2026-08-02 |
 
 Not thermal (68 °C peak, `reason_thermal` never set). Not frequency-limited — `cur_freq`
 stays pinned at `rp0` 2450 throughout while `act_freq` is held to ~2340–2380. The write
@@ -74,9 +75,15 @@ bits [15:0] = `0x80fa` = `EN` | 250 = 31.25 W, exactly the standard RAPL 64-bit 
 
 `xe` never reads, writes or exposes that dword: `regs/xe_mchbar_regs.h` defines no fields
 above bit 23, and `power2_cap` is gated out of sysfs by `else if (attr != PL2_HWMON_ATTR)`
-at `xe_hwmon.c:1080`. **So there is no supported way to raise this card's power ceiling.**
-The unsupported way is `intel_reg write mmio:0x1459a4 …` — untested, and see the slot-power
-warning below.
+at `xe_hwmon.c:1080`.
+
+**But raising PL2 does not move the cap either. [T4b, 2026-08-02]** With PL1 *and* PL2 both
+written to 45 W (`0x1459A0` and `0x1459A4` = `0x00dc8168`, confirmed by readback), Palworld
+still drew 31.2 W. Both registers accept and hold the write; neither is the enforced
+ceiling. So **the 31.2 W cap is not reachable from software at all** — it comes from
+somewhere the RAPL registers do not control: PL4 / VR current, or a PCU-internal value
+consistent with `PKG_POWER_SKU` reading 0. Raising PL1 alone, PL2 alone, or both, all
+produce exactly 31.2 W.
 
 ### Register map (MCHBAR mirror, base `0x140000`) — read with `scripts/power-regs.sh`
 
@@ -112,9 +119,17 @@ warning below.
 > the card has an external connector before writing a larger PL2.
 
 There is **no instantaneous power sensor**: `xe`'s `hwmon_info[]` declares no
-`HWMON_P_INPUT`/`HWMON_P_AVERAGE` on any platform. Derive watts from `Δenergy2_input/Δt`
-(`scripts/gpu-survey.sh`). MangoHud therefore cannot show GPU power on `xe` at all — see
-`pitfalls.md`.
+`HWMON_P_INPUT`/`HWMON_P_AVERAGE` on any platform. Watts must be derived from
+`Δenergy2_input/Δt` — which `scripts/gpu-survey.sh` does, **and so does MangoHud**.
+
+**MangoHud reads GPU power on `xe` correctly** and is a fine live readout. Verified by
+`strace` 2026-08-02: it opens `energy2_input` (differencing it for `gpu_power`),
+`power2_max` (for `gpu_power_limit`) and every `throttle/reason_*` file (for
+`throttling_status`). Cross-checked against `gpu-survey.sh` over the same 20 s load —
+21.52 W vs 22.08 W, agreeing within MangoHud's integer rounding. What genuinely does *not*
+work on `xe` is `gpu_load`, `gpu_mem_clock` and `gpu_vram_used`, all of which read 0.
+*(An earlier revision of this file claimed the opposite. See `pitfalls.md` — it was
+inferred from a `strings` grep, and MangoHud builds the sensor path at runtime.)*
 
 ### Throttle reasons are readable directly **[verified 2026-07-30]**
 

@@ -37,14 +37,15 @@ scene="shading"
 interval=0.5
 hud=1
 
-# What the on-screen HUD shows. Deliberately omits gpu_power: it is a valid MangoHud key
-# but xe exposes no instantaneous power sensor at all (no HWMON_P_INPUT/HWMON_P_AVERAGE in
-# xe_hwmon.c's hwmon_info[]), so it would sit permanently blank — which is precisely the
-# confusion that started plan 07. Watts come from the CSV's power_w column instead.
+# What the on-screen HUD shows. gpu_power IS included and DOES work on xe: MangoHud
+# enumerates the hwmon dir and differences energy2_input, the same Δenergy/Δt method
+# gpu-survey.sh uses (verified by strace 2026-08-02; cross-checks to within its integer
+# rounding). An earlier revision of this comment claimed the opposite — see pitfalls.md.
+# gpu_load, gpu_mem_clock and gpu_vram_used genuinely read 0 on xe, so they are omitted.
 # throttling_status is the one to watch live: it is the same signal the plan turns on.
 # Override wholesale by exporting MANGOHUD_CONFIG before calling.
 DEFAULT_MANGOHUD_CONFIG=${MANGOHUD_CONFIG:-\
-frametime,gpu_stats,gpu_temp,gpu_core_clock,gpu_mem_clock,vram,\
+frametime,gpu_power,gpu_temp,gpu_core_clock,\
 cpu_stats,cpu_temp,throttling_status,engine_version,vulkan_driver}
 
 usage() {
@@ -63,8 +64,8 @@ Usage: power-load-run.sh --label TXT [--duration S] [--runs N] [--cooldown S] [-
 
 The HUD is a Vulkan layer in the load path, so it is part of the workload. Whether it was
 on is recorded in each CSV header — do not compare a hud=on run against a hud=off one
-without saying so (RULES.md D.4). Watts are NOT on the overlay; xe has no power sensor for
-MangoHud to read. Read power_w from the CSV.
+without saying so (RULES.md D.4). gpu_power on the overlay is accurate on xe and agrees
+with the CSV's power_w column.
 
 Writes captures/survey_<label>_<date>_runN.csv and prints the analyze/power_summary.py
 verdict across all runs.
@@ -147,7 +148,7 @@ echo "power-load-run: label=$label runs=$runs duration=${duration}s scene=$scene
 echo "power-load-run: power2_max in force = ${limit_uw} uW"
 if [[ "$hud_state" == "on" ]]; then
     echo "power-load-run: HUD on — MANGOHUD_CONFIG=$MANGOHUD_CONFIG"
-    echo "power-load-run: no watts on the overlay (xe has no power sensor); see power_w in the CSV"
+    echo "power-load-run: overlay gpu_power is accurate on xe; power_w in the CSV agrees"
 fi
 echo
 
@@ -163,7 +164,7 @@ for (( i = 1; i <= runs; i++ )); do
 
     sleep 1
     # vkmark writes its score to stdout; we only care that it ran for the full duration.
-    if ! timeout $(( duration + 30 )) vkmark -b "${scene}:duration=${duration}" >/dev/null 2>&1; then
+    if ! timeout $(( duration + 30 )) "${load_cmd[@]}" >/dev/null 2>&1; then
         echo "power-load-run: vkmark failed or timed out on run $i" >&2
         stop_survey "$survey"
         exit 1

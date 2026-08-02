@@ -664,47 +664,61 @@ reason, and the probe's compiler invocation is in the log with the exact flags u
 - gpu: `patches/mesa/build.conf`
 
 ---
-
-# MangoHud can never show GPU watts on `xe` — the driver exposes no power sensor **[verified 2026-08-01]**
+# Absence of a literal string in a binary is not absence of the feature — I wrongly "proved" MangoHud cannot read GPU power on `xe` **[corrected 2026-08-02]**
 
 ## Problem
 
-You raise `power2_max`, watch MangoHud's GPU power field, and it does not move. The
-natural conclusion — "the write didn't take" — is wrong, and chasing it costs a session.
+**This entry previously claimed MangoHud can never show GPU watts on `xe`. That was wrong,
+and it was asserted here as [verified].** MangoHud reads GPU power on `xe` correctly.
 
-MangoHud cannot read GPU power on `xe` **at all**, for any setting. `strings` on
-`/usr/lib64/mangohud/libMangoHud.so` (0.8.3~rc1) yields exactly two hwmon power sensor
-names, `power1_average` and `power1_input`, and no energy-counter fallback. Meanwhile
-`xe_hwmon.c`'s `hwmon_info[]` declares, for both channels:
+The bad reasoning: `strings -x` on `libMangoHud.so` returned `power1_average` and
+`power1_input` and no energy sensor name, and `xe_hwmon.c`'s `hwmon_info[]` declares no
+`HWMON_P_INPUT`/`HWMON_P_AVERAGE`. I concluded the tool had no way to get watts. The
+premise about the driver is true; the conclusion does not follow. **MangoHud enumerates the
+hwmon directory and builds sensor paths at runtime, so the filename it uses never appears
+as a literal in the binary.**
 
-```c
-HWMON_CHANNEL_INFO(power, HWMON_P_MAX | HWMON_P_RATED_MAX | HWMON_P_LABEL | HWMON_P_CRIT |
-                          HWMON_P_CAP,
-                   HWMON_P_MAX | HWMON_P_RATED_MAX | HWMON_P_LABEL | HWMON_P_CAP),
+`strace` settles it — MangoHud opens exactly what it needs:
+
+```
+/sys/class/drm/renderD128/device/hwmon/hwmon2/energy2_input   <- derives watts from Δenergy/Δt
+/sys/class/drm/renderD128/device/hwmon/hwmon2/power2_max      <- the limit readout
+/sys/bus/pci/devices/0000:03:00.0/tile0/gt0/freq0/throttle/reason_pl1  (…pl2, pl4, thermal,
+                                                    ratl, prochot, vr_tdc, vr_thermalert)
 ```
 
-**No `HWMON_P_INPUT`, no `HWMON_P_AVERAGE`** — and not just on DG2, on every platform the
-driver supports. There is no instantaneous power reading to read. The only power-related
-counter is `energy2_input`, a monotonic µJ accumulator.
+Cross-checked against `scripts/gpu-survey.sh` over the same 20 s `vkmark` load: MangoHud
+21.52 W steady mean, gpu-survey 22.08 W — agreement within MangoHud's integer rounding.
+`gpu_power`, `gpu_power_limit` and `throttling_status` all work. (`gpu_load`,
+`gpu_mem_clock` and `gpu_vram_used` genuinely do read 0 on `xe`.)
 
-MangoHud *does* know about `xe` for other things — it has "Intel xe gt dir" and throttle-file
-strings — which makes the silent zero in the power field more convincing, not less.
+The cost of the error was not just a wrong doc line: it caused a real user observation —
+"I raised `power2_max` and MangoHud showed no change in watts" — to be dismissed as a
+broken readout, when it was **an accurate measurement of a cap that had not moved**. Days
+of work went into re-deriving what the user had already correctly observed.
 
 ## Fix
 
-Derive watts from `Δenergy2_input / Δt`. `scripts/gpu-survey.sh` already does this and
-emits a `power_w` column; `analyze/power_summary.py` reduces N of those to a plateau with
-a spread. Measured this way, idle is ~13 W and a `vkmark` load pins at 31.20 W.
+To find out whether a tool can read something, **watch what it opens**, do not grep its
+binary for a filename:
 
-Never treat a tool's blank/zero power field as evidence about a power *setting* until you
-have confirmed the tool can read that sensor on this driver at all.
+```bash
+strace -f -e trace=openat -o /tmp/t.strace mangohud <app>
+grep -oE '"/sys/[^"]*"' /tmp/t.strace | sort -u
+```
+
+More generally: `strings` shows what a program *spells out*, not what it *does*. Any path
+built with `snprintf`, a directory walk, or string concatenation is invisible to it. Treat
+a negative `strings` result as "no evidence", never as "evidence of absence" — and never
+promote it to **[verified]**.
+
+And when a user reports an observation that contradicts your model, weigh that they are
+looking at the actual screen.
 
 ## Sources
-- gpu: `scripts/gpu-survey.sh`, `analyze/power_summary.py`
-- `strings /usr/lib64/mangohud/libMangoHud.so` (mangohud 0.8.3~rc1-2.fc44)
-- `drivers/gpu/drm/xe/xe_hwmon.c`, `hwmon_info[]` (kernel 7.1.5-201.fc44)
-
----
+- gpu: `strace` of `mangohud vkcube`, 2026-08-02
+- gpu: `analyze/power_summary.py` cross-check vs MangoHud CSV log (`autostart_log`)
+- mangohud 0.8.3~rc1-2.fc44; `drivers/gpu/drm/xe/xe_hwmon.c` `hwmon_info[]`
 
 # A successful `power2_max` readback proves nothing on DG2 — the write path never verifies **[verified 2026-08-01, from source]**
 
