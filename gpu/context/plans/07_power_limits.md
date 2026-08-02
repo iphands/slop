@@ -229,10 +229,17 @@ excursions above 31 W are legal and expected; Δenergy/Δt is an average, not a 
 
 **What to do**:
 1. `echo 50000000 > .../hwmon2/power2_max`
-2. `scripts/power-regs.sh` → confirm `0x1459A0` holds the new value (50 W → raw 400 →
-   `0x8190`).
+2. `sudo scripts/power-regs.sh` → confirm `0x1459A0`'s `PWR_LIM` holds the new value
+   (50 W → raw 400 → `PWR_LIM` = `0x8190`; the full dword keeps its `0x00dc` tau bits, so
+   expect `0x00dc8190`).
 3. Re-run T3's load, N ≥ 3, compare `power_w`.
 4. Afterwards re-read **both** `power2_max` and `0x1459A0`.
+
+**Also settles the alias question (added after T2).** T2 found `0x1459a4` reading
+byte-identical to `0x1459a0`. Step 2 is the definitive test: if `0x1459a4` *also* changes
+to `0x00dc8190`, the address aliases and PL2 is not reachable there. If it stays
+`0x00dc80fa`, it is a genuinely separate register and PL2 really was set equal to PL1.
+Record which.
 
 **Expected observation**:
 - **Confirms** the write is honored if `power_w` rises meaningfully above 31 W.

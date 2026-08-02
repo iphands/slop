@@ -52,12 +52,60 @@ Reference source is gitignored: run `scripts/vendor-prep.sh` to repopulate
 **The first three rows do not load the GPU.** The fourth does, but is one run — it is a
 pilot that shaped the hypothesis, not a result. The N ≥ 3 measurement is still outstanding.
 
+### T2 — register read, 2026-08-01 21:15, `sudo ./scripts/power-regs.sh`
+
+Kernel `7.1.5-201.fc44`, card `0000:03:00.0` device `0x56a6`, driver `xe`. Card idle at
+read time (a load run was between iterations). Raw values:
+
+| Register | Addr | Value |
+|---|---|---|
+| `PKG_POWER_SKU` lo | `0x145930` | `0x00000000` |
+| `PKG_POWER_SKU` hi | `0x145934` | `0x00000000` |
+| `PKG_POWER_SKU_UNIT` | `0x145938` | `0x000a0e03` |
+| `PKG_RAPL_LIMIT` | `0x1459a0` | `0x00dc80fa` |
+| `PKG_RAPL_LIMIT` +4 | `0x1459a4` | `0x00dc80fa` |
+| `RP_STATE_CAP` | `0x145998` | `0x00062f31` |
+| `FREQ_INFO_REC` | `0x145ef0` | `0x31001100` |
+| `GT0_PERF_LIMIT_REASONS` | `0x1381a8` | `0x0d000000` |
+
+**Five findings, in order of how much they change the plan:**
+
+1. **`0x1459a4` is an alias of `0x1459a0`, not PL2.** Byte-identical, *including* the
+   time-window bits (x=3, y=14 → 28 s). PL2 encodes its own window independently and it is
+   normally far shorter than PL1's, so an exact 24-bit match is the signature of the address
+   aliasing back — not of PL2 coincidentally equalling PL1. **PL2's value remains unknown
+   and unreachable from this register.** Definitive test deferred to T4: change
+   `power2_max` and re-read both; if both move, alias proven.
+
+2. **PL1 fires too — the pilot's "it's PL2, not PL1" reading was too strong.**
+   `GT0_PERF_LIMIT_REASONS` = `0x0d000000`: live bits (mask `0xde3`) are all clear, while
+   bits **24, 26, 27** are set — the sticky-log positions for **pl4, pl1, pl2**. All three
+   have tripped since boot. Sticky-ness is still an inference, but live-clear + upper-set is
+   exactly its signature. Cumulative since boot, so not attributable to any one run.
+
+3. **`PKG_POWER_SKU` reads 0 in *both* dwords.** Predicted and confirmed for the low dword;
+   the high dword is new. So `PKG_TDP`, `PKG_MIN_PWR` and `PKG_MAX_PWR` are all unpopulated:
+   the read-path clamp is fully inert, `power2_rated_max` is correctly hidden, and **the
+   hardware's own power ceiling cannot be learned from MMIO.** T4/T5 are the only route.
+
+4. **The `rpa_freq` bug is confirmed on hardware.** `FREQ_INFO_REC` = `0x31001100`:
+   bits [31:24] = `0x31` = 49 → 49 × 50 = **2450 MHz, exactly RP0**; bits [23:16] = 0. So
+   `RPA_MASK = REG_GENMASK(31, 16)` at `xe_guc_pc.c:49` is too wide by 8 bits and inflates
+   the value 256×. Real upstream bug. `distilled.md:30`'s "meaningless" note should become
+   "reads 256× high; divide by 256".
+
+5. **RPe is dynamic, not a spec constant.** The register gives bits [15:8] = `0x11` = 17 →
+   **850 MHz**, but sysfs read **900 MHz** at 10:14 the same day. PCODE recomputes RPe at
+   runtime. `distilled.md`'s 850 was not stale — the value genuinely moves. Correct the file
+   to say so rather than writing a new fixed number. (`RP1` = `0x2f` = 47 → 2350 MHz; RP0
+   2450 and RPn 300 both confirmed.)
+
 ## Progress
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
 | 1 | T1: Create plan 07, tracker, SERIES row | `context/plans/07_power_limits*.md`, `SERIES.md` | done | 2026-08-01 |
-| 2 | T2: Read the hardware power fuses | `scripts/power-regs.sh` | blocked | Script written; `--self-test` passes 17/17. **Root path never run** — `sudo` needs a password. Now the highest-value task: `0x1459A4` is PL2. |
+| 2 | T2: Read the hardware power fuses | `scripts/power-regs.sh` | done | 2026-08-01 21:15. All five predictions resolved; see the register table above. Script updated afterwards to detect the `0x1459a4` alias rather than decode it as PL2. |
 | 3 | T3: Does PL1 bind under load? | `scripts/power-load-run.sh`, `analyze/power_summary.py` | in-progress | Harness built and exercised. **N ≥ 3 measurement not collected** — interrupted mid-run 2026-08-01. One pilot run recorded above. |
 | 4 | T4: Is a raised PL1 honored? | — | pending | Expected observation **revised**: the pilot says PL2 is the limiter, so raising PL1 should change nothing. Restore `power2_max` after. |
 | 5 | T5: PL1-disable writability probe | — | pending | Watch temps; restore immediately. Still worth doing — it is the one write the driver verifies. |

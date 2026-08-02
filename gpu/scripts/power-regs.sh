@@ -339,11 +339,21 @@ printf '  PWR_LIM_TIME  x=%s y=%-2s -> tau = %d.%03d s\n' \
        "$tw_x" "$tw_y" $(( tau_ms / 1000 )) $(( tau_ms % 1000 ))
 
 echo
-echo "== PKG_RAPL_LIMIT upper dword (PL2) =="
-echo "  NOTE: xe defines no fields here and never reads this dword. The layout below assumes"
-echo "        the standard RAPL 64-bit form (PL2 val [46:32], en [47]). Treat as UNVERIFIED."
-printf '  PL2_EN?     = %s\n' "$pl2_en"
-printf '  PL2_VAL?    = %-6s (%s)\n' "$pl2_val" "$(fmt_w "$(watts_mw "$pl2_val")")"
+echo "== PKG_RAPL_LIMIT upper dword (PL2?) =="
+echo "  xe defines no fields here and never reads this dword. If it followed the standard"
+echo "  RAPL 64-bit form it would hold PL2 (val [46:32], en [47])."
+if [[ $(( rapl_hi )) -eq $(( rapl )) ]]; then
+    echo "  !! ALIAS: 0x1459a4 reads byte-identical to 0x1459a0 ($rapl_hi)."
+    echo "     Including the time-window bits, which PL2 encodes independently and which are"
+    echo "     normally far shorter than PL1's. An exact 24-bit match is the signature of the"
+    echo "     address aliasing back to the low dword, NOT of PL2 happening to equal PL1."
+    echo "     => Do NOT read a PL2 value out of this. PL2 is not reachable here."
+    echo "     Definitive test: change power2_max, re-read both. If both move, it is an alias."
+else
+    printf '  PL2_EN?     = %s\n' "$pl2_en"
+    printf '  PL2_VAL?    = %-6s (%s)\n' "$pl2_val" "$(fmt_w "$(watts_mw "$pl2_val")")"
+    echo "  Distinct from the low dword, so this is plausibly a real PL2 — still UNVERIFIED."
+fi
 
 echo
 echo "== Frequencies =="
@@ -363,6 +373,14 @@ echo "        half, so sysfs cannot show it. On some Intel parts the upper bits 
 echo "        log bits — i.e. 'this reason fired at some point'. That is UNVERIFIED for DG2."
 echo "        If it holds, a set bit here with a clear live bit means the reason has tripped"
 echo "        since boot. Corroborate against a live sample before believing it."
+if [[ $live -eq 0 ]] && [[ $upper -ne 0 ]]; then
+    echo
+    echo "  OBSERVED: nothing is limiting right now, yet the upper half has bits set. That is"
+    echo "            the sticky-log signature. Read cumulatively — these reasons fired at"
+    echo "            some point since boot, not necessarily during any one workload, and the"
+    echo "            driver never clears them. To attribute a reason to a specific run you"
+    echo "            still need a live sample (gpu-survey.sh's throttle_reasons column)."
+fi
 
 # --- Plan 07 T2 hypothesis checks -------------------------------------------------------------
 # RULES.md wants the refuting result written down before the data is collected. These were
