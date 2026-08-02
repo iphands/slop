@@ -35,6 +35,17 @@ cooldown=25
 label=""
 scene="shading"
 interval=0.5
+hud=1
+
+# What the on-screen HUD shows. Deliberately omits gpu_power: it is a valid MangoHud key
+# but xe exposes no instantaneous power sensor at all (no HWMON_P_INPUT/HWMON_P_AVERAGE in
+# xe_hwmon.c's hwmon_info[]), so it would sit permanently blank — which is precisely the
+# confusion that started plan 07. Watts come from the CSV's power_w column instead.
+# throttling_status is the one to watch live: it is the same signal the plan turns on.
+# Override wholesale by exporting MANGOHUD_CONFIG before calling.
+DEFAULT_MANGOHUD_CONFIG=${MANGOHUD_CONFIG:-\
+frametime,gpu_stats,gpu_temp,gpu_core_clock,gpu_mem_clock,vram,\
+cpu_stats,cpu_temp,throttling_status,engine_version,vulkan_driver}
 
 usage() {
     cat <<'EOF'
@@ -47,6 +58,13 @@ Usage: power-load-run.sh --label TXT [--duration S] [--runs N] [--cooldown S] [-
   --cooldown S    idle seconds between runs, to avoid carrying thermal state (default 25)
   --scene S       vkmark scene (default shading)
   --interval S    sampling period (default 0.5)
+  --hud           show the MangoHud overlay during the load (default: on)
+  --no-hud        run without the overlay
+
+The HUD is a Vulkan layer in the load path, so it is part of the workload. Whether it was
+on is recorded in each CSV header — do not compare a hud=on run against a hud=off one
+without saying so (RULES.md D.4). Watts are NOT on the overlay; xe has no power sensor for
+MangoHud to read. Read power_w from the CSV.
 
 Writes captures/survey_<label>_<date>_runN.csv and prints the analyze/power_summary.py
 verdict across all runs.
@@ -61,6 +79,8 @@ while [[ $# -gt 0 ]]; do
         --cooldown) cooldown="$2"; shift 2 ;;
         --scene)    scene="$2"; shift 2 ;;
         --interval) interval="$2"; shift 2 ;;
+        --hud)      hud=1; shift ;;
+        --no-hud)   hud=0; shift ;;
         -h|--help)  usage; exit 0 ;;
         *) echo "power-load-run: unknown argument: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -75,6 +95,21 @@ fi
 if ! command -v vkmark >/dev/null 2>&1; then
     echo "power-load-run: vkmark not found" >&2
     exit 1
+fi
+
+# Build the load command. mangohud(1) is a wrapper that sets the LD_PRELOAD shim, so it
+# prefixes the real binary. If it is missing we say so and continue unhudded rather than
+# failing the run — losing the overlay is cosmetic, losing the measurement is not.
+load_cmd=(vkmark -b "${scene}:duration=${duration}")
+hud_state="off"
+if [[ $hud -eq 1 ]]; then
+    if command -v mangohud >/dev/null 2>&1; then
+        load_cmd=(mangohud "${load_cmd[@]}")
+        hud_state="on"
+        export MANGOHUD_CONFIG="$DEFAULT_MANGOHUD_CONFIG"
+    else
+        echo "power-load-run: --hud requested but mangohud not found; continuing without" >&2
+    fi
 fi
 
 if (( duration < 60 )); then
@@ -108,8 +143,12 @@ if [[ "$limit_uw" != "NA" ]]; then
     limit_w=$(( limit_uw / 1000000 ))
 fi
 
-echo "power-load-run: label=$label runs=$runs duration=${duration}s scene=$scene"
+echo "power-load-run: label=$label runs=$runs duration=${duration}s scene=$scene hud=$hud_state"
 echo "power-load-run: power2_max in force = ${limit_uw} uW"
+if [[ "$hud_state" == "on" ]]; then
+    echo "power-load-run: HUD on — MANGOHUD_CONFIG=$MANGOHUD_CONFIG"
+    echo "power-load-run: no watts on the overlay (xe has no power sensor); see power_w in the CSV"
+fi
 echo
 
 outputs=()
@@ -118,7 +157,7 @@ for (( i = 1; i <= runs; i++ )); do
     echo "power-load-run: run $i/$runs -> $(basename "$out")"
 
     "$HERE/gpu-survey.sh" --interval "$interval" \
-        --label "$label run$i vkmark:$scene pl1=${limit_uw}uW" \
+        --label "$label run$i vkmark:$scene pl1=${limit_uw}uW hud=$hud_state" \
         --out "$out" >/dev/null 2>&1 &
     survey=$!
 

@@ -39,6 +39,7 @@ duration=75
 runs=3
 cooldown=25
 label="t4-raised"
+hud_args=()
 
 usage() {
     cat <<'EOF'
@@ -50,6 +51,8 @@ Usage: power-pl1-experiment.sh [--target-w N] [--duration S] [--runs N] [--label
   --runs N       runs at the raised limit (default 3)
   --cooldown S   idle seconds between runs (default 25)
   --label TXT    capture label (default t4-raised)
+  --no-hud       run the load without the MangoHud overlay. Use this to stay comparable
+                 with the hud=off t3-baseline and t4-raised captures from 2026-08-01/02.
 
 Restores the original PL1 on every exit path. Run as your normal user; it calls sudo
 itself for the two privileged steps.
@@ -63,6 +66,8 @@ while [[ $# -gt 0 ]]; do
         --duration) duration="$2"; shift 2 ;;
         --runs)     runs="$2"; shift 2 ;;
         --cooldown) cooldown="$2"; shift 2 ;;
+        --no-hud)   hud_args+=(--no-hud); shift ;;
+        --hud)      hud_args+=(--hud); shift ;;
         --label)    label="$2"; shift 2 ;;
         -h|--help)  usage; exit 0 ;;
         *) echo "power-pl1-experiment: unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -135,7 +140,7 @@ echo
 
 echo "── load runs at the raised limit"
 "$HERE/power-load-run.sh" --label "$label" --duration "$duration" --runs "$runs" \
-    --cooldown "$cooldown"
+    --cooldown "$cooldown" "${hud_args[@]}"
 
 echo
 echo "── registers AFTER the load  (did the punit revert PL1 on its own?)"
