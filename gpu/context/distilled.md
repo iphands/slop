@@ -21,15 +21,77 @@ every session that learns something. Keep it dense.
 | Power | `PL1` supported on channel 1; driver uses register-based power limits |
 | OS / Mesa | Fedora 44, Mesa `26.3.0-0.3.20260729.05.21dc9d4` (git snapshot), i686 + x86_64 |
 | OA paranoia sysctl | **`dev.xe.observation_paranoid`** (= `1` by default). The only knob under `dev.xe`. |
-| Boost / efficient / min clock | `rp0_freq` **2450** MHz, `rpe_freq` 850, `rpn_freq` 300; idles at `act_freq` 850 |
-| Package power limit | `power2_max` = **31.25 W** (`power2_max_interval` 28 s) |
+| Boost / efficient / min clock | `rp0_freq` **2450** MHz (fused), `rpn_freq` **300** (fused), `rp1_freq` 2350. `rpe_freq` is **recomputed at runtime** — see below |
+| Package power limit | `power2_max` = **31.25 W** (`power2_max_interval` 28 s), and it **binds**: sustained load plateaus at 31.20 W. See *Power limits* below |
 
 Source: `dmesg | grep 'xe '`, `lspci`, `rpm -qa | grep mesa`, `sysctl dev.xe`,
 `/sys/class/drm/card0/device/tile0/gt0/freq0/`, `.../device/hwmon/hwmon2/`.
 
-**Do not use `rpa_freq`** — it reads `627200` while every neighbouring frequency is in MHz
-(850 / 2450 / 300). Units are inconsistent or the value is meaningless; `act_freq` vs
-`rp0_freq` is the pair to compare. **[verified 2026-07-30]**
+**`rpa_freq` reads 256× too high — it is a driver bug, not a meaningless value.**
+**[verified 2026-08-01 by MMIO read; supersedes the 2026-07-30 note that called it
+meaningless]**
+
+`FREQ_INFO_REC` (`0x145EF0`) reads `0x31001100`. The RPa ratio is an 8-bit field at
+**[31:24]** = `0x31` = 49, and 49 × 50 MHz = **2450 MHz — exactly `rp0`**. Bits [23:16] are
+zero. But `xe` declares `RPA_MASK = REG_GENMASK(31, 16)` (`xe_guc_pc.c:49`), 8 bits too
+wide, so it scoops up `ratio << 8` and reports 49 × 256 × 50 = `627200`.
+
+Corroboration: the sibling `RPE_MASK` on the same register is 8 bits at [15:8], and MTL's
+`MTL_RPA_MASK` / `MTL_RPE_MASK` are both 9 bits (`regs/xe_regs.h:55,58`) — the pre-1270
+fallback path looks untested. **Divide `rpa_freq` by 256 to get the real value.** Nothing
+in the driver consumes it, so the bug is cosmetic. Upstreamable one-line fix, not yet filed.
+
+**`rpe_freq` is dynamic — do not record it as a spec constant.** PCODE recomputes it at
+runtime: sysfs read **900 MHz** at 10:14 and the register read **850 MHz** at 21:15 the same
+day (2026-08-01). It is `0444`, so nothing wrote it. Capture it per measurement rather than
+citing a remembered value. (`min_freq`, by contrast, is `0644` and *is* a working user
+setting — a changed value there means someone set it.)
+
+---
+
+## Power limits — the A310 is power-capped at ~31.2 W **[verified 2026-08-01]**
+
+**PL1 binds.** Under sustained `vkmark` load, package power plateaus at **31.20 W across 3
+runs, run-to-run spread 0.00 W** (`captures/survey_t3-baseline_2026-08-01_211654_run{1,2,3}.csv`).
+The configured PL1 is 31.25 W; the 0.05 W gap is below one register quantum (1/8 W) and so
+unresolvable. Not thermal — 70 °C peak, `reason_thermal` never set. Not frequency-limited —
+`cur_freq` stays pinned at `rp0` 2450 while `act_freq` is held to ~2380.
+
+**The reported reason is `pl2`, in 93–98 % of plateau samples, even though the value
+enforced equals PL1.** Likely reading: PL2 is the fast-acting limiter the PCU uses to hold
+the 28 s average at the PL1 target.
+
+### Register map (MCHBAR mirror, base `0x140000`) — read with `scripts/power-regs.sh`
+
+| Register | Addr | A310 value | Meaning |
+|---|---|---|---|
+| `PKG_POWER_SKU` lo | `0x145930` | `0x00000000` | `PKG_TDP`, `PKG_MIN_PWR` — **unpopulated** |
+| `PKG_POWER_SKU` hi | `0x145934` | `0x00000000` | `PKG_MAX_PWR` — **unpopulated** |
+| `PKG_POWER_SKU_UNIT` | `0x145938` | `0x000a0e03` | power 1/8 W, energy 1/16384 J, time 1/1024 s |
+| `PKG_RAPL_LIMIT` | `0x1459A0` | `0x00dc80fa` | PL1 250 (31.25 W), `EN`=1, tau x=3 y=14 → 28 s |
+| `PKG_RAPL_LIMIT` +4 | `0x1459A4` | `0x00dc80fa` | **aliases the low dword — not PL2** |
+| `RP_STATE_CAP` | `0x145998` | `0x00062f31` | RP0 49, RP1 47, RPn 6 (× 50 MHz) |
+| `GT0_PERF_LIMIT_REASONS` | `0x1381A8` | `0x0d000000` | live bits clear; sticky bits 24/26/27 |
+
+**Three consequences worth knowing before touching power on this card:**
+
+1. **`PKG_POWER_SKU` reads 0 in both dwords**, so the hardware's own declared ceiling
+   cannot be learned from MMIO at all, `power2_rated_max` is (correctly) hidden, and the
+   driver's read-path clamp is inert.
+2. **`0x1459A4` is an alias, not PL2.** It reads byte-identical to `0x1459A0` including the
+   tau bits, which PL2 encodes independently and normally much shorter. **PL2's value is
+   unknown and unreachable** — `xe` also never exposes it, gated out by
+   `else if (attr != PL2_HWMON_ATTR)` at `xe_hwmon.c:1080`.
+3. **`GT0_PERF_LIMIT_REASONS` has sticky log bits the driver never reads.** `xe` masks with
+   `0xde3` (`xe_gt_throttle.c:93-97`), covering only bits 0–11. Bits 24/26/27 were set with
+   all live bits clear — the sticky positions for **pl4, pl1, pl2**, i.e. all three have
+   fired since boot. Cumulative and never cleared, so not attributable to one run, but it is
+   the only way to ask "did this ever throttle?" — sysfs cannot.
+
+There is **no instantaneous power sensor**: `xe`'s `hwmon_info[]` declares no
+`HWMON_P_INPUT`/`HWMON_P_AVERAGE` on any platform. Derive watts from `Δenergy2_input/Δt`
+(`scripts/gpu-survey.sh`). MangoHud therefore cannot show GPU power on `xe` at all — see
+`pitfalls.md`.
 
 ### Throttle reasons are readable directly **[verified 2026-07-30]**
 

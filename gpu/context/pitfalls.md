@@ -662,3 +662,155 @@ reason, and the probe's compiler invocation is in the log with the exact flags u
 - gpu: `vendor/mesa/BUILD/.../meson-logs/meson-log.txt`, first Mesa build attempt 2026-08-01
 - `/usr/lib/rpm/redhat/redhat-hardened-cc1`, `rpm --eval '%{build_ldflags}'`
 - gpu: `patches/mesa/build.conf`
+
+---
+
+# MangoHud can never show GPU watts on `xe` — the driver exposes no power sensor **[verified 2026-08-01]**
+
+## Problem
+
+You raise `power2_max`, watch MangoHud's GPU power field, and it does not move. The
+natural conclusion — "the write didn't take" — is wrong, and chasing it costs a session.
+
+MangoHud cannot read GPU power on `xe` **at all**, for any setting. `strings` on
+`/usr/lib64/mangohud/libMangoHud.so` (0.8.3~rc1) yields exactly two hwmon power sensor
+names, `power1_average` and `power1_input`, and no energy-counter fallback. Meanwhile
+`xe_hwmon.c`'s `hwmon_info[]` declares, for both channels:
+
+```c
+HWMON_CHANNEL_INFO(power, HWMON_P_MAX | HWMON_P_RATED_MAX | HWMON_P_LABEL | HWMON_P_CRIT |
+                          HWMON_P_CAP,
+                   HWMON_P_MAX | HWMON_P_RATED_MAX | HWMON_P_LABEL | HWMON_P_CAP),
+```
+
+**No `HWMON_P_INPUT`, no `HWMON_P_AVERAGE`** — and not just on DG2, on every platform the
+driver supports. There is no instantaneous power reading to read. The only power-related
+counter is `energy2_input`, a monotonic µJ accumulator.
+
+MangoHud *does* know about `xe` for other things — it has "Intel xe gt dir" and throttle-file
+strings — which makes the silent zero in the power field more convincing, not less.
+
+## Fix
+
+Derive watts from `Δenergy2_input / Δt`. `scripts/gpu-survey.sh` already does this and
+emits a `power_w` column; `analyze/power_summary.py` reduces N of those to a plateau with
+a spread. Measured this way, idle is ~13 W and a `vkmark` load pins at 31.20 W.
+
+Never treat a tool's blank/zero power field as evidence about a power *setting* until you
+have confirmed the tool can read that sensor on this driver at all.
+
+## Sources
+- gpu: `scripts/gpu-survey.sh`, `analyze/power_summary.py`
+- `strings /usr/lib64/mangohud/libMangoHud.so` (mangohud 0.8.3~rc1-2.fc44)
+- `drivers/gpu/drm/xe/xe_hwmon.c`, `hwmon_info[]` (kernel 7.1.5-201.fc44)
+
+---
+
+# A successful `power2_max` readback proves nothing on DG2 — the write path never verifies **[verified 2026-08-01, from source]**
+
+## Problem
+
+Write a new PL1 to `power2_max`, read it back, see your value, conclude the hardware
+accepted it. On DG2 that inference is unsupported.
+
+`dg2_desc` sets `.has_mbx_power_limits = false` (`xe_pci.c:349`), so
+`xe_hwmon_power_max_write()` takes the plain-MMIO branch and ends at:
+
+```c
+reg_val = xe_mmio_rmw32(mmio, rapl_limit, PWR_LIM, reg_val);   /* xe_hwmon.c:442 */
+```
+
+Three separate reasons the readback is uninformative:
+
+1. **`ret` is never assigned on this branch**, so the sysfs write returns success
+   unconditionally — even if the hardware ignored it.
+2. **The "clamp to GPU firmware default" guard is skipped** — it lives inside
+   `if (has_mbx_power_limits)` at `xe_hwmon.c:421`. Only a 4095 W overflow saturation runs.
+3. **The read path re-reads the same MMIO word.** It would clamp to `PKG_POWER_SKU`'s
+   min/max, but only `if (min && max)` — and on the A310 that register reads **0 in both
+   dwords** (verified via `intel_reg`), so the clamp never fires.
+
+The driver documents the real behaviour itself at `xe_hwmon.c:323`: *"HW allows arbitrary
+PL1 limits to be set but silently clamps these values to 'typical but not guaranteed'
+min/max values in REG_PKG_POWER_SKU."*
+
+So the readback confirms one thing only: the MMIO word at `0x1459A0` holds your value.
+
+## Fix
+
+Confirm the *effect*, not the setting: measure package power under a sustained load via
+`Δenergy2_input/Δt` and see whether the plateau moved. `scripts/power-pl1-experiment.sh`
+does write → register dump → N loads → restore in one command.
+
+The one operation the driver *does* verify is `echo 0 > power2_max` (disable PL1): it
+clears `PWR_LIM_EN`, re-reads, and returns `-EOPNOTSUPP` with a `drm_warn` if the bit
+refuses to drop (`xe_hwmon.c:385-402`). Note that leaving PL1 disabled makes `power2_max`
+vanish on the next driver reload, since visibility gates on `PWR_LIM_EN`.
+
+## Sources
+- gpu: `scripts/power-regs.sh`, `scripts/power-pl1-experiment.sh`
+- `drivers/gpu/drm/xe/xe_hwmon.c:323, 373-445, 1085-1101`; `xe_pci.c:349`
+- gpu: `context/plans/07_power_limits_tracker.md`, T2 register table
+
+---
+
+# `kill -INT` cannot stop a sampler you backgrounded from a script — and the corrupt capture still analyses cleanly **[verified 2026-08-01]**
+
+## Problem
+
+`scripts/gpu-survey.sh` installs `trap finish INT TERM` and `finish()` ends in `exit 0`,
+so `kill -INT` looks like a safe way to stop it. From an interactive shell it is. From
+*inside another script* it silently does nothing.
+
+A background (`&`) child of a **non-interactive** shell inherits `SIGINT` as `SIG_IGN`, and
+bash cannot re-trap a signal that was ignored on entry — so the child's `trap ... INT` is a
+no-op and the signal is swallowed. `SIGTERM` is unaffected and works.
+
+The damage is not that the run fails loudly. It is that the sampler **keeps running across
+subsequent iterations**: one harness run produced a single 919-sample CSV spanning three
+consecutive loads and two cooldowns, instead of three 150-sample ones, and the parent hung
+in `wait`. That merged capture then **analysed without complaint** — 24.91 W mean, sd 8.14
+— a plausible-looking number that was really "load and idle, averaged together". The true
+plateau was 31.20 W.
+
+## Fix
+
+Use `SIGTERM`, with a bounded wait and a `KILL` fallback so a wedged sampler cannot hang
+the harness. `scripts/power-load-run.sh` has `stop_survey()` for exactly this:
+
+```bash
+kill -TERM "$pid"; wait up to 5 s; kill -KILL "$pid"; wait "$pid"
+```
+
+Two generalisations worth keeping: **prefer TERM over INT for any programmatic stop**, and
+**sanity-check sample counts against expected duration × rate before trusting a capture**
+— a merged or truncated CSV rarely announces itself, it just shifts the mean.
+
+## Sources
+- gpu: `scripts/power-load-run.sh` (`stop_survey`), `scripts/gpu-survey.sh:217-235`
+- gpu: `context/plans/07_power_limits_tracker.md`, negative-results section
+
+---
+
+# `gpu-survey.sh` stamps "RUN INVALID per Rule D.5" on throttled captures — which is wrong when the throttle *is* the measurement **[verified 2026-08-01]**
+
+## Problem
+
+`gpu-survey.sh` writes `# VERDICT: THROTTLED in N/M samples — RUN INVALID per Rule D.5`
+into any capture where a throttle reason fired, and tells you on stderr to discard and
+re-measure. That is correct for performance comparisons, which is what Rule D.5 is about.
+
+It is actively misleading for any *power- or throttle-centric* question, where a throttled
+run is the entire point. Plan 07's three baseline captures are all stamped INVALID and all
+three are the result.
+
+## Fix
+
+`analyze/power_summary.py` detects the header and prints a note explaining why the stamp
+does not apply, so a later reader does not discard the data. If you reuse `gpu-survey.sh`
+for another throttle-centric question, do the same — or the gate will quietly delete your
+findings six months from now.
+
+## Sources
+- gpu: `scripts/gpu-survey.sh` (`finish`), `analyze/power_summary.py` (`print_run`)
+- gpu: `captures/survey_t3-baseline_2026-08-01_211654_run{1,2,3}.csv`

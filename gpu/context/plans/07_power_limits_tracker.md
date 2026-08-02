@@ -125,6 +125,14 @@ read time (a load run was between iterations). Raw values:
    the value 256×. Real upstream bug. `distilled.md:30`'s "meaningless" note should become
    "reads 256× high; divide by 256".
 
+5b. **`min_freq` is a working user setting — do not confuse it with `rpe_freq`.** It read
+   1500 MHz at 10:14 and 850 MHz at 21:30, and I briefly wrote that down as GuC drift. That
+   was wrong: `min_freq` is `0644` and the human sets it externally and successfully, so the
+   change was almost certainly theirs. `rpe_freq` is `0444` with no write path, which is why
+   point 5 below *is* a real observation and this one is not. **Consequence for
+   measurement:** `min_freq` can differ between sessions because someone set it, so capture
+   it per run as provenance — not because it drifts on its own.
+
 5. **RPe is dynamic, not a spec constant.** The register gives bits [15:8] = `0x11` = 17 →
    **850 MHz**, but sysfs read **900 MHz** at 10:14 the same day. PCODE recomputes RPe at
    runtime. `distilled.md`'s 850 was not stale — the value genuinely moves. Correct the file
