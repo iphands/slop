@@ -113,6 +113,28 @@ produce exactly 31.2 W.
    Sticky bit N sits at N+16. This is the only way to ask "did this ever throttle?"; sysfs
    cannot. Cumulative since boot, so never attribute one to a single run.
 
+### Switching to `i915` does not help — verified, do not spend a reboot on it **[verified 2026-08-02]**
+
+`i915` and `xe` use the **same registers** for DG2 power (`i915_hwmon.c:852-857` sets
+`pkg_rapl_limit = PCU_PACKAGE_RAPL_LIMIT`, the same `0x1459A0`), so it has the same PL1 and
+the same non-effect.
+
+`i915` additionally exposes `curr1_crit`, a writable **current** limit — which looks like a
+lever until you read `hwm_pcode_read_i1()`:
+
+```c
+if (IS_DG1(i915) || IS_DG2(i915))
+        return -ENXIO;                    /* i915_hwmon.c:305 */
+```
+
+`xe` refuses the same mailbox with the same reasoning (`xe_hwmon.c:829-831`, comment:
+"Avoid Illegal Subcommand error"). **Both drivers independently refuse the I1 power/current
+mailbox on DG2 because the hardware rejects the subcommand.** So `curr1_crit` does not
+exist on this card under either driver.
+
+Net: there is no power or current register that either Linux driver knows about which moves
+this card's ceiling.
+
 > **Slot power.** Before raising PL2: this pkg domain is capped at 31.25 W, and total board
 > draw is higher than the pkg figure. A310 boards are commonly 75 W slot-powered with no
 > PCIe power connector, in which case there is little headroom above stock. Check whether
