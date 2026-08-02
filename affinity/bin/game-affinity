@@ -1,47 +1,72 @@
 #!/usr/bin/env bash
 #
-# game-affinity — pin two users' game process trees to disjoint sets of CPUs.
+# USAGE-START
+# game-affinity — give each of two users half the box: game, desktop, and GPU IRQ.
 #
-# Built for a shared-box couch/LAN setup: two people playing (PalWorld via Steam
-# Proton) on one machine, and neither one's game threads should ever land on a
-# CPU the other is using.
+# Built for a shared-box couch/LAN setup: two people on one machine, each with
+# their own seat, their own GPU, and their own session. Nothing one user touches
+# should ever land on a CPU the other is using.
 #
-# What it does
-#   1. Walks /proc and finds "seed" processes for each user (steam, proton,
-#      wine, gamescope, Palworld, ...).
-#   2. Expands each seed to its ENTIRE descendant tree, so anything Steam or
-#      the Proton reaper spawns later is caught too.
-#   3. Applies sched_setaffinity to every process AND every thread
-#      (taskset --all-tasks) with that user's CPU list.
+# What gets pinned, per user
+#   1. GAME tree     — steam / proton / wine / the game itself, expanded to the
+#                      ENTIRE descendant tree so late-spawned children are caught.
+#   2. DESKTOP procs — compositor (labwc/sway/kwin/...), X server, Xwayland,
+#                      panels/wallpaper, and the audio stack (pipewire,
+#                      pipewire-pulse, wireplumber). Pinned as single processes:
+#                      their threads follow, their CHILDREN DO NOT. Pinning a
+#                      compositor's whole tree would drag every terminal, editor
+#                      and build the user ever launches onto the game's cores.
+#   3. GPU IRQ       — the interrupt line of the DRM card assigned to that user's
+#                      seat, plus that card's HDMI-audio function. The threaded
+#                      irq/N-* handler follows the IRQ affinity automatically.
+#
+#   The point of 1+2+3 sharing one CCD: the compositor's present, the audio
+#   callback, the GPU interrupt and the game's render thread all hit the same L3.
+#   Cross-CCD wakeups on Zen cost ~2x the latency of same-CCD ones.
+#
+# Seats and GPUs are discovered from loginctl + udev, so a root-owned X server
+# ("/usr/bin/X :1 -seat seat1") is attributed to the user whose session owns
+# that seat — uid matching alone would miss it entirely.
 #
 # Safety
 #   - Refuses to run if the two CPU sets overlap.
-#   - Refuses to run if the two CPU sets share SMT siblings (two logical CPUs
-#     on the SAME physical core -> a real collision even though the CPU
-#     numbers differ). This is why 0-7 / 16-23 is NOT a valid split here.
+#   - Refuses to run if the two CPU sets share SMT siblings (two logical CPUs on
+#     the SAME physical core -> a real collision even though the numbers differ).
+#     This is why 0-7 / 16-23 is NOT a valid split here.
 #   - Warns if the two sets share an L3 cache domain (CCD/CCX).
-#   - Non-root => automatic dry run. Only root can set affinity for another
-#     user's processes.
+#   - Non-root => automatic dry run. Only root can retarget another user's
+#     processes or write /proc/irq.
 #
 # Usage
 #   game-affinity                 # apply (dry run unless root)
 #   sudo game-affinity            # actually pin
-#   game-affinity status          # show current affinity of matched procs
-#   game-affinity plan            # show the CPU split + topology, touch nothing
-#   sudo game-affinity reset      # give every matched proc all CPUs back
+#   game-affinity status          # current affinity of everything matched
+#   game-affinity plan            # show the split, seats, GPUs, IRQs; touch nothing
+#   sudo game-affinity reset      # hand every CPU back to everything
 #   sudo game-affinity watch      # re-apply every 5s (catches new procs)
 #
 # Options
-#   -p, --profile ccd|cores       CPU split preset            (default: ccd)
+#   -p, --profile ccd|half|cores  CPU split preset            (default: ccd)
 #   -A, --cpus-a LIST             explicit CPU list for user A
 #   -B, --cpus-b LIST             explicit CPU list for user B
 #   -a, --user-a NAME             first user                  (default: iphands)
 #   -b, --user-b NAME             second user                 (default: merozas)
 #   -i, --interval SEC            watch interval              (default: 5)
+#       --no-desktop              skip compositor/X/audio
+#       --no-irq                  skip GPU interrupt affinity
 #   -n, --dry-run                 never touch anything
 #   -f, --force                   ignore the SMT-sibling veto (don't)
 #   -v, --verbose                 list every pid, not just a summary
 #   -h, --help                    this text
+#
+# Env
+#   AFFINITY_USER_A / _B          users
+#   AFFINITY_CPUS_A / _B          explicit CPU lists
+#   AFFINITY_PROFILE              ccd | half | cores
+#   AFFINITY_EXTRA_MATCH          extra regex, treated as a GAME seed
+#   AFFINITY_EXTRA_DESKTOP        extra regex, treated as a DESKTOP process
+#   AFFINITY_IRQS_A / _B          extra IRQ numbers, comma separated
+# USAGE-END
 #
 set -euo pipefail
 
@@ -53,18 +78,30 @@ USER_B=${AFFINITY_USER_B:-merozas}
 PROFILE=${AFFINITY_PROFILE:-ccd}
 CPUS_A=${AFFINITY_CPUS_A:-}
 CPUS_B=${AFFINITY_CPUS_B:-}
+IRQS_A=${AFFINITY_IRQS_A:-}
+IRQS_B=${AFFINITY_IRQS_B:-}
 INTERVAL=5
 DRY_RUN=0
 FORCE=0
 VERBOSE=0
+DO_DESKTOP=1
+DO_IRQ=1
 CMD=apply
 
-# Seed matching. A process is a seed if its comm matches SEED_COMM_RE or its
-# full cmdline matches SEED_CMD_RE. Extend without editing this file via
-# AFFINITY_EXTRA_MATCH='regex'.
+# GAME seeds. Matched on comm or full cmdline; each match is expanded to its
+# entire descendant tree.
 SEED_COMM_RE='^(steam|steam\.sh|steamwebhelper|steamerrorrepor|steamservice|reaper|srt-bwrap|pv-bwrap|pressure-vessel.*|proton.*|wine.*|wineserver|winedevice\.exe|explorer\.exe|services\.exe|Palworld.*|PalServer.*|gamescope.*|gamemoded|gamemoderun|mangohud)$'
 SEED_CMD_RE='steamapps|SteamApps|[Pp]alworld|[Pp]alServer|[Pp]roton|pressure-vessel|wineserver|ubuntu12_32|ubuntu12_64|/steam(/|$| )|steam\.sh|SteamLinuxRuntime'
 EXTRA_MATCH=${AFFINITY_EXTRA_MATCH:-}
+
+# DESKTOP processes. Matched on comm only (cmdline matching here would sweep in
+# every shell that happens to mention "pipewire"). Pinned WITHOUT descendants.
+# Note kernel comm is capped at 15 chars: "xdg-desktop-por", "pipewire-media-".
+DESK_COMM_RE='^(labwc|sway|swaybg|swaybar|swayidle|swaynag|waybar|Hyprland|hyprland|kwin_wayland|kwin_x11|plasmashell|gnome-shell|mutter|weston|river|wayfire|cage|niri|Xorg|Xorg\.bin|X|Xwayland|Xephyr|fluxbox|openbox|i3|bspwm|xfwm4|marco|picom|compton|pipewire|pipewire-pulse|pipewire-media-|wireplumber|pulseaudio|jackd|jackdbus|xdg-desktop-por|xdg-permission-|xdg-document-po)$'
+EXTRA_DESKTOP=${AFFINITY_EXTRA_DESKTOP:-}
+
+# X servers run as root but belong to a seat. Attributed by seat/display, below.
+XSERVER_COMM_RE='^(X|Xorg|Xorg\.bin)$'
 
 # ------------------------------------------------------------------ colors ---
 if [[ -t 1 ]]; then
@@ -78,7 +115,7 @@ die()  { printf '%s%s: error:%s %s\n' "$C_RED" "$PROG" "$C_RST" "$*" >&2; exit 1
 warn() { printf '%s%s: warning:%s %s\n' "$C_YEL" "$PROG" "$C_RST" "$*" >&2; }
 info() { printf '%s\n' "$*"; }
 
-usage() { sed -n '3,45p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+usage() { sed -n '/^# USAGE-START$/,/^# USAGE-END$/p' "$0" | sed '1d;$d;s/^# \{0,1\}//'; exit 0; }
 
 # -------------------------------------------------------------- cpu helpers ---
 
@@ -137,10 +174,11 @@ online_cpus() {
 # ------------------------------------------------------------------ profiles ---
 # Resolve PROFILE into CPUS_A / CPUS_B unless the user gave both explicitly.
 #
-#   ccd   - a whole CCD each: 8 physical cores + their SMT siblings.
-#           Separate L3, zero shared silicon. Recommended.
-#   cores - strictly 8 logical CPUs each, one per physical core, SMT siblings
-#           left idle. Fewer threads, but every thread owns a full core.
+#   ccd / half - half the machine each: one whole CCD, all its physical cores
+#                plus their SMT siblings. Separate L3, zero shared silicon.
+#                On a 5950X that is cpus 0-7,16-23 vs 8-15,24-31. Recommended.
+#   cores      - one logical CPU per physical core, SMT siblings left idle.
+#                Half as many threads; every thread owns a whole core.
 resolve_profile() {
   [[ -n $CPUS_A && -n $CPUS_B ]] && return 0
 
@@ -162,7 +200,7 @@ resolve_profile() {
   fi
 
   case $PROFILE in
-    ccd)
+    ccd|half)
       CPUS_A=${CPUS_A:-$(compact_list "${ccd0[@]}")}
       CPUS_B=${CPUS_B:-$(compact_list "${ccd1[@]}")}
       ;;
@@ -175,7 +213,7 @@ resolve_profile() {
       CPUS_A=${CPUS_A:-$(compact_list "${pa[@]}")}
       CPUS_B=${CPUS_B:-$(compact_list "${pb[@]}")}
       ;;
-    *) die "unknown profile '$PROFILE' (want: ccd, cores)" ;;
+    *) die "unknown profile '$PROFILE' (want: ccd, half, cores)" ;;
   esac
 }
 
@@ -222,6 +260,71 @@ validate_split() {
   fi
 }
 
+# ------------------------------------------------------------ seats / gpus ---
+# A user's seat is where their display hardware lives. Everything below hangs
+# off it: which X server is theirs, which DRM card, which GPU interrupt.
+
+seats_of_user() {   # user -> seat names, one per line
+  command -v loginctl >/dev/null || return 0
+  local sid
+  for sid in $(loginctl show-user "$1" -p Sessions --value 2>/dev/null); do
+    loginctl show-session "$sid" -p Seat --value 2>/dev/null
+  done | grep -v '^$' | sort -u
+}
+
+displays_of_user() { # user -> X display strings (":1"), one per line
+  command -v loginctl >/dev/null || return 0
+  local sid
+  for sid in $(loginctl show-user "$1" -p Sessions --value 2>/dev/null); do
+    loginctl show-session "$sid" -p Display --value 2>/dev/null
+  done | grep '^:' | sort -u
+}
+
+seat_of_card() {    # /sys/class/drm/cardN -> seat name (default seat0)
+  local s
+  s=$(udevadm info -q property -p "${1#/sys}" 2>/dev/null | sed -n 's/^ID_SEAT=//p')
+  printf '%s' "${s:-seat0}"
+}
+
+# All IRQ numbers for a PCI device: legacy line plus every MSI/MSI-X vector.
+irqs_of_pci() {
+  local d=$1 i
+  [[ -r $d/irq ]] && { i=$(<"$d/irq"); ((i > 0)) && printf '%s\n' "$i"; }
+  [[ -d $d/msi_irqs ]] && ls "$d/msi_irqs" 2>/dev/null
+  return 0
+}
+
+# GPU (+ its HDMI audio function) IRQs for a user, via seat -> drm card -> pci.
+irqs_for_user() {   # user -> irq numbers, one per line
+  local user=$1 seat card dev audio
+  local -A want=()
+  while read -r seat; do [[ -n $seat ]] && want[$seat]=1; done < <(seats_of_user "$user")
+
+  for card in /sys/class/drm/card[0-9]*; do
+    [[ -e $card/device ]] || continue
+    [[ $card == *-* ]] && continue                    # connector, not the card
+    [[ -n ${want[$(seat_of_card "$card")]:-} ]] || continue
+    dev=$(readlink -f "$card/device")
+    irqs_of_pci "$dev"
+    # 0000:0a:00.0 -> 0000:0a:00.1, the card's HDMI audio function
+    audio=/sys/bus/pci/devices/${dev##*/}
+    audio=${audio%.*}.1
+    [[ -d $audio && $(cat "$audio/class" 2>/dev/null) == 0x0403* ]] && irqs_of_pci "$audio"
+  done
+
+  local extra=$2 i
+  IFS=, read -ra _e <<<"$extra"
+  for i in "${_e[@]:-}"; do [[ $i =~ ^[0-9]+$ ]] && printf '%s\n' "$i"; done
+  return 0
+}
+
+irq_desc() { # irq -> driver/device name from /proc/irq/N
+  local n
+  n=$(ls "/proc/irq/$1" 2>/dev/null | grep -v -e '^[0-9]' -e '^smp_affinity' \
+      -e '^effective_affinity' -e '^affinity_hint' -e '^node' -e '^spurious' | head -1)
+  printf '%s' "${n:-?}"
+}
+
 # ------------------------------------------------------- process discovery ---
 declare -A P_PPID P_NAME P_UID P_CMD P_KIDS
 
@@ -250,7 +353,7 @@ snapshot_procs() {
   done
 }
 
-is_seed() { # $1 = pid
+is_seed() { # $1 = pid — a GAME seed
   local n=${P_NAME[$1]} c=${P_CMD[$1]}
   [[ $c == \[*\] ]] && return 1                       # kernel thread
   [[ $n =~ $SEED_COMM_RE ]] && return 0
@@ -259,8 +362,15 @@ is_seed() { # $1 = pid
   return 1
 }
 
-# Seeds owned by $1 (uid), plus every descendant of those seeds.
-# Prints pids, one per line, sorted.
+is_desktop() { # $1 = pid
+  local n=${P_NAME[$1]} c=${P_CMD[$1]}
+  [[ $c == \[*\] ]] && return 1
+  [[ $n =~ $DESK_COMM_RE ]] && return 0
+  [[ -n $EXTRA_DESKTOP && ( $n =~ $EXTRA_DESKTOP || $c =~ $EXTRA_DESKTOP ) ]] && return 0
+  return 1
+}
+
+# Game seeds owned by $1 (uid), plus every descendant. One pid per line, sorted.
 tree_for_uid() {
   local uid=$1
   local -A picked=()
@@ -282,6 +392,39 @@ tree_for_uid() {
   done
 
   ((${#picked[@]})) && printf '%s\n' "${!picked[@]}" | sort -n
+  return 0
+}
+
+# Desktop processes for a user: uid-owned matches, plus root-owned X servers
+# attributed by seat or display. NO descendant expansion — see the header.
+desktop_for_user() { # user uid
+  local user=$1 uid=$2
+  local -A picked=()
+  local pid s
+
+  for pid in "${!P_UID[@]}"; do
+    [[ ${P_UID[$pid]} == "$uid" ]] || continue
+    is_desktop "$pid" && picked[$pid]=1
+  done
+
+  # Root's X server belongs to whoever owns its seat.
+  local -a tokens=()
+  while read -r s; do [[ -n $s ]] && tokens+=("-seat $s" "-layout $s"); done < <(seats_of_user "$user")
+  while read -r s; do [[ -n $s ]] && tokens+=(" $s "); done < <(displays_of_user "$user")
+  if ((${#tokens[@]})); then
+    local cmd tok
+    for pid in "${!P_NAME[@]}"; do
+      [[ ${P_NAME[$pid]} =~ $XSERVER_COMM_RE ]] || continue
+      [[ -n ${picked[$pid]:-} ]] && continue
+      cmd=" ${P_CMD[$pid]} "
+      for tok in "${tokens[@]}"; do
+        [[ $cmd == *"$tok"* ]] && { picked[$pid]=1; break; }
+      done
+    done
+  fi
+
+  ((${#picked[@]})) && printf '%s\n' "${!picked[@]}" | sort -n
+  return 0
 }
 
 uid_of_user() { id -u "$1" 2>/dev/null || die "no such user: $1"; }
@@ -290,34 +433,29 @@ current_affinity() { taskset -pc "$1" 2>/dev/null | sed 's/.*: //' || printf '?'
 
 # ------------------------------------------------------------------ actions ---
 
-# apply_to_user <label> <user> <uid> <cpulist>
-apply_to_user() {
-  local label=$1 user=$2 uid=$3 list=$4
-  local -a pids
-  mapfile -t pids < <(tree_for_uid "$uid")
-
-  printf '%s%s %s%s  cpus=%s%s%s  procs=%s\n' \
-    "$C_B" "$label" "$user" "$C_RST" "$C_CYA" "$list" "$C_RST" "${#pids[@]}"
-
-  ((${#pids[@]})) || { printf '  %s(nothing running)%s\n' "$C_DIM" "$C_RST"; return; }
-
+# pin_group <group label> <cpulist> <pids...>  -> prints "ok fail" counts
+pin_group() {
+  local group=$1 list=$2; shift 2
   local pid ok=0 fail=0 before
-  for pid in "${pids[@]}"; do
+
+  ((${#})) || { printf '  %s%-8s (nothing running)%s\n' "$C_DIM" "$group" "$C_RST"; return; }
+
+  for pid in "$@"; do
     [[ -d /proc/$pid ]] || continue
     before=$(current_affinity "$pid")
     if ((DRY_RUN)); then
-      ((VERBOSE)) && printf '  %s[dry-run]%s %-7s %-24.24s %s -> %s\n' \
-        "$C_DIM" "$C_RST" "$pid" "${P_NAME[$pid]}" "$before" "$list" || true
+      ((VERBOSE)) && printf '  %s[dry-run]%s %-8s %-7s %-24.24s %s -> %s\n' \
+        "$C_DIM" "$C_RST" "$group" "$pid" "${P_NAME[$pid]}" "$before" "$list" || true
       ok=$((ok + 1))
     else
       if taskset --all-tasks --cpu-list --pid "$list" "$pid" >/dev/null 2>&1; then
         ok=$((ok + 1))
-        ((VERBOSE)) && printf '  %sok%s      %-7s %-24.24s %s -> %s\n' \
-          "$C_GRN" "$C_RST" "$pid" "${P_NAME[$pid]}" "$before" "$list" || true
+        ((VERBOSE)) && printf '  %sok%s      %-8s %-7s %-24.24s %s -> %s\n' \
+          "$C_GRN" "$C_RST" "$group" "$pid" "${P_NAME[$pid]}" "$before" "$list" || true
       else
         fail=$((fail + 1))
-        printf '  %sFAIL%s    %-7s %-24.24s (%s)\n' \
-          "$C_RED" "$C_RST" "$pid" "${P_NAME[$pid]}" \
+        printf '  %sFAIL%s    %-8s %-7s %-24.24s (%s)\n' \
+          "$C_RED" "$C_RST" "$group" "$pid" "${P_NAME[$pid]}" \
           "$([[ $EUID -ne 0 ]] && echo 'need root' || echo 'exited or not permitted')"
       fi
     fi
@@ -325,33 +463,95 @@ apply_to_user() {
 
   local verb='pinned'
   ((DRY_RUN)) && verb='would pin'
-  printf '  %s%s %d%s%s\n' "$C_DIM" "$verb" "$ok" \
+  printf '  %s%-8s %s %d%s%s\n' "$C_DIM" "$group" "$verb" "$ok" \
     "$( ((fail)) && printf ', failed %d' "$fail")" "$C_RST"
+}
+
+# pin_irqs <cpulist> <irqs...>
+pin_irqs() {
+  local list=$1; shift
+  ((${#})) || { printf '  %s%-8s (none found)%s\n' "$C_DIM" "irq" "$C_RST"; return; }
+  local irq f ok=0 fail=0 before
+  for irq in "$@"; do
+    f=/proc/irq/$irq/smp_affinity_list
+    [[ -r $f ]] || { printf '  %sFAIL%s    %-8s irq %-3s (no such irq)\n' "$C_RED" "$C_RST" "irq" "$irq"; fail=$((fail+1)); continue; }
+    before=$(<"$f")
+    if ((DRY_RUN)); then
+      ((VERBOSE)) && printf '  %s[dry-run]%s %-8s irq %-3s %-16.16s %s -> %s\n' \
+        "$C_DIM" "$C_RST" "irq" "$irq" "$(irq_desc "$irq")" "$before" "$list" || true
+      ok=$((ok + 1))
+    elif printf '%s' "$list" >"$f" 2>/dev/null; then
+      ok=$((ok + 1))
+      ((VERBOSE)) && printf '  %sok%s      %-8s irq %-3s %-16.16s %s -> %s\n' \
+        "$C_GRN" "$C_RST" "irq" "$irq" "$(irq_desc "$irq")" "$before" "$list" || true
+    else
+      fail=$((fail + 1))
+      # Managed (kernel-steered) interrupts reject writes with EIO. Nothing to fix.
+      printf '  %sFAIL%s    %-8s irq %-3s %-16.16s (%s)\n' "$C_RED" "$C_RST" "irq" "$irq" \
+        "$(irq_desc "$irq")" "$([[ $EUID -ne 0 ]] && echo 'need root' || echo 'kernel-managed, not settable')"
+    fi
+  done
+  local verb='steered'
+  ((DRY_RUN)) && verb='would steer'
+  printf '  %s%-8s %s %d%s%s\n' "$C_DIM" "irq" "$verb" "$ok" \
+    "$( ((fail)) && printf ', failed %d' "$fail")" "$C_RST"
+}
+
+# apply_to_user <label> <user> <uid> <cpulist> <extra irqs>
+apply_to_user() {
+  local label=$1 user=$2 uid=$3 list=$4 extra=$5
+  local -a game desk irq
+  mapfile -t game < <(tree_for_uid "$uid")
+  ((DO_DESKTOP)) && mapfile -t desk < <(desktop_for_user "$user" "$uid") || desk=()
+  ((DO_IRQ))     && mapfile -t irq  < <(irqs_for_user "$user" "$extra" | sort -n -u) || irq=()
+
+  printf '%s%s %s%s  cpus=%s%s%s  game=%d desktop=%d irq=%d\n' \
+    "$C_B" "$label" "$user" "$C_RST" "$C_CYA" "$list" "$C_RST" \
+    "${#game[@]}" "${#desk[@]}" "${#irq[@]}"
+
+  pin_group "game"    "$list" "${game[@]}"
+  ((DO_DESKTOP)) && pin_group "desktop" "$list" "${desk[@]}"
+  ((DO_IRQ))     && pin_irqs  "$list" "${irq[@]}"
+  return 0
 }
 
 cmd_apply() {
   local uid_a uid_b
   uid_a=$(uid_of_user "$USER_A"); uid_b=$(uid_of_user "$USER_B")
   snapshot_procs
-  apply_to_user "A" "$USER_A" "$uid_a" "$CPUS_A"
-  apply_to_user "B" "$USER_B" "$uid_b" "$CPUS_B"
+  apply_to_user "A" "$USER_A" "$uid_a" "$CPUS_A" "$IRQS_A"
+  apply_to_user "B" "$USER_B" "$uid_b" "$CPUS_B" "$IRQS_B"
 }
 
 cmd_status() {
   local uid_a uid_b
   uid_a=$(uid_of_user "$USER_A"); uid_b=$(uid_of_user "$USER_B")
   snapshot_procs
-  local user uid want pid
-  for pair in "$USER_A:$uid_a:$CPUS_A" "$USER_B:$uid_b:$CPUS_B"; do
-    IFS=: read -r user uid want <<<"$pair"
+  local user uid want extra pid pair
+  for pair in "$USER_A:$uid_a:$CPUS_A:$IRQS_A" "$USER_B:$uid_b:$CPUS_B:$IRQS_B"; do
+    IFS=: read -r user uid want extra <<<"$pair"
     printf '%s%s%s  want=%s\n' "$C_B" "$user" "$C_RST" "$want"
-    local -a pids; mapfile -t pids < <(tree_for_uid "$uid")
-    ((${#pids[@]})) || { printf '  %s(nothing running)%s\n' "$C_DIM" "$C_RST"; continue; }
-    local cur mark
-    for pid in "${pids[@]}"; do
-      cur=$(current_affinity "$pid")
+
+    local -a game desk irq
+    mapfile -t game < <(tree_for_uid "$uid")
+    ((DO_DESKTOP)) && mapfile -t desk < <(desktop_for_user "$user" "$uid") || desk=()
+    ((DO_IRQ))     && mapfile -t irq  < <(irqs_for_user "$user" "$extra" | sort -n -u) || irq=()
+
+    local cur mark group
+    for group in game desktop; do
+      local -n _pids=$([[ $group == game ]] && echo game || echo desk)
+      ((${#_pids[@]})) || { printf '  %s%-8s (nothing running)%s\n' "$C_DIM" "$group" "$C_RST"; continue; }
+      for pid in "${_pids[@]}"; do
+        cur=$(current_affinity "$pid")
+        if [[ $cur == "$want" ]]; then mark="${C_GRN}ok ${C_RST}"; else mark="${C_YEL}off${C_RST}"; fi
+        printf '  %s %-8s %-7s %-24.24s %s\n' "$mark" "$group" "$pid" "${P_NAME[$pid]:-?}" "$cur"
+      done
+      unset -n _pids
+    done
+    for pid in "${irq[@]}"; do
+      cur=$(cat "/proc/irq/$pid/smp_affinity_list" 2>/dev/null || printf '?')
       if [[ $cur == "$want" ]]; then mark="${C_GRN}ok ${C_RST}"; else mark="${C_YEL}off${C_RST}"; fi
-      printf '  %s %-7s %-24.24s %s\n' "$mark" "$pid" "${P_NAME[$pid]:-?}" "$cur"
+      printf '  %s %-8s irq %-3s %-24.24s %s\n' "$mark" "irq" "$pid" "$(irq_desc "$pid")" "$cur"
     done
   done
 }
@@ -361,26 +561,58 @@ cmd_reset() {
   local uid_a uid_b
   uid_a=$(uid_of_user "$USER_A"); uid_b=$(uid_of_user "$USER_B")
   snapshot_procs
-  info "resetting both trees to all CPUs ($all)"
+  info "resetting both users to all CPUs ($all)"
   CPUS_A=$all CPUS_B=$all
-  apply_to_user "A" "$USER_A" "$uid_a" "$all"
-  apply_to_user "B" "$USER_B" "$uid_b" "$all"
+  apply_to_user "A" "$USER_A" "$uid_a" "$all" "$IRQS_A"
+  apply_to_user "B" "$USER_B" "$uid_b" "$all" "$IRQS_B"
 }
 
 cmd_plan() {
   local ncpu; ncpu=$(nproc)
   printf '%smachine%s  %s logical CPUs, online %s\n' "$C_B" "$C_RST" "$ncpu" "$(online_cpus)"
-  printf '%sprofile%s  %s\n\n' "$C_B" "$C_RST" "$PROFILE"
-  local label user list
-  for pair in "A:$USER_A:$CPUS_A" "B:$USER_B:$CPUS_B"; do
-    IFS=: read -r label user list <<<"$pair"
+  printf '%sprofile%s  %s   desktop=%s irq=%s\n\n' "$C_B" "$C_RST" "$PROFILE" \
+    "$( ((DO_DESKTOP)) && echo on || echo off)" "$( ((DO_IRQ)) && echo on || echo off)"
+
+  snapshot_procs
+  local label user list extra pair uid
+  for pair in "A:$USER_A:$CPUS_A:$IRQS_A" "B:$USER_B:$CPUS_B:$IRQS_B"; do
+    IFS=: read -r label user list extra <<<"$pair"
+    uid=$(uid_of_user "$user")
     local -a cpus; mapfile -t cpus < <(expand_list "$list")
     local -A cores=(); local c
     for c in "${cpus[@]}"; do cores[$(core_of "$c")]=1; done
+
     printf '%s%s %-10s%s cpus %-16s  %2d logical, %2d physical cores, L3 %s\n' \
       "$C_B" "$label" "$user" "$C_RST" "$list" "${#cpus[@]}" "${#cores[@]}" "$(l3_of "${cpus[0]}")"
+    printf '   seat      %s\n' "$(seats_of_user "$user" | tr '\n' ' ')"
+    printf '   display   %s\n' "$(displays_of_user "$user" | tr '\n' ' ')"
+
+    local card seat dev
+    for card in /sys/class/drm/card[0-9]*; do
+      [[ -e $card/device && $card != *-* ]] || continue
+      seat=$(seat_of_card "$card")
+      seats_of_user "$user" | grep -qx "$seat" || continue
+      dev=$(readlink -f "$card/device")
+      printf '   gpu       %s (%s) seat=%s\n' "${card##*/}" "${dev##*/}" "$seat"
+    done
+
+    local i
+    while read -r i; do
+      [[ -n $i ]] || continue
+      printf '   irq %-5s %-20.20s now %s\n' "$i" "$(irq_desc "$i")" \
+        "$(cat "/proc/irq/$i/smp_affinity_list" 2>/dev/null || echo '?')"
+    done < <(irqs_for_user "$user" "$extra" | sort -n -u)
+
+    local -a desk; mapfile -t desk < <(desktop_for_user "$user" "$uid")
+    local pid
+    for pid in "${desk[@]}"; do
+      printf '   desktop   %-7s %-20.20s %s\n' "$pid" "${P_NAME[$pid]}" \
+        "$([[ ${P_UID[$pid]} == 0 ]] && printf '%s(root-owned, matched by seat)%s' "$C_DIM" "$C_RST")"
+    done
+    printf '\n'
   done
-  printf '\n%sSMT map%s (logical -> physical core)\n' "$C_B" "$C_RST"
+
+  printf '%sSMT map%s (logical -> physical core)\n' "$C_B" "$C_RST"
   local c owner x
   local -A own=()
   while read -r x; do own[$x]=A; done < <(expand_list "$CPUS_A")
@@ -393,6 +625,9 @@ cmd_plan() {
       *) printf '%scpu%-3s core %-3s free%s\n' "$C_DIM" "$c" "$(core_of "$c")" "$C_RST" ;;
     esac
   done
+
+  printf '\n%snot pinned%s  nvidia-drm/timeline-* kthreads carry no owner tag, so\n' "$C_DIM" "$C_RST"
+  printf '%s           %s they cannot be attributed to a user and are left alone.\n' "$C_DIM" "$C_RST"
 }
 
 cmd_watch() {
@@ -416,6 +651,8 @@ while (($#)); do
     -a|--user-a)   USER_A=${2:?}; shift ;;
     -b|--user-b)   USER_B=${2:?}; shift ;;
     -i|--interval) INTERVAL=${2:?}; shift ;;
+    --no-desktop)  DO_DESKTOP=0 ;;
+    --no-irq)      DO_IRQ=0 ;;
     -n|--dry-run)  DRY_RUN=1 ;;
     -f|--force)    FORCE=1 ;;
     -v|--verbose)  VERBOSE=1 ;;

@@ -612,3 +612,26 @@ Same trap applies to `let i++` and to `((flag))` used as a standalone truth test
 
 ## Sources
 - slop/affinity: `bin/game-affinity` (`apply_to_user` ok/fail counters, `cmd_watch` pass counter)
+
+# X server on a multi-seat box is root-owned, so uid matching never finds it
+Pinning "everything belonging to user U" by scanning `/proc/*/status` for `Uid:` silently
+misses the single most latency-critical process in an X session: the X server itself. On a
+multi-seat box (LightDM/GDM driving two seats) X is spawned by the display manager as
+**root** — `/usr/bin/X :1 -layout seat1 -seat seat1 -auth /var/run/lightdm/root/:1`. A uid
+filter drops it, so the game tree and the audio stack get pinned to a CCD while the X server
+that composites their frames stays free to float across every CPU on the machine. The bug is
+invisible because the pin *appears* to succeed: process counts look plausible and every pid
+reported is genuinely the right user's. Wayland hides the problem — the compositor (labwc,
+sway) and Xwayland do run as the user, so the same code is correct for one seat and wrong
+for the other.
+
+Avoid: attribute display-server processes by **seat**, not uid. `loginctl show-user U -p
+Sessions --value`, then `loginctl show-session N -p Seat/-p Display --value`, gives the
+user's seat (`seat1`) and display (`:1`); match any `X`/`Xorg` process whose cmdline contains
+`-seat <seat>`, `-layout <seat>`, or the display as a standalone argument. The same
+seat→hardware path answers "which GPU is this user's": `/sys/class/drm/cardN` carries
+`ID_SEAT` in udev properties (absent means seat0), and `cardN/device/irq` +
+`device/msi_irqs` give the interrupt line to steer onto that user's CCD.
+
+## Sources
+- slop/affinity: `bin/game-affinity` (`desktop_for_user`, `seats_of_user`, `irqs_for_user`)
