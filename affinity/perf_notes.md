@@ -218,12 +218,43 @@ hard — a known cause of stalls in Wine/Proton titles. **Ruled out by measureme
 `kernel.dmesg_restrict = 0`, and `dmesg | grep -icE 'bus lock|split lock'` returns **0**.
 Nothing is being throttled. Leave the sysctl alone.
 
-## Finding 6 — Resizable BAR is off
+## Finding 6 — Resizable BAR: WITHDRAWN, it is on. `NVreg_EnableResizableBar` was a red herring
 
-`NVreg_EnableResizableBar: 0` (from `/proc/driver/nvidia/params`). Both cards support it.
-Needs BIOS *Above 4G Decoding* + *Re-Size BAR Support*, then
-`nvidia.NVreg_EnableResizableBar=1` as a module option. Helps most exactly when host→VRAM
-traffic is heavy, i.e. when both users are streaming assets.
+**This finding was wrong.** It was raised on the strength of one reading —
+`NVreg_EnableResizableBar: 0` in `/proc/driver/nvidia/params` — without checking the actual
+BAR sizes. ReBAR is enabled in UEFI and fully active on both cards.
+
+The BARs themselves, from `/sys/bus/pci/devices/*/resource` line 2 (BAR1):
+
+| card | VRAM | BAR1 aperture | verdict |
+|---|---|---|---|
+| `09:00.0` PRO 6000 | 96 GB | **131072 MiB** (128 GiB) | full, ReBAR active |
+| `0a:00.0` RTX 4060 | 8 GB | **8192 MiB** | full, ReBAR active |
+
+Without ReBAR both would read **256 MiB** — that is the legacy aperture and the thing the
+finding claimed to see. `dmesg` agrees (`BAR 1 [mem 0x4000000000-0x5fffffffff 64bit pref]`
+= 0x2000000000 = 128 GiB), and so does the driver's own accounting, which is the reading
+that actually settles it:
+
+```
+nvidia-smi -q | grep -A3 BAR1
+  BAR1 Memory Usage   Total : 131072 MiB     <- card0
+  BAR1 Memory Usage   Total :   8192 MiB     <- card1
+```
+
+The driver is mapping the whole framebuffer. Nothing to fix, and **do not add
+`nvidia.NVreg_EnableResizableBar=1`** on the strength of the old note.
+
+### Why the param reads 0 anyway
+
+`NVreg_EnableResizableBar` is a *driver-side* opt-in for the driver to perform the resize
+itself at probe time, on systems whose firmware left BAR1 at 256 MiB. Here firmware sized it
+first, so the driver had nothing to do and the knob stayed at its default 0. The param
+describes who did the resizing, not whether it happened — reading it as a status flag is the
+mistake this finding made.
+
+**Lesson, same shape as Finding 2: measure the effect, not the knob.** BAR1 size is the
+ground truth; a module parameter is not.
 
 ## Finding 7 — no user's PipeWire can get realtime priority
 
