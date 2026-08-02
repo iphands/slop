@@ -83,6 +83,20 @@ This makes T4 more likely to move the needle than the pilot suggested. If the pl
 tracks the PL1 setting, raising PL1 should raise it. If it stays at 31.20 W, the PCU is
 clamping to something of its own. **Both outcomes are informative; do not skip T4.**
 
+**Gap — the Palworld half of T3 was never run.** The plan called for the synthetic load
+*and* a real Palworld session. Only the synthetic ran. That is enough to answer "is this
+card power-limited" (definitively: yes), because a fixed load is the better evidence for
+that question. It does **not** answer "does PL1 bind during actual gameplay" — Palworld may
+not sustain enough GPU load to reach 31.2 W, in which case the cap is irrelevant to the
+frame rate and Plan 01's CPU-bound/GPU-bound question is the one that matters. To close it:
+
+```bash
+./scripts/gpu-survey.sh --match Palworld --interval 0.5 --out captures/survey_palworld_pl1.csv
+./analyze/power_summary.py --limit-w 31.25 captures/survey_palworld_pl1.csv
+```
+
+Needs ≥ 3 sessions of ≥ 105 s each to satisfy Rule D.1.
+
 ### T2 — register read, 2026-08-01 21:15, `sudo ./scripts/power-regs.sh`
 
 Kernel `7.1.5-201.fc44`, card `0000:03:00.0` device `0x56a6`, driver `xe`. Card idle at
@@ -147,7 +161,7 @@ read time (a load run was between iterations). Raw values:
 | 2 | T2: Read the hardware power fuses | `scripts/power-regs.sh` | done | 2026-08-01 21:15. All five predictions resolved; see the register table above. Script updated afterwards to detect the `0x1459a4` alias rather than decode it as PL2. |
 | 3 | T3: Does PL1 bind under load? | `scripts/power-load-run.sh`, `analyze/power_summary.py` | done | 2026-08-01. **Yes** — 31.20 W across 3 runs, spread 0.00 W, exactly at the 31.25 W setting. Not thermal, not frequency-limited. |
 | 4 | T4: Is a raised PL1 honored? | `scripts/power-pl1-experiment.sh` | pending | Needs sudo. Expectation **revised again**: the plateau tracks PL1 exactly, so it may well move. Both outcomes informative. |
-| 5 | T5: PL1-disable writability probe | — | pending | Watch temps; restore immediately. Still worth doing — it is the one write the driver verifies. |
+| 5 | T5: PL1-disable writability probe | `scripts/power-pl1-disable-probe.sh` | pending | Needs sudo. Script samples temps, writes 0, captures exit status + new dmesg, reads back, restores from a trap. Deliberately runs the GPU **idle** — the question is whether the register accepts the write. |
 | 6 | T6: Record findings | `context/pitfalls.md`, `context/distilled.md` | pending | Now **four** pitfalls entries — see below. |
 
 ## Negative / Inconclusive Results
