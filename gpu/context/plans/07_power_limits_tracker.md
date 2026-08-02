@@ -52,6 +52,37 @@ Reference source is gitignored: run `scripts/vendor-prep.sh` to repopulate
 **The first three rows do not load the GPU.** The fourth does, but is one run — it is a
 pilot that shaped the hypothesis, not a result. The N ≥ 3 measurement is still outstanding.
 
+### T3 — does PL1 bind? **Yes.** 2026-08-01 21:16–21:21
+
+`./scripts/power-load-run.sh --label t3-baseline --duration 75 --runs 3 --cooldown 25`
+Kernel `7.1.5-201.fc44`, Mesa `26.3.0-0.3.20260801.10.a5ab305`, stock `power2_max`
+31250000 µW, load `vkmark -b shading:duration=75`, plateau = samples in [30 s, end−2 s].
+
+| Run | Capture | Plateau power | sd | act_freq | cur_freq | temp_max | `pl2` share |
+|---|---|---|---|---|---|---|---|
+| 1 | `captures/survey_t3-baseline_2026-08-01_211654_run1.csv` | 31.20 W | 0.03 | 2384 MHz | 2450 | 68 °C | 94% |
+| 2 | `captures/survey_t3-baseline_2026-08-01_211654_run2.csv` | 31.20 W | 0.03 | 2382 MHz | 2450 | 69 °C | 98% |
+| 3 | `captures/survey_t3-baseline_2026-08-01_211654_run3.csv` | 31.20 W | 0.02 | 2376 MHz | 2450 | 70 °C | 93% |
+
+**Across 3 runs: 31.20 W, run-to-run spread 0.00 W, noise floor 0.125 W** (bounded by the
+PL1 register quantum, not by measurement scatter). Gap to the configured 31.25 W is
+**+0.05 W — below one register quantum, i.e. unresolvable.**
+
+**Verdict: the card is power-limited, and the plateau sits exactly at the PL1 setting.**
+Not thermal (70 °C peak, `reason_thermal` never set). Not frequency-limited: `cur_freq` is
+pinned at rp0 2450 the whole time while `act_freq` is held to ~2380, i.e. SLPC is asking
+for full clocks and something else is refusing.
+
+**The reported reason is `pl2` in 93–98% of plateau samples, yet the value enforced equals
+PL1.** Those two facts together are the crux. Read alongside T2's sticky bits (pl1, pl2 and
+pl4 have all fired since boot), the most likely reading is that PL2 is the fast-acting
+limiter the PCU uses to hold the 28 s average at the PL1 target — so the *reason* reported
+is pl2 while the *value* tracked is PL1's.
+
+This makes T4 more likely to move the needle than the pilot suggested. If the plateau
+tracks the PL1 setting, raising PL1 should raise it. If it stays at 31.20 W, the PCU is
+clamping to something of its own. **Both outcomes are informative; do not skip T4.**
+
 ### T2 — register read, 2026-08-01 21:15, `sudo ./scripts/power-regs.sh`
 
 Kernel `7.1.5-201.fc44`, card `0000:03:00.0` device `0x56a6`, driver `xe`. Card idle at
@@ -106,8 +137,8 @@ read time (a load run was between iterations). Raw values:
 |---|------|---------------|--------|-------|
 | 1 | T1: Create plan 07, tracker, SERIES row | `context/plans/07_power_limits*.md`, `SERIES.md` | done | 2026-08-01 |
 | 2 | T2: Read the hardware power fuses | `scripts/power-regs.sh` | done | 2026-08-01 21:15. All five predictions resolved; see the register table above. Script updated afterwards to detect the `0x1459a4` alias rather than decode it as PL2. |
-| 3 | T3: Does PL1 bind under load? | `scripts/power-load-run.sh`, `analyze/power_summary.py` | in-progress | Harness built and exercised. **N ≥ 3 measurement not collected** — interrupted mid-run 2026-08-01. One pilot run recorded above. |
-| 4 | T4: Is a raised PL1 honored? | — | pending | Expected observation **revised**: the pilot says PL2 is the limiter, so raising PL1 should change nothing. Restore `power2_max` after. |
+| 3 | T3: Does PL1 bind under load? | `scripts/power-load-run.sh`, `analyze/power_summary.py` | done | 2026-08-01. **Yes** — 31.20 W across 3 runs, spread 0.00 W, exactly at the 31.25 W setting. Not thermal, not frequency-limited. |
+| 4 | T4: Is a raised PL1 honored? | `scripts/power-pl1-experiment.sh` | pending | Needs sudo. Expectation **revised again**: the plateau tracks PL1 exactly, so it may well move. Both outcomes informative. |
 | 5 | T5: PL1-disable writability probe | — | pending | Watch temps; restore immediately. Still worth doing — it is the one write the driver verifies. |
 | 6 | T6: Record findings | `context/pitfalls.md`, `context/distilled.md` | pending | Now **four** pitfalls entries — see below. |
 

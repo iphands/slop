@@ -44,6 +44,16 @@ DEFAULT_SKIP_S = 30.0
 # number: it is applied identically to every run and stated in the output.
 DEFAULT_TRIM_TAIL_S = 2.0
 
+# PL1 is stored in PWR_LIM_VAL as a U12.3 fixed-point value — units of 1/8 W
+# (scl_shift_power = 3, read from PKG_POWER_SKU_UNIT; see scripts/power-regs.sh). The
+# hardware therefore cannot express a limit finer than this, so a plateau-to-limit gap
+# below one quantum is unresolvable no matter how stable the measurement is.
+#
+# This matters: the vkmark plateau is stable to sd 0.03 W, which would otherwise make a
+# physically meaningless 0.05 W gap read as statistically significant. The noise floor has
+# to be bounded below by what the register can actually represent.
+PL1_QUANTUM_W = 0.125
+
 # A plateau needs enough samples for its spread to mean anything.
 MIN_PLATEAU_SAMPLES = 20
 
@@ -206,9 +216,10 @@ def print_aggregate(runs: list[RunSummary], limit_w: float | None) -> None:
 
     # The noise floor a delta must clear. Run-to-run spread alone understates it — with a
     # single run it is 0 by construction, which would make any gap look significant. The
-    # within-run standard deviation bounds it from below.
+    # within-run standard deviation bounds it from below, and the PL1 register quantum
+    # bounds it below that: the hardware cannot express a finer limit than 1/8 W.
     within_sd = statistics.mean([r.power_stdev for r in runs])
-    noise = max(across_spread, within_sd)
+    noise = max(across_spread, within_sd, PL1_QUANTUM_W)
 
     print()
     print(f"══ Across {len(runs)} run(s)")
@@ -217,8 +228,8 @@ def print_aggregate(runs: list[RunSummary], limit_w: float | None) -> None:
         f"spread {across_spread:.2f} W   ({min(means):.2f} … {max(means):.2f})"
     )
     print(
-        f"   noise floor: {noise:.2f} W   "
-        f"(max of run-to-run spread {across_spread:.2f} and mean within-run sd {within_sd:.2f})"
+        f"   noise floor: {noise:.3f} W   (max of run-to-run spread {across_spread:.3f}, "
+        f"mean within-run sd {within_sd:.3f}, PL1 register quantum {PL1_QUANTUM_W:.3f})"
     )
 
     if len(runs) < 3:
