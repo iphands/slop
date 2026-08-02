@@ -635,3 +635,24 @@ seat→hardware path answers "which GPU is this user's": `/sys/class/drm/cardN` 
 
 ## Sources
 - slop/affinity: `bin/game-affinity` (`desktop_for_user`, `seats_of_user`, `irqs_for_user`)
+
+# scaling_cur_freq can be a cached constant, not a measurement
+Diagnosing "the CPU is not maxed but frames are slow" on a Ryzen 5950X, every userspace
+source of CPU clock agreed on 3368.5 MHz — `/sys/.../cpufreq/scaling_cur_freq`, `lscpu -e=MHZ`,
+and the monitors that read them. The number was identical with the core idle and with the
+core pinned at 100% by a busy loop, which is the tell: a real aperf/mperf-derived reading
+moves. Under `amd_pstate` (and other drivers that do not implement `cpuinfo_cur_freq`),
+`scaling_cur_freq` can report the policy's cached target rather than the achieved clock, so
+it neither proves boost is working nor proves it is not. Two separate attempts to confirm a
+boost cap from sysfs were inconclusive because of this.
+
+Avoid: measure clock from the cycle counter, which cannot be cached.
+`perf stat -e cycles -- taskset -c 3 bash -c 'end=$((SECONDS+3)); while [ $SECONDS -lt $end ]; do :; done'`
+then divide the cycle count by the elapsed seconds perf prints — that gave 9.695e9 / 2.8817 s
+= 3.364 GHz against a rated 5086 MHz boost, proving the cap. `cycles:u` counts without root
+at the common `perf_event_paranoid=2`. `turbostat` is the other correct tool. Corollary: a
+value that is suspiciously round, or identical across all cores, or unchanged between idle
+and load, should be treated as a constant until a second independent method agrees.
+
+## Sources
+- slop/affinity: `perf_notes.md` (Finding 1, Finding 2)
