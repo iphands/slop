@@ -7,37 +7,38 @@
 
 ## Resume Instructions
 
-**The central question is answered — read T4 first.** The A310 is capped at 31.20 W by
-**PL2** (`0x1459A4`, 31.25 W), not PL1. `power2_max` writes land, persist, and are simply
-irrelevant to the ceiling: raising PL1 to 50 W left the plateau at 31.20 W with spread
-0.00 W over 3 runs. `xe` neither exposes nor writes PL2 on DG2.
+**Answered: this card's 31.2 W cap cannot be raised from software.** PL1 alone (T4), PL2
+alone, and both at 45 W together (T4b) all leave it at exactly 31.2 W. Both RAPL registers
+accept and retain writes; the PCU ignores them. Read T4b then T4.
 
-**Three things remain:**
+**FIRST, CHECK THE MACHINE IS AT STOCK.** T4b left PL1 and PL2 at 45 W — the restore trap
+did not fire and the cause is unknown:
 
-1. **T4b — raise PL2 directly.** The only known way to move this card's ceiling, and the
-   only remaining question with an interesting answer.
+```bash
+sudo ./scripts/power-regs.sh --raw          # PL1 0x1459a0 and PL2 0x1459a4 both 0x00dc80fa?
+sudo intel_reg write mmio:0x1459a4 0x00dc80fa
+echo 31250000 | sudo tee /sys/class/drm/card0/device/hwmon/hwmon2/power2_max
+```
 
-   ```bash
-   ./scripts/power-pl2-experiment.sh --confirm --target-w 35
-   ```
+**What is left, in order of value:**
 
-   **Unsupported path**: `intel_reg` writes `0x1459A4`, which the driver never touches. It
-   raises PL1 *and* PL2 — PL2 alone does nothing, because PL1 at 31.25 W would just become
-   the lower limit and bind instead. **`--confirm` is mandatory and means you have
-   physically checked the card for a PCIe power connector**; A310 boards are commonly 75 W
-   slot-powered, and board draw (which we cannot measure — `xe` gives only the pkg counter)
-   is higher than the pkg figure. Start at 35 W, read the result, escalate deliberately.
-   Restores both limits from a trap; a reboot resets them regardless.
+1. **One `cat`, no root: is the throttle reason still `pl2` while PL2 is raised?**
+   `cat /sys/class/drm/card0/device/tile0/gt0/freq0/throttle/reasons` during gameplay with
+   PL2 at 45 W. If it still says `pl2`, the PCU is ignoring the register rather than
+   enforcing some other limit — which distinguishes the two live hypotheses for free.
 
-2. **T5, the PL1-disable probe** — `./scripts/power-pl1-disable-probe.sh`. Seconds, GPU
-   idle, needs sudo. Now largely of academic interest: T4 already showed the RAPL register
-   accepts and holds our writes, so "is it writable" is mostly answered. Still the only
-   operation the driver verifies, and it would confirm whether `PWR_LIM_EN` specifically can
-   be cleared.
+2. **The Palworld half of T3.** The one that actually matters for the wider project: if
+   Palworld never reaches 31.2 W, this cap is irrelevant to frame rate and Plan 01's
+   CPU-bound/GPU-bound question is the real one. `./scripts/gpu-survey.sh --match Palworld`.
 
-3. **The Palworld half of T3** — see the gap note in the T3 section. This is the one that
-   actually matters for the wider project: if Palworld never reaches 31.2 W, the cap is
-   irrelevant to frame rate and Plan 01's CPU-bound/GPU-bound question is the real one.
+3. **T5, the PL1-disable probe** — `./scripts/power-pl1-disable-probe.sh`. Now academic:
+   T4 already showed the register accepts writes. Only tests whether `PWR_LIM_EN`
+   specifically can be cleared.
+
+4. **Not worth doing from software:** PL4, VR-current and any PCU-internal limit are not
+   in the RAPL registers and `PKG_POWER_SKU` reads 0, so there is nothing left to write.
+   The real TGP on Arc lives in the VBIOS power table. Out of scope, and it can brick the
+   card.
 
 Anything that modifies `power2_max` must restore it to `31250000` — T5 in particular leaves
 the attribute invisible on the next driver reload if `PWR_LIM_EN` is left clear
