@@ -1,7 +1,7 @@
 # GPU Power Limits — Tracker
 
 ## Overview
-- Status: 67% complete (4/6 tasks). **The central question is answered** — see T4. T5 and the Palworld half of T3 remain.
+- Status: 4/7 tasks. **The central question is answered** — see T4. T4b (raise PL2, unsupported), T5, and the Palworld half of T3 remain.
 - Start date: 2026-08-01
 - Plan: `context/plans/07_power_limits.md`
 
@@ -12,23 +12,32 @@
 irrelevant to the ceiling: raising PL1 to 50 W left the plateau at 31.20 W with spread
 0.00 W over 3 runs. `xe` neither exposes nor writes PL2 on DG2.
 
-**Two things remain, neither on the critical path:**
+**Three things remain:**
 
-1. **T5, the PL1-disable probe** — `./scripts/power-pl1-disable-probe.sh`. Seconds, GPU
+1. **T4b — raise PL2 directly.** The only known way to move this card's ceiling, and the
+   only remaining question with an interesting answer.
+
+   ```bash
+   ./scripts/power-pl2-experiment.sh --confirm --target-w 35
+   ```
+
+   **Unsupported path**: `intel_reg` writes `0x1459A4`, which the driver never touches. It
+   raises PL1 *and* PL2 — PL2 alone does nothing, because PL1 at 31.25 W would just become
+   the lower limit and bind instead. **`--confirm` is mandatory and means you have
+   physically checked the card for a PCIe power connector**; A310 boards are commonly 75 W
+   slot-powered, and board draw (which we cannot measure — `xe` gives only the pkg counter)
+   is higher than the pkg figure. Start at 35 W, read the result, escalate deliberately.
+   Restores both limits from a trap; a reboot resets them regardless.
+
+2. **T5, the PL1-disable probe** — `./scripts/power-pl1-disable-probe.sh`. Seconds, GPU
    idle, needs sudo. Now largely of academic interest: T4 already showed the RAPL register
    accepts and holds our writes, so "is it writable" is mostly answered. Still the only
    operation the driver verifies, and it would confirm whether `PWR_LIM_EN` specifically can
    be cleared.
-2. **The Palworld half of T3** — see the gap note in the T3 section. This is the one that
+
+3. **The Palworld half of T3** — see the gap note in the T3 section. This is the one that
    actually matters for the wider project: if Palworld never reaches 31.2 W, the cap is
    irrelevant to frame rate and Plan 01's CPU-bound/GPU-bound question is the real one.
-
-**The obvious next experiment, deliberately NOT run:** write PL2 directly with
-`sudo intel_reg write mmio:0x1459a4 0x00dc8190` and re-run the load. That is the only known
-way to move this card's ceiling. It is out of plan 07's diagnose-only scope, it bypasses the
-driver entirely, and **A310 boards are commonly 75 W slot-powered with no PCIe connector**
-— check for an external connector before considering it. Restore with
-`sudo intel_reg write mmio:0x1459a4 0x00dc80fa`.
 
 Anything that modifies `power2_max` must restore it to `31250000` — T5 in particular leaves
 the attribute invisible on the next driver reload if `PWR_LIM_EN` is left clear
@@ -206,6 +215,7 @@ read time (a load run was between iterations). Raw values:
 | 2 | T2: Read the hardware power fuses | `scripts/power-regs.sh` | done | 2026-08-01 21:15. All five predictions resolved; see the register table above. Script updated afterwards to detect the `0x1459a4` alias rather than decode it as PL2. |
 | 3 | T3: Does PL1 bind under load? | `scripts/power-load-run.sh`, `analyze/power_summary.py` | done | 2026-08-01. **Yes** — 31.20 W across 3 runs, spread 0.00 W, exactly at the 31.25 W setting. Not thermal, not frequency-limited. |
 | 4 | T4: Is a raised PL1 honored? | `scripts/power-pl1-experiment.sh` | done | 2026-08-02. **No.** PL1 50 W -> plateau still 31.20 W, spread 0.00 W. `0x1459a4` did not move with `0x1459a0`, so it is PL2 = 31.25 W and it is the real cap. |
+| 4b | T4b: Raise PL2 directly | `scripts/power-pl2-experiment.sh` | pending | **Unsupported path** — intel_reg writes a register the driver never touches. Needs sudo + `--confirm`. Raises PL1 **and** PL2 (PL2 alone does nothing; PL1 would just bind instead). Start at 35 W. |
 | 5 | T5: PL1-disable writability probe | `scripts/power-pl1-disable-probe.sh` | pending | Needs sudo. Script samples temps, writes 0, captures exit status + new dmesg, reads back, restores from a trap. Deliberately runs the GPU **idle** — the question is whether the register accepts the write. |
 | 6 | T6: Record findings | `context/pitfalls.md`, `context/distilled.md` | pending | Now **four** pitfalls entries — see below. |
 

@@ -257,6 +257,59 @@ Record which.
 
 ---
 
+### T4b: Raise PL2 directly — the only lever left
+
+**File**: `scripts/power-pl2-experiment.sh`
+
+**Added after T4**, which proved PL2 at `0x1459A4` is the binding limit and that `xe`
+provides no way to reach it. This is the **unsupported path**: `intel_reg` writing a
+register the driver never touches. It is deliberately outside the "diagnose only" framing
+of the rest of the plan, and it is opt-in.
+
+**What to do**: `./scripts/power-pl2-experiment.sh --confirm --target-w 35`
+
+**It must raise BOTH limits.** Writing PL2 alone accomplishes nothing: PL1 is 31.25 W, so
+it would simply become the lower of the two and bind instead. The PCU enforces whichever is
+lower. The script sets PL1 via sysfs and PL2 via `intel_reg` to the same target.
+
+Encoding, verified against the observed stock value: power fields are U12.3, so
+counts = watts × 8, and the register is `TAU(0x00dc0000) | EN(0x8000) | counts`. 31.25 W →
+`0x00dc80fa`, which is exactly what the hardware reads at rest. 35 W → `0x00dc8118`.
+
+**Start at 35 W and read the result before escalating.** +3.75 W is ~30× the 0.125 W noise
+floor, so it is unambiguously detectable while staying close to the stock board budget.
+
+**Expected observation**:
+- **Confirms PL2 is the lever if** the plateau moves above 31.20 W. The magnitude tells you
+  how much headroom the PCU will actually grant.
+- **Refutes it if** the plateau stays at 31.20 W. Then something below PL1/PL2 — PL4, VR
+  current, or an internal PCU limit — is the real ceiling, and **nothing in software moves
+  it.** That closes the question for good.
+- **Also refutes it if** the register does not take the write at all; the script detects
+  this and stops before running any load.
+
+**Risks and mitigations**:
+1. **Slot power — the serious one.** The pkg domain is capped at 31.25 W; total board draw
+   is higher and **we cannot measure it** (`xe` exposes only the pkg energy counter). A310
+   boards are commonly 75 W slot-powered with no PCIe connector, in which case the headroom
+   above stock is small and this can ask the slot for more than its 75 W spec.
+   *Mitigation:* `--confirm` is mandatory and exists to force a physical check of the card
+   for an external power connector. Conservative 35 W default. `--max-w` guard at 50 W.
+2. **Writing behind the driver's back.** *Mitigation:* registers are written only while the
+   GPU is idle — never during a load, per `power-regs.sh`'s own warning. The script refuses
+   to start if PL2 is not at the stock value, so it never "restores" to a wrong baseline.
+3. **Thermal runaway at raised power.** *Mitigation:* a background watchdog polls package
+   temperature every second and, above `--temp-limit` (default 90 °C), kills the load first
+   and then restores — load first so the register write does not race the GPU.
+4. **Losing the restore.** *Mitigation:* `trap restore EXIT INT TERM`, and the restore
+   verifies its own readback and prints manual recovery commands if it fails. A reboot is
+   the ultimate reset — `0x1459A4` is programmed at init and read `0x00dc80fa` on two
+   separate boots.
+
+**Commit**: `task(T4b): record whether writing PL2 moves the ceiling`
+
+---
+
 ### T5: The definitive writability probe — disable PL1
 
 `echo 0 > power2_max` is the **one** operation the DG2 path verifies
