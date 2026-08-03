@@ -68,6 +68,12 @@ impl<'a> Reader<'a> {
         Ok(i16::from_le_bytes([b[0], b[1]]))
     }
 
+    /// `MSG_ReadShort` — little-endian unsigned 16-bit.
+    pub fn read_u16(&mut self) -> Result<u16, DecodeError> {
+        let b = self.take(2)?;
+        Ok(u16::from_le_bytes([b[0], b[1]]))
+    }
+
     /// `MSG_ReadLong` — little-endian signed 32-bit.
     pub fn read_i32(&mut self) -> Result<i32, DecodeError> {
         let b = self.take(4)?;

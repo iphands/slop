@@ -384,9 +384,8 @@ fn parse_leafs(buf: &[u8]) -> Result<Vec<Leaf>, DecodeError> {
         let mins = read_i16_3(&mut r)?;
         let maxs = read_i16_3(&mut r)?;
         r.skip(4)?; // firstleafface + numleaffaces (u16 each)
-                    // u16 fields read as i16 then bit-reinterpreted (Reader has no read_u16).
-        let firstleafbrush = r.read_i16()? as u16;
-        let numleafbrushes = r.read_i16()? as u16;
+        let firstleafbrush = r.read_u16()?;
+        let numleafbrushes = r.read_u16()?;
         out.push(Leaf {
             contents,
             cluster,
@@ -419,7 +418,7 @@ fn parse_brushsides(buf: &[u8]) -> Result<Vec<BrushSide>, DecodeError> {
     let mut r = Reader::new(buf);
     let mut out = Vec::with_capacity(buf.len() / SIZE);
     while r.remaining() >= SIZE {
-        let planenum = r.read_i16()? as u16;
+        let planenum = r.read_u16()?;
         r.skip(2)?; // texinfo
         out.push(BrushSide { planenum });
     }
@@ -430,7 +429,7 @@ fn parse_leafbrushes(buf: &[u8]) -> Result<Vec<u16>, DecodeError> {
     let mut r = Reader::new(buf);
     let mut out = Vec::with_capacity(buf.len() / 2);
     while r.remaining() >= 2 {
-        out.push(r.read_i16()? as u16);
+        out.push(r.read_u16()?);
     }
     Ok(out)
 }
