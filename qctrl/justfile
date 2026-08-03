@@ -101,6 +101,10 @@ ci: _nm
     RUSTFLAGS="-D warnings" cargo build --release
     cd frontend && npm run build
 
+# Run backend with default config path (no explicit --config-path)
+run:
+    cargo run --release --bin qctrl-api
+
 # Run backend
 be-run:
     cargo run --bin qctrl-api --release -- --config-path config.yaml
