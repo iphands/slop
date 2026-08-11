@@ -1,0 +1,299 @@
+#!/usr/bin/env bash
+# lightdm-restart-seat — recycle ONE lightdm seat back to a fresh greeter,
+# leaving every other seat on the box running untouched.
+#
+# Why this script exists: lightdm drives every seat from a SINGLE daemon, so
+# `systemctl restart lightdm` restarts all of them. Cycling one seat means
+# making lightdm rebuild that seat's session WITHOUT ever letting the seat's
+# Seat object stop. Line refs below are lightdm 1.32.0 sources.
+#
+#   terminate the seat's user session
+#     src/seat.c:850-858  "Active session stopped, starting greeter"
+#   SIGTERM the seat's X server
+#     src/seat.c:499-511  "Active display server stopped, starting greeter"
+#
+# RESIDUAL RISK — READ THIS. Both paths above end in seat_switch_to_greeter(),
+# and if that fails to bring up a greeter, lightdm calls seat_stop() on the spot
+# (src/seat.c:508-509 and 855-856) and the seat is destroyed. This is not
+# theoretical: on cosmo, 2026-08-10, the kill-X path on seat1 did exactly that —
+# the old X died, the replacement X failed to start, and seat1 was lost until a
+# full daemon restart. find_greeter_session() skips stopping sessions
+# (src/seat.c:532), so lightdm always tries to build a NEW display server here;
+# there is no "reuse the greeter that is already up" shortcut to fall back on.
+#
+# Mitigate before relying on this script: put `type=local;local` under the seat's
+# section in lightdm.conf, which buys the seat one automatic rebuild
+# (src/lightdm.c:224-256). It is read at daemon start, so it only arms after the
+# next lightdm restart.
+#
+# Because of that risk, restarting a seat that is ALREADY at the greeter — which
+# gains almost nothing — requires an explicit --restart-greeter.
+#
+# NEVER DO THESE:
+#   `loginctl terminate-seat <seat>`   kills the greeter session -> src/seat.c:841-848
+#                                      -> seat_stop -> the seat is gone FOREVER.
+#                                      AddSeat is deprecated (returns an error,
+#                                      src/display-manager-service.c:229) and the
+#                                      logind re-add path is only wired up when
+#                                      logind-check-graphical=true (src/lightdm.c:511-512),
+#                                      which this box sets false. Only a full daemon
+#                                      restart brings the seat back — dropping every
+#                                      other seat with it.
+#   kill lightdm-gtk-greeter           same path, same permanent loss.
+#   systemctl restart lightdm          single daemon: drops all seats.
+#
+# Also never address a seat through dm-tool or a D-Bus path. lightdm's
+# /org/freedesktop/DisplayManager/SeatN is a bare registration counter
+# (src/display-manager-service.c:481) with no relation to logind seat names, and
+# it increments on every seat restart. On this box DBus Seat0 is logind seat1.
+# Use logind seat names only.
+#
+# Usage: lightdm-restart-seat <seat> [--force] [--restart-greeter] [--dry-run]
+
+set -euo pipefail
+
+PROG=${0##*/}
+SEAT=""
+FORCE=0
+RESTART_GREETER=0
+DRY_RUN=0
+POLL_TIMEOUT=20
+
+usage() {
+  cat <<EOF
+Usage: $PROG <seat> [--force] [--restart-greeter] [--dry-run]
+
+  <seat>             logind seat name, e.g. seat1 (see: loginctl list-seats)
+  --force            terminate a live user session on the seat (kicks that user out)
+  --restart-greeter  when the seat is ALREADY at the greeter, restart it anyway by
+                     SIGTERMing its X server. Gains little and risks destroying the
+                     seat if the replacement X fails to start — see the header.
+  --dry-run          show what would be signalled, change nothing
+
+Refuses to touch a live user session unless --force is given.
+EOF
+}
+
+die() { printf '%s: %s\n' "$PROG" "$1" >&2; exit 1; }
+note() { printf '  %s\n' "$1"; }
+
+# --- helpers ---------------------------------------------------------------
+
+all_seats() { loginctl list-seats --no-legend 2>/dev/null | awk '{print $1}'; }
+
+# seat -> session ids, one per line
+sessions_of_seat() {
+  loginctl show-seat "$1" -p Sessions --value 2>/dev/null | tr ' ' '\n' | grep -v '^$' || true
+}
+
+session_prop() { loginctl show-session "$1" -p "$2" --value 2>/dev/null || true; }
+
+cmdline_args() { tr '\0' '\n' < "/proc/$1/cmdline" 2>/dev/null || true; }
+
+# The seat's X server, spawned by lightdm as root. Matched by the `-seat <name>`
+# argument pair rather than by uid — see context/pitfalls.md, "X server on a
+# multi-seat box is root-owned". Prints nothing if the seat has no X server
+# (e.g. a Wayland session is running there).
+xserver_pid_for_seat() {
+  local seat=$1 pid comm i
+  local -a args
+  for pid in $(pgrep -P "$LIGHTDM_PID" 2>/dev/null || true); do
+    comm=$(cat "/proc/$pid/comm" 2>/dev/null || true)
+    [[ $comm == "X" || $comm == "Xorg" ]] || continue
+    mapfile -t args < <(cmdline_args "$pid")
+    for ((i = 0; i < ${#args[@]}; i++)); do
+      if [[ ${args[i]} == "-seat" && ${args[i + 1]:-} == "$seat" ]]; then
+        printf '%s\n' "$pid"
+        return 0
+      fi
+    done
+  done
+  return 0
+}
+
+# Every session on every seat EXCEPT the target, as "seat session state".
+# Compared before and after to prove we did not disturb anyone else.
+snapshot_other_seats() {
+  local s sid
+  for s in $(all_seats); do
+    [[ $s == "$SEAT" ]] && continue
+    for sid in $(sessions_of_seat "$s"); do
+      printf '%s %s %s\n' "$s" "$sid" "$(session_prop "$sid" State)"
+    done
+  done | sort
+}
+
+# --- args ------------------------------------------------------------------
+
+while (($#)); do
+  case $1 in
+    --force)           FORCE=1 ;;
+    --restart-greeter) RESTART_GREETER=1 ;;
+    --dry-run)         DRY_RUN=1 ;;
+    -h|--help) usage; exit 0 ;;
+    -*)        die "unknown option: $1" ;;
+    *)         [[ -n $SEAT ]] && die "seat given twice: $SEAT and $1"; SEAT=$1 ;;
+  esac
+  shift
+done
+
+[[ -n $SEAT ]] || { usage >&2; exit 1; }
+((DRY_RUN)) || [[ $EUID -eq 0 ]] || die "must run as root (signals root-owned X servers and other users' sessions)"
+
+command -v loginctl >/dev/null || die "loginctl not found"
+
+all_seats | grep -qx "$SEAT" || die "no such logind seat: $SEAT (have: $(all_seats | tr '\n' ' '))"
+
+LIGHTDM_PID=$(systemctl show -p MainPID --value lightdm 2>/dev/null || echo 0)
+[[ $LIGHTDM_PID =~ ^[0-9]+$ && $LIGHTDM_PID -gt 0 ]] || die "lightdm.service is not running"
+
+if [[ $SEAT == "seat0" ]]; then
+  printf '%s: WARNING: seat0 has exit-on-failure=true hardcoded (src/lightdm.c:418-419).\n' "$PROG" >&2
+  printf '%s:          If its seat ever stops, the whole daemon exits and every seat restarts.\n' "$PROG" >&2
+fi
+
+# --- inspect ---------------------------------------------------------------
+
+printf 'Target: %s (lightdm MainPID %s)\n' "$SEAT" "$LIGHTDM_PID"
+
+USER_SESSIONS=()
+GREETER_SESSIONS=()
+for sid in $(sessions_of_seat "$SEAT"); do
+  class=$(session_prop "$sid" Class)
+  name=$(session_prop "$sid" Name)
+  note "session $sid  class=$class  user=$name  state=$(session_prop "$sid" State)"
+  case $class in
+    user)    USER_SESSIONS+=("$sid:$name") ;;
+    greeter) GREETER_SESSIONS+=("$sid") ;;
+  esac
+done
+
+XPID=$(xserver_pid_for_seat "$SEAT")
+[[ -n $XPID ]] && note "X server pid $XPID"
+
+BEFORE_OTHERS=$(snapshot_other_seats)
+
+# --- decide ----------------------------------------------------------------
+
+ACTION=""
+if ((${#USER_SESSIONS[@]})); then
+  if ((! FORCE)); then
+    printf '\n%s has a live session: %s\n' "$SEAT" "${USER_SESSIONS[*]//:/ }"
+    printf 'Refusing. Re-run with --force to terminate it.\n'
+    exit 1
+  fi
+  ACTION="terminate-sessions"
+elif [[ -n $XPID ]]; then
+  if ((! RESTART_GREETER)); then
+    printf '\n%s is already at the greeter — there is no user session to restart.\n' "$SEAT"
+    printf 'Cycling it anyway gains almost nothing and can destroy the seat if the\n'
+    printf 'replacement X server fails to start (src/seat.c:508-509). Re-run with\n'
+    printf '--restart-greeter if you really want that.\n'
+    exit 1
+  fi
+  ACTION="kill-xserver"
+else
+  printf '\n%s has no user session and no X server.\n' "$SEAT"
+  if ((${#GREETER_SESSIONS[@]})); then
+    die "greeter present but no X server found; refusing to signal the greeter directly (src/seat.c:841-848)"
+  fi
+  die "the seat looks already dead; nothing here can recreate it (AddSeat is deprecated). Recovery needs a full lightdm restart, which drops every other seat."
+fi
+
+# --- act -------------------------------------------------------------------
+
+printf '\nPlan: %s\n' "$ACTION"
+case $ACTION in
+  terminate-sessions)
+    for entry in "${USER_SESSIONS[@]}"; do
+      note "loginctl terminate-session ${entry%%:*}   (user ${entry#*:})"
+    done ;;
+  kill-xserver)
+    note "kill -TERM $XPID   ($(tr '\0' ' ' < "/proc/$XPID/cmdline"))" ;;
+esac
+
+if ((DRY_RUN)); then
+  printf '\n--dry-run: nothing signalled.\n'
+  exit 0
+fi
+
+case $ACTION in
+  terminate-sessions)
+    for entry in "${USER_SESSIONS[@]}"; do
+      loginctl terminate-session "${entry%%:*}"
+    done ;;
+  kill-xserver)
+    kill -TERM "$XPID" ;;
+esac
+
+# --- wait for the seat to come back ----------------------------------------
+
+printf '\nWaiting for %s to come back (up to %ss)...\n' "$SEAT" "$POLL_TIMEOUT"
+ok=0
+for ((i = 0; i < POLL_TIMEOUT * 2; i++)); do
+  sleep 0.5
+  all_seats | grep -qx "$SEAT" || break   # seat vanished: stop early, report below
+
+  case $ACTION in
+    terminate-sessions)
+      # success: no user-class session left, and a greeter is present again
+      still=0
+      greeter=0
+      for sid in $(sessions_of_seat "$SEAT"); do
+        case $(session_prop "$sid" Class) in
+          user)    still=1 ;;
+          greeter) greeter=1 ;;
+        esac
+      done
+      ((! still && greeter)) && { ok=1; break; } ;;
+    kill-xserver)
+      # success: a different X server pid is serving the seat again
+      now=$(xserver_pid_for_seat "$SEAT")
+      [[ -n $now && $now != "$XPID" ]] && { ok=1; break; } ;;
+  esac
+done
+
+# --- post-conditions -------------------------------------------------------
+
+printf '\nPost-conditions:\n'
+fail=0
+
+now_pid=$(systemctl show -p MainPID --value lightdm 2>/dev/null || echo 0)
+if [[ $now_pid == "$LIGHTDM_PID" ]]; then
+  note "OK   lightdm MainPID unchanged ($now_pid) — the daemon did not restart"
+else
+  note "FAIL lightdm MainPID changed $LIGHTDM_PID -> $now_pid — the daemon restarted, ALL seats were dropped"
+  fail=1
+fi
+
+if all_seats | grep -qx "$SEAT"; then
+  note "OK   $SEAT still present in logind"
+else
+  note "FAIL $SEAT is GONE. Nothing can recreate it at runtime; recovery needs"
+  note "     'systemctl restart lightdm', which drops every other seat."
+  note "     Add 'type=local;local' under [Seat:$SEAT] in lightdm.conf to give it a"
+  note "     spare life next time (src/lightdm.c:224-256)."
+  fail=1
+fi
+
+if [[ "$(snapshot_other_seats)" == "$BEFORE_OTHERS" ]]; then
+  note "OK   other seats untouched"
+else
+  note "FAIL other seats changed:"
+  diff <(printf '%s\n' "$BEFORE_OTHERS") <(snapshot_other_seats) | sed 's/^/       /' || true
+  fail=1
+fi
+
+if ((ok)); then
+  note "OK   $SEAT is back:"
+  for sid in $(sessions_of_seat "$SEAT"); do
+    note "       session $sid  class=$(session_prop "$sid" Class)  state=$(session_prop "$sid" State)"
+  done
+  now=$(xserver_pid_for_seat "$SEAT")
+  [[ -n $now ]] && note "       X server pid $now"
+else
+  note "FAIL $SEAT did not come back within ${POLL_TIMEOUT}s"
+  fail=1
+fi
+
+exit "$fail"
