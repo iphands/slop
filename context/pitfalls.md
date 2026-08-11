@@ -684,3 +684,33 @@ is fixable only in BIOS (Core Performance Boost = Auto), or at runtime by cleari
 
 ## Sources
 - slop/affinity: `perf_notes.md` (Finding 1)
+
+# Restarting one lightdm seat can destroy that seat permanently
+LightDM drives every seat from one daemon, so `systemctl restart lightdm` restarts all of
+them. Cycling a single seat means terminating its session or its X server and letting lightdm
+rebuild it — but every such path funnels into `seat_switch_to_greeter`, which calls
+`seat_stop` when it cannot bring a greeter up (seat.c:508-509, 855-856). `find_greeter_session`
+skips stopping sessions (seat.c:532), so lightdm always builds a *new* display server; there is
+no falling back to the greeter that was already on screen. If that new X fails to start, the
+Seat object is destroyed. For any seat other than seat0 nothing recreates it at runtime:
+`AddSeat` returns "AddSeat is deprecated" (display-manager-service.c:229) and the logind re-add
+path only exists when `logind-check-graphical=true` (lightdm.c:511-512). Recovery is a full
+daemon restart, which drops the very seat you were protecting. `loginctl terminate-seat` is the
+worst offender — it kills the greeter session directly (seat.c:841-848). Note also that seat0
+alone gets `exit-on-failure=true` hardcoded *after* config load (lightdm.c:418-419), so it
+cannot be disabled from lightdm.conf, and a seat0 stop exits the whole daemon.
+
+Avoid: before ever cycling a seat, put `type=local;local` in its lightdm.conf section — on seat
+removal lightdm skips the first type and rebuilds from the next (lightdm.c:224-256), buying one
+automatic recovery. It is read at `add_login1_seat` time, so it only arms after the next daemon
+start. Prefer terminating a live user session over restarting a seat already at the greeter,
+which risks everything for nothing. Never address a seat via `dm-tool` or a D-Bus path:
+`/org/freedesktop/DisplayManager/SeatN` is a bare registration counter
+(display-manager-service.c:481) that is unrelated to logind names and increments on every seat
+restart — on cosmo, DBus `Seat0` was logind `seat1`. Use `loginctl` seat names only. Reading
+the control flow shows which paths dodge a guard; it does not show whether the replacement
+display server will actually start.
+
+## Sources
+- slop/scripts: `lightdm-restart-seat`
+- slop/context: `lightdm.md`
