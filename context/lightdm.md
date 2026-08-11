@@ -120,10 +120,31 @@ Find a seat's root-owned X server by the `-seat <name>` argument pair, never by 
 
 ## Config gotchas
 
-- `desired-display-number` appears **nowhere** in upstream 1.32.0 sources nor in Gentoo's
-  `lightdm-gentoo-patch-2.tar.gz`. It is a no-op key that a stock-looking `lightdm.conf` may
-  carry; display numbers actually come from `[LightDM] minimum-display-number`. Unknown keys
-  are copied into the property hash and ignored, so it is harmless — just not doing anything.
+- `desired-display-number` is **a local patch on cosmo, not upstream** — it pins a seat's X
+  display number. Absent from upstream 1.32.0 and from `lightdm-gentoo-patch-2.tar.gz`, and it
+  does not appear in the ebuild's `PATCHES` array, because it lives in
+  `/etc/portage/patches/x11-misc/lightdm/lightdm_path_desired_display_number.patch` and is
+  applied by `eapply_user` (reached via `default` in the ebuild's `src_prepare`). Confirm what
+  a box actually runs with `strings /usr/sbin/lightdm | grep desired-display-number`, never by
+  reading upstream sources alone — see `context/pitfalls.md`.
+
+  What it does: registers the key as a supported seat key in `common/configuration.c`, then in
+  `create_x_server` passes it to a new `x_server_local_init_display_number`, which tries the
+  requested number first and falls back to the stock `minimum-display-number` upward scan if
+  that number is already in use. It also splits `seat_get_integer_property` into a
+  `_with_fallback` variant so an unset key reads as `-1` rather than `0` — without that, every
+  seat with no `desired-display-number` would request `:0`.
+
+  **Latent bug in the patch:** the desired-number path `return`s the number *without* appending
+  it to the static `display_numbers` list, while the fallback path appends. A successfully
+  pinned number is therefore invisible to `display_number_in_use` until the X server itself
+  creates `/tmp/.X<n>-lock`. In that window, another seat that falls into the fallback scan can
+  be handed the same number, and one of the two X servers then fails to start. Fix is a
+  `display_numbers = g_list_append (...)` before the early return.
+
+  The patch also still carries `IAN_DEBUG` log lines, including
+  `"Requested display number %d, actual display number: %d"` — which makes
+  `/var/log/lightdm/lightdm.log` the fastest way to see which number a seat's X actually got.
 - `dbus-service=false` (`src/lightdm.c:856-865`) skips the D-Bus service entirely. Needed if
   you ever run a second instance, since only one process can own the bus name and
   `service_name_lost_cb` calls `exit(EXIT_FAILURE)` (`src/lightdm.c:380-383`). The cost is that

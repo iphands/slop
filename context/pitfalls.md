@@ -714,3 +714,25 @@ display server will actually start.
 ## Sources
 - slop/scripts: `lightdm-restart-seat`
 - slop/context: `lightdm.md`
+
+# Upstream sources do not tell you what the installed binary does
+Diagnosing lightdm on a Gentoo box, `desired-display-number` in `/etc/lightdm/lightdm.conf`
+was checked against the upstream 1.32.0 tarball and against the distro's patch tarball, found
+in neither, and written off as an inert leftover key — in a commit, in a context file, and in
+a recommendation to delete it from the config. It was in fact a locally written feature that
+pins a seat's X display number, very much live in the running daemon. It was invisible to that
+search because `eapply_user` patches live in `/etc/portage/patches/<cat>/<pkg>/` and never
+appear in the ebuild, in `SRC_URI`, in the distfiles, or in the `PATCHES` array recorded in
+`/var/db/pkg/.../environment.bz2`. Searching every overlay for the string also finds nothing.
+The same blind spot applies to any distro's user-patch mechanism, to `-r` revision bumps whose
+ebuild has since been re-synced away, and to hand-built installs.
+
+Avoid: when a config key, symbol, or flag looks unrecognised, ask the installed artifact rather
+than the source you happen to have. `strings -a /usr/sbin/foo | grep <key>` settles it in one
+command; `nm -D`, `--help`, and the package manager's own file list are the same move. Check
+`/etc/portage/patches/` (Gentoo), `debian/patches/` and `dpkg -l` versions, or the RPM spec
+before concluding a feature is absent. "Not in upstream" and "not in this binary" are different
+claims, and only the second one licenses telling someone their config line does nothing.
+
+## Sources
+- slop/context: `lightdm.md` (desired-display-number)
