@@ -24,6 +24,25 @@
 #   callback, the GPU interrupt and the game's render thread all hit the same L3.
 #   Cross-CCD wakeups on Zen cost ~2x the latency of same-CCD ones.
 #
+# Each group can take its own CPU mode
+#   A user's BASE set is their half of the box (a whole CCD, or -A/-B). Each of
+#   the three groups then carves its list out of that base:
+#
+#     ccd | half   the whole base
+#     cores        one logical CPU per physical core in the base — SMT siblings
+#                  dropped, so every pinned thread owns a whole core
+#
+#   --profile sets the mode for all three; --game-profile / --desktop-profile /
+#   --irq-profile override it per group. The useful combination:
+#
+#     game-affinity --game-profile cores
+#       game     0-7           each game thread gets a physical core to itself
+#       desktop  0-7,16-23     compositor/audio free to use the sibling threads
+#       irq      0-7,16-23     still the same L3 as the game
+#
+#   The game and desktop sets overlapping is fine and intended — desktop work is
+#   bursty, and keeping it in the same L3 is worth more than isolating it.
+#
 # Seats and GPUs are discovered from loginctl + udev, so a root-owned X server
 # ("/usr/bin/X :1 -seat seat1") is attributed to the user whose session owns
 # that seat — uid matching alone would miss it entirely.
@@ -46,9 +65,12 @@
 #   sudo game-affinity watch      # re-apply every 5s (catches new procs)
 #
 # Options
-#   -p, --profile ccd|half|cores  CPU split preset            (default: ccd)
-#   -A, --cpus-a LIST             explicit CPU list for user A
-#   -B, --cpus-b LIST             explicit CPU list for user B
+#   -p, --profile ccd|half|cores  default CPU mode, all groups (default: ccd)
+#       --game-profile MODE       CPU mode for the game tree   (default: -p)
+#       --desktop-profile MODE    CPU mode for desktop procs   (default: -p)
+#       --irq-profile MODE        CPU mode for GPU IRQs        (default: -p)
+#   -A, --cpus-a LIST             explicit base CPU list for user A
+#   -B, --cpus-b LIST             explicit base CPU list for user B
 #   -a, --user-a NAME             first user                  (default: iphands)
 #   -b, --user-b NAME             second user                 (default: merozas)
 #   -i, --interval SEC            watch interval              (default: 5)
@@ -61,8 +83,11 @@
 #
 # Env
 #   AFFINITY_USER_A / _B          users
-#   AFFINITY_CPUS_A / _B          explicit CPU lists
+#   AFFINITY_CPUS_A / _B          explicit base CPU lists
 #   AFFINITY_PROFILE              ccd | half | cores
+#   AFFINITY_GAME_PROFILE         per-group mode override
+#   AFFINITY_DESKTOP_PROFILE      per-group mode override
+#   AFFINITY_IRQ_PROFILE          per-group mode override
 #   AFFINITY_EXTRA_MATCH          extra regex, treated as a GAME seed
 #   AFFINITY_EXTRA_DESKTOP        extra regex, treated as a DESKTOP process
 #   AFFINITY_IRQS_A / _B          extra IRQ numbers, comma separated
@@ -76,6 +101,9 @@ PROG=${0##*/}
 USER_A=${AFFINITY_USER_A:-iphands}
 USER_B=${AFFINITY_USER_B:-merozas}
 PROFILE=${AFFINITY_PROFILE:-ccd}
+GAME_PROFILE=${AFFINITY_GAME_PROFILE:-}     # empty => fall back to $PROFILE
+DESK_PROFILE=${AFFINITY_DESKTOP_PROFILE:-}
+IRQ_PROFILE=${AFFINITY_IRQ_PROFILE:-}
 CPUS_A=${AFFINITY_CPUS_A:-}
 CPUS_B=${AFFINITY_CPUS_B:-}
 IRQS_A=${AFFINITY_IRQS_A:-}
@@ -172,15 +200,24 @@ online_cpus() {
 }
 
 # ------------------------------------------------------------------ profiles ---
-# Resolve PROFILE into CPUS_A / CPUS_B unless the user gave both explicitly.
+# Two steps. First a BASE set per user — their half of the box. Then each group
+# (game / desktop / irq) carves its own list out of that base according to its
+# mode:
 #
-#   ccd / half - half the machine each: one whole CCD, all its physical cores
-#                plus their SMT siblings. Separate L3, zero shared silicon.
-#                On a 5950X that is cpus 0-7,16-23 vs 8-15,24-31. Recommended.
-#   cores      - one logical CPU per physical core, SMT siblings left idle.
-#                Half as many threads; every thread owns a whole core.
-resolve_profile() {
-  [[ -n $CPUS_A && -n $CPUS_B ]] && return 0
+#   ccd / half - the whole base: one whole CCD, all its physical cores plus
+#                their SMT siblings. Separate L3, zero shared silicon.
+#                On a 5950X that is cpus 0-7,16-23 vs 8-15,24-31.
+#   cores      - one logical CPU per physical core of the base, SMT siblings
+#                dropped. Half as many threads; every thread owns a whole core.
+#
+# Cross-user validation runs on the bases, and every group list is a subset of
+# its user's base, so no group can ever reach across the split.
+
+# Resolve BASE_A / BASE_B unless the user gave both explicitly.
+resolve_base() {
+  BASE_A=$CPUS_A
+  BASE_B=$CPUS_B
+  [[ -n $BASE_A && -n $BASE_B ]] && return 0
 
   local -a ccd0=() ccd1=()
   local ncpu; ncpu=$(nproc)
@@ -199,29 +236,63 @@ resolve_profile() {
     done
   fi
 
-  case $PROFILE in
-    ccd|half)
-      CPUS_A=${CPUS_A:-$(compact_list "${ccd0[@]}")}
-      CPUS_B=${CPUS_B:-$(compact_list "${ccd1[@]}")}
-      ;;
-    cores)
-      # one logical cpu per physical core, taken from each CCD
-      local -A seen_a=() seen_b=()
-      local -a pa=() pb=() k
-      for c in "${ccd0[@]}"; do k=$(core_of "$c"); [[ -n ${seen_a[$k]:-} ]] || { seen_a[$k]=1; pa+=("$c"); }; done
-      for c in "${ccd1[@]}"; do k=$(core_of "$c"); [[ -n ${seen_b[$k]:-} ]] || { seen_b[$k]=1; pb+=("$c"); }; done
-      CPUS_A=${CPUS_A:-$(compact_list "${pa[@]}")}
-      CPUS_B=${CPUS_B:-$(compact_list "${pb[@]}")}
-      ;;
-    *) die "unknown profile '$PROFILE' (want: ccd, half, cores)" ;;
+  BASE_A=${BASE_A:-$(compact_list "${ccd0[@]}")}
+  BASE_B=${BASE_B:-$(compact_list "${ccd1[@]}")}
+}
+
+# One logical CPU per physical core of <list>, lowest-numbered sibling wins.
+# Cores are keyed by their thread_siblings_list, not core_id — core_id is only
+# unique within a package on some topologies, and a collision here would
+# silently drop a whole core from the set.
+subset_cores() {
+  local -A seen=()
+  local -a out=()
+  local c k
+  while read -r c; do
+    k=$(siblings_of "$c" | sort -n | tr '\n' ',')
+    [[ -n ${seen[$k]:-} ]] && continue
+    seen[$k]=1; out+=("$c")
+  done < <(expand_list "$1" | sort -n -u)
+  compact_list "${out[@]}"
+}
+
+# cpus_for <mode> <base list> -> the group's cpu list
+cpus_for() {
+  case $1 in
+    ccd|half) printf '%s' "$2" ;;
+    cores)    subset_cores "$2" ;;
+    *)        die "unknown profile '$1' (want: ccd, half, cores)" ;;
   esac
+}
+
+# Fill GAME_A/B, DESK_A/B, IRQ_A/B from the bases and the per-group modes.
+resolve_groups() {
+  local gm=${GAME_PROFILE:-$PROFILE} dm=${DESK_PROFILE:-$PROFILE} im=${IRQ_PROFILE:-$PROFILE}
+
+  # Check the modes here, not inside the command substitutions below — a die()
+  # in there only kills the subshell, leaving the caller to guess from an empty
+  # result why it failed.
+  local m
+  for m in "$gm" "$dm" "$im"; do
+    case $m in ccd|half|cores) ;; *) die "unknown profile '$m' (want: ccd, half, cores)" ;; esac
+  done
+
+  GAME_A=$(cpus_for "$gm" "$BASE_A"); GAME_B=$(cpus_for "$gm" "$BASE_B")
+  DESK_A=$(cpus_for "$dm" "$BASE_A"); DESK_B=$(cpus_for "$dm" "$BASE_B")
+  IRQ_CPUS_A=$(cpus_for "$im" "$BASE_A"); IRQ_CPUS_B=$(cpus_for "$im" "$BASE_B")
+
+  local name val
+  for name in GAME_A GAME_B DESK_A DESK_B IRQ_CPUS_A IRQ_CPUS_B; do
+    val=${!name}
+    [[ -n $val && $val != '(none)' ]] || die "$name resolved to an empty CPU set"
+  done
 }
 
 # ------------------------------------------------------------- validation ---
 validate_split() {
   local -a a b
-  mapfile -t a < <(expand_list "$CPUS_A")
-  mapfile -t b < <(expand_list "$CPUS_B")
+  mapfile -t a < <(expand_list "$BASE_A")
+  mapfile -t b < <(expand_list "$BASE_B")
   ((${#a[@]})) || die "user A ($USER_A) has an empty CPU set"
   ((${#b[@]})) || die "user B ($USER_B) has an empty CPU set"
 
@@ -438,7 +509,7 @@ pin_group() {
   local group=$1 list=$2; shift 2
   local pid ok=0 fail=0 before
 
-  ((${#})) || { printf '  %s%-8s (nothing running)%s\n' "$C_DIM" "$group" "$C_RST"; return; }
+  ((${#})) || { printf '  %s%-8s %-16s (nothing running)%s\n' "$C_DIM" "$group" "$list" "$C_RST"; return; }
 
   for pid in "$@"; do
     [[ -d /proc/$pid ]] || continue
@@ -463,14 +534,14 @@ pin_group() {
 
   local verb='pinned'
   ((DRY_RUN)) && verb='would pin'
-  printf '  %s%-8s %s %d%s%s\n' "$C_DIM" "$group" "$verb" "$ok" \
+  printf '  %s%-8s %-16s %s %d%s%s\n' "$C_DIM" "$group" "$list" "$verb" "$ok" \
     "$( ((fail)) && printf ', failed %d' "$fail")" "$C_RST"
 }
 
 # pin_irqs <cpulist> <irqs...>
 pin_irqs() {
   local list=$1; shift
-  ((${#})) || { printf '  %s%-8s (none found)%s\n' "$C_DIM" "irq" "$C_RST"; return; }
+  ((${#})) || { printf '  %s%-8s %-16s (none found)%s\n' "$C_DIM" "irq" "$list" "$C_RST"; return; }
   local irq f ok=0 fail=0 before
   for irq in "$@"; do
     f=/proc/irq/$irq/smp_affinity_list
@@ -493,25 +564,27 @@ pin_irqs() {
   done
   local verb='steered'
   ((DRY_RUN)) && verb='would steer'
-  printf '  %s%-8s %s %d%s%s\n' "$C_DIM" "irq" "$verb" "$ok" \
+  printf '  %s%-8s %-16s %s %d%s%s\n' "$C_DIM" "irq" "$list" "$verb" "$ok" \
     "$( ((fail)) && printf ', failed %d' "$fail")" "$C_RST"
 }
 
-# apply_to_user <label> <user> <uid> <cpulist> <extra irqs>
+# apply_to_user <label> <user> <uid> <game cpus> <desktop cpus> <irq cpus> <extra irqs>
 apply_to_user() {
-  local label=$1 user=$2 uid=$3 list=$4 extra=$5
+  local label=$1 user=$2 uid=$3 glist=$4 dlist=$5 ilist=$6 extra=$7
   local -a game desk irq
   mapfile -t game < <(tree_for_uid "$uid")
   ((DO_DESKTOP)) && mapfile -t desk < <(desktop_for_user "$user" "$uid") || desk=()
   ((DO_IRQ))     && mapfile -t irq  < <(irqs_for_user "$user" "$extra" | sort -n -u) || irq=()
 
-  printf '%s%s %s%s  cpus=%s%s%s  game=%d desktop=%d irq=%d\n' \
-    "$C_B" "$label" "$user" "$C_RST" "$C_CYA" "$list" "$C_RST" \
-    "${#game[@]}" "${#desk[@]}" "${#irq[@]}"
+  # The per-group cpu lists ride on the pin_group/pin_irqs summary lines below,
+  # so the header only carries the match counts.
+  printf '%s%s %s%s  %sgame=%d desktop=%d irq=%d%s\n' \
+    "$C_B" "$label" "$user" "$C_RST" "$C_CYA" \
+    "${#game[@]}" "${#desk[@]}" "${#irq[@]}" "$C_RST"
 
-  pin_group "game"    "$list" "${game[@]}"
-  ((DO_DESKTOP)) && pin_group "desktop" "$list" "${desk[@]}"
-  ((DO_IRQ))     && pin_irqs  "$list" "${irq[@]}"
+  pin_group "game"    "$glist" "${game[@]}"
+  ((DO_DESKTOP)) && pin_group "desktop" "$dlist" "${desk[@]}"
+  ((DO_IRQ))     && pin_irqs  "$ilist" "${irq[@]}"
   return 0
 }
 
@@ -519,28 +592,31 @@ cmd_apply() {
   local uid_a uid_b
   uid_a=$(uid_of_user "$USER_A"); uid_b=$(uid_of_user "$USER_B")
   snapshot_procs
-  apply_to_user "A" "$USER_A" "$uid_a" "$CPUS_A" "$IRQS_A"
-  apply_to_user "B" "$USER_B" "$uid_b" "$CPUS_B" "$IRQS_B"
+  apply_to_user "A" "$USER_A" "$uid_a" "$GAME_A" "$DESK_A" "$IRQ_CPUS_A" "$IRQS_A"
+  apply_to_user "B" "$USER_B" "$uid_b" "$GAME_B" "$DESK_B" "$IRQ_CPUS_B" "$IRQS_B"
 }
 
 cmd_status() {
   local uid_a uid_b
   uid_a=$(uid_of_user "$USER_A"); uid_b=$(uid_of_user "$USER_B")
   snapshot_procs
-  local user uid want extra pid pair
-  for pair in "$USER_A:$uid_a:$CPUS_A:$IRQS_A" "$USER_B:$uid_b:$CPUS_B:$IRQS_B"; do
-    IFS=: read -r user uid want extra <<<"$pair"
-    printf '%s%s%s  want=%s\n' "$C_B" "$user" "$C_RST" "$want"
+  local user uid gwant dwant iwant extra pid pair
+  for pair in "$USER_A:$uid_a:$GAME_A:$DESK_A:$IRQ_CPUS_A:$IRQS_A" \
+              "$USER_B:$uid_b:$GAME_B:$DESK_B:$IRQ_CPUS_B:$IRQS_B"; do
+    IFS=: read -r user uid gwant dwant iwant extra <<<"$pair"
+    printf '%s%s%s\n' "$C_B" "$user" "$C_RST"
 
     local -a game desk irq
     mapfile -t game < <(tree_for_uid "$uid")
     ((DO_DESKTOP)) && mapfile -t desk < <(desktop_for_user "$user" "$uid") || desk=()
     ((DO_IRQ))     && mapfile -t irq  < <(irqs_for_user "$user" "$extra" | sort -n -u) || irq=()
 
-    local cur mark group
-    for group in game desktop; do
-      local -n _pids=$([[ $group == game ]] && echo game || echo desk)
-      ((${#_pids[@]})) || { printf '  %s%-8s (nothing running)%s\n' "$C_DIM" "$group" "$C_RST"; continue; }
+    local cur mark group want spec _arr
+    for spec in "game:$gwant:game" "desktop:$dwant:desk"; do
+      IFS=: read -r group want _arr <<<"$spec"
+      local -n _pids=$_arr
+      printf '  %s%-8s want=%s%s\n' "$C_DIM" "$group" "$want" "$C_RST"
+      ((${#_pids[@]})) || { printf '  %s%-8s (nothing running)%s\n' "$C_DIM" "$group" "$C_RST"; unset -n _pids; continue; }
       for pid in "${_pids[@]}"; do
         cur=$(current_affinity "$pid")
         if [[ $cur == "$want" ]]; then mark="${C_GRN}ok ${C_RST}"; else mark="${C_YEL}off${C_RST}"; fi
@@ -548,9 +624,10 @@ cmd_status() {
       done
       unset -n _pids
     done
+    if ((${#irq[@]})); then printf '  %s%-8s want=%s%s\n' "$C_DIM" "irq" "$iwant" "$C_RST"; fi
     for pid in "${irq[@]}"; do
       cur=$(cat "/proc/irq/$pid/smp_affinity_list" 2>/dev/null || printf '?')
-      if [[ $cur == "$want" ]]; then mark="${C_GRN}ok ${C_RST}"; else mark="${C_YEL}off${C_RST}"; fi
+      if [[ $cur == "$iwant" ]]; then mark="${C_GRN}ok ${C_RST}"; else mark="${C_YEL}off${C_RST}"; fi
       printf '  %s %-8s irq %-3s %-24.24s %s\n' "$mark" "irq" "$pid" "$(irq_desc "$pid")" "$cur"
     done
   done
@@ -562,28 +639,41 @@ cmd_reset() {
   uid_a=$(uid_of_user "$USER_A"); uid_b=$(uid_of_user "$USER_B")
   snapshot_procs
   info "resetting both users to all CPUs ($all)"
-  CPUS_A=$all CPUS_B=$all
-  apply_to_user "A" "$USER_A" "$uid_a" "$all" "$IRQS_A"
-  apply_to_user "B" "$USER_B" "$uid_b" "$all" "$IRQS_B"
+  apply_to_user "A" "$USER_A" "$uid_a" "$all" "$all" "$all" "$IRQS_A"
+  apply_to_user "B" "$USER_B" "$uid_b" "$all" "$all" "$all" "$IRQS_B"
 }
 
 cmd_plan() {
   local ncpu; ncpu=$(nproc)
   printf '%smachine%s  %s logical CPUs, online %s\n' "$C_B" "$C_RST" "$ncpu" "$(online_cpus)"
-  printf '%sprofile%s  %s   desktop=%s irq=%s\n\n' "$C_B" "$C_RST" "$PROFILE" \
+  printf '%smodes%s    game=%s desktop=%s irq=%s\n' "$C_B" "$C_RST" \
+    "${GAME_PROFILE:-$PROFILE}" "${DESK_PROFILE:-$PROFILE}" "${IRQ_PROFILE:-$PROFILE}"
+  printf '%sgroups%s   desktop=%s irq=%s\n\n' "$C_B" "$C_RST" \
     "$( ((DO_DESKTOP)) && echo on || echo off)" "$( ((DO_IRQ)) && echo on || echo off)"
 
   snapshot_procs
-  local label user list extra pair uid
-  for pair in "A:$USER_A:$CPUS_A:$IRQS_A" "B:$USER_B:$CPUS_B:$IRQS_B"; do
-    IFS=: read -r label user list extra <<<"$pair"
+  local label user base glist dlist ilist extra pair uid
+  for pair in "A:$USER_A:$BASE_A:$GAME_A:$DESK_A:$IRQ_CPUS_A:$IRQS_A" \
+              "B:$USER_B:$BASE_B:$GAME_B:$DESK_B:$IRQ_CPUS_B:$IRQS_B"; do
+    IFS=: read -r label user base glist dlist ilist extra <<<"$pair"
     uid=$(uid_of_user "$user")
-    local -a cpus; mapfile -t cpus < <(expand_list "$list")
-    local -A cores=(); local c
-    for c in "${cpus[@]}"; do cores[$(core_of "$c")]=1; done
+    local -a cpus; mapfile -t cpus < <(expand_list "$base")
 
-    printf '%s%s %-10s%s cpus %-16s  %2d logical, %2d physical cores, L3 %s\n' \
-      "$C_B" "$label" "$user" "$C_RST" "$list" "${#cpus[@]}" "${#cores[@]}" "$(l3_of "${cpus[0]}")"
+    printf '%s%s %-10s%s base %-16s  L3 %s\n' \
+      "$C_B" "$label" "$user" "$C_RST" "$base" "$(l3_of "${cpus[0]}")"
+
+    local group glabel gcpus c
+    local -a gc
+    local -A gcores
+    for group in "game:$glist" "desktop:$dlist" "irq:$ilist"; do
+      IFS=: read -r glabel gcpus <<<"$group"
+      mapfile -t gc < <(expand_list "$gcpus")
+      gcores=()
+      for c in "${gc[@]}"; do gcores[$(siblings_of "$c" | sort -n | tr '\n' ',')]=1; done
+      printf '   %-9s %-16s %2d logical, %2d physical cores\n' \
+        "$glabel" "$gcpus" "${#gc[@]}" "${#gcores[@]}"
+    done
+
     printf '   seat      %s\n' "$(seats_of_user "$user" | tr '\n' ' ')"
     printf '   display   %s\n' "$(displays_of_user "$user" | tr '\n' ' ')"
 
@@ -613,17 +703,28 @@ cmd_plan() {
   done
 
   printf '%sSMT map%s (logical -> physical core)\n' "$C_B" "$C_RST"
-  local c owner x
-  local -A own=()
-  while read -r x; do own[$x]=A; done < <(expand_list "$CPUS_A")
-  while read -r x; do own[$x]=B; done < <(expand_list "$CPUS_B")
+  local owner x note col who
+  local -A own=() ingame=() inany=()
+  while read -r x; do own[$x]=A; done < <(expand_list "$BASE_A")
+  while read -r x; do own[$x]=B; done < <(expand_list "$BASE_B")
+  for x in $(expand_list "$GAME_A"; expand_list "$GAME_B"); do ingame[$x]=1; inany[$x]=1; done
+  for x in $(expand_list "$DESK_A"; expand_list "$DESK_B"); do inany[$x]=1; done
+  for x in $(expand_list "$IRQ_CPUS_A"; expand_list "$IRQ_CPUS_B"); do inany[$x]=1; done
   for ((c = 0; c < ncpu; c++)); do
     owner=${own[$c]:-.}
-    case $owner in
-      A) printf '%scpu%-3s core %-3s %s%s\n' "$C_BLU" "$c" "$(core_of "$c")" "A:$USER_A" "$C_RST" ;;
-      B) printf '%scpu%-3s core %-3s %s%s\n' "$C_CYA" "$c" "$(core_of "$c")" "B:$USER_B" "$C_RST" ;;
-      *) printf '%scpu%-3s core %-3s free%s\n' "$C_DIM" "$c" "$(core_of "$c")" "$C_RST" ;;
-    esac
+    if [[ $owner == . ]]; then
+      printf '%scpu%-3s core %-3s free%s\n' "$C_DIM" "$c" "$(core_of "$c")" "$C_RST"
+      continue
+    fi
+    if [[ $owner == A ]]; then col=$C_BLU; who="A:$USER_A"; else col=$C_CYA; who="B:$USER_B"; fi
+    if [[ -n ${ingame[$c]:-} ]]; then
+      note=''
+    elif [[ -n ${inany[$c]:-} ]]; then
+      note=' (desktop/irq only)'
+    else
+      note=' (unused)'; col=$C_DIM
+    fi
+    printf '%scpu%-3s core %-3s %s%s%s\n' "$col" "$c" "$(core_of "$c")" "$who" "$note" "$C_RST"
   done
 
   printf '\n%snot pinned%s  nvidia-drm/timeline-* kthreads carry no owner tag, so\n' "$C_DIM" "$C_RST"
@@ -646,6 +747,9 @@ while (($#)); do
   case $1 in
     apply|status|reset|watch|plan) CMD=$1 ;;
     -p|--profile)  PROFILE=${2:?}; shift ;;
+    --game-profile)    GAME_PROFILE=${2:?}; shift ;;
+    --desktop-profile) DESK_PROFILE=${2:?}; shift ;;
+    --irq-profile)     IRQ_PROFILE=${2:?}; shift ;;
     -A|--cpus-a)   CPUS_A=${2:?}; shift ;;
     -B|--cpus-b)   CPUS_B=${2:?}; shift ;;
     -a|--user-a)   USER_A=${2:?}; shift ;;
@@ -664,8 +768,9 @@ done
 
 command -v taskset >/dev/null || die "taskset not found (install util-linux)"
 
-resolve_profile
+resolve_base
 [[ $CMD == reset ]] || validate_split
+resolve_groups
 
 if ((EUID != 0)) && [[ $CMD != status && $CMD != plan ]]; then
   DRY_RUN=1
