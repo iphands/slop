@@ -15,8 +15,10 @@ collision model + navigation graph parsed locally.
 > parse + trace + PVS + nav graph + navmesh), the combat/navigation brain, and the fleet
 > supervisor are all complete and verified live. `spawn-to-spawn --count 24` on a parked
 > q2dm1 measured **effective 13–15/24** (0 deferred) on 2026-09-12 across six *independent*
-> full 24-bot batches — 13, 14, 15, 13 before the day's netchan/perception commits and
-> 13, 14 on `8d8645f24` after them — so the band is run-to-run variance, not an average.
+> full 24-bot batches — 13, 14, 15, 13 at 14:07–15:43 UTC, after the morning's cmd-window
+> and wire-velocity commits (`d72095ba5`, `a471a2450`) and before the evening's ack-path
+> and velocity-tracker commits, then 13, 14 on `8d8645f24` after those — so the band is
+> run-to-run variance, not an average.
 > Compare only under the same constants (q2dm1, default brain + `astar`, default spacing,
 > server parked with 0 other players); a q2dm3 or non-default-brain run is a different
 > measurement. Stated in the tool's own units so future runs compare without arithmetic.
