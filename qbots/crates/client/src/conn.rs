@@ -169,14 +169,22 @@ impl Conn {
         if oob_reply.is_some() {
             return oob_reply;
         }
-        // Immediately ACK server reliables: YamagiQ2 drives configstrings via reliable
-        // "cmd configstrings N K" stufftexts and the bot must reply quickly. Waiting for
-        // the 100ms ticker risks the server retransmitting the same reliable, which
-        // toggles incoming_reliable_sequence back — defeating the ACK. Standard Q2
-        // clients send clc_move on every server frame, so we do the same: flush any
-        // pending stringcmds (e.g. the next "configstrings N K" request or "begin N")
-        // along with the ack.
-        if has_reliable {
+        // Pre-Active, ACK server reliables immediately: YamagiQ2 drives the handshake
+        // via reliable "cmd configstrings N K" / "precache" stufftexts, and the reply
+        // (the next stringcmd) is what moves it forward. This is vendor's ca_connected
+        // path (`cl_input.c:757-761`: a header-only transmit whenever a reliable is
+        // queued) — the only state in which a real client sends a packet with no
+        // `clc_move` in it.
+        //
+        // Once Active, do NOT: the next tick's `clc_move` (≤100 ms away) carries the
+        // ack in its header, exactly as vendor's ca_active path does. A header-only
+        // packet here would consume an outgoing sequence with no real cmd behind it;
+        // if the server then missed that packet it would count a drop and REPLAY the
+        // window's filler slot as a genuine cmd (`sv_user.c:744`) — a tick of movement
+        // executed twice. The delay is safe: `Netchan_NeedReliable` only resends a
+        // reliable when the client has acked a LATER sequence without the toggle, and
+        // our next move acks this sequence with the toggle in the same header.
+        if has_reliable && self.state != ConnState::Active {
             // ACK + flush any queued stringcmds. No clc_move in this packet, so the
             // window REPEATS its newest slot (transmit_payload) rather than punching a
             // hole a later loss-recovery replay would read as a stand-still cmd.
@@ -1140,13 +1148,22 @@ mod tests {
         );
     }
 
-    /// The invariant that breaks SILENTLY if a transmit site is ever added that skips
-    /// the window: the sequence advances but the window does not, so the server replays
-    /// cmds from before the gap, the checksum still passes, and the visible symptom is
-    /// "bot stands still" — a phantom nav bug. So: every site pushes, and a site with
-    /// no clc_move REPEATS the newest cmd rather than opening a hole.
+    /// A server packet with the reliable bit set (w1 bit 31), carrying no message body.
+    fn reliable_server_packet(sequence: u32, ack: u32) -> Bytes {
+        let mut w = Writer::new();
+        w.write_i32((sequence | (1 << 31)) as i32);
+        w.write_i32(ack as i32); // no reliable-ack bit
+        w.freeze()
+    }
+
+    /// While Active, a server reliable must NOT trigger a header-only transmit: vendor's
+    /// ca_active path acks on the next `clc_move` (`cl_input.c:757-761` is the
+    /// ca_connected-only header-only send). A cmd-less packet here consumes a sequence
+    /// the server can count as a drop and then replay the window's filler slot as a
+    /// real cmd (`sv_user.c:744`) — one tick of movement executed twice. So: no packet,
+    /// no sequence step, no window push; the ack rides the next move's header.
     #[test]
-    fn reliable_ack_transmit_pushes_by_repeating_newest() {
+    fn active_reliable_is_acked_by_the_next_move_not_a_header_only_packet() {
         let mut c = active_conn();
         let (a, b, d) = (
             cmd(10, 100, 1000, 0),
@@ -1158,13 +1175,55 @@ mod tests {
         c.transmit_cmd(&d).unwrap();
         assert_eq!(c.cmd_window(), [a, b, d]);
 
-        // A server packet with the reliable bit set (w1 bit 31) forces the immediate
-        // ACK inside `on_recv` — our only transmit site that carries no clc_move.
-        let mut w = Writer::new();
-        w.write_i32(100 | (1 << 31)); // sequence 100 + reliable
-        w.write_i32(4); // ack 4, no reliable-ack bit
         let before = c.netchan.as_ref().unwrap().outgoing_sequence();
-        c.on_recv(&w.freeze());
+        let out = c.on_recv(&reliable_server_packet(100, 4));
+        assert!(out.is_none(), "Active: no header-only ack packet");
+        let after = c.netchan.as_ref().unwrap().outgoing_sequence();
+        assert_eq!(after, before, "no packet out == no sequence step");
+        assert_eq!(c.cmd_window(), [a, b, d], "and therefore no window push");
+
+        // The next move carries the ack: w2 = incoming_sequence (100) with the
+        // reliable toggle (bit 31) set, and its triple is the untouched window + cmd.
+        let e = cmd(13, 50, 0, 0);
+        let seq = c.netchan.as_ref().unwrap().outgoing_sequence();
+        let pkt = c.transmit_cmd(&e).expect("active conn transmits");
+        let w2 = u32::from_le_bytes([pkt[4], pkt[5], pkt[6], pkt[7]]);
+        assert_eq!(
+            w2 & !(1 << 31),
+            100,
+            "next move acks the reliable's sequence"
+        );
+        assert_eq!(w2 >> 31, 1, "with the reliable toggle flipped");
+        let (_, got) = q2proto::parse_clc_move(&pkt[HEADER_LEN..], seq).unwrap();
+        assert_eq!(got, [b, d, e], "triple drawn from an un-punched window");
+    }
+
+    /// The invariant that breaks SILENTLY if a transmit site is ever added that skips
+    /// the window: the sequence advances but the window does not, so the server replays
+    /// cmds from before the gap, the checksum still passes, and the visible symptom is
+    /// "bot stands still" — a phantom nav bug. So: every site pushes, and a site with
+    /// no clc_move REPEATS the newest cmd rather than opening a hole. The one such site
+    /// left is the pre-Active immediate ack (vendor's ca_connected header-only send),
+    /// exercised here by dropping an Active conn to Connected via stufftext "changing".
+    #[test]
+    fn connected_reliable_ack_transmit_pushes_by_repeating_newest() {
+        let mut c = active_conn();
+        let (a, b, d) = (
+            cmd(10, 100, 1000, 0),
+            cmd(11, 0, 2000, 1),
+            cmd(12, 0, -3000, 2),
+        );
+        c.transmit_cmd(&a).unwrap();
+        c.transmit_cmd(&b).unwrap();
+        c.transmit_cmd(&d).unwrap();
+        assert_eq!(c.cmd_window(), [a, b, d]);
+
+        c.on_recv(&server_frame(4, 3, &stufftext_payload("changing\n")));
+        assert_eq!(c.state(), ConnState::Connected);
+
+        let before = c.netchan.as_ref().unwrap().outgoing_sequence();
+        let out = c.on_recv(&reliable_server_packet(100, 4));
+        assert!(out.is_some(), "Connected: reliables are acked immediately");
         let after = c.netchan.as_ref().unwrap().outgoing_sequence();
 
         assert_eq!(after, before + 1, "one packet out == one sequence step");

@@ -1358,6 +1358,15 @@ qbots doesn't run. Make the sole transmit path take the cmd so the invariant hol
 construction, and don't reset the window on a soft map change — the netchan and its
 sequence survive that path.
 
+Corollary (found in review of the fix): while **Active**, never send a cmd-less packet at
+all. The immediate reliable-ack in `on_recv` used to fire in every state; vendor sends a
+header-only packet only in ca_connected (`cl_input.c:757-761`) and, once active, acks on
+the next `clc_move`. A cmd-less packet consumes a sequence with no real cmd behind it, so
+if the server misses it, `net_drop` counts one and the filler slot is replayed as a genuine
+cmd (`sv_user.c:744`) — one tick of movement executed twice. Delaying the ack to the next
+move (≤100 ms) is safe: `Netchan_NeedReliable` resends only when a LATER sequence is acked
+without the toggle. The immediate ack now runs pre-Active only.
+
 ## Sources
 - qbots: crates/client/src/conn.rs (`cmd_window`, `cmd_triple`, `transmit_payload`)
 - qbots: crates/q2proto/src/usercmd.rs (`parse_clc_move` — decode your own packets)
