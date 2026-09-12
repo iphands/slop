@@ -35,5 +35,5 @@ pub use oob::{is_oob, oob_payload, tokenize, write_oob, OOB_MARKER, OOB_PREFIX};
 pub use ops::{ClcOp, SvcOp, PROTOCOL_VERSION, UPDATE_BACKUP, UPDATE_MASK};
 pub use playerstate::{PlayerState, PmoveState, MAX_STATS, PM_FREEZE};
 pub use reader::Reader;
-pub use usercmd::{build_clc_move, Usercmd};
+pub use usercmd::{build_clc_move, parse_clc_move, Usercmd};
 pub use writer::Writer;

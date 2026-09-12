@@ -152,6 +152,35 @@ pub fn build_clc_move(serverframe: i32, cmds: [&Usercmd; 3], sequence: u32) -> V
     out
 }
 
+/// Decode a `clc_move` message body, mirroring `SV_ReadClientMessage`'s `clc_move`
+/// arm (`sv_user.c:683-702`): opcode, checksum byte, the serverframe ack, then three
+/// delta-chained usercmds (`nullcmd -> oldest -> mid -> newest`). `sequence` is the
+/// netchan sequence the packet carried — the server recomputes the checksum keyed on
+/// `cl->netchan.incoming_sequence` (`sv_user.c:711-714`), so a
+/// `build_clc_move(.., seq)` → `parse_clc_move(.., seq)` round-trip is the same check
+/// a live server runs. `Err(ChecksumMismatch)` means our own packet would be silently
+/// ignored by the server, which is exactly the silent failure this crate must not ship.
+pub fn parse_clc_move(payload: &[u8], sequence: u32) -> Result<(i32, [Usercmd; 3]), DecodeError> {
+    let mut r = Reader::new(payload);
+    if ClcOp::from_u8(r.read_u8()?) != Some(ClcOp::Move) {
+        return Err(DecodeError::Invalid("clc_move opcode"));
+    }
+    let checksum = r.read_u8()?;
+    let serverframe = r.read_i32()?;
+    let nullcmd = Usercmd::default();
+    let oldest = Usercmd::read_delta(&mut r, &nullcmd)?;
+    let mid = Usercmd::read_delta(&mut r, &oldest)?;
+    let newest = Usercmd::read_delta(&mut r, &mid)?;
+    // The server checksums exactly the bytes consumed through the third delta
+    // (`readcount`, sv_user.c:712) — which is what we consumed here, not any trailing
+    // bytes a real capture might carry.
+    let consumed = payload.len() - r.remaining();
+    if block_sequence_crc_byte(&payload[2..consumed], sequence) != checksum {
+        return Err(DecodeError::ChecksumMismatch);
+    }
+    Ok((serverframe, [oldest, mid, newest]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,6 +193,65 @@ mod tests {
         let mut r = Reader::new(&bytes);
         let got = Usercmd::read_delta(&mut r, &from).unwrap();
         (got, n)
+    }
+
+    fn cmd(msec: u8, forwardmove: i16, yaw: i16, buttons: u8) -> Usercmd {
+        Usercmd {
+            msec,
+            buttons,
+            angles: [0, yaw, 0],
+            forwardmove,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn parse_clc_move_round_trips_a_distinct_triple() {
+        // Three DIFFERENT cmds: the whole point of the wire format (sv_user.c:698-702
+        // reads oldest/mid/newest and replays them on packet loss). A build→parse
+        // round trip must return them unchanged, in order, checksum-valid.
+        let cmds = [
+            cmd(10, 100, 1000, 0),
+            cmd(11, -200, 2000, 1),
+            cmd(12, 0, -3000, 2),
+        ];
+        let seq = 7u32;
+        let payload = build_clc_move(-1, [&cmds[0], &cmds[1], &cmds[2]], seq);
+        let (sf, got) = parse_clc_move(&payload, seq).expect("our own packet must decode");
+        assert_eq!(sf, -1, "serverframe ack passes through");
+        assert_eq!(got, cmds, "triple must survive the delta chain in order");
+    }
+
+    #[test]
+    fn parse_clc_move_detects_corruption_like_the_server() {
+        let seq = 42u32;
+        let cmds = [cmd(1, 0, 0, 0), cmd(2, 25, 0, 0), cmd(3, 50, 0, 0)];
+        let mut payload = build_clc_move(111, [&cmds[0], &cmds[1], &cmds[2]], seq);
+        // One bit inside a delta'd field changes the cmd AND breaks the checksum —
+        // exactly what the server's check at sv_user.c:716 catches.
+        let last = payload.len() - 1;
+        payload[last] ^= 0x01;
+        assert!(
+            matches!(
+                parse_clc_move(&payload, seq),
+                Err(DecodeError::ChecksumMismatch)
+            ),
+            "a flipped bit must fail the same check the server runs"
+        );
+    }
+
+    #[test]
+    fn parse_clc_move_rejects_truncation_and_wrong_opcode() {
+        assert!(matches!(parse_clc_move(&[], 1), Err(DecodeError::Eof)));
+        assert!(matches!(
+            parse_clc_move(&[2, 0, 0, 0, 0], 1),
+            Err(DecodeError::Eof)
+        ));
+        // opcode 3 = clc_userinfo, not clc_move
+        assert!(matches!(
+            parse_clc_move(&[3, 0, 0, 0, 0, 0, 0], 1),
+            Err(DecodeError::Invalid(_))
+        ));
     }
 
     #[test]

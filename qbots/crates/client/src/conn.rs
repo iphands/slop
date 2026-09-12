@@ -67,6 +67,20 @@ pub struct Conn {
     /// A soft map change requested a re-handshake (`stufftext "reconnect"`) and the
     /// reliable `"new"` has not been sent yet — the caller paces [`Conn::send_new`].
     new_pending: bool,
+    /// The last three cmds we put on the wire, `[oldest, mid, newest]`, shifted one
+    /// per transmitted packet. A real client sends a 3-cmd window in every `clc_move`
+    /// (`cl_input.c:807-819`, slots `seq-2, seq-1, seq`) so the server can REPLAY the
+    /// cmds in the packets we lost: `sv_user.c:727-750` runs `oldest`/`oldcmd` only
+    /// when `netchan.dropped > 0`, and `newcmd` always. Sending the same cmd three
+    /// times therefore wastes the window — a recovered slot replays our CURRENT intent
+    /// instead of the one the server never got. One push per transmitted packet,
+    /// always, so `Δoutgoing_sequence == Δwindow pushes`.
+    ///
+    /// Vendor's ring is `CMD_BACKUP` 256 deep (`client.h:31`) because client-side
+    /// prediction re-applies every cmd since the acked frame (`cl_prediction.c:279`).
+    /// qbots runs no prediction — the server frame is the truth — so 3 is exactly the
+    /// depth the server consumes.
+    cmd_window: [Usercmd; 3],
 }
 
 impl Conn {
@@ -85,6 +99,7 @@ impl Conn {
             frame: None,
             begin_queued: false,
             prints: Vec::new(),
+            cmd_window: [Usercmd::default(); 3],
             reject_reason: None,
             new_pending: false,
         }
@@ -122,8 +137,10 @@ impl Conn {
         // pending stringcmds (e.g. the next "configstrings N K" request or "begin N")
         // along with the ack.
         if has_reliable {
-            let nc = self.netchan.as_mut()?;
-            Some(nc.transmit(&[]))
+            // ACK + flush any queued stringcmds. No clc_move in this packet, so the
+            // window REPEATS its newest slot (transmit_payload) rather than punching a
+            // hole a later loss-recovery replay would read as a stand-still cmd.
+            self.transmit_payload(Vec::new(), None)
         } else {
             None
         }
@@ -149,11 +166,7 @@ impl Conn {
             }
             Some("client_connect") if self.netchan.is_none() => {
                 // Netchan up; queue the reliable `new`. (Dup client_connect is ignored.)
-                let mut nc = Netchan::new(self.qport);
-                nc.message_mut().write_u8(ClcOp::Stringcmd.into());
-                nc.message_mut().write_string("new");
-                self.netchan = Some(nc);
-                self.state = ConnState::Connected;
+                self.open_netchan();
             }
             Some("client_connect") => {}
             Some("print") if self.state == ConnState::Connecting => {
@@ -311,6 +324,25 @@ impl Conn {
         Some(oob_line("getchallenge\n"))
     }
 
+    /// The single site that installs a netchan, so the cmd window can never disagree
+    /// with the sequence counter it is indexed against. `Netchan::new` restarts
+    /// `outgoing_sequence` at 1, and a fresh window of nullcmds matches it.
+    ///
+    /// Deliberately NOT reset by [`Conn::reset_level_state`]: a soft map change keeps
+    /// the netchan and its sequence counting (asserted by
+    /// `map_change_stufftext_rehandshakes_on_live_netchan`), so clearing the window
+    /// there would punch a 3-sequence hole — the hazard this field exists to close.
+    /// Vendor agrees: `CL_Changing_f` leaves `cl.cmds` intact; only `CL_ClearState`
+    /// (full disconnect) zeroes it.
+    fn open_netchan(&mut self) {
+        let mut nc = Netchan::new(self.qport);
+        nc.message_mut().write_u8(ClcOp::Stringcmd.into());
+        nc.message_mut().write_string("new");
+        self.netchan = Some(nc);
+        self.cmd_window = [Usercmd::default(); 3];
+        self.state = ConnState::Connected;
+    }
+
     /// Drop the per-level snapshot state (frame history + spawn latch) when the server
     /// changes levels. Stale [`FrameRing`] entries would poison delta decode against the
     /// new level's frames, and `begin_queued` must re-arm so the next `precache`
@@ -322,24 +354,90 @@ impl Conn {
         self.ring = FrameRing::new();
     }
 
-    /// Build a heartbeat frame. Once Active, send a real `clc_move` (walk forward) so
-    /// the server moves us; before that, an empty transmit flushes the queued reliable
-    /// `new`/`begin` and refreshes the server's last_received.
-    pub fn keepalive(&mut self) -> Option<Bytes> {
-        let payload: Vec<u8> = if self.state == ConnState::Active {
-            let cmd = Usercmd {
-                msec: 33,
-                forwardmove: 400, // walk forward
-                ..Default::default()
-            };
-            let serverframe = self.frame.as_ref().map(|f| f.serverframe).unwrap_or(-1);
-            let seq = self.netchan.as_ref()?.outgoing_sequence();
-            build_clc_move(serverframe, [&cmd, &cmd, &cmd], seq)
-        } else {
-            Vec::new()
-        };
+    /// The exact triple `build_clc_move` wants: the two cmds already in the window
+    /// with `cmd` pinned into the newest slot — vendor's `cl.cmds[seq-2], cmds[seq-1],
+    /// cmds[seq]` (`cl_input.c:807-819`). The ONLY way to build the array: the
+    /// always-executed `newcmd` slot (`sv_user.c:748`) cannot then be anything but the
+    /// intent of THIS packet. Building it per call site instead reintroduces the
+    /// off-by-one where the server perpetually runs the PREVIOUS cmd.
+    fn cmd_triple(&self, cmd: Usercmd) -> [Usercmd; 3] {
+        [self.cmd_window[1], self.cmd_window[2], cmd]
+    }
+
+    /// The checksum keys on `outgoing_sequence()` as returned here, while `transmit`
+    /// masks bit 31 into `w1` (`netchan.rs:110`); past 2^31 sends the two diverge and
+    /// every move is silently ignored. Vendor overflows an `int` the same way, and at
+    /// 10 Hz that is ~6.8 years of uptime. The counter is NOT reset by a soft map
+    /// change (see [`Conn::open_netchan`]) — only a hard `svc_reconnect` or a process
+    /// restart returns it to 1. Documented rather than fixed, so the symptom is not a
+    /// mystery.
+    ///
+    /// The SOLE caller of `Netchan::transmit`: every packet we send, move or not,
+    /// shifts the cmd window exactly once. That is the invariant (`Δoutgoing_sequence
+    /// == Δwindow pushes`) — a site that transmitted without pushing would make the
+    /// server replay pre-gap cmds, the checksum would still pass, and the visible
+    /// symptom would be "bot stands still", i.e. a phantom nav bug. Hence: one door.
+    ///
+    /// `cmd == None` (reliable acks, pre-Active flushes, disconnect) REPEATS the
+    /// newest slot. That packet carries no `clc_move`, so nothing in the slot reaches
+    /// the server at all (`cl->lastcmd` is written by the `clc_move` arm alone among message
+    /// types, and zeroed at connect, `sv_user.c:105`/`:751`) — the push exists purely
+    /// to keep the window aligned with the
+    /// sequence the packet consumed. Skipping it would leave the NEXT `clc_move`'s
+    /// triple drawn from pre-gap sequences, and a recovery would replay stale cmds.
+    /// Repeating the newest is the cheapest non-surprising filler (a nullcmd would
+    /// also freeze pmove's time base if it ever were replayed).
+    fn transmit_payload(&mut self, payload: Vec<u8>, cmd: Option<Usercmd>) -> Option<Bytes> {
+        let push = cmd.unwrap_or(self.cmd_window[2]);
         let nc = self.netchan.as_mut()?;
-        Some(nc.transmit(&payload))
+        // Read only where the tripwire below compiles (release would flag it unused).
+        #[cfg(debug_assertions)]
+        let seq = nc.outgoing_sequence();
+        #[cfg(debug_assertions)]
+        if payload.first() == Some(&u8::from(ClcOp::Move)) {
+            // Debug-build tripwire for payload/push drift, NOT for the Δseq invariant
+            // above (it would not have caught `[cmd, cmd, cmd]`). Decodes our own
+            // packet with the server's own checksum check and pins that the newest
+            // slot carries the cmd this transmit was given.
+            let (_sf, cmds) = q2proto::parse_clc_move(&payload, seq)
+                .expect("debug build: our own clc_move must pass the server's check");
+            debug_assert_eq!(cmds[2], push, "newest slot must carry this packet's cmd");
+        }
+        let pkt = nc.transmit(&payload);
+        self.cmd_window = [self.cmd_window[1], self.cmd_window[2], push];
+        Some(pkt)
+    }
+
+    /// The window, for tests (push-per-transmit and repeat-newest assertions).
+    #[cfg(test)]
+    fn cmd_window(&self) -> [Usercmd; 3] {
+        self.cmd_window
+    }
+
+    /// Build a heartbeat frame. Once Active, send a real `clc_move` with a
+    /// SYNTHESIZED walk-forward cmd (`forwardmove: 400`) — this is NOT the brain's
+    /// intent; the fleet and scenarios drive real movement through [`Conn::transmit_cmd`].
+    /// It exists so the bare `client::run()` loop moves visibly as a proof of life.
+    /// Pre-Active, an empty transmit flushes the queued reliable `new`/`begin` and
+    /// refreshes the server's last_received.
+    ///
+    /// TODO: rename to `heartbeat()` and drop the Active synthesis — a public method
+    /// named "keepalive" must not own a movement policy. Any new driver wired through
+    /// `client::run()` currently gets a fleet that walks forward by itself.
+    pub fn keepalive(&mut self) -> Option<Bytes> {
+        if self.state != ConnState::Active {
+            return self.transmit_payload(Vec::new(), None);
+        }
+        let cmd = Usercmd {
+            msec: 33,
+            forwardmove: 400, // walk forward
+            ..Default::default()
+        };
+        let serverframe = self.frame.as_ref().map(|f| f.serverframe).unwrap_or(-1);
+        let [o, m, n] = self.cmd_triple(cmd);
+        let seq = self.netchan.as_ref()?.outgoing_sequence();
+        let payload = build_clc_move(serverframe, [&o, &m, &n], seq);
+        self.transmit_payload(payload, Some(cmd))
     }
 
     /// Current state.
@@ -379,25 +477,38 @@ impl Conn {
 
     /// Build and transmit a move frame with the provided usercmd.
     /// Pre-active: flushes the reliable queue with an empty payload.
-    /// Active: sends `clc_move` with the given command (sent 3× as Q2 expects).
+    /// Active: `clc_move` carrying `[oldest, mid, newest]` — the previous two cmds plus
+    /// `cmd` as the newest, so a dropped packet costs a stale tick, not a lost one
+    /// (`cl_input.c:807-819`, `sv_user.c:727-750`).
+    ///
+    /// A cmd submitted while not `Active` is DISCARDED, not queued (mid-map-change the
+    /// server would ignore it anyway) — the caller cannot tell, so don't treat the
+    /// return value as an acknowledgement that `cmd` reached the wire.
     pub fn transmit_cmd(&mut self, cmd: &Usercmd) -> Option<Bytes> {
-        let payload: Vec<u8> = if self.state == ConnState::Active {
-            let serverframe = self.frame.as_ref().map(|f| f.serverframe).unwrap_or(-1);
-            let seq = self.netchan.as_ref()?.outgoing_sequence();
-            build_clc_move(serverframe, [cmd, cmd, cmd], seq)
-        } else {
-            Vec::new()
-        };
-        let nc = self.netchan.as_mut()?;
-        Some(nc.transmit(&payload))
+        if self.state != ConnState::Active {
+            return self.transmit_payload(Vec::new(), None);
+        }
+        let serverframe = self.frame.as_ref().map(|f| f.serverframe).unwrap_or(-1);
+        let [o, m, n] = self.cmd_triple(*cmd);
+        let seq = self.netchan.as_ref()?.outgoing_sequence();
+        let payload = build_clc_move(serverframe, [&o, &m, &n], seq);
+        self.transmit_payload(payload, Some(*cmd))
     }
 
-    /// Build a disconnect packet to send to the server before teardown.
-    /// Sends `clc_stringcmd "disconnect"` three times (per CL_Disconnect in yquake2).
+    /// Send a disconnect notice before teardown.
+    ///
+    /// TODO: the payload is raw
+    /// `disconnect`, whose first byte `d` (0x64) is not a valid `clc_*` opcode — the
+    /// server takes the `default:` arm and DROPS us ("unknown command char",
+    /// `sv_user.c:663-666` → `SV_DropClient`), so this is a server-side drop, not the
+    /// clean `SV_Disconnect_f` path. Per `CL_Disconnect` (`cl_network.c:331-337`) it
+    /// must be `clc_stringcmd` followed by `"disconnect"` with NO trailing NUL (vendor's
+    /// `strlen` excludes it; `MSG_ReadString` accepts either) and, per `CL_Disconnect`,
+    /// three separate `Netchan_Transmit` calls — three sequences, not one sent thrice.
+    /// Recorded in `context/pitfalls.md`, entry "`clc_stringcmd` opcode byte missing".
+    /// (This doc previously claimed that was already the behaviour; it was not.)
     pub fn disconnect(&mut self) -> Option<Bytes> {
-        let nc = self.netchan.as_mut()?;
-        let payload = b"disconnect";
-        Some(nc.transmit(payload))
+        self.transmit_payload(b"disconnect".to_vec(), None)
     }
 }
 
@@ -670,6 +781,103 @@ mod tests {
         c.on_recv(&server_frame_rel_ack(3, 3, 1, &[])); // acks "begin"
         assert_eq!(c.state(), ConnState::Active);
         c
+    }
+
+    /// A fresh `active_conn()` has no reliable in flight, so a transmitted packet is
+    /// exactly w1(4) + w2(4) + qport(2) of header followed by the message body.
+    const HEADER_LEN: usize = 10;
+
+    fn cmd(msec: u8, forwardmove: i16, yaw: i16, buttons: u8) -> Usercmd {
+        Usercmd {
+            msec,
+            buttons,
+            angles: [0, yaw, 0],
+            forwardmove,
+            ..Default::default()
+        }
+    }
+
+    /// The bug this pins: both send sites used to pass `[cmd, cmd, cmd]`, so a
+    /// recovered slot replayed the CURRENT intent instead of the missed one. Decode
+    /// our own wire bytes with the server's own parser and assert the triple is the
+    /// last three DISTINCT cmds, oldest-first, with `cmd` in the always-run newest
+    /// slot (`cl_input.c:807-819`, `sv_user.c:727-750`). This one assertion covers
+    /// distinctness, ordering, the nullcmd-rooted delta chain, and the pre- vs
+    /// post-push rotation (an off-by-one decodes as `[0, a, b]` and fails).
+    #[test]
+    fn clc_move_window_sends_three_distinct_cmds_oldest_first() {
+        let mut c = active_conn();
+        assert!(
+            c.frame.is_none(),
+            "no frame parsed yet -> acks serverframe -1"
+        );
+        let (a, b, d) = (
+            cmd(10, 100, 1000, 0),
+            cmd(11, -200, 2000, 1),
+            cmd(12, 0, -3000, 2),
+        );
+
+        // Whatever the handshake left in the window (`active_conn` keepalives walk
+        // forward once Active, so it is NOT nullcmds here) — the expectation is derived
+        // from it, because what matters is the LAST THREE and their ordering.
+        let w0 = c.cmd_window();
+
+        let seq = c.netchan.as_ref().unwrap().outgoing_sequence();
+        let pkt = c.transmit_cmd(&a).expect("active conn transmits");
+        let (sf, got) = q2proto::parse_clc_move(&pkt[HEADER_LEN..], seq).expect("self-valid");
+        assert_eq!(sf, -1, "no frame yet, so the ack is -1 (never compress)");
+        assert_eq!(
+            got,
+            [w0[1], w0[2], a],
+            "triple = the two kept cmds + current intent"
+        );
+        assert_eq!(c.cmd_window(), got, "the window is exactly what went out");
+
+        let seq = c.netchan.as_ref().unwrap().outgoing_sequence();
+        let pkt = c.transmit_cmd(&b).expect("second cmd");
+        let (_, got) = q2proto::parse_clc_move(&pkt[HEADER_LEN..], seq).unwrap();
+        assert_eq!(got, [w0[2], a, b], "window slid by exactly one");
+
+        let seq = c.netchan.as_ref().unwrap().outgoing_sequence();
+        let pkt = c.transmit_cmd(&d).expect("third cmd");
+        let (_, got) = q2proto::parse_clc_move(&pkt[HEADER_LEN..], seq).unwrap();
+        assert_eq!(got, [a, b, d], "triple = seq-2, seq-1, seq — all distinct");
+    }
+
+    /// The invariant that breaks SILENTLY if a transmit site is ever added that skips
+    /// the window: the sequence advances but the window does not, so the server replays
+    /// cmds from before the gap, the checksum still passes, and the visible symptom is
+    /// "bot stands still" — a phantom nav bug. So: every site pushes, and a site with
+    /// no clc_move REPEATS the newest cmd rather than opening a hole.
+    #[test]
+    fn reliable_ack_transmit_pushes_by_repeating_newest() {
+        let mut c = active_conn();
+        let (a, b, d) = (
+            cmd(10, 100, 1000, 0),
+            cmd(11, 0, 2000, 1),
+            cmd(12, 0, -3000, 2),
+        );
+        c.transmit_cmd(&a).unwrap();
+        c.transmit_cmd(&b).unwrap();
+        c.transmit_cmd(&d).unwrap();
+        assert_eq!(c.cmd_window(), [a, b, d]);
+
+        // A server packet with the reliable bit set (w1 bit 31) forces the immediate
+        // ACK inside `on_recv` — our only transmit site that carries no clc_move.
+        let mut w = Writer::new();
+        w.write_i32(100 | (1 << 31)); // sequence 100 + reliable
+        w.write_i32(4); // ack 4, no reliable-ack bit
+        let before = c.netchan.as_ref().unwrap().outgoing_sequence();
+        c.on_recv(&w.freeze());
+        let after = c.netchan.as_ref().unwrap().outgoing_sequence();
+
+        assert_eq!(after, before + 1, "one packet out == one sequence step");
+        assert_eq!(
+            c.cmd_window(),
+            [b, d, d],
+            "ack-only transmit advances outgoing_sequence, so the window must advance \
+             with it (Δseq == Δpushes) or the next clc_move sends a pre-gap triple"
+        );
     }
 
     /// The Yamagi map-change flow (`sv_init.c:614/654`): stufftext "changing" drops us

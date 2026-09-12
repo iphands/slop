@@ -13,6 +13,10 @@ pub enum DecodeError {
     Eof,
     /// A decoded value was outside its valid range (e.g. a dir index ≥ 162).
     Invalid(&'static str),
+    /// A `clc_move` checksum does not match what the server would compute for the
+    /// packet's sequence (`sv_user.c:711-722`) — a live server would silently
+    /// ignore such a packet.
+    ChecksumMismatch,
 }
 
 impl fmt::Display for DecodeError {
@@ -20,6 +24,7 @@ impl fmt::Display for DecodeError {
         match self {
             DecodeError::Eof => write!(f, "unexpected end of message"),
             DecodeError::Invalid(what) => write!(f, "{what} out of range"),
+            DecodeError::ChecksumMismatch => write!(f, "clc_move checksum mismatch"),
         }
     }
 }

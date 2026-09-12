@@ -1290,3 +1290,70 @@ nav system must re-path or the bot is genuinely stuck).
 - qbots: crates/brain/src/recover.rs (`RecoveryAction`, `evaluate`)
 - qbots: crates/brain/src/brains/{main,zb2,xon,runtester,q3}/mod.rs (match arms)
 - vendor: yquake2/src/common/cmodel.c (`CM_RecursiveHullCheck`)
+
+---
+
+# `clc_stringcmd` opcode byte missing — "clean disconnect" is a server-side drop
+
+## Problem
+
+`Conn::disconnect()` sent the raw ASCII bytes `disconnect` as the netchan's unreliable
+body. Every `clc_*` message must begin with its opcode byte, and `d` (0x64) is not one:
+valid opcodes are 1 `nop`, 2 `move`, 3 `userinfo`, 4 `stringcmd`. The server's switch
+takes the `default:` arm, prints `SV_ReadClientMessage: unknown command char` and calls
+`SV_DropClient` (`sv_user.c:663-666`). So the bot never reaches `SV_Disconnect_f` — what
+looked like a graceful leave was a drop with a scolding in the server log — once per bot
+shutdown (the fleet's shutdown path sends the packet three times, a scenario twice), on
+a server we don't own (AGENTS.md constraint #3). Map changes do NOT hit it: that path
+re-handshakes with a reliable `new` on the live netchan.
+
+Nothing caught it: `disconnect()` was the one send path with **no** unit test at all, and
+its doc comment *claimed* the correct behaviour (`clc_stringcmd`, ×3), so code and
+documentation disagreed and the comment won the review.
+
+## Fix
+
+Build the payload as `[ClcOp::Stringcmd] + b"disconnect\0"` and send it three times, per
+`CL_Disconnect` (`cl_network.c:331-337`). Two habits prevent the class: (a) route every
+send through one helper — `Conn::transmit_payload` is now the sole caller of
+`Netchan::transmit` and, in debug builds, decodes its own `clc_move` payload with the
+server's checksum check; extending that to assert `ClcOp::from_u8(payload[0]).is_some()`
+for *every* payload is the follow-up, and it has to land together with this fix, since
+before the fix it would abort every debug build at shutdown — which is precisely the
+point of adding it; (b) treat a `///` describing a wire format as an assertion to verify
+against vendor, not as documentation.
+
+## Sources
+- qbots: crates/client/src/conn.rs (`disconnect`)
+- vendor: yquake2/src/server/sv_user.c (`SV_ReadClientMessage`, default arm)
+- vendor: yquake2/src/client/cl_network.c (`CL_Disconnect`)
+
+---
+
+# `clc_move` sent the same usercmd 3× → packet loss replays the wrong intent
+
+## Problem
+
+Both send sites built `build_clc_move(serverframe, [cmd, cmd, cmd], seq)`. The triple is
+NOT a redundancy check: the server replays `oldest`/`oldcmd` **only** when
+`netchan.dropped > 0` and always runs `newcmd` (`sv_user.c:727-750`), so it is a
+lost-packet recovery window. Filling all three slots with the current cmd means a
+recovered slot re-runs the intent the server already had, and the two ticks the server
+never received are gone — movement smears forward on the recovery packet, which reads in
+the movement logs as an unexplained position jump and gets debugged as a nav/physics bug.
+
+## Fix
+
+Keep a 3-deep window `[oldest, mid, newest]` on `Conn`, shifted exactly once per
+transmitted **packet** (not per `clc_move` — an ack-only packet advances
+`outgoing_sequence` too, so the window must advance with it). Send
+`[window[1], window[2], current]`, matching vendor's `cmds[seq-2..=seq]`
+(`cl_input.c:807-819`). Vendor's ring is 256 deep only for client-side prediction, which
+qbots doesn't run. Make the sole transmit path take the cmd so the invariant holds by
+construction, and don't reset the window on a soft map change — the netchan and its
+sequence survive that path.
+
+## Sources
+- qbots: crates/client/src/conn.rs (`cmd_window`, `cmd_triple`, `transmit_payload`)
+- qbots: crates/q2proto/src/usercmd.rs (`parse_clc_move` — decode your own packets)
+- vendor: yquake2/src/server/sv_user.c (`SV_ReadClientMessage`, clc_move arm)
