@@ -912,6 +912,11 @@ pub(crate) async fn bot_task(
     // over the wire. Finding (2026-07-10, this yquake2 server): players carry `modelindex2 = 255`
     // (a sentinel — CS slot 255 is empty), so enemy-weapon inference is NOT available here.
     let p28_debug = std::env::var("QBOTS_P28_DEBUG").is_ok();
+    // Enemy-velocity inspection: with QBOTS_VEL_DEBUG set, log each enemy player's wire
+    // `origin - old_origin` beside the `MotionTracker` velocity every 5th tick. The wire
+    // delta is expected to read ZERO for players on a Yamagi server (see `MotionTracker`);
+    // the tracker column is what aim actually leads with. Read-only.
+    let vel_debug = std::env::var("QBOTS_VEL_DEBUG").is_ok();
 
     // Per-bot span attribution (Plan 09 T3) is applied by the CALLERS via
     // `Future::instrument` (supervisor.rs) — an inline `span.enter()` here leaked its
@@ -1514,6 +1519,33 @@ pub(crate) async fn bot_task(
                                     origin = ?[e.origin[0] as i32, e.origin[1] as i32, e.origin[2] as i32],
                                     dorigin = ?[d[0] as i32, d[1] as i32, d[2] as i32],
                                     "MOVER"
+                                );
+                            }
+                        }
+
+                        if vel_debug && ticks.is_multiple_of(5) {
+                            for e in view
+                                .entities()
+                                .filter(|e| e.class == brain::EntityClass::EnemyPlayer)
+                            {
+                                let wire = frame
+                                    .entities
+                                    .iter()
+                                    .find(|w| w.number == e.entity_number)
+                                    .map(|w| {
+                                        [
+                                            (w.origin[0] - w.old_origin[0]) as i32,
+                                            (w.origin[1] - w.old_origin[1]) as i32,
+                                            (w.origin[2] - w.old_origin[2]) as i32,
+                                        ]
+                                    });
+                                tracing::info!(
+                                    sf = frame.serverframe,
+                                    ent = e.entity_number,
+                                    origin = ?[e.origin.x as i32, e.origin.y as i32, e.origin.z as i32],
+                                    wire_dorigin = ?wire,
+                                    velocity = ?e.velocity.map(|v| [v.x as i32, v.y as i32, v.z as i32]),
+                                    "ENEMY-VEL"
                                 );
                             }
                         }
