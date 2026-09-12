@@ -14,8 +14,9 @@ collision model + navigation graph parsed locally.
 > navigates, fights, and respawns; an N-bot fleet fills a server. The world model (`.bsp`
 > parse + trace + PVS + nav graph + navmesh), the combat/navigation brain, and the fleet
 > supervisor are all complete and verified live. `spawn-to-spawn --count 24` on a parked
-> q2dm1 measured **effective 13–15/24** (0 deferred) on 2026-09-12 — each endpoint an
-> *independent* full 24-bot batch, so the band is run-to-run variance, not an average.
+> q2dm1 measured **effective 13–15/24** (0 deferred) on 2026-09-12 across six *independent*
+> full 24-bot batches — 13, 14, 15, 13 before the day's netchan/perception commits and
+> 13, 14 on `8d8645f24` after them — so the band is run-to-run variance, not an average.
 > Compare only under the same constants (q2dm1, default brain + `astar`, default spacing,
 > server parked with 0 other players); a q2dm3 or non-default-brain run is a different
 > measurement. Stated in the tool's own units so future runs compare without arithmetic.
