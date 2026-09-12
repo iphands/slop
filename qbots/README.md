@@ -22,9 +22,13 @@ collision model + navigation graph parsed locally.
 > measurement. Stated in the tool's own units so future runs compare without arithmetic.
 > An earlier **24/24** headline is retired: it predates this measurement *and* the
 > contamination guards described in `context/pitfalls.md`, without which a rotating or
-> frozen server was silently counted against movement. Current work: moving-platform ride
-> behavior + q2dm3 reachability (Plan 43). Full roadmap: `context/plans/SERIES.md`
-> (Plans 01–43).
+> frozen server was silently counted against movement. Combat perception got its first
+> real enemy velocity on 2026-09-12 (`cc7bf5663`): a player's wire `old_origin` always
+> equals its `origin` on Yamagi, so projectile lead against players had been computed
+> against zero since the start; a per-bot `MotionTracker` now measures it across frames
+> (verified live with `QBOTS_VEL_DEBUG`, 101/101 samples wire-zero vs. tracker ~300 u/s).
+> Current work: moving-platform ride behavior + q2dm3 reachability (Plan 43). Full
+> roadmap: `context/plans/SERIES.md` (Plans 01–43).
 
 ---
 
