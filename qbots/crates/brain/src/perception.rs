@@ -575,7 +575,7 @@ mod tests {
         const { assert!(MAX_TRACK_VELOCITY < 5000.0) }; // cap must reject teleports
     }
 
-    /// Plan 73 regression: enemy velocity must come from the wire's
+    /// Regression guard for a471a2450: enemy velocity must come from the wire's
     /// `old_origin`→`origin` delta. Before this fix `velocity` was structurally
     /// always `None` (the lookup searched the freshly-built vec), which silently
     /// killed all projectile lead prediction and rocket dodging.

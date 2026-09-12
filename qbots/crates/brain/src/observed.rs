@@ -31,7 +31,7 @@ use crate::perception::{player_name, Worldview};
 /// attribution (~2 s): once we've not seen a player for this long we won't pin a
 /// fresh death to their stale last-known node (PVS-honesty, T4). The old
 /// `perception::STALE_THRESHOLD` it was tuned against never fired in practice
-/// (removed, Plan 73) — this TTL is the one that actually bounds staleness here.
+/// (removed, a471a2450) — this TTL is the one that actually bounds staleness here.
 const PLAYER_NODE_TTL: i32 = 20; // ~2 s at 10 Hz
 
 /// Compact heatmap state for periodic debug logging (Plan 08 T4). Cheap to build

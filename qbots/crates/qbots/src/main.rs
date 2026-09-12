@@ -1172,7 +1172,7 @@ pub(crate) async fn bot_task(
                 was_active |= state == ConnState::Active;
 
                 // Measured frame delta for turn-rate limiting (Open Q1, Plan 12) AND for
-                // perception's old_origin→origin velocity (Plan 73). Ticks and received
+                // perception's old_origin→origin velocity (a471a2450). Ticks and received
                 // frames are not phase-locked, so a tick that brings no NEW frame must
                 // carry the last real dt — recomputing it from the unchanged frame gives
                 // gap 0, and dividing the same wire delta by the 0.02 floor fakes 5× speed.
