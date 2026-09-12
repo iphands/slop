@@ -168,7 +168,9 @@ qbots spawn-to-weapon rocketlauncher [--count 24] [--max-secs 60]
   `A`=airborne, `R`=recovery), a `# RESULT verdict=…` line after the column header, and a
   trailing `# SUMMARY verdict=… reached=… …`. Filename, `# RESULT` and the SUMMARY's
   `verdict=` token all carry the verdict, so `ls logs/` — or a grep of the SUMMARY alone —
-  distinguishes a *deferred* (server-voided) run from a genuine *failed* one. Schema lives
+  distinguishes a *deferred* (server-voided) run from a genuine *failed* one. The `# RESULT`
+  line sits between the column header and the first frame row, so frame data begins at
+  `lines[4]`, not `lines[3]` — key off the `#` prefix, never a fixed row index. Schema lives
   in `crates/brain/src/recorder.rs`. `./logs/` is gitignored.
 - **Exit code**: `0` = every valid run reached; `2` = at least one valid run failed to
   reach; `3` = **every** run was deferred — the server voided all of them (intermission,

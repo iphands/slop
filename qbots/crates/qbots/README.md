@@ -160,7 +160,9 @@ The `spawn-to-spawn` and `spawn-to-weapon` scenarios measure navigation quality:
 
 - **Output:** `./logs/<scenario>/<unix_ts>.<bot>.<verdict>.log` — one frame per line,
   a `# RESULT verdict=…` line after the header, a trailing `# SUMMARY verdict=… reached=…`.
-  The filename carries the verdict so a voided run never reads as a failed one.
+  The filename carries the verdict so a voided run never reads as a failed one. `# RESULT`
+  sits between the column header and the frame rows, so frame data begins at `lines[4]`,
+  not `lines[3]` — key off the `#` prefix, not a fixed row index.
 - **Exit code:** `0` = every valid run reached; `2` = at least one valid run failed;
   `3` = **every** run was deferred by the server (intermission / level rotation / drop)
   — a void measurement, NOT a movement failure; `FAILURE` = setup/IO error (incl. a bot
