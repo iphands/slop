@@ -950,6 +950,8 @@ pub(crate) async fn bot_task(
     // the first frame; dropped (and decremented) on every exit path, panic included.
     let mut beacon_active: Option<beacon::ActiveBot> = None;
     let mut last_serverframe: Option<i32> = None;
+    // Carried dt for ticks that bring no NEW frame (see the dt block in the tick arm).
+    let mut last_dt: f32 = 0.1;
     let mut last_health: Option<i32> = None; // Track health across frames for damage detection
     let mut last_armor: Option<i32> = None; // Track armor for pickup detection (Plan 67)
     let mut last_pickup_cs: Option<i16> = None; // Track STAT_PICKUP_STRING for weapon pickups (Plan 68)
@@ -1168,6 +1170,24 @@ pub(crate) async fn bot_task(
                 let (frame_opt, cs) = (conn.frame.clone(), conn.configstrings().clone());
                 let state = conn.state();
                 was_active |= state == ConnState::Active;
+
+                // Measured frame delta for turn-rate limiting (Open Q1, Plan 12) AND for
+                // perception's old_origin→origin velocity (Plan 73). Ticks and received
+                // frames are not phase-locked, so a tick that brings no NEW frame must
+                // carry the last real dt — recomputing it from the unchanged frame gives
+                // gap 0, and dividing the same wire delta by the 0.02 floor fakes 5× speed.
+                let dt = match frame_opt.as_ref() {
+                    Some(f) if Some(f.serverframe) != last_serverframe => {
+                        let d = ((f.serverframe - last_serverframe.unwrap_or(f.serverframe - 1))
+                            .max(1) as f32
+                            * 0.1)
+                            .clamp(0.02, 0.3);
+                        last_serverframe = Some(f.serverframe);
+                        last_dt = d;
+                        d
+                    }
+                    _ => last_dt,
+                };
 
                 // Plan 64: pace the map-change re-handshake. The hold is the per-bot
                 // anti-herd jitter; once it passes, the hard path sends getchallenge
@@ -1576,16 +1596,6 @@ pub(crate) async fn bot_task(
                         // build_cmd can subtract it — without this, every aim/move direction
                         // is rotated by the persistent spawn-yaw offset. (pmove.c:1255)
                         move_ctrl.set_delta_angles(frame.playerstate.pmove.delta_angles);
-
-                        // Measured frame delta for turn-rate limiting (Open Q1, Plan 12).
-                        let current_sf = frame.serverframe;
-                        let dt = if let Some(prev_sf) = last_serverframe {
-                            let sf_delta = (current_sf - prev_sf).max(0) as f32;
-                            (sf_delta * 0.1).clamp(0.02, 0.3)
-                        } else {
-                            0.1
-                        };
-                        last_serverframe = Some(current_sf);
 
                         // The brain owns all per-frame decisions (Plan 22): combat, FSM,
                         // goal selection, steering, stuck recovery, jump-edge, dodge. The

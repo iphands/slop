@@ -30,8 +30,11 @@ const STAT_ARMOR: usize = 5;
 /// `STAT_FRAGS` — our frag count (`hud.c`). Incremented by the server on kills.
 const STAT_FRAGS: usize = 14;
 
-/// How many frames an entity can be unseen before marked stale.
-const STALE_THRESHOLD: i32 = 10; // ~1 second at 10 Hz
+/// Cap on derived velocity (u/s). Fastest real motion: rocket 700, rocket-jump
+/// bounce ~1000. Above this it is a teleport/spawnbaseline/multi-frame gap, and
+/// `aim_direction` fails safe on `None` (treats the target as stationary) where a
+/// bogus 9000 u/s value would lead a shot metres past the target.
+const MAX_TRACK_VELOCITY: f32 = 2000.0;
 
 /// Classification of an entity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,8 +57,12 @@ pub struct PerceivedEntity {
     pub entity_number: i32,
     pub class: EntityClass,
     pub origin: Vec3,
-    #[allow(dead_code)]
-    pub velocity: Option<Vec3>, // None if stale > 2 frames
+    /// Measured velocity in u/s: the wire's `old_origin`→`origin` delta over the
+    /// frame's own delta span ([`Frame::velocity_dt`]). Always `Some` — stationary
+    /// and baseline updates measure a real zero, teleports are zeroed (see
+    /// [`MAX_TRACK_VELOCITY`]). `Option` is kept so a future persistent-staleness
+    /// store can express "no idea" for entities we have never seen.
+    pub velocity: Option<Vec3>,
     pub angles: Vec3,
     pub health: Option<i32>,
     pub weapon: Option<i32>,
@@ -63,11 +70,16 @@ pub struct PerceivedEntity {
     /// → CS_MODELS, Plan 28). `None` for non-players, when VWep is off, or an unknown model — we
     /// never guess. Lets `main` read the matchup (hold range vs a railgunner, rush a shotgunner).
     pub held_weapon: Option<Weapon>,
+    /// The frame this entity was last seen in a packet (for staleness reporting).
     pub last_seen_frame: i32,
+    /// Always `false` for entities present in the current frame: the Q2 delta
+    /// stream only transmits **visible** entities, and [`Worldview::from_frame`]
+    /// builds its list from that list, so every entity here was seen *this* frame.
+    /// A `true` value can therefore only come from a test helper
+    /// (`entities_mut`); cross-PVS memory — knowing where an entity we lost sight
+    /// of was last — needs a persistent per-bot store, which is not yet built.
+    /// Until then, treat this as a permanent `false` at runtime.
     pub is_stale: bool,
-    /// Previous frame's origin for velocity calculation.
-    #[allow(dead_code)]
-    last_origin: Option<Vec3>,
 }
 
 /// The bot's own state.
@@ -161,23 +173,23 @@ impl Worldview {
             };
 
             let origin = Vec3::from(entity_state.origin);
-            let prev = entities
-                .iter()
-                .find(|e| e.entity_number == entity_state.number);
-
+            // Velocity comes straight off the wire: `old_origin` is the origin as of
+            // this frame's DELTA SOURCE, so one subtraction gives the measured motion
+            // over `Frame::velocity_dt()` (the delta's own frame span — dividing by a
+            // wall-clock dt mixes units and re-inflates the gap). Over-cap values are a
+            // teleport or a >5-tick stale delta: zero, because lead prediction fails
+            // safe at zero and detonates at 9000 u/s.
+            let v = (origin - Vec3::from(entity_state.old_origin)) / frame.velocity_dt();
+            let velocity = Some(if v.length() > MAX_TRACK_VELOCITY {
+                Vec3::ZERO
+            } else {
+                v
+            });
             let perceived = PerceivedEntity {
                 entity_number: entity_state.number,
                 class,
                 origin,
-                velocity: prev.and_then(|p| {
-                    if p.last_seen_frame == frame.serverframe - 1 {
-                        let dt = 0.1; // Assume 10 Hz
-                        let delta = origin - p.origin;
-                        Some(delta / dt)
-                    } else {
-                        None
-                    }
-                }),
+                velocity,
                 angles: Vec3::from(entity_state.angles),
                 health: if class != EntityClass::SelfPlayer {
                     None // Only self has health in playerstate
@@ -196,19 +208,11 @@ impl Worldview {
                     })
                     .flatten(),
                 last_seen_frame: frame.serverframe,
+                // Present this frame ⇒ not stale by definition (see the field doc).
                 is_stale: false,
-                last_origin: Some(origin),
             };
 
             entities.push(perceived);
-        }
-
-        // Mark stale entities
-        for entity in &mut entities {
-            if frame.serverframe - entity.last_seen_frame > STALE_THRESHOLD {
-                entity.is_stale = true;
-                entity.velocity = None;
-            }
         }
 
         Worldview {
@@ -549,10 +553,123 @@ mod tests {
         assert_eq!(classify_model("unknown"), None);
     }
 
+    /// The velocity cap must bracket real motion: above the fastest projectile
+    /// (`Weapon::projectile_speed`) so no real threat is clipped, far below any
+    /// teleport so gaps are still rejected. Asserts against the weapons table
+    /// rather than a copy-pasted constant that drifts from what it guards.
     #[test]
-    fn test_stale_threshold() {
-        const { assert!(STALE_THRESHOLD > 0) };
-        const { assert!(STALE_THRESHOLD <= 20) }; // Reasonable decay
+    fn velocity_cap_brackets_real_motion() {
+        for w in [
+            Weapon::Blaster,
+            Weapon::GrenadeLauncher,
+            Weapon::RocketLauncher,
+            Weapon::Hyperblaster,
+            Weapon::Bfg10k,
+        ] {
+            let speed = w.projectile_speed().unwrap_or(0.0);
+            assert!(
+                MAX_TRACK_VELOCITY > speed,
+                "{w:?} travels at {speed} u/s; the cap would clip it into zero velocity"
+            );
+        }
+        const { assert!(MAX_TRACK_VELOCITY < 5000.0) }; // cap must reject teleports
+    }
+
+    /// Plan 73 regression: enemy velocity must come from the wire's
+    /// `old_origin`→`origin` delta. Before this fix `velocity` was structurally
+    /// always `None` (the lookup searched the freshly-built vec), which silently
+    /// killed all projectile lead prediction and rocket dodging.
+    #[test]
+    fn velocity_derives_from_old_origin() {
+        use q2proto::{EntityState, Frame};
+        // deltaframe 100 → a 1-tick delta, so velocity_dt() is the nominal 0.1 s.
+        let frame = Frame {
+            serverframe: 101,
+            deltaframe: 100,
+            entities: vec![
+                // Mover: last transmitted at (100,0,0), now (120,0,0) → 20u/0.1s.
+                EntityState {
+                    number: 2,
+                    origin: [120.0, 0.0, 0.0],
+                    old_origin: [100.0, 0.0, 0.0],
+                    modelindex: 255,
+                    ..Default::default()
+                },
+                // Stationary (old_origin == origin after the carry-through stamp):
+                // a real zero, not a dropout — aim/lead treat zero and None alike,
+                // and danger.rs ignores a zero-velocity entity either way.
+                EntityState {
+                    number: 3,
+                    origin: [500.0, 0.0, 0.0],
+                    old_origin: [500.0, 0.0, 0.0],
+                    modelindex: 255,
+                    ..Default::default()
+                },
+            ],
+            ..Frame::default()
+        };
+        let cs = ConfigStrings::default();
+        let view = Worldview::from_frame(&frame, &cs, 0);
+        let mut ents = view.entities();
+        let mover = ents.next().expect("mover");
+        let v = mover.velocity.expect("moving entity must have velocity");
+        assert!(
+            (v.x - 200.0).abs() < 0.01 && v.y.abs() < 0.01,
+            "20u over 0.1s must read 200 u/s along x, got {v}"
+        );
+        let still = ents.next().expect("stationary");
+        assert_eq!(
+            still.velocity,
+            Some(Vec3::ZERO),
+            "unchanged origin → real zero"
+        );
+    }
+
+    /// A teleport (or any multi-frame-gap artifact) must NOT produce a huge
+    /// velocity: a fake 9000 u/s vector would lead a rocket 900u past the
+    /// target. Over the cap collapses to zero — fail safe.
+    #[test]
+    fn teleport_velocity_is_capped_to_zero() {
+        use q2proto::{EntityState, Frame};
+        let frame = Frame {
+            entities: vec![EntityState {
+                number: 2,
+                origin: [5000.0, 0.0, 0.0],
+                old_origin: [0.0, 0.0, 0.0], // 50 km/s
+                modelindex: 255,
+                ..Default::default()
+            }],
+            ..Frame::default()
+        };
+        let view = Worldview::from_frame(&frame, &ConfigStrings::default(), 0);
+        assert_eq!(
+            view.entities().next().unwrap().velocity,
+            Some(Vec3::ZERO),
+            "absurd delta must not be reported as motion"
+        );
+    }
+
+    /// Velocity must divide by the DELTA's frame span (`serverframe - deltaframe`),
+    /// not a nominal tick: the same 20u step across a 2-tick delta is 100 u/s, and
+    /// dividing by 0.1 would report 200 — the inflation that made the first pass of
+    /// this fix wrong (a 3-frame gap reads a strafe as a rocket).
+    #[test]
+    fn velocity_divides_by_delta_span() {
+        use q2proto::{EntityState, Frame};
+        let frame = Frame {
+            serverframe: 103,
+            deltaframe: 101, // 2-tick delta
+            entities: vec![EntityState {
+                number: 2,
+                origin: [120.0, 0.0, 0.0],
+                old_origin: [100.0, 0.0, 0.0],
+                modelindex: 255,
+                ..Default::default()
+            }],
+            ..Frame::default()
+        };
+        let view = Worldview::from_frame(&frame, &ConfigStrings::default(), 0);
+        assert!((view.entities().next().unwrap().velocity.unwrap().x - 100.0).abs() < 0.01);
     }
 
     /// LOS-gated selection (Plan 11): the nearer enemy is behind a wall, the

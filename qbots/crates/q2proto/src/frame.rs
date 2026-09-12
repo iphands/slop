@@ -19,6 +19,23 @@ pub struct Frame {
     pub entities: Vec<EntityState>,
 }
 
+impl Frame {
+    /// Seconds spanned by this frame's entity deltas: `serverframe - deltaframe`
+    /// tick(s) at the nominal 10 Hz. Entity `old_origin` is the origin as of the
+    /// DELTA SOURCE frame, so `(origin - old_origin) / velocity_dt()` is the
+    /// measured velocity; dividing by a single-tick dt inflates it `gap`× on a
+    /// 2+ frame gap (a 300 u/s strafe reads 900, a rocket reads "teleport").
+    /// `deltaframe <= 0` (uncompressed/baseline) spans ≥ 2 nominal ticks.
+    pub fn velocity_dt(&self) -> f32 {
+        let gap = if self.deltaframe <= 0 {
+            2
+        } else {
+            (self.serverframe - self.deltaframe).max(1)
+        };
+        (gap as f32 * 0.1).clamp(0.1, 0.5) // 0.5 cap = 5 ticks, under UPDATE_BACKUP/2
+    }
+}
+
 /// A ring of `UPDATE_BACKUP` frames for delta decoding, indexed `serverframe & UPDATE_MASK`.
 #[derive(Debug, Clone)]
 pub struct FrameRing {
@@ -69,9 +86,14 @@ pub fn parse_packet_entities(
             return Err(DecodeError::Invalid("entity number"));
         }
 
-        // Copy unchanged old entities (oldnum < newnum) straight through.
+        // Copy unchanged old entities (oldnum < newnum) straight through. The server
+        // omitted them precisely because NOTHING changed, so last-motion == now:
+        // stamp `old_origin = origin` so the carry-through reads as stationary
+        // instead of replaying whatever stale delta the clone happened to carry.
         while old_idx < old_ents.len() && old_ents[old_idx].number < newnum {
-            out.push(old_ents[old_idx].clone());
+            let mut e = old_ents[old_idx].clone();
+            e.old_origin = e.origin;
+            out.push(e);
             old_idx += 1;
         }
 
@@ -92,9 +114,11 @@ pub fn parse_packet_entities(
         out.push(EntityState::read_delta(r, &from, newnum, bits)?);
     }
 
-    // Any trailing old entities are unchanged.
+    // Any trailing old entities are unchanged: same stationary carry-through as above.
     while old_idx < old_ents.len() {
-        out.push(old_ents[old_idx].clone());
+        let mut e = old_ents[old_idx].clone();
+        e.old_origin = e.origin;
+        out.push(e);
         old_idx += 1;
     }
 
