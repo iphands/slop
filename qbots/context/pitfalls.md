@@ -1459,6 +1459,46 @@ as a first-class answer.
 - vendor: yquake2/src/server/sv_init.c (`SV_SpawnServer` spawncount++ / broadcast reconnect)
 - vendor: yquake2/src/game/player/client.c + hud.c (`PM_FREEZE` sources, intermission teleport)
 
+### Recognising a voided run from the numbers alone
+
+For **pre-verdict archives** (logs with no `# RESULT` line), or when a verdict tag itself
+looks wrong. Discriminate on **elapsed-to-cap + zero-vs-nonzero**, never magnitude:
+
+| shape | elapsed | distance | flags |
+|---|---|---|---|
+| genuine `failed` | at cap | > 0 | mixed `B`/`W`/`H`/`P` |
+| frozen intermission | at cap | 0 | all `A` |
+| dropped mid-run (rotation / kick / interrupt) | **below cap** | > 0 | mixed |
+
+The third row's elapsed is low *because* `RunSummary::summary()` takes `elapsed` from the
+**last sampled frame**, and sampling stops when the run leaves `Active` — so the clock
+stops where the level did. Row-count and elapsed are one observation, not two, which is
+also why this shape is **not** uniquely a rotation: in this repo's archive 38 pre-verdict
+runs are early-with-distance>0-and-`reached=0`, spanning every early-abort cause. Use the
+tag when you have one. The frozen row is exact and self-contained: all 28 such pre-verdict
+runs are at cap, `distance=0`, flags all `A`, 295–297 rows.
+
+Magnitude is not a signal: the genuine failures of the 2026-09-12 batch spanned bumps
+5..53 and distance 1336..5491, so any "bumps in the tens" threshold misclassifies the
+bump=5 sample that is unambiguously real locomotion. `distance` is cumulative
+*travelled path*, not distance-to-goal — non-zero proves the bot moved, never that it
+closed. Verdict-era runs void **at onset** and break on the detecting tick, so their
+`elapsed` is early even for a freeze — for those trust `# RESULT … frozen_from_t=` over
+this table. Pre-verdict runs idled or stalled to the cap only because nothing detected
+them, which is exactly why the table works on them and not on new logs.
+
+Trap that survives verdicts: exit 2 covers ANY failed run — 19 deferred + 2 real
+failures still exits 2. Read the aggregate's deferred breakdown before believing one;
+exit 3 fires only when nothing at all measured.
+
+Third shape inside `failed`, a different bug: a run flagged `P` (riding a mover) whose
+origin stops advancing while its frame counter climbs is a ride that failed to complete
+(Plan 43), not a wall-bump and not a link stall — verified: origin `1756 1029 1048` and
+velocity `0 0 0` on 185 of 298 rows, from t=11.5 s (frame 36937) to the cap (37118). It
+stays `failed`; tagging it `deferred` would hide our bug behind the server's excuse, the
+inversion `SetupError` exists to prevent. A frozen *frame counter* is the link-stall
+shape; a climbing one with a frozen origin is us.
+
 ### Known gap left open (found in review, NOT fixed here)
 
 Every detector above keys on *level identity*; none keys on *frame freshness*. `run_scenario`

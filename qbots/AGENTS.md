@@ -362,7 +362,9 @@ cargo run -p qbots -- spawn-to-weapon railgun --instance 1 --map q2dm3
   NOT a movement failure; `FAILURE` = setup/IO error, including a bot that never became
   Active. Contaminated runs are reported as `deferred` and excluded from the printed
   *effective* denominator; the in-loop detectors (PM_FREEZE onset, `servercount` change)
-  and the pitfalls entry in `context/pitfalls.md` explain why a naive `N/M` used to lie.
+  and the pitfalls entry in `context/pitfalls.md` explain why a naive `N/M` used to lie
+  — its "Recognising a voided run from the numbers alone" table is the fallback for
+  pre-verdict archives and for when a tag itself looks wrong.
 
 The **baseline** for regression comparison is the README's dated headline band
 (`effective 13–15/24`, measured 2026-09-12), stated in the tool's own units — compare
