@@ -21,7 +21,7 @@ use q2proto::{
 use tokio::net::UdpSocket;
 use tokio::time;
 
-use crate::parse::{parse_message, ConfigStrings, ServerData, SvcEvent};
+use crate::parse::{parse_message, ConfigStrings, ServerData, SvcEvent, CS_MODELS, MAX_MODELS};
 use crate::{Netchan, Userinfo};
 
 /// Max `svc_print` lines buffered between ticks (oldest dropped past this).
@@ -69,6 +69,28 @@ pub struct Conn {
     /// change (`configstrings = default()`, revision-0 content) still climbs the
     /// counter and a cached table can never false-match the new level's.
     cs_revision: u64,
+    /// Second counter, bumped ONLY when a write lands in the model configstring
+    /// range `CS_MODELS..CS_MODELS + MAX_MODELS`. Same bump-on-reset discipline as
+    /// [`Conn::cs_revision`].
+    ///
+    /// Correctness does NOT rest on how often the range is written: the predicate is
+    /// content-agnostic, so *any* in-range write invalidates, on any game DLL — even a
+    /// mod calling `gi.modelindex` mid-match, which is reachable because that import is
+    /// unwrapped (`sv_game.c:481`). Staleness is therefore impossible by construction.
+    /// What the observation below bounds is only how often we REBUILD, which is why a
+    /// second counter is worth having at all: the model range is populated at level
+    /// load — `SV_SpawnServer` writes the bsp + inline models (`sv_init.c:316,331`) and
+    /// `SV_ModelIndex` (`sv_init.c:133`) fills the rest as entities precache. The
+    /// configstrings that DO churn mid-match — `CS_PLAYERSKINS` re-broadcast on every
+    /// spawn/respawn (`ClientUserinfoChanged`, `client.c:1870`) and `CS_LIGHTS` when a
+    /// mover toggles its style (`g_misc.c:761`) — are all OUTSIDE the range. Keying the
+    /// cache on the shared `cs_revision` would rebuild on every respawn across a 32-bot
+    /// server to reproduce a byte-identical table; `model_revision` moves once per level
+    /// LOAD (which repeats within one map on `map_restart`, also correct — the stale
+    /// table dies there too). (An earlier draft blamed `CS_ITEMS` item pickups — wrong:
+    /// `g_items.c:1163` sets the `STAT_PICKUP_STRING` *stat*, and `CS_ITEMS` itself is
+    /// written only once by `SetItemNames` at worldspawn.)
+    model_revision: u64,
     pub serverdata: Option<ServerData>,
     ring: FrameRing,
     /// Most recently decoded server frame (our state + visible world).
@@ -111,6 +133,7 @@ impl Conn {
             netchan: None,
             configstrings: ConfigStrings::default(),
             cs_revision: 0,
+            model_revision: 0,
             serverdata: None,
             ring: FrameRing::new(),
             frame: None,
@@ -493,6 +516,14 @@ impl Conn {
         self.cs_revision
     }
 
+    /// The current [`Conn::model_revision`] value. A caller caching a
+    /// modelindex→classification table keys on this rather than
+    /// [`Conn::cs_revision`], so configstring traffic outside the model range
+    /// (item pickups, player skins, lightstyles) does not force a rebuild.
+    pub fn model_revision(&self) -> u64 {
+        self.model_revision
+    }
+
     /// The ONLY writer into `configstrings` after construction: store one slot and
     /// bump [`Conn::cs_revision`] so memoizing callers notice. Route every
     /// `svc_configstring` through here — a direct `self.configstrings.set(..)` would
@@ -501,18 +532,24 @@ impl Conn {
     fn write_configstring(&mut self, index: usize, value: String) {
         self.configstrings.set(index, value);
         self.cs_revision = self.cs_revision.wrapping_add(1);
+        if (CS_MODELS..CS_MODELS + MAX_MODELS).contains(&index) {
+            self.model_revision = self.model_revision.wrapping_add(1);
+        }
     }
 
     /// Drop the whole configstring table for a level change (the `reconnect` stufftext
-    /// and `svc_reconnect` paths) and bump [`Conn::cs_revision`]. Bumping on reset is
-    /// the whole point: a fresh [`ConfigStrings::default`] has revision-0 content,
-    /// and a cached clone made against the PREVIOUS level's nonzero revision must not
-    /// be reused for the new one. Without the bump the cached rev could, after enough
-    /// writes on the new level, coincidentally equal the cached value and serve the old
-    /// map's model table forever.
+    /// and `svc_reconnect` paths) and bump BOTH counters. Bumping on reset is the whole
+    /// point: without it the counter is UNCHANGED across a total content wipe, so any
+    /// caller whose cached revision already equals it keeps serving the previous map's
+    /// table forever — immediately, not after some number of later writes. (The
+    /// counter living on `Conn` rather than on `ConfigStrings` is what makes it
+    /// monotonic across the wipe; see [`Conn::cs_revision`].)
     fn reset_configstrings(&mut self) {
         self.configstrings = ConfigStrings::default();
         self.cs_revision = self.cs_revision.wrapping_add(1);
+        // Unconditional, not range-scoped: a wipe DOES change what every modelindex
+        // resolves to, so it is a model-range event whatever caused it.
+        self.model_revision = self.model_revision.wrapping_add(1);
     }
 
     /// Drain `svc_print` lines accumulated since the last call (obituaries, chat,
@@ -902,6 +939,62 @@ mod tests {
             "a new-level write must not reuse the stale rev"
         );
         assert_eq!(c.configstrings().get(32), Some("models/new_map.md2"));
+    }
+
+    /// The range scoping is what earns the second counter: the model range is written
+    /// only at level load, while `CS_PLAYERSKINS` (every spawn/respawn,
+    /// `client.c:1870`) and `CS_LIGHTS` (`g_misc.c:761`) churn mid-match outside it, so
+    /// keying the cache on `cs_revision` would rebuild an unchanged table on every
+    /// respawn. Pins the boundary at BOTH edges — the index just below the range, the
+    /// two endpoints, and `CS_SOUNDS` (288), the first index above it, which is the
+    /// one a hand-written `index > CS_MODELS` check would wrongly admit.
+    #[test]
+    fn only_model_range_writes_bump_model_revision() {
+        let mut c = active_conn();
+        assert_eq!((c.cs_revision(), c.model_revision()), (0, 0));
+
+        // Each feed gets its OWN ascending sequence: `Netchan::process` discards a
+        // packet whose sequence does not advance (`netchan.rs:145`), so reusing one
+        // would make the 2nd and 3rd assertions pass because the packet was DROPPED,
+        // not because the range check rejected the index. `active_conn` ends at seq 3.
+        for (n, &out) in [CS_MODELS - 1, CS_MODELS + MAX_MODELS, 1312]
+            .iter()
+            .enumerate()
+        {
+            c.on_recv(&server_frame(
+                4 + n as u32,
+                3,
+                &configstring_payload(out as i16, "models/off_range.md2"),
+            ));
+            assert_eq!(
+                (c.cs_revision(), c.model_revision()),
+                (1 + n as u64, 0),
+                "index {out} is outside CS_MODELS..CS_MODELS+MAX_MODELS: the table \
+                 revision climbs, the model revision must not"
+            );
+        }
+
+        // In range, both endpoints.
+        for (n, &idx) in [CS_MODELS, CS_MODELS + MAX_MODELS - 1].iter().enumerate() {
+            c.on_recv(&server_frame(
+                7 + n as u32,
+                3,
+                &configstring_payload(idx as i16, "models/w_shotgun.md2"),
+            ));
+            assert_eq!(
+                (c.cs_revision(), c.model_revision()),
+                (4 + n as u64, 1 + n as u64),
+                "index {idx} is IN the model range and bumps both"
+            );
+        }
+
+        // A level wipe IS a model event whatever wrote it: both counters climb.
+        c.on_recv(&server_frame(9, 3, &stufftext_payload("reconnect\n")));
+        assert_eq!(
+            (c.cs_revision(), c.model_revision()),
+            (6, 3),
+            "reset bumps both unconditionally"
+        );
     }
 
     /// A server→client netchan packet whose ack word also acknowledges the client's

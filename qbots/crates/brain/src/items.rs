@@ -280,8 +280,7 @@ mod tests {
     use client::parse::ConfigStrings;
     use q2proto::{EntityState, Frame};
 
-    /// CS_MODELS base (perception's private const) — a model configstring is at `32 + modelindex`.
-    const CS_MODELS: usize = 32;
+    use client::CS_MODELS;
 
     /// Worldview with the bot at `self_origin` and the given item entities (each a `(origin,
     /// model_string)`; the model string is classified by the perception layer — use one containing

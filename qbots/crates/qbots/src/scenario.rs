@@ -20,7 +20,7 @@ use glam::Vec3;
 use tokio::net::UdpSocket;
 
 use brain::nav::NavGoal;
-use brain::perception::Worldview;
+use brain::perception::{ModelTable, Worldview};
 use brain::recorder::{CmWallProbe, MovementRecorder, Sample, WallProbe};
 use brain::{
     build_brain, BotSkill, Brain, BrainConfig, BrainContext, BrainKind, BrainMap,
@@ -420,6 +420,8 @@ pub async fn run_scenario(
     // Re-clone only when `Conn::cs_revision` moves (a configstring write or level reset).
     let mut cs = conn.configstrings().clone();
     let mut cs_rev = conn.cs_revision();
+    // Modelindex→class cache; see the fleet loop in main.rs and `Conn::model_revision`.
+    let mut models = ModelTable::default();
 
     loop {
         if shutdown.requested() {
@@ -455,7 +457,13 @@ pub async fn run_scenario(
                         .map(|frame| {
                             let playernum =
                                 conn.serverdata.as_ref().map(|sd| sd.playernum).unwrap_or(0);
-                            let view = Worldview::from_frame(&frame, &cs, playernum);
+                            let view = Worldview::from_frame_with_models(
+                                &frame,
+                                &cs,
+                                playernum,
+                                &mut models,
+                                conn.model_revision(),
+                            );
                             let self_st = view.self_state();
                             let pos = self_st.origin;
                             let origin_arr = [pos.x, pos.y, pos.z];

@@ -57,7 +57,7 @@ pub use navmesh_driver::NavmeshDriver;
 pub use observed::{
     classify_env_death, parse_obituary, EnvDeath, HeatmapObserver, HeatmapSnapshot, Obituary,
 };
-pub use perception::{EntityClass, PerceivedEntity, SelfState, Worldview};
+pub use perception::{EntityClass, ModelTable, PerceivedEntity, SelfState, Worldview};
 pub use q3char::{CharPreset, Q3Character};
 pub use recorder::{
     CmWallProbe, FrameRecord, MovementRecorder, RunSummary, Sample, WallBump, WallProbe,

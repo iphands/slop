@@ -1362,3 +1362,51 @@ sequence survive that path.
 - qbots: crates/client/src/conn.rs (`cmd_window`, `cmd_triple`, `transmit_payload`)
 - qbots: crates/q2proto/src/usercmd.rs (`parse_clc_move` — decode your own packets)
 - vendor: yquake2/src/server/sv_user.c (`SV_ReadClientMessage`, clc_move arm)
+
+---
+
+# Memoization keyed on a counter the reset itself can reset
+
+## Problem
+
+Fix #5 killed two per-frame costs in the bot tick: a deep `ConfigStrings::clone()`
+(~49 KB + a malloc per filled slot, every tick, per bot) and `Worldview::from_frame`
+re-deriving the whole modelindex→class lookup every frame. Both want a memo, and a memo
+needs an invalidation key — which is where the trap is.
+
+Put the counter ON the cached value (`ConfigStrings.revision`) and a level change
+breaks silently: both reset paths do `configstrings = ConfigStrings::default()`, which
+resets content AND revision to 0. A caller holding revision 5 sees no bump, and once the
+new level has taken five writes its revision is 5 again — equal to the cached one — so
+the caller keeps classifying **map B's entities with map A's model table**. On a DM
+rotation between two maps with an equal configstring count the false match is permanent,
+not transient, and the symptom is "bots ignore items / only spot enemies via the
+`modelindex == 255` sentinel", which reads as an AI bug and gets debugged for hours. A
+per-`Conn` counter survives the reset, and a process-global one closes the same hole but
+leaks invalidation across bots and makes tests order-dependent.
+
+## Fix
+
+Keep the counter beside the OWNER of the data, not the data: `Conn::cs_revision`, bumped
+by the two private funnels that are the only mutators (`write_configstring`,
+`reset_configstrings`). Bump **on reset too** — that is the whole point, and it is the
+bit a reader skims. Make the only-writer invariant compiler-enforced: the field is
+private and `configstrings()` returns `&`, so no path obtains `&mut ConfigStrings`
+without going through a bump. Then pin it with a test that feeds the exact failure
+(write → reset → refill the same index → assert the revision differs from the stale one);
+mutation-reverting either bump must fail it. Two habits: (a) a reset that clears the
+cache MUST move the key, always, even when the key lives on the thing being cleared —
+prefer putting the key where the reset can't reach it; (b) a vendor citation a reviewer
+hands you is still your claim once it's in a `///`. The draft of this fix justified the
+cache by "`CS_ITEMS` flashes on every pickup (`g_items.c:1163`)"; checking vendor showed
+that line sets the `STAT_PICKUP_STRING` *stat*, and `CS_ITEMS` configstrings are written
+once by `SetItemNames` at worldspawn. The real mid-match churn is `CS_PLAYERSKINS`
+(`client.c:1870`, every spawn/respawn) and `CS_LIGHTS` (`g_misc.c:761`) — all outside the
+model range, so the range-scoped `model_revision` is justified, just not for the reason
+written down.
+
+## Sources
+- qbots: crates/client/src/conn.rs (`cs_revision`, `model_revision`, `reset_configstrings`)
+- qbots: crates/brain/src/perception.rs (`ModelTable`, `from_frame_with_models`)
+- vendor: yquake2/src/server/sv_init.c (`SV_SpawnServer`, the only model-range writer)
+- vendor: yquake2/src/game/player/client.c (`ClientUserinfoChanged` → `CS_PLAYERSKINS`)

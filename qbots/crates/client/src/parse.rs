@@ -9,9 +9,21 @@
 
 use q2proto::{DecodeError, EntityState, Reader, SvcOp};
 
-/// Total configstring slots (computed from the CS_* chain in `shared.h:1193-1210`):
+/// Total configstring slots (computed from the CS_* chain in `shared.h:1190-1210`):
 /// `CS_GENERAL(1568) + MAX_GENERAL(512) = 2080`.
 pub const MAX_CONFIGSTRINGS: usize = 2080;
+
+/// `CS_MODELS` (`shared.h:1203`) — start of the model name table. Entity
+/// `modelindex` is 1-based into it, so a model configstring sits at
+/// `CS_MODELS + modelindex`. The model range is `CS_MODELS..CS_MODELS +
+/// MAX_MODELS` = `32..288`; `CS_SOUNDS` (`shared.h:1204`) begins immediately
+/// after it, which is why the bound matters: a sound write must not be
+/// mistaken for a model write (see `Conn::model_revision`).
+pub const CS_MODELS: usize = 32;
+
+/// `MAX_MODELS` (`shared.h:187`), "sent over the net as bytes" — so the model
+/// configstring range is exactly `CS_MODELS..CS_MODELS + MAX_MODELS`.
+pub const MAX_MODELS: usize = 256;
 
 /// `svc_serverdata` payload — parsed from `CL_ParseServerData` (`cl_parse.c:887`).
 #[derive(Debug, Clone, PartialEq, Eq)]

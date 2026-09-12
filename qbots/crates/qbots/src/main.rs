@@ -850,14 +850,14 @@ pub(crate) async fn bot_task(
     persona: Option<brain::persona::Persona>,
     xonchar: Option<brain::XonCharPreset>,
 ) -> std::io::Result<()> {
-    use brain::perception::Worldview;
+    use brain::perception::{ModelTable, Worldview};
     // `Brain` is the plugin trait (its methods resolve on the `Box<dyn Brain>` the factory
     // returns); `build_brain`/`BrainKind` select the implementation, mirroring `build_navigator`.
     use brain::{
         build_brain, BotSkill, Brain, BrainConfig, BrainContext, BrainMap, MovementController,
         Navigator,
     };
-    use client::{Conn, ConnState};
+    use client::{Conn, ConnState, CS_MODELS};
     use q2proto::Usercmd;
     use std::time::Duration;
     use tokio::net::UdpSocket;
@@ -1004,6 +1004,10 @@ pub(crate) async fn bot_task(
     // later in the tick, exactly as the per-tick clone did. See `Conn::cs_revision`.
     let mut cs = conn.configstrings().clone();
     let mut cs_rev = conn.cs_revision();
+    // Modelindex→class cache (fix #5, second half). Keyed on `Conn::model_revision`,
+    // which only moves when the server rewrites the model configstring range — so item
+    // pickups and skin changes leave a correct table alone.
+    let mut models = ModelTable::default();
 
     loop {
         if shutdown.requested() {
@@ -1239,7 +1243,13 @@ pub(crate) async fn bot_task(
                 // Track health across frames for damage detection
                 let mut dmg_this_tick: i32 = 0; // Plan 51: fed to the stall monitor below
                 if let Some(ref frame) = frame_opt {
-                    let view = Worldview::from_frame(frame, &cs, playernum);
+                    let view = Worldview::from_frame_with_models(
+                        frame,
+                        &cs,
+                        playernum,
+                        &mut models,
+                        conn.model_revision(),
+                    );
                     let current_health = view.self_state().health;
                     if current_health > 0 {
                         if let Some(prev) = last_health {
@@ -1416,7 +1426,13 @@ pub(crate) async fn bot_task(
                     }
                 } else if state == ConnState::Active {
                     if let Some(frame) = frame_opt {
-                        let view = Worldview::from_frame(&frame, &cs, playernum);
+                        let view = Worldview::from_frame_with_models(
+                            &frame,
+                            &cs,
+                            playernum,
+                            &mut models,
+                            conn.model_revision(),
+                        );
 
                         // T1 (diagnostic): with QBOTS_OBSERVE_MOVERS set, log MOVING non-player
                         // entities each frame — their live wire origin + per-frame delta. Brush
@@ -1425,7 +1441,6 @@ pub(crate) async fn bot_task(
                         // Lets us MEASURE a func_train's actual wire origin/motion (vs the assumed
                         // `corner - mins`) and, with the model bounds, its standable top. Read-only.
                         if observe_movers {
-                            const CS_MODELS: usize = 32;
                             for e in &frame.entities {
                                 let moved = e.origin != e.old_origin;
                                 let nonzero = e.origin != [0.0, 0.0, 0.0];
@@ -1455,7 +1470,6 @@ pub(crate) async fn bot_task(
                         }
 
                         if p28_debug && ticks.is_multiple_of(15) {
-                            const CS_MODELS: usize = 32;
                             for e in &frame.entities {
                                 if e.modelindex == 255 {
                                     let wield = if e.modelindex2 > 0 {

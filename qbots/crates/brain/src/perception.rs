@@ -5,12 +5,13 @@
 //! decay. Classification is based on configstrings (CS_MODELS, CS_PLAYERSKINS).
 
 use crate::weapons::Weapon;
-use client::parse::ConfigStrings;
+use client::parse::{ConfigStrings, CS_MODELS, MAX_MODELS};
 use glam::Vec3;
 use q2proto::{Frame, PlayerState};
 
-/// Configstring index where the models table starts (`CS_MODELS`, `shared.h:1193`).
-const CS_MODELS: usize = 32;
+// `CS_MODELS` (32, `shared.h:1203`) and `MAX_MODELS` (256, `shared.h:187`) come from
+// `client::parse` as the single source of truth; the model configstring range is
+// `CS_MODELS..CS_MODELS + MAX_MODELS` = `32..288` (`CS_SOUNDS` starts at 288).
 
 /// `CS_PLAYERSKINS` — start of the per-client infostring table (`shared.h:1208`).
 /// Derived for yquake2 (MAX_CLIENTS = MAX_MODELS = MAX_SOUNDS = MAX_IMAGES =
@@ -114,41 +115,166 @@ pub struct Worldview {
     pub frame_number: i32,
     pub self_state: SelfState,
     entities: Vec<PerceivedEntity>,
-    /// Pre-built lookup: modelindex → EntityClass.
-    #[allow(dead_code)]
-    model_to_class: Vec<EntityClass>,
     /// Previous frame's health for detecting damage.
     prev_health: i32,
 }
 
-impl Worldview {
-    /// Build a Worldview from a Frame, configstrings, and our player number.
-    /// `playernum` is the 0-based slot from `svc_serverdata`; our entity = playernum+1.
-    pub fn from_frame(frame: &Frame, configstrings: &ConfigStrings, playernum: i16) -> Self {
-        // Build modelindex→class lookup. Entity modelindex is 1-based into CS_MODELS,
-        // so configstring index CS_MODELS+modelindex maps to model_to_class[modelindex].
-        let mut model_to_class = vec![EntityClass::Unknown; 256];
-        // Parallel lookup for the VWep wield model (`modelindex2`) → enemy's held weapon (Plan 28).
-        let mut model_to_weapon: Vec<Option<Weapon>> = vec![None; 256];
+/// The modelindex→classification lookup, rebuilt only when the server rewrites the
+/// model configstring range.
+///
+/// This is the second half of fix #5: `Worldview::from_frame` used to re-derive the
+/// whole table every frame. It is static for the life of a level — the model range is
+/// written only during level load, by `SV_SpawnServer` (`sv_init.c:316,331`) and by
+/// gamecode's `gi.ModelIndex`→`SV_ModelIndex` (`sv_init.c:133`) as entities spawn, and
+/// never touched again until the next map, while the configstrings that do churn
+/// mid-match (`CS_PLAYERSKINS` on every spawn/respawn, `CS_LIGHTS` on a toggled mover)
+/// sit outside the range, keyed by `Conn::cs_revision` rather than `Conn::model_revision`.
+/// Rebuilding per frame recomputed ~100 identical classifications per bot per tick.
+///
+/// The arrays are inline, not `Vec`: the range is fixed at `MAX_MODELS`, so the whole
+/// cache is a 528-byte struct with no heap allocation (both element types are 1-byte
+/// discriminants — measured, not assumed), and a rebuild is a fixed-size refill instead
+/// of two allocations plus a rescan. It is `Copy`-free by design — a per-bot cache
+/// should be moved, not duplicated.
+#[derive(Debug, Clone)]
+pub struct ModelTable {
+    /// The [`client::Conn::model_revision`] this table was built against. `u64::MAX`
+    /// means "never built" so a first `ensure` always rebuilds without a bool flag.
+    revision: u64,
+    model_to_class: [EntityClass; MAX_MODELS],
+    model_to_weapon: [Option<Weapon>; MAX_MODELS],
+    /// How many times the table has actually been rebuilt, read through
+    /// [`ModelTable::build_count`]. Observability, not behaviour: the freshness
+    /// guarantee (steady frames ⇒ one build) is the whole point of this type, and
+    /// nothing else in the gate can see it. Private behind an accessor so nothing
+    /// outside [`ModelTable::rebuild`] can scribble it, while the accessor — on a type
+    /// re-exported from the crate root — keeps it externally reachable and so out of
+    /// the `dead_code` lint that `-D warnings` would otherwise raise.
+    build_count: u32,
+}
+
+impl ModelTable {
+    /// Number of times this table has been rebuilt. `0` means it has never been
+    /// built; steady-state frames must leave it unmoved.
+    pub fn build_count(&self) -> u32 {
+        self.build_count
+    }
+}
+
+impl Default for ModelTable {
+    fn default() -> Self {
+        Self {
+            // Sentinel, NOT a derived 0: a fresh `Conn::model_revision()` IS 0, so a
+            // `revision: 0` would make the first `ensure` a no-op and serve an
+            // all-`Unknown` table until a model write happened to bump the counter —
+            // silent, frame-plausible, green-suite. No real revision reaches u64::MAX.
+            revision: u64::MAX,
+            model_to_class: [EntityClass::Unknown; MAX_MODELS],
+            model_to_weapon: [None; MAX_MODELS],
+            build_count: 0,
+        }
+    }
+}
+
+impl ModelTable {
+    /// A table built from `configstrings`, for callers that have no long-lived cache
+    /// to feed (tests, cold paths). Prefer [`Worldview::from_frame_with_models`] in a
+    /// bot loop.
+    fn built(configstrings: &ConfigStrings) -> Self {
+        let mut t = Self::default();
+        t.rebuild(configstrings);
+        t
+    }
+
+    /// Re-derive both lookups from the model configstring range.
+    ///
+    /// The reset-to-`Unknown` refill is REQUIRED, not conservative tidying: across a
+    /// level change the new map may not precache a model the old one did, and the
+    /// stale slot would then classify the new level's entities with the old level's
+    /// answer. It is a 512-byte refill against a rebuild that used to cost two heap
+    /// allocations plus ~100 `to_lowercase` allocations, so it is not the cost anyone
+    /// worries about.
+    fn rebuild(&mut self, configstrings: &ConfigStrings) {
+        self.model_to_class = [EntityClass::Unknown; MAX_MODELS];
+        self.model_to_weapon = [None; MAX_MODELS];
         for (i, model_str) in configstrings.iter() {
             if i < CS_MODELS {
                 continue;
             }
             let modelindex = i - CS_MODELS;
-            if modelindex < model_to_class.len() {
+            if modelindex < MAX_MODELS {
                 if let Some(class) = classify_model(model_str) {
-                    model_to_class[modelindex] = class;
+                    self.model_to_class[modelindex] = class;
                 }
                 if let Some(w) = Weapon::from_wield_model(model_str) {
-                    model_to_weapon[modelindex] = Some(w);
+                    self.model_to_weapon[modelindex] = Some(w);
                 }
             }
         }
+        self.build_count = self.build_count.saturating_add(1);
+    }
 
+    /// Rebuild iff `model_revision` (from [`client::Conn::model_revision`]) differs
+    /// from the one this table was built against. Cheap steady-state path: one
+    /// `u64` compare.
+    fn ensure(&mut self, configstrings: &ConfigStrings, model_revision: u64) {
+        if model_revision != self.revision {
+            self.rebuild(configstrings);
+            self.revision = model_revision;
+        }
+    }
+}
+
+impl Worldview {
+    /// Build a Worldview from a Frame, configstrings, and our player number.
+    /// `playernum` is the 0-based slot from `svc_serverdata`; our entity = playernum+1.
+    ///
+    /// Rebuilds the model table from scratch on every call. A bot loop should hold a
+    /// [`ModelTable`] and call [`Worldview::from_frame_with_models`] instead — the
+    /// table is static for the life of a level, so re-deriving it per frame is the
+    /// cost fix #5 removes. This wrapper stays because ~25 test and cold-path callers
+    /// pass a throwaway `ConfigStrings`, and forcing them to thread a cache buys
+    /// nothing.
+    pub fn from_frame(frame: &Frame, configstrings: &ConfigStrings, playernum: i16) -> Self {
+        Self::assemble(
+            frame,
+            configstrings,
+            playernum,
+            &ModelTable::built(configstrings),
+        )
+    }
+
+    /// [`Worldview::from_frame`] reusing a caller-owned [`ModelTable`], refreshed only
+    /// when `model_revision` (from [`client::Conn::model_revision`]) has moved since
+    /// the table was last built. The steady-state cost is one `u64` compare.
+    pub fn from_frame_with_models(
+        frame: &Frame,
+        configstrings: &ConfigStrings,
+        playernum: i16,
+        models: &mut ModelTable,
+        model_revision: u64,
+    ) -> Self {
+        models.ensure(configstrings, model_revision);
+        Self::assemble(frame, configstrings, playernum, models)
+    }
+
+    fn assemble(
+        frame: &Frame,
+        configstrings: &ConfigStrings,
+        playernum: i16,
+        models: &ModelTable,
+    ) -> Self {
         // Parse self state from playerstate
         let mut self_state = SelfState::from_playerstate(&frame.playerstate);
         // Resolve the held weapon from the `gunindex` view-model configstring (Plan 36):
         // gunindex is a 1-based CS_MODELS index naming the first-person weapon model.
+        //
+        // This stays a live `configstrings` read rather than a table lookup, on
+        // purpose: `model_to_weapon` is keyed by the THIRD-person wield models
+        // (`#w_railgun.md2`), while `gunindex` names a FIRST-person view model
+        // (`v_rail/tris.md2`), and `from_wield_model` returns `None` for the latter.
+        // Serving our own held weapon from that table would read "no weapon" while the
+        // bot holds a railgun. Two different name families, two different resolvers.
         if self_state.weapon > 0 {
             self_state.held_weapon = configstrings
                 .get(CS_MODELS + self_state.weapon as usize)
@@ -166,7 +292,11 @@ impl Worldview {
                 // CS_PLAYERSKINS" — i.e., this is always a player entity.
                 EntityClass::EnemyPlayer
             } else {
-                model_to_class
+                // `.get`, never `[..]`: `modelindex` is an `i32` off the wire, and a
+                // negative or oversized value must classify Unknown rather than panic
+                // in the frame-decode path.
+                models
+                    .model_to_class
                     .get(entity_state.modelindex as usize)
                     .copied()
                     .unwrap_or(EntityClass::Unknown)
@@ -201,7 +331,8 @@ impl Worldview {
                 // meaningful for players; a non-weapon `modelindex2` resolves to `None`.
                 held_weapon: matches!(class, EntityClass::EnemyPlayer | EntityClass::AllyPlayer)
                     .then(|| {
-                        model_to_weapon
+                        models
+                            .model_to_weapon
                             .get(entity_state.modelindex2 as usize)
                             .copied()
                             .flatten()
@@ -219,7 +350,6 @@ impl Worldview {
             frame_number: frame.serverframe,
             self_state,
             entities,
-            model_to_class,
             prev_health: 0, // First frame, no previous health to compare
         }
     }
@@ -733,5 +863,193 @@ mod tests {
         assert_eq!(player_name(&cs, -1), None);
         assert_eq!(player_name(&cs, MAX_CLIENTS as i32 + 1), None);
         assert_eq!(player_name(&cs, 5), None); // slot never set
+    }
+
+    /// Configstrings for the cache tests: a weapon whose name ALSO resolves through
+    /// the wield matcher, an item, a first-person view model, and a model that
+    /// classifies as nothing.
+    fn probe_configstrings() -> ConfigStrings {
+        let mut cs = ConfigStrings::default();
+        cs.set(CS_MODELS + 1, "models/w_shotgun.md2");
+        cs.set(CS_MODELS + 2, "models/item_health_small.md2");
+        cs.set(CS_MODELS + 3, "models/weapons/v_rail/tris.md2");
+        cs.set(CS_MODELS + 9, "maps/q2dm1/submodels/face0.md2");
+        cs
+    }
+
+    /// Entities matching [`probe_configstrings`], incl. the `modelindex == 255`
+    /// player sentinel, an out-of-range index, and `gunindex` set so the live
+    /// view-model read runs on every call.
+    fn probe_frame() -> Frame {
+        use q2proto::EntityState;
+        let mut frame = Frame {
+            serverframe: 7,
+            deltaframe: 6,
+            entities: vec![
+                EntityState {
+                    number: 2,
+                    modelindex: 1,
+                    ..Default::default()
+                },
+                EntityState {
+                    number: 3,
+                    modelindex: 2,
+                    ..Default::default()
+                },
+                EntityState {
+                    number: 4,
+                    modelindex: 255,
+                    ..Default::default()
+                },
+                EntityState {
+                    number: 5,
+                    modelindex: 9,
+                    ..Default::default()
+                },
+                EntityState {
+                    number: 6,
+                    modelindex: 4_000_000, // off the wire, must not panic
+                    ..Default::default()
+                },
+            ],
+            ..Frame::default()
+        };
+        frame.playerstate.gunindex = 3;
+        frame
+    }
+
+    fn classified(view: &Worldview) -> Vec<(i32, EntityClass, Option<Weapon>)> {
+        view.entities()
+            .map(|e| (e.entity_number, e.class, e.held_weapon))
+            .collect()
+    }
+
+    /// The whole point of the type, and the proof-of-win that replaces a benchmark
+    /// because the gate runs it forever: ten frames of an unchanged level rebuild
+    /// ONCE. Before fix #5 this cost a rescan + ~100 `to_lowercase` allocs per frame.
+    #[test]
+    fn model_table_builds_once_across_steady_frames() {
+        let cs = probe_configstrings();
+        let frame = probe_frame();
+        let mut models = ModelTable::default();
+
+        for tick in 0..10 {
+            let view = Worldview::from_frame_with_models(&frame, &cs, 0, &mut models, 5);
+            assert_eq!(
+                view.self_state.held_weapon,
+                Some(Weapon::Railgun),
+                "held weapon on tick {tick}"
+            );
+        }
+        assert_eq!(
+            models.build_count(),
+            1,
+            "ten frames at one model_revision must derive the table once"
+        );
+    }
+
+    /// Caching must change how OFTEN the table is derived, never WHAT it says: the
+    /// cold wrapper and the cached entry point must agree on every entity. The
+    /// expected values are spelled out so a change to `classify_model` fails this too,
+    /// rather than two paths agreeing while both went wrong.
+    #[test]
+    fn cached_path_agrees_with_cold_build_on_content() {
+        let cs = probe_configstrings();
+        let frame = probe_frame();
+        let cold = Worldview::from_frame(&frame, &cs, 0);
+        let mut models = ModelTable::default();
+        let warm = Worldview::from_frame_with_models(&frame, &cs, 0, &mut models, 1);
+
+        assert_eq!(
+            cold.self_state.held_weapon, warm.self_state.held_weapon,
+            "our held weapon comes from the live view-model read, not the cache"
+        );
+        let expected = vec![
+            (2, EntityClass::ItemWeapon, None),
+            (3, EntityClass::ItemHealth, None),
+            (4, EntityClass::EnemyPlayer, None),
+            (5, EntityClass::Unknown, None),
+            (6, EntityClass::Unknown, None),
+        ];
+        assert_eq!(
+            classified(&cold),
+            expected,
+            "fixture classifies as documented"
+        );
+        assert_eq!(classified(&warm), expected, "cached path says the same");
+    }
+
+    /// A level change wipes the model table, so a rebuild must not INHERIT the
+    /// previous level's answers. `rebuild` refills every slot with `Unknown` before
+    /// rescanning for exactly this reason — drop that refill and index 1 here keeps
+    /// reading `ItemWeapon` on a map where it is a brush face. The `build_count == 2`
+    /// half is what a real `Conn` guarantees via `reset_configstrings`.
+    #[test]
+    fn rebuild_does_not_inherit_the_previous_levels_classifications() {
+        let frame = probe_frame();
+        let mut models = ModelTable::default();
+        let first =
+            Worldview::from_frame_with_models(&frame, &probe_configstrings(), 0, &mut models, 1);
+        assert_eq!(models.build_count(), 1);
+        assert_eq!(
+            classified(&first)[0],
+            (2, EntityClass::ItemWeapon, None),
+            "sanity: index 1 IS a weapon on the first level"
+        );
+
+        // New level: same index, different model, and nothing else precached.
+        let mut second_map = ConfigStrings::default();
+        second_map.set(CS_MODELS + 1, "maps/q2dm3/submodels/face0.md2");
+        let second = Worldview::from_frame_with_models(&frame, &second_map, 0, &mut models, 2);
+
+        assert_eq!(models.build_count(), 2, "a moved revision rebuilds");
+        assert_eq!(
+            classified(&second)[0],
+            (2, EntityClass::Unknown, None),
+            "the old level's ItemWeapon must NOT survive at modelindex 1"
+        );
+    }
+
+    /// The same refill guarantee for the OTHER half of the table. An enemy's held
+    /// weapon is resolved through `model_to_weapon` by `modelindex2`, so a stale
+    /// weapon slot makes bots report a weapon the new map never precached — and
+    /// `classify_model` cannot catch it, because the class and the weapon come from
+    /// separate arrays. The existing refill test never sets `modelindex2`, so without
+    /// this one deleting `model_to_weapon`'s refill line keeps the suite green.
+    #[test]
+    fn rebuild_does_not_inherit_the_previous_levels_weapons() {
+        use q2proto::EntityState;
+        // A player entity (modelindex 255) wielding whatever CS_MODELS+1 names.
+        let frame = Frame {
+            serverframe: 7,
+            deltaframe: 6,
+            entities: vec![EntityState {
+                number: 2,
+                modelindex: 255,
+                modelindex2: 1,
+                ..Default::default()
+            }],
+            ..Frame::default()
+        };
+        let mut models = ModelTable::default();
+
+        let mut first_map = ConfigStrings::default();
+        first_map.set(CS_MODELS + 1, "#w_railgun.md2");
+        let first = Worldview::from_frame_with_models(&frame, &first_map, 0, &mut models, 1);
+        assert_eq!(
+            classified(&first)[0],
+            (2, EntityClass::EnemyPlayer, Some(Weapon::Railgun)),
+            "sanity: index 1 IS a railgun on the first level"
+        );
+
+        // New level: same index, and it is not a weapon any more.
+        let mut second_map = ConfigStrings::default();
+        second_map.set(CS_MODELS + 1, "models/items/md2/key.md2");
+        let second = Worldview::from_frame_with_models(&frame, &second_map, 0, &mut models, 2);
+        assert_eq!(
+            classified(&second)[0],
+            (2, EntityClass::EnemyPlayer, None),
+            "the old level's Railgun must NOT survive at modelindex2 1"
+        );
     }
 }

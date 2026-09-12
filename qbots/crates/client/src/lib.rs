@@ -13,6 +13,8 @@ pub mod userinfo;
 
 pub use conn::{run, Conn, ConnState};
 pub use netchan::Netchan;
-pub use parse::{parse_message, ConfigStrings, ServerData, SvcEvent, MAX_CONFIGSTRINGS};
+pub use parse::{
+    parse_message, ConfigStrings, ServerData, SvcEvent, CS_MODELS, MAX_CONFIGSTRINGS, MAX_MODELS,
+};
 pub use send_timing::{SendTiming, SendTimingStats};
 pub use userinfo::Userinfo;

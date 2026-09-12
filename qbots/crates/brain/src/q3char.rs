@@ -391,8 +391,7 @@ mod tests {
     use client::parse::ConfigStrings;
     use q2proto::Frame;
 
-    /// CS_MODELS — the configstring model table base (mirrors `perception::CS_MODELS`).
-    const CS_MODELS: usize = 32;
+    use client::CS_MODELS;
 
     /// Build a synthetic single-frame `Worldview` with a chosen held weapon + stats, so the
     /// aggression ladder can be exercised with no server. `gunindex` names the view-model
