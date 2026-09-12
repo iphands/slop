@@ -1541,3 +1541,39 @@ the verdict commit single-purpose.
 ## Sources
 - qbots: crates/qbots/src/scenario.rs (`run_scenario` frame re-read, `decide_verdict`)
 - qbots: crates/client/src/conn.rs (frame overwritten only on successful decode)
+
+---
+
+# A player's wire `old_origin` always equals its `origin` — velocity is not on the wire
+
+## Problem
+
+a471a2450 derived every entity's velocity as `(origin - old_origin) / velocity_dt()`, on
+the reasoning that `old_origin` is the origin as of the delta source frame. That is true
+for entities the client fills in itself (`cl_parse.c:159`: `to->old_origin = from->origin`),
+but NOT for players: `SV_EmitPacketEntities` writes players as "newentities" on every delta
+(`sv_entities.c:99-102`, comment: "players are always 'newentities'"), which forces
+`U_OLDORIGIN` (`movemsg.c:348`), so the wire carries the game's own `s.old_origin`. And
+`G_RunFrame` sets that equal to `s.origin` (`g_main.c:453`) — after the client's move for
+the frame has already run, because `SV_Frame` orders `SV_ReadPackets` (`ClientThink` moves
+the player) → `SV_RunGameFrame` (stamp) → `SV_SendClientMessages` (`sv_main.c:411/448/451`).
+Net: every player packet says `old_origin == origin`. Projectile velocity (dodge) was real;
+enemy-player velocity (lead) was zero, exactly as before the "fix". The regression test
+passed because its fixture gave a player a differing `old_origin` — a packet the server
+cannot produce.
+
+## Fix
+
+Measure player motion across frames in a per-bot store (`MotionTracker`: entity → last
+origin + serverframe + derived velocity), threaded through the bot loop like `ModelTable`,
+cleared on level change. Gap ≤ 5 frames, else `None` (out of PVS: the chord is not motion);
+same serverframe re-observed → the same answer (ticks and frames are not phase-locked);
+the teleport cap applies after. Non-players stay on the wire path. Habit: a test fixture
+for a wire format must be a packet the server can emit — when a field is "always sent"
+for some entity class, ask what VALUE is sent, not just that the bits are there.
+
+## Sources
+- qbots: crates/brain/src/perception.rs (`MotionTracker`, `Worldview::from_frame_cached`)
+- vendor: yquake2/src/server/sv_entities.c (`SV_EmitPacketEntities`, newentity for players)
+- vendor: yquake2/src/game/g_main.c (`G_RunFrame`, `old_origin = origin`)
+- vendor: yquake2/src/server/sv_main.c (`SV_Frame`: read → run → send)

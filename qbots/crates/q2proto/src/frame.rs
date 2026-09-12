@@ -21,11 +21,17 @@ pub struct Frame {
 
 impl Frame {
     /// Seconds spanned by this frame's entity deltas: `serverframe - deltaframe`
-    /// tick(s) at the nominal 10 Hz. Entity `old_origin` is the origin as of the
-    /// DELTA SOURCE frame, so `(origin - old_origin) / velocity_dt()` is the
-    /// measured velocity; dividing by a single-tick dt inflates it `gap`× on a
-    /// 2+ frame gap (a 300 u/s strafe reads 900, a rocket reads "teleport").
-    /// `deltaframe <= 0` (uncompressed/baseline) spans ≥ 2 nominal ticks.
+    /// tick(s) at the nominal 10 Hz. A NON-PLAYER entity's `old_origin` is the origin
+    /// as of the DELTA SOURCE frame (`cl_parse.c:159`), so `(origin - old_origin) /
+    /// velocity_dt()` is its measured velocity; dividing by a single-tick dt inflates
+    /// it `gap`× on a 2+ frame gap (a 300 u/s strafe reads 900, a rocket reads
+    /// "teleport"). `deltaframe <= 0` (uncompressed/baseline) spans ≥ 2 nominal ticks.
+    ///
+    /// NOT valid for players: the server force-sends `U_OLDORIGIN` for them on every
+    /// delta (`sv_entities.c:99-102`) with a value `G_RunFrame` has already set equal
+    /// to `origin` (`g_main.c:453`), so a player's wire delta is always zero. Player
+    /// velocity has to be tracked across frames by the consumer (brain's
+    /// `MotionTracker`).
     pub fn velocity_dt(&self) -> f32 {
         let gap = if self.deltaframe <= 0 {
             2

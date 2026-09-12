@@ -892,7 +892,7 @@ pub(crate) async fn bot_task(
     persona: Option<brain::persona::Persona>,
     xonchar: Option<brain::XonCharPreset>,
 ) -> std::io::Result<()> {
-    use brain::perception::{ModelTable, Worldview};
+    use brain::perception::{ModelTable, MotionTracker, Worldview};
     // `Brain` is the plugin trait (its methods resolve on the `Box<dyn Brain>` the factory
     // returns); `build_brain`/`BrainKind` select the implementation, mirroring `build_navigator`.
     use brain::{
@@ -1050,6 +1050,10 @@ pub(crate) async fn bot_task(
     // which only moves when the server rewrites the model configstring range — so item
     // pickups and skin changes leave a correct table alone.
     let mut models = ModelTable::default();
+    // Per-player last-seen origin, the ONLY source of enemy-player velocity: a player's
+    // wire old_origin always equals its origin (see `MotionTracker`). Cleared on level
+    // change below, where the serverframe counter restarts.
+    let mut motion = MotionTracker::default();
 
     loop {
         if shutdown.requested() {
@@ -1285,12 +1289,13 @@ pub(crate) async fn bot_task(
                 // Track health across frames for damage detection
                 let mut dmg_this_tick: i32 = 0; // Plan 51: fed to the stall monitor below
                 if let Some(ref frame) = frame_opt {
-                    let view = Worldview::from_frame_with_models(
+                    let view = Worldview::from_frame_cached(
                         frame,
                         &cs,
                         playernum,
                         &mut models,
                         conn.model_revision(),
+                        &mut motion,
                     );
                     let current_health = view.self_state().health;
                     if current_health > 0 {
@@ -1374,6 +1379,7 @@ pub(crate) async fn bot_task(
                     collision = None;
                     heatmap_obs = None;
                     last_serverframe = None;
+                    motion.clear();
                     last_health = None;
                     last_armor = None;
                     last_pickup_cs = None;
@@ -1468,12 +1474,13 @@ pub(crate) async fn bot_task(
                     }
                 } else if state == ConnState::Active {
                     if let Some(frame) = frame_opt {
-                        let view = Worldview::from_frame_with_models(
+                        let view = Worldview::from_frame_cached(
                             &frame,
                             &cs,
                             playernum,
                             &mut models,
                             conn.model_revision(),
+                            &mut motion,
                         );
 
                         // T1 (diagnostic): with QBOTS_OBSERVE_MOVERS set, log MOVING non-player

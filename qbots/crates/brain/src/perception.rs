@@ -4,6 +4,8 @@
 //! current frame's PVS are marked "stale" (not removed), with last-known-position
 //! decay. Classification is based on configstrings (CS_MODELS, CS_PLAYERSKINS).
 
+use std::collections::HashMap;
+
 use crate::weapons::Weapon;
 use client::parse::{ConfigStrings, CS_MODELS, MAX_MODELS};
 use glam::Vec3;
@@ -58,11 +60,16 @@ pub struct PerceivedEntity {
     pub entity_number: i32,
     pub class: EntityClass,
     pub origin: Vec3,
-    /// Measured velocity in u/s: the wire's `old_origin`→`origin` delta over the
-    /// frame's own delta span ([`Frame::velocity_dt`]). Always `Some` — stationary
-    /// and baseline updates measure a real zero, teleports are zeroed (see
-    /// [`MAX_TRACK_VELOCITY`]). `Option` is kept so a future persistent-staleness
-    /// store can express "no idea" for entities we have never seen.
+    /// Measured velocity in u/s, capped at [`MAX_TRACK_VELOCITY`] (over → zero, a
+    /// teleport). Two sources, because the wire only carries one of them:
+    /// - **Non-players**: the wire's `old_origin`→`origin` delta over the frame's own
+    ///   delta span ([`Frame::velocity_dt`]). Always `Some`; a stationary or baseline
+    ///   update measures a real zero.
+    /// - **Players**: from the [`MotionTracker`] — origin now minus origin when last
+    ///   seen, over that serverframe gap. `None` on first sight or after leaving PVS
+    ///   for more than [`MotionTracker::MAX_GAP`] frames ("no idea"; aim treats it as
+    ///   stationary). A player's wire `old_origin` always equals its `origin` (see the
+    ///   tracker doc), so the wire path would report every player as standing still.
     pub velocity: Option<Vec3>,
     pub angles: Vec3,
     pub health: Option<i32>,
@@ -178,7 +185,7 @@ impl Default for ModelTable {
 
 impl ModelTable {
     /// A table built from `configstrings`, for callers that have no long-lived cache
-    /// to feed (tests, cold paths). Prefer [`Worldview::from_frame_with_models`] in a
+    /// to feed (tests, cold paths). Prefer [`Worldview::from_frame_cached`] in a
     /// bot loop.
     fn built(configstrings: &ConfigStrings) -> Self {
         let mut t = Self::default();
@@ -225,37 +232,110 @@ impl ModelTable {
     }
 }
 
+/// Per-bot memory of where each **player** entity was last seen, so a player's velocity
+/// can be measured across frames. It has to live here because the wire cannot carry it:
+/// Yamagi writes players as "newentities" on every delta (`sv_entities.c:99-102`),
+/// which forces `U_OLDORIGIN` (`movemsg.c:348`) carrying the game's own `s.old_origin`
+/// — and `G_RunFrame` stamps that equal to `s.origin` (`g_main.c:453`) AFTER the
+/// client's move for that frame has already run (`sv_main.c:411` ReadPackets →
+/// `:448` RunGameFrame → `:451` Send). So every player packet has
+/// `old_origin == origin`, and the wire delta reads a 300 u/s strafe as zero.
+/// Non-players are not force-newentity: their `old_origin` is the delta source's
+/// origin (`cl_parse.c:159`) and the wire delta is right, so they stay on that path.
+///
+/// Keyed by entity number, which for players is the stable client slot. Bounded by
+/// `MAX_EDICTS`, so it never needs pruning; a level change must [`MotionTracker::clear`]
+/// it (the serverframe counter restarts, and the gap check below rejects a backwards
+/// counter anyway, so a missed clear degrades to one `None`, never to a bogus value).
+#[derive(Debug, Default)]
+pub struct MotionTracker {
+    last_seen: HashMap<i32, Sighting>,
+}
+
+/// One tracked entity: where and when it was last seen, plus the velocity derived on
+/// that sighting — kept so a tick that rebuilds the view from the SAME frame (ticks
+/// and frames are not phase-locked) hands back the same answer instead of `None`.
+#[derive(Debug, Clone, Copy)]
+struct Sighting {
+    origin: Vec3,
+    serverframe: i32,
+    velocity: Option<Vec3>,
+}
+
+impl MotionTracker {
+    /// Largest serverframe gap across which a velocity is still derived. Past it the
+    /// entity was out of PVS and the straight line from "then" to "now" is not motion.
+    pub const MAX_GAP: i32 = 5;
+
+    /// Record entity `number` at `origin` on `serverframe` and return its velocity
+    /// (u/s, uncapped) from the previous sighting. Re-observing the same serverframe
+    /// returns the velocity derived when that frame was first seen. `None` on first
+    /// sight, after more than [`Self::MAX_GAP`] frames unseen, or if the frame counter
+    /// went backwards (level change without a [`Self::clear`]).
+    fn observe(&mut self, number: i32, origin: Vec3, serverframe: i32) -> Option<Vec3> {
+        let velocity = match self.last_seen.get(&number) {
+            Some(prev) if prev.serverframe == serverframe => return prev.velocity,
+            Some(prev) => {
+                let gap = serverframe - prev.serverframe;
+                (1..=Self::MAX_GAP)
+                    .contains(&gap)
+                    .then(|| (origin - prev.origin) / (gap as f32 * 0.1))
+            }
+            None => None,
+        };
+        self.last_seen.insert(
+            number,
+            Sighting {
+                origin,
+                serverframe,
+                velocity,
+            },
+        );
+        velocity
+    }
+
+    /// Forget every sighting — call on a level change, when entity numbers and the
+    /// serverframe counter both start over.
+    pub fn clear(&mut self) {
+        self.last_seen.clear();
+    }
+}
+
 impl Worldview {
     /// Build a Worldview from a Frame, configstrings, and our player number.
     /// `playernum` is the 0-based slot from `svc_serverdata`; our entity = playernum+1.
     ///
-    /// Rebuilds the model table from scratch on every call. A bot loop should hold a
-    /// [`ModelTable`] and call [`Worldview::from_frame_with_models`] instead — the
-    /// table is static for the life of a level, so re-deriving it per frame is the
-    /// cost fix #5 removes. This wrapper stays because ~25 test and cold-path callers
-    /// pass a throwaway `ConfigStrings`, and forcing them to thread a cache buys
-    /// nothing.
+    /// Rebuilds the model table from scratch on every call and tracks no motion, so
+    /// every player's `velocity` is `None`. A bot loop should hold a [`ModelTable`] +
+    /// [`MotionTracker`] and call [`Worldview::from_frame_cached`] instead — the table
+    /// is static for the life of a level, so re-deriving it per frame is the cost fix
+    /// #5 removes, and player velocity only exists across frames. This wrapper stays
+    /// because ~25 test and cold-path callers pass a throwaway `ConfigStrings`, and
+    /// forcing them to thread caches buys nothing.
     pub fn from_frame(frame: &Frame, configstrings: &ConfigStrings, playernum: i16) -> Self {
         Self::assemble(
             frame,
             configstrings,
             playernum,
             &ModelTable::built(configstrings),
+            &mut MotionTracker::default(),
         )
     }
 
-    /// [`Worldview::from_frame`] reusing a caller-owned [`ModelTable`], refreshed only
+    /// [`Worldview::from_frame`] reusing a caller-owned [`ModelTable`] — refreshed only
     /// when `model_revision` (from [`client::Conn::model_revision`]) has moved since
-    /// the table was last built. The steady-state cost is one `u64` compare.
-    pub fn from_frame_with_models(
+    /// the table was last built; the steady-state cost is one `u64` compare — and a
+    /// caller-owned [`MotionTracker`], which is what gives players a velocity at all.
+    pub fn from_frame_cached(
         frame: &Frame,
         configstrings: &ConfigStrings,
         playernum: i16,
         models: &mut ModelTable,
         model_revision: u64,
+        motion: &mut MotionTracker,
     ) -> Self {
         models.ensure(configstrings, model_revision);
-        Self::assemble(frame, configstrings, playernum, models)
+        Self::assemble(frame, configstrings, playernum, models, motion)
     }
 
     fn assemble(
@@ -263,6 +343,7 @@ impl Worldview {
         configstrings: &ConfigStrings,
         playernum: i16,
         models: &ModelTable,
+        motion: &mut MotionTracker,
     ) -> Self {
         // Parse self state from playerstate
         let mut self_state = SelfState::from_playerstate(&frame.playerstate);
@@ -303,17 +384,26 @@ impl Worldview {
             };
 
             let origin = Vec3::from(entity_state.origin);
-            // Velocity comes straight off the wire: `old_origin` is the origin as of
-            // this frame's DELTA SOURCE, so one subtraction gives the measured motion
-            // over `Frame::velocity_dt()` (the delta's own frame span — dividing by a
-            // wall-clock dt mixes units and re-inflates the gap). Over-cap values are a
-            // teleport or a >5-tick stale delta: zero, because lead prediction fails
-            // safe at zero and detonates at 9000 u/s.
-            let v = (origin - Vec3::from(entity_state.old_origin)) / frame.velocity_dt();
-            let velocity = Some(if v.length() > MAX_TRACK_VELOCITY {
-                Vec3::ZERO
-            } else {
-                v
+            let raw_velocity =
+                if matches!(class, EntityClass::EnemyPlayer | EntityClass::AllyPlayer) {
+                    // Players: the wire's `old_origin` ALWAYS equals `origin` for them (see
+                    // `MotionTracker`), so the only measurement is across frames we keep.
+                    motion.observe(entity_state.number, origin, frame.serverframe)
+                } else {
+                    // Everything else comes straight off the wire: `old_origin` is the
+                    // origin as of this frame's DELTA SOURCE, so one subtraction gives the
+                    // measured motion over `Frame::velocity_dt()` (the delta's own frame
+                    // span — dividing by a wall-clock dt mixes units and re-inflates the gap).
+                    Some((origin - Vec3::from(entity_state.old_origin)) / frame.velocity_dt())
+                };
+            // Over-cap values are a teleport or a >5-tick stale delta: zero, because
+            // lead prediction fails safe at zero and detonates at 9000 u/s.
+            let velocity = raw_velocity.map(|v| {
+                if v.length() > MAX_TRACK_VELOCITY {
+                    Vec3::ZERO
+                } else {
+                    v
+                }
             });
             let perceived = PerceivedEntity {
                 entity_number: entity_state.number,
@@ -705,10 +795,11 @@ mod tests {
         const { assert!(MAX_TRACK_VELOCITY < 5000.0) }; // cap must reject teleports
     }
 
-    /// Regression guard for a471a2450: enemy velocity must come from the wire's
+    /// Regression guard for a471a2450: NON-PLAYER velocity must come from the wire's
     /// `old_origin`→`origin` delta. Before this fix `velocity` was structurally
     /// always `None` (the lookup searched the freshly-built vec), which silently
-    /// killed all projectile lead prediction and rocket dodging.
+    /// killed all rocket/grenade dodging. (Players are NOT on this path — see
+    /// `player_velocity_comes_from_the_tracker_not_the_wire`.)
     #[test]
     fn velocity_derives_from_old_origin() {
         use q2proto::{EntityState, Frame};
@@ -717,12 +808,13 @@ mod tests {
             serverframe: 101,
             deltaframe: 100,
             entities: vec![
-                // Mover: last transmitted at (100,0,0), now (120,0,0) → 20u/0.1s.
+                // Mover (a projectile): last transmitted at (100,0,0), now (120,0,0)
+                // → 20u/0.1s.
                 EntityState {
                     number: 2,
                     origin: [120.0, 0.0, 0.0],
                     old_origin: [100.0, 0.0, 0.0],
-                    modelindex: 255,
+                    modelindex: 1,
                     ..Default::default()
                 },
                 // Stationary (old_origin == origin after the carry-through stamp):
@@ -732,7 +824,7 @@ mod tests {
                     number: 3,
                     origin: [500.0, 0.0, 0.0],
                     old_origin: [500.0, 0.0, 0.0],
-                    modelindex: 255,
+                    modelindex: 1,
                     ..Default::default()
                 },
             ],
@@ -766,7 +858,7 @@ mod tests {
                 number: 2,
                 origin: [5000.0, 0.0, 0.0],
                 old_origin: [0.0, 0.0, 0.0], // 50 km/s
-                modelindex: 255,
+                modelindex: 1,
                 ..Default::default()
             }],
             ..Frame::default()
@@ -776,6 +868,128 @@ mod tests {
             view.entities().next().unwrap().velocity,
             Some(Vec3::ZERO),
             "absurd delta must not be reported as motion"
+        );
+    }
+
+    /// A player entity (`modelindex == 255`) at `origin` on `serverframe`, with the
+    /// wire's `old_origin` stamped EQUAL to `origin` — which is what Yamagi sends for
+    /// every player on every frame (`sv_entities.c:99-102` force-newentity →
+    /// `movemsg.c:348` `U_OLDORIGIN` → `g_main.c:453` `old_origin = origin`, after
+    /// the client's move already ran). A fixture with a differing player `old_origin`
+    /// is a packet the server cannot produce.
+    fn player_frame(serverframe: i32, origin: [f32; 3]) -> q2proto::Frame {
+        use q2proto::{EntityState, Frame};
+        Frame {
+            serverframe,
+            deltaframe: serverframe - 1,
+            entities: vec![EntityState {
+                number: 2,
+                origin,
+                old_origin: origin,
+                modelindex: 255,
+                ..Default::default()
+            }],
+            ..Frame::default()
+        }
+    }
+
+    fn player_velocity(view: &Worldview) -> Option<Vec3> {
+        let e = view.entities().next().expect("player present");
+        assert_eq!(e.class, EntityClass::EnemyPlayer);
+        e.velocity
+    }
+
+    /// The bug a471a2450 left in place: a player's wire `old_origin` equals its
+    /// `origin`, so the wire delta reads every player as stationary and projectile
+    /// lead against players was still computed against zero. Player velocity must
+    /// instead be measured across frames by the caller-owned `MotionTracker`:
+    /// first sight is "no idea", the next frame yields the real delta over the
+    /// serverframe gap, and a repeat build of the same frame returns the same answer.
+    #[test]
+    fn player_velocity_comes_from_the_tracker_not_the_wire() {
+        let cs = ConfigStrings::default();
+        let mut models = ModelTable::default();
+        let mut motion = MotionTracker::default();
+        let mut build = |sf: i32, origin: [f32; 3]| {
+            Worldview::from_frame_cached(
+                &player_frame(sf, origin),
+                &cs,
+                0,
+                &mut models,
+                1,
+                &mut motion,
+            )
+        };
+
+        // The wire path (what `from_frame` does) says "stationary" for a player that
+        // moved 30u this tick — that is the lie the tracker exists to replace.
+        let wire_only = Worldview::from_frame(&player_frame(101, [130.0, 0.0, 0.0]), &cs, 0);
+        assert_eq!(
+            player_velocity(&wire_only),
+            None,
+            "cold path: no history, no idea"
+        );
+
+        assert_eq!(
+            player_velocity(&build(100, [100.0, 0.0, 0.0])),
+            None,
+            "first sight"
+        );
+        let v = player_velocity(&build(101, [130.0, 0.0, 0.0])).expect("second sight");
+        assert!(
+            (v.x - 300.0).abs() < 0.01 && v.y.abs() < 0.01,
+            "30u over one 0.1s tick = 300 u/s along x, got {v}"
+        );
+        // Same frame rebuilt on a tick that brought no new frame: same answer, not None.
+        let again = player_velocity(&build(101, [130.0, 0.0, 0.0])).expect("repeat frame");
+        assert_eq!(
+            again, v,
+            "re-observing the same serverframe keeps its velocity"
+        );
+        // A 2-frame gap divides by the gap: 60u over 0.2s is still 300 u/s.
+        let v2 = player_velocity(&build(103, [190.0, 0.0, 0.0])).expect("gap of 2");
+        assert!((v2.x - 300.0).abs() < 0.01, "gap-scaled: got {v2}");
+    }
+
+    /// Out of PVS and back: the straight line from "where it was 3 s ago" to "here"
+    /// is not motion, so past `MAX_GAP` the tracker answers `None` (aim: stationary),
+    /// and so does a backwards serverframe (level change without a `clear`). A teleport
+    /// inside the gap is caught by the same cap as everything else.
+    #[test]
+    fn player_velocity_is_none_after_a_pvs_gap_and_capped_on_teleport() {
+        let cs = ConfigStrings::default();
+        let mut models = ModelTable::default();
+        let mut motion = MotionTracker::default();
+        // The tracker is a parameter, not a capture, so `clear` can be called below.
+        let mut build = |motion: &mut MotionTracker, sf: i32, origin: [f32; 3]| {
+            Worldview::from_frame_cached(&player_frame(sf, origin), &cs, 0, &mut models, 1, motion)
+        };
+
+        build(&mut motion, 100, [0.0, 0.0, 0.0]);
+        let gap = MotionTracker::MAX_GAP + 1;
+        assert_eq!(
+            player_velocity(&build(&mut motion, 100 + gap, [600.0, 0.0, 0.0])),
+            None,
+            "unseen for {gap} frames: not a measurement"
+        );
+        // Re-armed by that sighting: the next frame measures again.
+        assert!(player_velocity(&build(&mut motion, 100 + gap + 1, [620.0, 0.0, 0.0])).is_some());
+        // Frame counter went backwards (new level): no bogus cross-level delta.
+        assert_eq!(
+            player_velocity(&build(&mut motion, 5, [0.0, 0.0, 0.0])),
+            None
+        );
+        // Teleport within the gap: over the cap collapses to zero, same as the wire path.
+        assert_eq!(
+            player_velocity(&build(&mut motion, 6, [5000.0, 0.0, 0.0])),
+            Some(Vec3::ZERO),
+            "50 km/s is a teleport, fail safe to stationary"
+        );
+        // `clear` forgets everything: the next sighting is a first sight again.
+        motion.clear();
+        assert_eq!(
+            player_velocity(&build(&mut motion, 7, [5010.0, 0.0, 0.0])),
+            None
         );
     }
 
@@ -793,7 +1007,7 @@ mod tests {
                 number: 2,
                 origin: [120.0, 0.0, 0.0],
                 old_origin: [100.0, 0.0, 0.0],
-                modelindex: 255,
+                modelindex: 1,
                 ..Default::default()
             }],
             ..Frame::default()
@@ -934,7 +1148,14 @@ mod tests {
         let mut models = ModelTable::default();
 
         for tick in 0..10 {
-            let view = Worldview::from_frame_with_models(&frame, &cs, 0, &mut models, 5);
+            let view = Worldview::from_frame_cached(
+                &frame,
+                &cs,
+                0,
+                &mut models,
+                5,
+                &mut MotionTracker::default(),
+            );
             assert_eq!(
                 view.self_state.held_weapon,
                 Some(Weapon::Railgun),
@@ -958,7 +1179,14 @@ mod tests {
         let frame = probe_frame();
         let cold = Worldview::from_frame(&frame, &cs, 0);
         let mut models = ModelTable::default();
-        let warm = Worldview::from_frame_with_models(&frame, &cs, 0, &mut models, 1);
+        let warm = Worldview::from_frame_cached(
+            &frame,
+            &cs,
+            0,
+            &mut models,
+            1,
+            &mut MotionTracker::default(),
+        );
 
         assert_eq!(
             cold.self_state.held_weapon, warm.self_state.held_weapon,
@@ -988,8 +1216,14 @@ mod tests {
     fn rebuild_does_not_inherit_the_previous_levels_classifications() {
         let frame = probe_frame();
         let mut models = ModelTable::default();
-        let first =
-            Worldview::from_frame_with_models(&frame, &probe_configstrings(), 0, &mut models, 1);
+        let first = Worldview::from_frame_cached(
+            &frame,
+            &probe_configstrings(),
+            0,
+            &mut models,
+            1,
+            &mut MotionTracker::default(),
+        );
         assert_eq!(models.build_count(), 1);
         assert_eq!(
             classified(&first)[0],
@@ -1000,7 +1234,14 @@ mod tests {
         // New level: same index, different model, and nothing else precached.
         let mut second_map = ConfigStrings::default();
         second_map.set(CS_MODELS + 1, "maps/q2dm3/submodels/face0.md2");
-        let second = Worldview::from_frame_with_models(&frame, &second_map, 0, &mut models, 2);
+        let second = Worldview::from_frame_cached(
+            &frame,
+            &second_map,
+            0,
+            &mut models,
+            2,
+            &mut MotionTracker::default(),
+        );
 
         assert_eq!(models.build_count(), 2, "a moved revision rebuilds");
         assert_eq!(
@@ -1035,7 +1276,14 @@ mod tests {
 
         let mut first_map = ConfigStrings::default();
         first_map.set(CS_MODELS + 1, "#w_railgun.md2");
-        let first = Worldview::from_frame_with_models(&frame, &first_map, 0, &mut models, 1);
+        let first = Worldview::from_frame_cached(
+            &frame,
+            &first_map,
+            0,
+            &mut models,
+            1,
+            &mut MotionTracker::default(),
+        );
         assert_eq!(
             classified(&first)[0],
             (2, EntityClass::EnemyPlayer, Some(Weapon::Railgun)),
@@ -1045,7 +1293,14 @@ mod tests {
         // New level: same index, and it is not a weapon any more.
         let mut second_map = ConfigStrings::default();
         second_map.set(CS_MODELS + 1, "models/items/md2/key.md2");
-        let second = Worldview::from_frame_with_models(&frame, &second_map, 0, &mut models, 2);
+        let second = Worldview::from_frame_cached(
+            &frame,
+            &second_map,
+            0,
+            &mut models,
+            2,
+            &mut MotionTracker::default(),
+        );
         assert_eq!(
             classified(&second)[0],
             (2, EntityClass::EnemyPlayer, None),

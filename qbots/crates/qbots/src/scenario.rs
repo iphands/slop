@@ -20,7 +20,7 @@ use glam::Vec3;
 use tokio::net::UdpSocket;
 
 use brain::nav::NavGoal;
-use brain::perception::{ModelTable, Worldview};
+use brain::perception::{ModelTable, MotionTracker, Worldview};
 use brain::recorder::{CmWallProbe, MovementRecorder, Sample, WallProbe};
 use brain::{
     build_brain, BotSkill, Brain, BrainConfig, BrainContext, BrainKind, BrainMap,
@@ -625,6 +625,9 @@ pub async fn run_scenario(
     let mut cs_rev = conn.cs_revision();
     // Modelindex→class cache; see the fleet loop in main.rs and `Conn::model_revision`.
     let mut models = ModelTable::default();
+    // Enemy-player velocity memory (see `MotionTracker`); combat is off here, but the
+    // view is built the same way the fleet builds it so the two never drift.
+    let mut motion = MotionTracker::default();
 
     loop {
         if shutdown.requested() {
@@ -697,12 +700,13 @@ pub async fn run_scenario(
                         .map(|frame| {
                             let playernum =
                                 conn.serverdata.as_ref().map(|sd| sd.playernum).unwrap_or(0);
-                            let view = Worldview::from_frame_with_models(
+                            let view = Worldview::from_frame_cached(
                                 &frame,
                                 &cs,
                                 playernum,
                                 &mut models,
                                 conn.model_revision(),
+                                &mut motion,
                             );
                             let self_st = view.self_state();
                             let pos = self_st.origin;
