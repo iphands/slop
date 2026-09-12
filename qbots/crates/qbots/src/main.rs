@@ -1003,9 +1003,11 @@ pub(crate) async fn bot_task(
             // map-change re-handshake) — otherwise our slot lingers server-side as a
             // CNCT ghost until the server times it out, eating into maxclients.
             if matches!(conn.state(), ConnState::Active | ConnState::Connected) {
-                if let Some(pkt) = conn.disconnect() {
-                    let _ = sock.send(&pkt).await;
-                    let _ = sock.send(&pkt).await;
+                // `disconnect()` owns the repeat count (three transmits, three
+                // sequences). Writing one returned packet N times here — as this used
+                // to — re-sends the same sequence, which the server discards as a
+                // duplicate, and desyncs the cmd window from `outgoing_sequence`.
+                for pkt in conn.disconnect() {
                     let _ = sock.send(&pkt).await;
                 }
                 time::sleep(Duration::from_millis(100)).await;

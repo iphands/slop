@@ -567,8 +567,9 @@ pub async fn run_scenario(
 
     // 5. Disconnect cleanly, dump the log, print the SUMMARY line.
     if conn.state() == ConnState::Active {
-        if let Some(pkt) = conn.disconnect() {
-            let _ = sock.send(&pkt).await;
+        // `disconnect()` owns the repeat count (three transmits, three sequences) —
+        // see the fleet shutdown path in main.rs for why we don't resend one packet.
+        for pkt in conn.disconnect() {
             let _ = sock.send(&pkt).await;
         }
     }

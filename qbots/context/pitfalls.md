@@ -1313,19 +1313,24 @@ documentation disagreed and the comment won the review.
 
 ## Fix
 
-Build the payload as `[ClcOp::Stringcmd] + b"disconnect\0"` and send it three times, per
+Build the payload as `[ClcOp::Stringcmd] + b"disconnect"` with **no trailing NUL** —
+vendor transmits `strlen(final)`, which excludes the terminator — and send it as three
+separate transmits (three sequences), not one packet written to the socket thrice, per
 `CL_Disconnect` (`cl_network.c:331-337`). Two habits prevent the class: (a) route every
-send through one helper — `Conn::transmit_payload` is now the sole caller of
-`Netchan::transmit` and, in debug builds, decodes its own `clc_move` payload with the
-server's checksum check; extending that to assert `ClcOp::from_u8(payload[0]).is_some()`
-for *every* payload is the follow-up, and it has to land together with this fix, since
-before the fix it would abort every debug build at shutdown — which is precisely the
-point of adding it; (b) treat a `///` describing a wire format as an assertion to verify
-against vendor, not as documentation.
+send through one helper and have it reject an unknown first byte in debug builds. That is
+now `Conn::transmit_payload`, the sole caller of `Netchan::transmit`, which asserts the
+byte is one of the four opcodes the server's switch actually handles — **not**
+`ClcOp::from_u8(b).is_some()`, because `from_u8(0)` returns `Some(ClcOp::Bad)` and
+`clc_bad` has no `case` in `SV_ReadClientMessage`, so a 0 byte would satisfy that weaker
+predicate and still get us dropped. The assert had to land in the same commit as the
+fix: against the unfixed payload it aborts every debug build at shutdown, which would
+also poison the scenario runs that are the movement benchmark. It has to be bundled; (b)
+treat a `///` describing a wire format as an assertion to verify against vendor, not as
+documentation.
 
 ## Sources
-- qbots: crates/client/src/conn.rs (`disconnect`)
-- vendor: yquake2/src/server/sv_user.c (`SV_ReadClientMessage`, default arm)
+- qbots: crates/client/src/conn.rs (`disconnect`, `transmit_payload`, `DISCONNECT_TRANSMITS`)
+- vendor: yquake2/src/server/sv_user.c (`SV_ReadClientMessage`, default arm; `clc_stringcmd`'s `cs_zombie` return)
 - vendor: yquake2/src/client/cl_network.c (`CL_Disconnect`)
 
 ---

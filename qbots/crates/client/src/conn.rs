@@ -27,6 +27,12 @@ use crate::{Netchan, Userinfo};
 /// Max `svc_print` lines buffered between ticks (oldest dropped past this).
 const PRINT_BUFFER_CAP: usize = 128;
 
+/// Copies of `clc_stringcmd "disconnect"` sent by [`Conn::disconnect`], each as its
+/// own netchan transmit (thus its own sequence). Vendor sends three
+/// (`cl_network.c:331-337`); UDP gives no delivery guarantee, and the server stops
+/// reading the moment the command lands, so this is loss hedging, not a broadcast.
+const DISCONNECT_TRANSMITS: usize = 3;
+
 /// Connection lifecycle states (ports the `ca_*` enum, `client/header/client.h:194`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnState {
@@ -380,19 +386,38 @@ impl Conn {
     ///
     /// `cmd == None` (reliable acks, pre-Active flushes, disconnect) REPEATS the
     /// newest slot. That packet carries no `clc_move`, so nothing in the slot reaches
-    /// the server at all (`cl->lastcmd` is written by the `clc_move` arm alone among message
-    /// types, and zeroed at connect, `sv_user.c:105`/`:751`) — the push exists purely
-    /// to keep the window aligned with the
-    /// sequence the packet consumed. Skipping it would leave the NEXT `clc_move`'s
-    /// triple drawn from pre-gap sequences, and a recovery would replay stale cmds.
-    /// Repeating the newest is the cheapest non-surprising filler (a nullcmd would
-    /// also freeze pmove's time base if it ever were replayed).
+    /// the server at all — `cl->lastcmd` is written only by the `clc_move` arm (and
+    /// zeroed at connect, `sv_user.c:105`/`:751`) — so the push is purely local
+    /// bookkeeping: it keeps the window aligned with the sequence the packet consumed.
+    /// A cmd-less transmit is a first-class vendor pattern, not our invention
+    /// (`cl_input.c:761` sends a header-only packet the same way). Skipping the push
+    /// would leave the NEXT `clc_move`'s triple drawn from pre-gap sequences, and a
+    /// recovery would replay stale cmds. Repeating the newest is the cheapest
+    /// non-surprising filler (a nullcmd would also freeze pmove's time base if it ever
+    /// were replayed).
     fn transmit_payload(&mut self, payload: Vec<u8>, cmd: Option<Usercmd>) -> Option<Bytes> {
         let push = cmd.unwrap_or(self.cmd_window[2]);
         let nc = self.netchan.as_mut()?;
         // Read only where the tripwire below compiles (release would flag it unused).
         #[cfg(debug_assertions)]
         let seq = nc.outgoing_sequence();
+        #[cfg(debug_assertions)]
+        if let Some(&first) = payload.first() {
+            // Every non-empty unreliable body must start with an opcode the server's
+            // switch actually handles. `ClcOp::from_u8` maps 0 to `ClcOp::Bad`, and
+            // `clc_bad` is NOT a `case` in `SV_ReadClientMessage`, so a 0 byte takes
+            // the same `default:` → `SV_DropClient` arm as any other garbage byte —
+            // hence `matches!` on the handled set rather than `from_u8(..).is_some()`.
+            // An empty body is legal (header-only flush; the server breaks on `-1`).
+            debug_assert!(
+                matches!(
+                    ClcOp::from_u8(first),
+                    Some(ClcOp::Nop | ClcOp::Move | ClcOp::Userinfo | ClcOp::Stringcmd)
+                ),
+                "payload starts with {first:#04x}, which the server reads as an \
+                 unknown command char and answers by dropping us (sv_user.c:663-666)"
+            );
+        }
         #[cfg(debug_assertions)]
         if payload.first() == Some(&u8::from(ClcOp::Move)) {
             // Debug-build tripwire for payload/push drift, NOT for the Δseq invariant
@@ -495,20 +520,32 @@ impl Conn {
         self.transmit_payload(payload, Some(*cmd))
     }
 
-    /// Send a disconnect notice before teardown.
+    /// Send the clean disconnect notice: `clc_stringcmd` + `"disconnect"`, three
+    /// separate transmits, per `CL_Disconnect` (`cl_network.c:331-337`). Returns one
+    /// packet per transmit (three distinct sequences) for the caller to write; empty
+    /// if the netchan never came up, in which case there is nothing to disconnect from.
     ///
-    /// TODO: the payload is raw
-    /// `disconnect`, whose first byte `d` (0x64) is not a valid `clc_*` opcode — the
-    /// server takes the `default:` arm and DROPS us ("unknown command char",
-    /// `sv_user.c:663-666` → `SV_DropClient`), so this is a server-side drop, not the
-    /// clean `SV_Disconnect_f` path. Per `CL_Disconnect` (`cl_network.c:331-337`) it
-    /// must be `clc_stringcmd` followed by `"disconnect"` with NO trailing NUL (vendor's
-    /// `strlen` excludes it; `MSG_ReadString` accepts either) and, per `CL_Disconnect`,
-    /// three separate `Netchan_Transmit` calls — three sequences, not one sent thrice.
-    /// Recorded in `context/pitfalls.md`, entry "`clc_stringcmd` opcode byte missing".
-    /// (This doc previously claimed that was already the behaviour; it was not.)
-    pub fn disconnect(&mut self) -> Option<Bytes> {
-        self.transmit_payload(b"disconnect".to_vec(), None)
+    /// No trailing NUL: vendor builds `final[0] = clc_stringcmd` then
+    /// `strcpy(final + 1, "disconnect")` and transmits `strlen(final)` == 11, which
+    /// excludes the terminator. Three transmits rather than one packet written to the
+    /// socket thrice: each advances `outgoing_sequence`, so a server that loses copy 1
+    /// still sees the sequence it expects at copy 2, and the cmd window stays aligned
+    /// with the sequence counter (see [`Conn::transmit_payload`]).
+    ///
+    /// The payoff is the `clc_stringcmd` arm's `cs_zombie` check (`sv_user.c:763-766`):
+    /// the server runs `disconnect` as a user command, the client becomes a zombie, and
+    /// the read loop returns — freeing the slot. A payload with a bad first byte takes
+    /// the `default:` arm instead (`:663-666`): `SV_DropClient` plus a scolding in the
+    /// log of a server we do not own, which is what this method used to send.
+    #[must_use = "the returned packets ARE the disconnect notice; dropping them \
+                  leaves the slot as a CNCT ghost until the server times it out"]
+    pub fn disconnect(&mut self) -> Vec<Bytes> {
+        let mut payload = Vec::with_capacity(1 + b"disconnect".len());
+        payload.push(u8::from(ClcOp::Stringcmd));
+        payload.extend_from_slice(b"disconnect");
+        (0..DISCONNECT_TRANSMITS)
+            .filter_map(|_| self.transmit_payload(payload.clone(), None))
+            .collect()
     }
 }
 
@@ -842,6 +879,53 @@ mod tests {
         let pkt = c.transmit_cmd(&d).expect("third cmd");
         let (_, got) = q2proto::parse_clc_move(&pkt[HEADER_LEN..], seq).unwrap();
         assert_eq!(got, [a, b, d], "triple = seq-2, seq-1, seq — all distinct");
+    }
+
+    /// `disconnect()` had NO test when the raw-payload bug shipped, which is why it
+    /// survived: the code sent `disconnect` with no opcode byte, the server read `d`
+    /// (0x64) as an unknown command char and dropped us (`sv_user.c:663-666`), and the
+    /// doc comment claimed the correct behaviour. Pins the three properties vendor has
+    /// (`cl_network.c:331-337`): the `clc_stringcmd` opcode is present, the string is
+    /// NOT NUL-terminated (vendor transmits `strlen(final)` == 11), and the three
+    /// copies are three TRANSMITS, i.e. three consecutive sequences — not one packet
+    /// written to the socket thrice, which a lost first copy would make useless.
+    #[test]
+    fn disconnect_sends_opcode_prefixed_stringcmd_on_three_sequences() {
+        let mut c = active_conn();
+        let newest_before = c.cmd_window()[2];
+
+        let pkts = c.disconnect();
+        assert_eq!(pkts.len(), DISCONNECT_TRANSMITS, "vendor sends three");
+
+        let mut seqs = Vec::new();
+        for p in &pkts {
+            // Nothing reliable is in flight, so the body starts at the header end.
+            let body = &p[HEADER_LEN..];
+            assert_eq!(
+                body[0],
+                u8::from(ClcOp::Stringcmd),
+                "payload must start with clc_stringcmd, not the bare text"
+            );
+            assert_eq!(&body[1..], b"disconnect", "no trailing NUL (vendor strlen)");
+            let w1 = u32::from_le_bytes([p[0], p[1], p[2], p[3]]);
+            assert_eq!(
+                w1 >> 31,
+                0,
+                "this test slices at HEADER_LEN, which is only the body start while \
+                 nothing reliable is in flight — if this fires, the body offset moved"
+            );
+            seqs.push(w1 & !(1 << 31));
+        }
+        assert_eq!(
+            seqs,
+            [seqs[0], seqs[0] + 1, seqs[0] + 2],
+            "three transmits advance outgoing_sequence by one each"
+        );
+        assert_eq!(
+            c.cmd_window(),
+            [newest_before; 3],
+            "three cmd-less transmits slide the window three times, repeating newest"
+        );
     }
 
     /// The invariant that breaks SILENTLY if a transmit site is ever added that skips
