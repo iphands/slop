@@ -20,25 +20,28 @@ pub struct Frame {
 }
 
 impl Frame {
-    /// Seconds spanned by this frame's entity deltas: `serverframe - deltaframe`
-    /// tick(s) at the nominal 10 Hz. A NON-PLAYER entity's `old_origin` is the origin
-    /// as of the DELTA SOURCE frame (`cl_parse.c:159`), so `(origin - old_origin) /
-    /// velocity_dt()` is its measured velocity; dividing by a single-tick dt inflates
-    /// it `gap`× on a 2+ frame gap (a 300 u/s strafe reads 900, a rocket reads
-    /// "teleport"). `deltaframe <= 0` (uncompressed/baseline) spans ≥ 2 nominal ticks.
+    /// Seconds spanned by entity `e`'s `old_origin → origin` delta, so
+    /// `(origin - old_origin) / velocity_dt_for(e)` is its measured velocity (non-players
+    /// only — a player's `old_origin` always equals its `origin`, see
+    /// [`EntityState::old_origin_explicit`]).
     ///
-    /// NOT valid for players: the server force-sends `U_OLDORIGIN` for them on every
-    /// delta (`sv_entities.c:99-102`) with a value `G_RunFrame` has already set equal
-    /// to `origin` (`g_main.c:453`), so a player's wire delta is always zero. Player
-    /// velocity has to be tracked across frames by the consumer (brain's
-    /// `MotionTracker`).
-    pub fn velocity_dt(&self) -> f32 {
-        let gap = if self.deltaframe <= 0 {
-            2
-        } else {
-            (self.serverframe - self.deltaframe).max(1)
-        };
-        (gap as f32 * 0.1).clamp(0.1, 0.5) // 0.5 cap = 5 ticks, under UPDATE_BACKUP/2
+    /// Two cases, decided per ENTITY, not per frame:
+    /// - `old_origin_explicit`: the server sent its own `s.old_origin`, which is exactly
+    ///   one server tick old (`g_main.c:453`) regardless of the delta gap. Every entity of
+    ///   an uncompressed frame (`deltaframe <= 0`) and every entity entering the PVS is in
+    ///   this case, so dividing those by the frame gap under-reports (a rocket entering
+    ///   view on a 2-frame gap would read 350 u/s).
+    /// - otherwise the client filled `old_origin` from the delta source, and the span is
+    ///   `serverframe - deltaframe` ticks; dividing by a single tick inflates it `gap`×
+    ///   (a 300 u/s strafe reads 900). Clamped to 5 ticks — past that the delta is stale
+    ///   and perception's velocity cap zeroes it anyway.
+    pub fn velocity_dt_for(&self, e: &EntityState) -> f32 {
+        const TICK: f32 = 0.1;
+        if e.old_origin_explicit || self.deltaframe <= 0 {
+            return TICK;
+        }
+        let gap = (self.serverframe - self.deltaframe).max(1);
+        (gap as f32 * TICK).clamp(TICK, 0.5) // 0.5 cap = 5 ticks, under UPDATE_BACKUP/2
     }
 }
 
@@ -99,6 +102,7 @@ pub fn parse_packet_entities(
         while old_idx < old_ents.len() && old_ents[old_idx].number < newnum {
             let mut e = old_ents[old_idx].clone();
             e.old_origin = e.origin;
+            e.old_origin_explicit = false; // client-filled, and a zero delta anyway
             out.push(e);
             old_idx += 1;
         }
@@ -124,6 +128,7 @@ pub fn parse_packet_entities(
     while old_idx < old_ents.len() {
         let mut e = old_ents[old_idx].clone();
         e.old_origin = e.origin;
+        e.old_origin_explicit = false;
         out.push(e);
         old_idx += 1;
     }
@@ -200,6 +205,68 @@ mod tests {
         w.write_u8(0);
         w.write_u8(0);
         w.freeze().to_vec()
+    }
+
+    /// `U_OLDORIGIN` on the wire marks `old_origin` as the server's one-tick value;
+    /// a client-filled delta and a carry-through must NOT carry that mark, and
+    /// `velocity_dt_for` keys on it: 1 tick when set, the frame gap otherwise.
+    #[test]
+    fn old_origin_explicit_tracks_the_wire_bit_and_sets_the_span() {
+        use crate::ops::U_OLDORIGIN;
+        let from = EntityState {
+            number: 2,
+            origin: [100.0, 0.0, 0.0],
+            old_origin_explicit: true, // stale mark from a previous update
+            ..Default::default()
+        };
+        // Explicit: the wire carries old_origin.
+        let mut w = Writer::new();
+        w.write_pos([90.0, 0.0, 0.0]);
+        let b = w.freeze();
+        let mut r = Reader::new(&b);
+        let explicit = EntityState::read_delta(&mut r, &from, 2, U_OLDORIGIN).unwrap();
+        assert!(explicit.old_origin_explicit);
+        assert_eq!(explicit.old_origin, [90.0, 0.0, 0.0]);
+        // Client-filled: no bit → old_origin = from.origin, mark cleared despite `from`.
+        let mut r = Reader::new(&[]);
+        let filled = EntityState::read_delta(&mut r, &from, 2, 0).unwrap();
+        assert!(
+            !filled.old_origin_explicit,
+            "must not inherit the previous update's mark"
+        );
+        assert_eq!(filled.old_origin, from.origin);
+        // Carry-through (unchanged entity omitted by the server): stationary, not explicit.
+        let mut b = Writer::new();
+        b.write_i16(0); // end sentinel: bits=0, number=0
+        let b = b.freeze();
+        let mut r = Reader::new(&b);
+        let out = parse_packet_entities(&mut r, Some(std::slice::from_ref(&from))).unwrap();
+        assert_eq!(out.len(), 1);
+        assert!(!out[0].old_origin_explicit);
+        assert_eq!(out[0].old_origin, out[0].origin);
+
+        let frame = Frame {
+            serverframe: 103,
+            deltaframe: 101,
+            ..Frame::default()
+        };
+        assert!(
+            (frame.velocity_dt_for(&explicit) - 0.1).abs() < 1e-6,
+            "server-stamped: 1 tick"
+        );
+        assert!(
+            (frame.velocity_dt_for(&filled) - 0.2).abs() < 1e-6,
+            "client-filled: the gap"
+        );
+        let uncompressed = Frame {
+            serverframe: 103,
+            deltaframe: -1,
+            ..Frame::default()
+        };
+        assert!(
+            (uncompressed.velocity_dt_for(&filled) - 0.1).abs() < 1e-6,
+            "uncompressed: 1 tick"
+        );
     }
 
     #[test]

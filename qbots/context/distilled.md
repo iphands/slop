@@ -53,9 +53,13 @@ Reaches "test connected" / "test entered the game" on a real yquake2 server:
   - *Non-players*: `U_OLDORIGIN` is sent only for `newentity || RF_BEAM` (movemsg.c:348), so
     the client fills it itself as the DELTA SOURCE's origin (`CL_ParseDelta`, cl_parse.c:159;
     ours `entitystate.rs::read_delta`). `(origin − old_origin) / ((serverframe − deltaframe)
-    × 0.1 s)` is a real velocity (`Frame::velocity_dt`); divide by the delta's own span, not
-    the tick, or a 2-frame gap doubles it. Carry-through entities (omitted because unchanged)
-    must be stamped `old_origin = origin` in `parse_packet_entities` or a stale delta replays.
+    × 0.1 s)` is a real velocity; divide by the delta's own span, not the tick, or a 2-frame
+    gap doubles it. BUT when `U_OLDORIGIN` *was* on the wire (uncompressed frame, entity
+    entering the PVS) the value is the server's `s.old_origin` = exactly ONE tick old
+    whatever the gap — `EntityState::old_origin_explicit` records the bit and
+    `Frame::velocity_dt_for(e)` picks the span per entity. Carry-through entities (omitted
+    because unchanged) must be stamped `old_origin = origin` in `parse_packet_entities` or
+    a stale delta replays.
   - *Players*: `SV_EmitPacketEntities` passes `newentity = number <= maxclients`
     (sv_entities.c:99-102, "players are always 'newentities'"), so `U_OLDORIGIN` is forced
     every delta and carries the game's `s.old_origin` — which `G_RunFrame` sets `= s.origin`

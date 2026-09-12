@@ -19,6 +19,16 @@ pub struct EntityState {
     pub angles: [f32; 3],
     /// Previous-frame origin (for lerping); set to `from.origin` during delta.
     pub old_origin: [f32; 3],
+    /// `U_OLDORIGIN` was on the wire for this update, so `old_origin` is the SERVER's
+    /// `s.old_origin` rather than the delta source's origin. The server sets that bit
+    /// for `newentity || RF_BEAM` (`movemsg.c:348`): every entity of an uncompressed
+    /// frame, an entity entering the PVS, and — always — players
+    /// (`sv_entities.c:99-102`). For a non-player the value is exactly ONE server tick
+    /// old (`G_RunFrame` stamps `old_origin = origin` before running the entity,
+    /// `g_main.c:453`), whatever the frame's delta gap; for a player it equals `origin`.
+    /// `false` means the client filled it from the delta source (`cl_parse.c:159`),
+    /// so the span is `serverframe - deltaframe` ticks. See [`Frame::velocity_dt_for`].
+    pub old_origin_explicit: bool,
     pub modelindex: i32,
     pub modelindex2: i32,
     pub modelindex3: i32,
@@ -64,6 +74,9 @@ impl EntityState {
     ) -> Result<EntityState, DecodeError> {
         let mut to = from.clone();
         to.old_origin = from.origin;
+        // Overwritten below if `U_OLDORIGIN` is set; a clone of `from` must not inherit
+        // the previous update's answer.
+        to.old_origin_explicit = false;
         to.number = number;
 
         if bits & U_MODEL != 0 {
@@ -127,6 +140,7 @@ impl EntityState {
         }
         if bits & U_OLDORIGIN != 0 {
             to.old_origin = r.read_pos()?;
+            to.old_origin_explicit = true;
         }
         if bits & U_SOUND != 0 {
             to.sound = r.read_u8()? as i32;

@@ -62,9 +62,10 @@ pub struct PerceivedEntity {
     pub origin: Vec3,
     /// Measured velocity in u/s, capped at [`MAX_TRACK_VELOCITY`] (over → zero, a
     /// teleport). Two sources, because the wire only carries one of them:
-    /// - **Non-players**: the wire's `old_origin`→`origin` delta over the frame's own
-    ///   delta span ([`Frame::velocity_dt`]). Always `Some`; a stationary or baseline
-    ///   update measures a real zero.
+    /// - **Non-players**: the wire's `old_origin`→`origin` delta over the span it covers
+    ///   ([`Frame::velocity_dt_for`]: the frame gap when client-filled, one tick when the
+    ///   server sent it). Always `Some`; a stationary or baseline update measures a real
+    ///   zero.
     /// - **Players**: from the [`MotionTracker`] — origin now minus origin when last
     ///   seen, over that serverframe gap. `None` on first sight or after leaving PVS
     ///   for more than [`MotionTracker::MAX_GAP`] frames ("no idea"; aim treats it as
@@ -390,11 +391,15 @@ impl Worldview {
                     // `MotionTracker`), so the only measurement is across frames we keep.
                     motion.observe(entity_state.number, origin, frame.serverframe)
                 } else {
-                    // Everything else comes straight off the wire: `old_origin` is the
-                    // origin as of this frame's DELTA SOURCE, so one subtraction gives the
-                    // measured motion over `Frame::velocity_dt()` (the delta's own frame
-                    // span — dividing by a wall-clock dt mixes units and re-inflates the gap).
-                    Some((origin - Vec3::from(entity_state.old_origin)) / frame.velocity_dt())
+                    // Everything else comes straight off the wire: one subtraction gives
+                    // the measured motion over the span `old_origin` actually covers — the
+                    // delta's frame gap when the client filled it, one server tick when the
+                    // server sent it (`Frame::velocity_dt_for`; dividing by a wall-clock dt
+                    // mixes units and re-inflates the gap).
+                    Some(
+                        (origin - Vec3::from(entity_state.old_origin))
+                            / frame.velocity_dt_for(entity_state),
+                    )
                 };
             // Over-cap values are a teleport or a >5-tick stale delta: zero, because
             // lead prediction fails safe at zero and detonates at 9000 u/s.
@@ -803,7 +808,7 @@ mod tests {
     #[test]
     fn velocity_derives_from_old_origin() {
         use q2proto::{EntityState, Frame};
-        // deltaframe 100 → a 1-tick delta, so velocity_dt() is the nominal 0.1 s.
+        // deltaframe 100 → a 1-tick delta, so velocity_dt_for() is the nominal 0.1 s.
         let frame = Frame {
             serverframe: 101,
             deltaframe: 100,
@@ -990,6 +995,67 @@ mod tests {
         assert_eq!(
             player_velocity(&build(&mut motion, 7, [5010.0, 0.0, 0.0])),
             None
+        );
+    }
+
+    /// The other half of the span rule: when `U_OLDORIGIN` was on the wire the server's
+    /// `old_origin` is exactly one tick old however wide the frame gap is — an entity
+    /// ENTERING the PVS on a 2-frame gap, or any entity of an uncompressed frame. Dividing
+    /// those by the gap under-reports: a 70u rocket step would read 350 u/s, and the
+    /// old per-frame `velocity_dt` did exactly that for every uncompressed frame.
+    #[test]
+    fn explicit_old_origin_spans_one_tick_regardless_of_gap() {
+        use q2proto::{EntityState, Frame};
+        let rocket = |old_origin_explicit: bool| EntityState {
+            number: 2,
+            origin: [170.0, 0.0, 0.0],
+            old_origin: [100.0, 0.0, 0.0], // 70u
+            modelindex: 1,
+            old_origin_explicit,
+            ..Default::default()
+        };
+        let vx = |frame: &Frame| {
+            Worldview::from_frame(frame, &ConfigStrings::default(), 0)
+                .entities()
+                .next()
+                .unwrap()
+                .velocity
+                .unwrap()
+                .x
+        };
+        // Entering the PVS on a 2-frame gap: the wire carried old_origin → 1 tick.
+        let entering = Frame {
+            serverframe: 103,
+            deltaframe: 101,
+            entities: vec![rocket(true)],
+            ..Frame::default()
+        };
+        assert!(
+            (vx(&entering) - 700.0).abs() < 0.01,
+            "70u / 0.1s, got {}",
+            vx(&entering)
+        );
+        // Same numbers client-filled → the 2-tick span applies.
+        let carried = Frame {
+            entities: vec![rocket(false)],
+            ..entering.clone()
+        };
+        assert!(
+            (vx(&carried) - 350.0).abs() < 0.01,
+            "70u / 0.2s, got {}",
+            vx(&carried)
+        );
+        // Uncompressed frame: every entity is server-stamped → 1 tick, never 2.
+        let uncompressed = Frame {
+            serverframe: 103,
+            deltaframe: -1,
+            entities: vec![rocket(true)],
+            ..Frame::default()
+        };
+        assert!(
+            (vx(&uncompressed) - 700.0).abs() < 0.01,
+            "got {}",
+            vx(&uncompressed)
         );
     }
 
