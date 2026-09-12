@@ -736,3 +736,29 @@ claims, and only the second one licenses telling someone their config line does 
 
 ## Sources
 - slop/context: `lightdm.md` (desired-display-number)
+
+# A state enum named after a protocol state that does not mean the same thing
+
+qbots' `ConnState::Active` reads like Quake 2's `ca_active` ("spawned, receiving frames").
+It is not: the crate enters `Active` on `svc_serverdata`, which is the START of the reliable
+configstring/baseline pull, while the server still holds the client in `cs_connected` and
+drives it forward with reliable `cmd configstrings N K` / `cmd baselines` / `precache`
+stufftexts that each need a prompt reply. A netchan change gated on `state != Active`, meant
+to match the reference client's "no cmd-less packets once active", silenced every one of
+those replies for up to a tick. A single bot tolerated it (a 50 s live run looked fine); a
+24-bot join did not — the server dropped 10 of 24 mid-handshake with a bare `svc_disconnect`
+(the `SV_DropClient` shape for an unspawned client: no `ClientDisconnect` print). The commit
+had a green suite, a vendor-cited rationale, and a correct A/B against the netchan source; it
+was wrong about what the enum variant meant in *this* codebase.
+
+Avoid: before gating behaviour on a state name, read where the variant is assigned, not what
+it is called — one `grep "State::Active ="` would have shown `svc_serverdata`. When a
+protocol has a well-known state machine, either mirror its names exactly or name the local
+states after the local event (`ServerDataSeen`, `Spawned`). The fix was a predicate on the
+actual observable (`state == Active && frame.is_some()`, the reference's first-parsed-frame
+line) rather than the name. And: verify netchan/handshake changes with a many-client join,
+not one client — starvation of a request/reply pull only shows under contention.
+
+## Sources
+- qbots: crates/client/src/conn.rs (`Conn::spawned`, `on_recv`; commits 8e4546290 → 8d8645f24)
+- qbots: context/pitfalls.md ("`clc_move` sent the same usercmd 3×", corollary)
