@@ -997,6 +997,14 @@ pub(crate) async fn bot_task(
     let mut last_send = Instant::now();
     let mut send_timing = client::SendTiming::new();
 
+    // Memoized configstring clone. The table mutates only on `svc_configstring` /
+    // level change, which bump `Conn::cs_revision`; re-clone iff that moved. Kills the
+    // per-tick deep clone of up to 2080 `String`s (~49 KB + a malloc per filled slot)
+    // on every steady tick. Owned (not a borrow) so it survives the `&mut conn` sends
+    // later in the tick, exactly as the per-tick clone did. See `Conn::cs_revision`.
+    let mut cs = conn.configstrings().clone();
+    let mut cs_rev = conn.cs_revision();
+
     loop {
         if shutdown.requested() {
             // Plan 64: also send the clean disconnect while merely Connected (mid
@@ -1169,7 +1177,12 @@ pub(crate) async fn bot_task(
                     ));
                 }
 
-                let (frame_opt, cs) = (conn.frame.clone(), conn.configstrings().clone());
+                let frame_opt = conn.frame.clone();
+                let rev = conn.cs_revision();
+                if rev != cs_rev {
+                    cs = conn.configstrings().clone();
+                    cs_rev = rev;
+                }
                 let state = conn.state();
                 was_active |= state == ConnState::Active;
 

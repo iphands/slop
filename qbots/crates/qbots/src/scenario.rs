@@ -414,6 +414,13 @@ pub async fn run_scenario(
     let mut resolved_goal: Option<[f32; 3]> = goal_origin;
     let mut reached = false;
 
+    // Memoized configstring clone (see the fleet loop in main.rs and `Conn::cs_revision`):
+    // the scenario loop drives one bot over a 30 s cap, and re-cloning up to 2080
+    // `String`s every tick to read one `svc_configstring`-stable model table is waste.
+    // Re-clone only when `Conn::cs_revision` moves (a configstring write or level reset).
+    let mut cs = conn.configstrings().clone();
+    let mut cs_rev = conn.cs_revision();
+
     loop {
         if shutdown.requested() {
             break;
@@ -438,7 +445,12 @@ pub async fn run_scenario(
 
             _ = ticker.tick() => {
                 let cmd = if conn.state() == ConnState::Active {
-                    let (frame_opt, cs) = (conn.frame.clone(), conn.configstrings().clone());
+                    let frame_opt = conn.frame.clone();
+                    let rev = conn.cs_revision();
+                    if rev != cs_rev {
+                        cs = conn.configstrings().clone();
+                        cs_rev = rev;
+                    }
                     frame_opt
                         .map(|frame| {
                             let playernum =

@@ -59,6 +59,16 @@ pub struct Conn {
     challenge: i32,
     netchan: Option<Netchan>,
     configstrings: ConfigStrings,
+    /// Monotonic counter, bumped by [`Conn::write_configstring`] and
+    /// [`Conn::reset_configstrings`] — the ONLY two mutators of `configstrings`.
+    /// A caller may memoize a clone of the table against this (`if conn.cs_revision()
+    /// != cached_rev { clone }`) and skip the re-clone whenever the number is
+    /// unchanged, which is every steady-state tick. Per-`Conn`, NOT process-global:
+    /// the counter guards this connection's data, so a peer's configstring must not
+    /// invalidate our cache; and it lives on `Conn`, not `ConfigStrings`, so a level
+    /// change (`configstrings = default()`, revision-0 content) still climbs the
+    /// counter and a cached table can never false-match the new level's.
+    cs_revision: u64,
     pub serverdata: Option<ServerData>,
     ring: FrameRing,
     /// Most recently decoded server frame (our state + visible world).
@@ -100,6 +110,7 @@ impl Conn {
             challenge: 0,
             netchan: None,
             configstrings: ConfigStrings::default(),
+            cs_revision: 0,
             serverdata: None,
             ring: FrameRing::new(),
             frame: None,
@@ -202,7 +213,7 @@ impl Conn {
                     self.state = ConnState::Active;
                 }
                 Ok(SvcEvent::ConfigString { index, value }) => {
-                    self.configstrings.set(index, value);
+                    self.write_configstring(index, value);
                 }
                 Ok(SvcEvent::StuffText(s)) => {
                     if let Some(server_cmd) = s.strip_prefix("cmd ") {
@@ -242,7 +253,7 @@ impl Conn {
                         // The caller staggers [`Conn::send_new`] to break the herd.
                         self.reset_level_state();
                         self.serverdata = None;
-                        self.configstrings = ConfigStrings::default();
+                        self.reset_configstrings();
                         self.state = ConnState::Connected;
                         self.new_pending = true;
                     }
@@ -276,7 +287,7 @@ impl Conn {
                     // Clear all per-level state too — the next serverdata is a new level.
                     self.reset_level_state();
                     self.serverdata = None;
-                    self.configstrings = ConfigStrings::default();
+                    self.reset_configstrings();
                     self.netchan = None;
                     self.state = ConnState::Connecting;
                     return Some(oob_line("getchallenge\n"));
@@ -473,6 +484,35 @@ impl Conn {
     /// Access the current configstrings table.
     pub fn configstrings(&self) -> &ConfigStrings {
         &self.configstrings
+    }
+
+    /// The current [`Conn::cs_revision`] value. A caller memoizing a clone of
+    /// [`Conn::configstrings`] re-clones iff this changed since its cached value;
+    /// unchanged means the table is byte-identical and the clone can be skipped.
+    pub fn cs_revision(&self) -> u64 {
+        self.cs_revision
+    }
+
+    /// The ONLY writer into `configstrings` after construction: store one slot and
+    /// bump [`Conn::cs_revision`] so memoizing callers notice. Route every
+    /// `svc_configstring` through here — a direct `self.configstrings.set(..)` would
+    /// change the table WITHOUT bumping, and a caller holding a memoized clone would
+    /// serve stale content forever with a green test suite.
+    fn write_configstring(&mut self, index: usize, value: String) {
+        self.configstrings.set(index, value);
+        self.cs_revision = self.cs_revision.wrapping_add(1);
+    }
+
+    /// Drop the whole configstring table for a level change (the `reconnect` stufftext
+    /// and `svc_reconnect` paths) and bump [`Conn::cs_revision`]. Bumping on reset is
+    /// the whole point: a fresh [`ConfigStrings::default`] has revision-0 content,
+    /// and a cached clone made against the PREVIOUS level's nonzero revision must not
+    /// be reused for the new one. Without the bump the cached rev could, after enough
+    /// writes on the new level, coincidentally equal the cached value and serve the old
+    /// map's model table forever.
+    fn reset_configstrings(&mut self) {
+        self.configstrings = ConfigStrings::default();
+        self.cs_revision = self.cs_revision.wrapping_add(1);
     }
 
     /// Drain `svc_print` lines accumulated since the last call (obituaries, chat,
@@ -783,6 +823,85 @@ mod tests {
         w.write_u8(SvcOp::Stufftext.into());
         w.write_string(text);
         w.freeze()
+    }
+
+    /// A netchan payload of just `svc_configstring <index> "<value>"`.
+    fn configstring_payload(index: i16, value: &str) -> Bytes {
+        let mut w = Writer::new();
+        w.write_u8(SvcOp::Configstring.into());
+        w.write_i16(index);
+        w.write_string(value);
+        w.freeze()
+    }
+
+    /// The callers' memoization trusts `cs_revision` absolutely: a mutation that
+    /// fails to bump it serves a stale clone forever, silently and green. Pin both
+    /// mutators. Exact values are assertable because the counter is per-`Conn`
+    /// (a fresh Conn starts at 0 and `active_conn` feeds no `svc_configstring` —
+    /// "cmd configstrings" is StuffText passthrough, not a table write).
+    #[test]
+    fn configstring_write_bumps_cs_revision() {
+        let mut c = active_conn();
+        assert_eq!(c.cs_revision(), 0, "the handshake writes no configstring");
+
+        c.on_recv(&server_frame(
+            4,
+            3,
+            &configstring_payload(32, "models/player.md2"),
+        ));
+        assert_eq!(c.cs_revision(), 1, "one write = one bump");
+        assert_eq!(c.configstrings().get(32), Some("models/player.md2"));
+
+        c.on_recv(&server_frame(
+            5,
+            3,
+            &configstring_payload(33, "models/totem.md2"),
+        ));
+        assert_eq!(c.cs_revision(), 2);
+        assert_eq!(c.configstrings().get(33), Some("models/totem.md2"));
+    }
+
+    /// A level change empties the table, and a memoized clone made on the PREVIOUS
+    /// level must never be reused for the new one. The counter lives on `Conn`, not
+    /// on the [`ConfigStrings`] it tracks, so the wipe cannot reset it back to a
+    /// value a cached caller already holds. This is the false-match the per-`Conn`
+    /// design exists to prevent: with a field-reset-to-0 design, the new level's
+    /// first write would land on rev 1 again — equal to the stale rev below —
+    /// while the content differs.
+    #[test]
+    fn level_reset_bumps_cs_revision_so_a_stale_clone_never_false_matches() {
+        let mut c = active_conn();
+        c.on_recv(&server_frame(
+            4,
+            3,
+            &configstring_payload(32, "models/old_map.md2"),
+        ));
+        let stale_rev = c.cs_revision();
+        assert_eq!(stale_rev, 1);
+
+        // Map change part 2: stufftext "reconnect" → the table is wiped.
+        c.on_recv(&server_frame(5, 3, &stufftext_payload("reconnect\n")));
+        assert_eq!(c.state(), ConnState::Connected, "reset path taken");
+        assert!(
+            c.cs_revision() > stale_rev,
+            "reset must bump: rev-0 content is NOT the old table, and the counter \
+             must never hand back a value a cached caller already holds"
+        );
+        assert_eq!(c.configstrings().get(32), None, "the table is wiped");
+
+        // Refill the SAME index with the new level's model: the memoizing caller
+        // sees a moved revision and re-clones.
+        c.on_recv(&server_frame(
+            6,
+            4,
+            &configstring_payload(32, "models/new_map.md2"),
+        ));
+        assert_ne!(
+            c.cs_revision(),
+            stale_rev,
+            "a new-level write must not reuse the stale rev"
+        );
+        assert_eq!(c.configstrings().get(32), Some("models/new_map.md2"));
     }
 
     /// A server→client netchan packet whose ack word also acknowledges the client's
