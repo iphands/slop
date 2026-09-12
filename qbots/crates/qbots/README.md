@@ -158,9 +158,14 @@ See `docs/BRAINS.md` for the full brain catalog.
 
 The `spawn-to-spawn` and `spawn-to-weapon` scenarios measure navigation quality:
 
-- **Output:** `./logs/<scenario>/<timestamp>.<bot>.log` — one frame per line.
-- **Summary:** `# SUMMARY reached=... elapsed=... hindered=...`
-- **Exit code:** `0` = reached goal, `2` = timed out, `FAILURE` = setup error.
+- **Output:** `./logs/<scenario>/<unix_ts>.<bot>.<verdict>.log` — one frame per line,
+  a `# RESULT verdict=…` line after the header, a trailing `# SUMMARY verdict=… reached=…`.
+  The filename carries the verdict so a voided run never reads as a failed one.
+- **Exit code:** `0` = every valid run reached; `2` = at least one valid run failed;
+  `3` = **every** run was deferred by the server (intermission / level rotation / drop)
+  — a void measurement, NOT a movement failure; `FAILURE` = setup/IO error (incl. a bot
+  that never went Active or a local interrupt). `--count N` prints an aggregate with an
+  **effective** denominator that excludes deferred runs.
 
 Run with `--count N` to test N bots in parallel.
 

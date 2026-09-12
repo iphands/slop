@@ -761,11 +761,53 @@ async fn preflight_map(
                 }
             },
             Err(e) => {
-                tracing::error!("couldn't query server for its map ({e}); pass --map to override");
+                // A timeout during a level change is EXPECTED (the server stops
+                // answering OOB while spawning) — say so, or this error misroutes
+                // people into debugging their network/config instead of the clock.
+                tracing::error!(
+                    "couldn't query server for its map ({e}); server may be mid-level-change \
+                     (timelimit/fraglimit rotation) — retry, or pass --map to override"
+                );
                 return Err(ExitCode::FAILURE);
             }
         },
     };
+
+    // 1b. Movement-harness only: a rotation DURING the run voids every datapoint,
+    // and a second probe 2.5 s later is the cheapest predictor of "this server is
+    // rotating right now". It can't promise the next 30 s are quiet (only
+    // `timelimit 0` does — not visible over OOB `status`, it's serverinfo), but it
+    // refuses the runs that are already doomed. The in-loop LevelChange detector
+    // stays the primary defense; this one just stops burning 24 connections on a
+    // doomed batch.
+    if allow_partial {
+        tokio::time::sleep(Duration::from_millis(2500)).await;
+        match query_status(addr).await {
+            Ok(report) => {
+                if let Some(m2) = report.map.filter(|m2| *m2 != map) {
+                    if map_override.is_none() {
+                        tracing::error!(
+                            "server changed map {map} -> {m2} during preflight — it is mid-rotation; \
+                             re-run when it settles (or set `timelimit 0` via rcon for benchmarks)"
+                        );
+                        return Err(ExitCode::FAILURE);
+                    }
+                    // An explicit `--map` asserts the operator's intent; in-loop LevelChange
+                    // is the backstop, so a mid-preflight rotation is a warning, not a veto.
+                    tracing::warn!(
+                        "server changed map {map} -> {m2} during preflight despite --map override; \
+                         in-run contamination detection will void affected datapoints"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "second status probe failed ({e}) — server may be changing levels; \
+                     starting anyway, in-run detection will void contaminated runs"
+                );
+            }
+        }
+    }
 
     // 2. Validate the nav cache loads NOW (fatal on miss/stale/garbage) so the failure
     //    is immediate and once, not per-bot at +Ns. This loads the BSP, builds the CM,
@@ -1786,6 +1828,12 @@ async fn run_scenario_cmd(
     mode: NavMode,
     brain: brain::BrainKind,
 ) -> ExitCode {
+    // `--count 0` would fall through to the all-deferred shape and print the nonsense
+    // "all 0 runs voided"; reject the typo at the door (the fleet path has the same gate).
+    if count == 0 {
+        tracing::error!("--count must be >= 1");
+        return ExitCode::FAILURE;
+    }
     let base_name = name.unwrap_or_else(|| "qbots".to_string());
     let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
     let addr = match resolve_addr(&addr_str).await {
@@ -1807,7 +1855,7 @@ async fn run_scenario_cmd(
 
     let unix_ts = time::OffsetDateTime::now_utc().unix_timestamp();
     // (bot_name, join_handle) pairs for per-bot summary (T5).
-    let mut handles: Vec<(String, tokio::task::JoinHandle<ExitCode>)> = Vec::new();
+    let mut handles: Vec<(String, tokio::task::JoinHandle<scenario::ScenarioVerdict>)> = Vec::new();
     let map_clone = map.clone();
     let goal_clone = goal.clone();
 
@@ -1846,10 +1894,10 @@ async fn run_scenario_cmd(
             )
             .await
             {
-                Ok(code) => code,
+                Ok(verdict) => verdict,
                 Err(e) => {
                     tracing::error!("scenario for {}: {e}", bot_name_task);
-                    ExitCode::FAILURE
+                    scenario::ScenarioVerdict::SetupError
                 }
             }
         });
@@ -1857,27 +1905,47 @@ async fn run_scenario_cmd(
     }
 
     // Wait for all bots; emit per-bot result lines then an aggregate summary (T5).
+    // The verdict (not the raw ExitCode) drives everything: `deferred` runs are
+    // counted SEPARATELY and excluded from the effective denominator, so a server
+    // rotation can never masquerade as a movement failure (or vice versa).
     let total = handles.len();
-    let mut reached = 0usize;
-    let mut result = ExitCode::SUCCESS;
+    let mut tally = scenario::BatchTally::default();
     for (name, handle) in handles {
-        let code = match handle.await {
-            Ok(c) => c,
+        let verdict = match handle.await {
+            Ok(v) => v,
             Err(e) => {
                 tracing::error!("task join error for {name}: {e}");
-                ExitCode::FAILURE
+                scenario::ScenarioVerdict::SetupError
             }
         };
-        let ok = code == ExitCode::SUCCESS;
-        tracing::info!(bot = %name, reached = ok, "scenario result");
-        if ok {
-            reached += 1;
-        } else if result == ExitCode::SUCCESS {
-            result = code;
-        }
+        tracing::info!(bot = %name, verdict = verdict.log_tag(), "scenario result");
+        tally.add(&verdict);
     }
-    tracing::info!("{reached}/{total} bots reached the goal");
-    result
+    tracing::info!("scenario batch ({total} bots): {tally}");
+    let code = tally.exit_code();
+    // Exit 3 means "the server voided every run" — say so in plain words on stderr,
+    // because a CI log that ends in a bare `exit=3` gets a bug filed against the
+    // bots, not against the server schedule. The breakdown is INLINED (not "see
+    // above"): a CI job capturing only stderr must still get the per-reason counts.
+    if code == ExitCode::from(3) {
+        eprintln!(
+            "exit=3: NOT a movement failure — all {total} runs were voided by the server, so \
+             0 locomotion datapoints exist. breakdown: {tally}.\n\
+             fix: wait for the rotation to SETTLE, or park the map (`rcon set timelimit 0`), \
+             then re-run (`qbots status` shows the map it settled on). per-run detail: the \
+             `# RESULT` lines in logs/.",
+        );
+    }
+    // A measurement from a fraction of the batch is noise against a 24-bot baseline:
+    // say LOW POWER before anyone compares it. (exit 3 already covers ed == 0.)
+    let ed = tally.effective_denominator();
+    if ed > 0 && ed * 2 < total {
+        tracing::warn!(
+            "LOW POWER: only {ed} of {total} runs measured — do NOT compare to the \
+             24-bot baseline (per-run verdicts above explain the missing runs)"
+        );
+    }
+    code
 }
 
 /// Enumerate all available map names under `baseq2`: loose `.bsp` files in

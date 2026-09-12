@@ -196,7 +196,11 @@ struct MatrixRow {
     name: &'static str,
     /// `qbots` args (scenario + flags); `--addr`/`--brain` are appended per run.
     args: &'static [&'static str],
-    /// Pass gate: at least this many of `count` bots reach.
+    /// Pass gate: at least this many bots must reach. Compared against the
+    /// aggregate's `reached` COUNT, not its fraction — so the currency is unchanged by
+    /// the effective-denominator format: a run the SERVER voided lowers the denominator
+    /// but can never satisfy this gate, and a batch that measures nothing has no
+    /// parseable fraction at all and fails as `None` (see `parse_reached`).
     min_reached: u32,
     count: u32,
     note: &'static str,
@@ -336,8 +340,17 @@ fn run_matrix(mut args: Vec<String>) -> ExitCode {
                 parse_reached(&text)
             });
             match outcome {
-                Some((r, c)) => eprintln!("[matrix]   → {r}/{c} reached"),
-                None => eprintln!("[matrix]   → NO RESULT (run error / wrong map loaded?)"),
+                // `{c}` is the EFFECTIVE denominator, not the launched count: printing
+                // a bare `3/3` under a `≥3/8` gate would read as perfect for a row that
+                // measured 3 of 8. Show both numbers so a half-voided row can't flatter
+                // itself — that is exactly how a false "24/24" headline gets written.
+                Some((r, c)) => eprintln!(
+                    "[matrix]   → {r}/{c} reached (effective; {} launched)",
+                    row.count
+                ),
+                None => eprintln!(
+                    "[matrix]   → NO RESULT (run error / wrong map / every datapoint deferred = exit 3)"
+                ),
             }
             results.push((row, brain.clone(), outcome));
         }
@@ -376,14 +389,24 @@ fn run_matrix(mut args: Vec<String>) -> ExitCode {
     }
 }
 
-/// Parse the scenario aggregate line `X/N bots reached the goal` (last occurrence wins).
+/// Parse the scenario aggregate line `scenario batch (N bots): effective R/C …`.
+/// `R/C` is the effective fraction (deferred runs excluded) — the gate currency.
+/// Format lives in qbots `scenario::BatchTally::Display`; keep the two in step
+/// (no cross-crate type to share: qbots is a binary crate).
 fn parse_reached(text: &str) -> Option<(u32, u32)> {
-    text.lines().rev().find_map(|l| {
-        let idx = l.find(" bots reached the goal")?;
-        let frac = l[..idx].split_whitespace().last()?;
-        let (a, b) = frac.split_once('/')?;
-        Some((a.parse().ok()?, b.parse().ok()?))
-    })
+    // Two-step ON PURPOSE: locate the LAST aggregate line, then parse ONLY that line.
+    // A `find_map` whose closure bails on a fraction-less line would fall through to an
+    // EARLIER aggregate line and report a previous batch's fraction as this batch's
+    // verdict. The last line is the verdict, and a batch that measured nothing has no
+    // fraction ⇒ None, always.
+    let line = text
+        .lines()
+        .rev()
+        .find(|l| l.contains("scenario batch ("))?;
+    let after = line.split_once("scenario batch (")?.1.split_once("): ")?.1;
+    let frac = after.split_whitespace().find(|t| t.contains('/'))?;
+    let (a, b) = frac.split_once('/')?;
+    Some((a.parse().ok()?, b.parse().ok()?))
 }
 
 fn main() -> ExitCode {
@@ -472,12 +495,28 @@ mod tests {
 
     #[test]
     fn parse_reached_finds_the_last_aggregate_line() {
-        let log = "\
-0059.458 I scenario result bot=a reached=true
-0091.770 I 2/4 bots reached the goal
-0120.001 I 3/4 bots reached the goal
-0121.000 I done";
-        assert_eq!(parse_reached(log), Some((3, 4)));
+        // Fixture lines are CAPTURED output (`0043.913 I ` is the fmt layer's prefix),
+        // from a live 24-bot run of `tracing::info!("scenario batch ({N} bots): {tally}")`.
+        // Regenerate from a live run whenever qbots' `BatchTally::Display` changes — a
+        // fixture that drifts from its producer pins a lie (this one already did once).
+        let real =
+            "0043.913 I scenario batch (24 bots): effective 13/24 (54%) | 13 reached, 11 failed";
+        assert_eq!(parse_reached(real), Some((13, 24)));
+
+        // Last aggregate wins, when both carry a fraction.
+        let two = format!("0001.000 I {real}\n0002.000 I scenario batch (4 bots): effective 4/4 (100%) | 4 reached, 0 failed");
+        assert_eq!(parse_reached(&two), Some((4, 4)));
+
+        // An all-deferred batch prints no `R/C` token, so a run that measured NOTHING
+        // parses as None and its matrix row FAILS. That is intended: a batch with zero
+        // datapoints must never pass a movement gate (it is exit 3, not exit 2).
+        let deferred = "0001.000 I scenario batch (3 bots): NO effective runs — nothing learned about movement | 0 reached, 0 failed, 3 deferred by SERVER (3 intermission)";
+        assert_eq!(parse_reached(deferred), None);
+
+        // The fall-through trap: a good batch followed by an all-deferred one is None,
+        // NOT the earlier fraction. A row whose final batch measured nothing must not
+        // inherit a pass from the batch before it.
+        assert_eq!(parse_reached(&format!("{real}\n{deferred}")), None);
         assert_eq!(parse_reached("no aggregate here"), None);
     }
 

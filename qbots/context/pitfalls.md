@@ -1410,3 +1410,77 @@ written down.
 - qbots: crates/brain/src/perception.rs (`ModelTable`, `from_frame_with_models`)
 - vendor: yquake2/src/server/sv_init.c (`SV_SpawnServer`, the only model-range writer)
 - vendor: yquake2/src/game/player/client.c (`ClientUserinfoChanged` → `CS_PLAYERSKINS`)
+
+---
+
+# A benchmark that prints a confident false number
+
+## Problem
+
+`spawn-to-spawn` reported `0/24 bots reached the goal`, exit 2 — a movement failure —
+when the truth was that the server sat in PM_FREEZE intermission and every bot was
+frozen solid for its entire 30 s window (`distance=0 mean_speed=0 bumps=0`, `flags=A`
+on all 297 samples). A later run returned `13/24` and I nearly A/B'd that as a
+regression signal; the server actually had `timelimit 600` and rotated the map
+mid-run, which drops the client out of `Active` (server broadcasts `reconnect`,
+`sv_init.c:654`, after bumping `svs.spawncount`, `:264`). The harness's Active guard
+then silently sent `Usercmd::default()` until the cap: the recorder stopped sampling,
+the goal coordinates belonged to a map that no longer existed, and the run reported
+"failed to move". Any outcome the benchmark cannot distinguish — never-Active, frozen,
+kicked, level-gone, genuinely-stuck — collapses into one exit code and becomes a lie.
+The killer detail: a contaminated `0/N` is indistinguishable from a Plan 11–14
+regression, so the benchmark actively manufactures bug reports against correct code.
+
+## Fix
+
+Give void measurements their own verdict, exit code, and denominator. `ScenarioVerdict
+= Reached | Failed | Deferred(LevelChange | Intermission{t}) | SetupError`, with
+`exit=3` meaning "every run deferred: nothing was learned" (never reuse 2, or CI can't
+tell broken from unmeasurable). Detect in-loop, cheaply: capture `serverdata.servercount`
+at first-Active and void on ANY deviation (`Option` — the level-change path nulls it
+before the fresh `svc_serverdata` lands; never order-compare, `svs.spawncount` is
+`randk()`-seeded per process, `sv_init.c:495`); void on ANY `PM_FREEZE` frame (a scenario
+bot's only freeze source is intermission — death is `PM_DEAD` and respawn restores
+`PM_NORMAL`, and unlike the fleet it never presses a button to exit, `client.c:2122`);
+void on a post-Active disconnect. Contamination is STICKY and must break before the
+reach-settle check, which sits outside the Active guard — otherwise a bot dropped from
+the level near its goal gets credited `reached` 0.5 s later. Two verdicts must never be
+folded together: a completed `reached` outranks later contamination (the loop breaks on
+reach, so the settle was won on live data), and zero-frames stays `SetupError`, never
+`Deferred` — that path may be OUR broken client, and blaming the server buries real bugs.
+Print the reason in the log FILENAME and a `# RESULT` line, not just the terminal: days
+later someone greps archived SUMMARY lines with no terminal, and `reached=0` alone would
+permanently poison the archive. General rule: a harness must return "I could not measure"
+as a first-class answer.
+
+## Sources
+- qbots: crates/qbots/src/scenario.rs (`DeferredReason`, `BatchTally`, contamination poll)
+- qbots: crates/brain/src/recorder.rs (`dump` with `# RESULT` line)
+- vendor: yquake2/src/server/sv_init.c (`SV_SpawnServer` spawncount++ / broadcast reconnect)
+- vendor: yquake2/src/game/player/client.c + hud.c (`PM_FREEZE` sources, intermission teleport)
+
+### Known gap left open (found in review, NOT fixed here)
+
+Every detector above keys on *level identity*; none keys on *frame freshness*. `run_scenario`
+re-reads `conn.frame`, which is only overwritten on a successful decode — so if frames stop
+arriving while the state stays `Active` and `servercount` is unchanged (lossy link, `rate`
+overflow, parser desync) the tick closure re-decides the SAME stale playerstate every tick,
+and a stale origin already inside `GOAL_TOL` still wins the settle test: a **false
+`Reached`**, which is worse than the false `0/N` this entry is about because it silences a
+real regression. Guard: track `last_new_frame_at: Instant` beside `last_serverframe` and
+void after >1 s of an unchanged `serverframe`. Also untested by construction: the loop-side
+poll and the freeze/settle step are only verifiable against a live server — extracting them
+into pure functions (`contamination_tick`, `observe_frame`) makes ~30 lines of table-driven
+tests possible without one.
+
+Second sharp edge, deferred with it: exit 3 only protects the **all**-deferred batch. Five
+`Server is full.` bounces (a drop after `Active`, tagged `level-change`) alongside 19 real
+deferrals exit **2**, which a CI reader reads as a movement regression when the real fault
+is slot starvation. The kick reason IS drained and logged at the disconnect site, just not
+fed into the tag — classifying reason-text (`full|kick|banned|maxclients`) as `SetupError`
+would move those batches from exit 2 to exit `FAILURE`, which is the honest diagnosis.
+Until then: read the deferred breakdown on the aggregate line before believing an exit 2.
+
+## Sources
+- qbots: crates/qbots/src/scenario.rs (`run_scenario` frame re-read, `decide_verdict`)
+- qbots: crates/client/src/conn.rs (frame overwritten only on successful decode)

@@ -13,18 +13,30 @@
 //!
 //! # Log schema (`dump()`)
 //!
-//! Written to `./logs/<scenario>/<unix_ts>.<bot>.log`, one token per column,
-//! single-space separated and fully positional (so `awk '{print $4,$5,$6}'` etc.
-//! works). `#`-prefixed lines are metadata; the rest are frame rows:
+//! Written to `./logs/<scenario>/<unix_ts>.<bot>.<verdict>.log` — the verdict suffix is
+//! part of the schema: `ls logs/` alone must separate a run the SERVER voided from one
+//! the BOT failed. One token per column, single-space separated and fully positional (so
+//! `awk '{print $4,$5,$6}'` etc. works). `#`-prefixed lines are metadata; the rest are
+//! frame rows:
 //!
 //! ```text
 //! # qbots movement log  scenario=<s>  bot=<name>  map=<map>  goal=(x,y,z)
 //! # goal_classname=<cls>  started=<ISO8601>
 //! # t frame x y z vx vy vz speed yaw pitch move_yaw face_delta wp wpd flags
+//! # RESULT verdict=<verdict>[ deferred=<reason>[ frozen_from_t=<s>]]
 //! <t> <frame> <x> <y> <z> <vx> <vy> <vz> <speed> <yaw> <pitch> <move_yaw> <face_delta> <wp> <wpd> <flags>
 //! ...
-//! # SUMMARY reached=<0|1> elapsed=<s> distance=<u> mean_speed=<u/s> max_speed=<u/s> bumps=<n> wrong_turns=<n> hindered_frames=<n> phantom_frames=<n> path_efficiency=<0..1>
+//! # SUMMARY [verdict=<verdict> ]reached=<0|1> elapsed=<s> distance=<u> mean_speed=<u/s> max_speed=<u/s> bumps=<n> wrong_turns=<n> hindered_frames=<n> phantom_frames=<n> path_efficiency=<0..1>
 //! ```
+//!
+//! Both `# RESULT` and the `SUMMARY` `verdict=` token appear only when `dump` is given
+//! a `result_line`; a caller that passes `None` gets the pre-verdict byte format back.
+//! `verdict` is `reached|failed|deferred|setup-error`; `deferred` means the server voided
+//! the run (rotated the map / threw it in intermission / dropped us) so it measured
+//! NOTHING about locomotion, and `reached=0` on such a run is not a movement failure.
+//! NOTE the `# RESULT` line sits between the column header and the first frame row, so
+//! with an outcome present frame data starts at `lines[4]`, not `lines[3]` — positional
+//! consumers must key off the `#` prefix, not a fixed index.
 //!
 //! Columns: `t` elapsed seconds; `frame` serverframe; `x y z` origin;
 //! `vx vy vz` velocity (u/s); `speed` `|horizontal velocity|`; `yaw pitch` view
@@ -403,9 +415,16 @@ impl MovementRecorder {
     }
 
     /// Write the structured per-frame log to `path` (creates parent dirs; on IO
-    /// failure logs a warning instead of panicking). Format is finalized/​documented
-    /// in Plan 10 T3; this writes header + one row per frame + a SUMMARY line.
-    pub fn dump(&self, path: &Path) -> std::io::Result<()> {
+    /// failure logs a warning instead of panicking). Schema is finalized in the
+    /// module doc above: header + one row per frame + a SUMMARY line.
+    ///
+    /// `result_line` is an optional verdict line (e.g. `verdict=deferred
+    /// deferred=level-change`), emitted as a `# RESULT` header comment AFTER the
+    /// column header (shifting frame rows to `lines[4]`) and echoed as the SUMMARY's
+    /// leading `verdict=` token — the line greppers actually pipe into spreadsheets
+    /// must not read a voided run's `reached=0` as a locomotion failure. A caller
+    /// with no verdict passes `None` and gets the exact pre-verdict byte format.
+    pub fn dump(&self, path: &Path, result_line: Option<&str>) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 if let Err(e) = std::fs::create_dir_all(parent) {
@@ -423,6 +442,9 @@ impl MovementRecorder {
             self.goal_label, self.started_iso
         ));
         out.push_str("# t frame x y z vx vy vz speed yaw pitch move_yaw face_delta wp wpd flags\n");
+        if let Some(r) = result_line {
+            out.push_str(&format!("# RESULT {r}\n"));
+        }
         for f in &self.frames {
             out.push_str(&format!(
                 "{:.3} {} {:.0} {:.0} {:.0} {:.0} {:.0} {:.0} {:.0} {:.0} {:.0} {} {:.0} {} {} {}\n",
@@ -445,8 +467,19 @@ impl MovementRecorder {
             ));
         }
         let s = self.summary();
+        // Echo the verdict INTO the SUMMARY (first token after `# SUMMARY `): the
+        // `# RESULT` header is what `head` finds, but SUMMARY is the line people
+        // grep out of the archive — `reached=0` alone cannot tell a voided run from
+        // a locomotion failure, which is the whole lie this format exists to kill.
+        let verdict_tok = result_line
+            .and_then(|r| r.strip_prefix("verdict="))
+            .map(|r| {
+                let end = r.find(' ').unwrap_or(r.len());
+                format!("verdict={} ", &r[..end])
+            })
+            .unwrap_or_default();
         out.push_str(&format!(
-            "# SUMMARY reached={} elapsed={:.2} distance={:.0} mean_speed={:.0} max_speed={:.0} bumps={} wrong_turns={} hindered_frames={} phantom_frames={} path_efficiency={:.3}\n",
+            "# SUMMARY {verdict_tok}reached={} elapsed={:.2} distance={:.0} mean_speed={:.0} max_speed={:.0} bumps={} wrong_turns={} hindered_frames={} phantom_frames={} path_efficiency={:.3}\n",
             s.reached as u8, s.elapsed_secs, s.distance, s.mean_speed, s.max_speed, s.bumps,
             s.wrong_turns, s.hindered_frames, s.phantom_frames, s.path_efficiency
         ));
@@ -794,7 +827,7 @@ mod tests {
         });
         let dir = std::env::temp_dir().join(format!("qbots-rec-test-{}", std::process::id()));
         let path = dir.join("run.qb0.log");
-        r.dump(&path).expect("dump ok");
+        r.dump(&path, None).expect("dump ok");
         let text = std::fs::read_to_string(&path).expect("read back");
         let summary = text
             .lines()
@@ -834,7 +867,7 @@ mod tests {
         });
         let dir = std::env::temp_dir().join(format!("qbots-schema-{}", std::process::id()));
         let path = dir.join("run.qb0.log");
-        r.dump(&path).expect("dump ok");
+        r.dump(&path, None).expect("dump ok");
         let text = std::fs::read_to_string(&path).expect("read back");
         let lines: Vec<&str> = text.lines().collect();
 
@@ -889,6 +922,56 @@ mod tests {
         ] {
             assert!(summary.contains(key), "SUMMARY has {key}");
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// With a `result_line` the `# RESULT` line sits between the column header and
+    /// the frame rows (so frame data moves to `lines[4]`), and the SUMMARY echoes the
+    /// verdict as its first token — both halves of the anti-`reached=0`-lie contract,
+    /// which nothing else in the suite pinned.
+    #[test]
+    fn dump_with_outcome_places_result_line_and_tags_summary() {
+        let probe: Arc<dyn WallProbe> = Arc::new(ClearProbe);
+        let mut r = rec(probe, [1000.0, 0.0, 0.0]);
+        r.sample(Sample {
+            t_secs: 0.1,
+            frame: 1,
+            origin: [30.0, 0.0, 0.0],
+            velocity: [300.0, 0.0, 0.0],
+            view_yaw: 0.0,
+            view_pitch: 0.0,
+            grounded: true,
+            waypoint: Some(0),
+            waypoint_pos: Some([1000.0, 0.0, 0.0]),
+            intent_forward: 1.0,
+            phantom_target: false,
+            recovery: false,
+            swimming: false,
+            riding: false,
+            ladder: false,
+        });
+        let dir = std::env::temp_dir().join(format!("qbots-result-{}", std::process::id()));
+        let path = dir.join("run.qb0.log");
+        r.dump(&path, Some("verdict=deferred deferred=level-change"))
+            .expect("dump ok");
+        let text = std::fs::read_to_string(&path).expect("read back");
+        let lines: Vec<&str> = text.lines().collect();
+
+        // lines[0..3] are unchanged by an outcome; the RESULT line is inserted at [3]...
+        assert!(
+            lines[2].starts_with("# t frame x y z"),
+            "column header still [2]"
+        );
+        assert_eq!(lines[3], "# RESULT verdict=deferred deferred=level-change");
+        // ...so the frame row shifts to [4] with its full 16 columns intact.
+        assert_eq!(lines[4].split_whitespace().count(), 16, "frame row at [4]");
+        // ...and the SUMMARY — the line greppers actually extract — carries the verdict
+        // BEFORE reached=, so `reached=0` can never read as a locomotion failure.
+        let summary = lines.last().expect("a SUMMARY line exists");
+        assert!(
+            summary.starts_with("# SUMMARY verdict=deferred reached=0"),
+            "{summary}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

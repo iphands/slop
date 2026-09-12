@@ -27,7 +27,7 @@ use brain::{
     MovementController, Navigator,
 };
 use client::{Conn, ConnState};
-use q2proto::Usercmd;
+use q2proto::{Usercmd, PM_FREEZE};
 use world::NavGraph;
 
 use crate::config::Config;
@@ -81,10 +81,203 @@ pub fn item_classname(name: &str) -> String {
     .to_string()
 }
 
+/// Why a run measured NOTHING about locomotion: the server, not the bot, decided
+/// the outcome. A Deferred run must never be counted as a failure — and never as a
+/// success either; its data is void (the goal coordinates belong to a map we left,
+/// the freeze window had no locomotion in it). Deliberately only two variants: a
+/// bot that never went Active or produced no frames is a SetupError (possibly OUR
+/// broken client), and routing that into "the server voided it" would bury a real
+/// bug under someone else's excuse.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DeferredReason {
+    /// The level went away mid-run: server broadcast `reconnect` / fresh
+    /// `svc_serverdata` with a different `servercount` / netchan reset (which nulls
+    /// `serverdata` before the new one lands — `None` is the same event) / hard
+    /// disconnect after we were Active. Vendor: `sv_init.c:264` bumps
+    /// `svs.spawncount` per level spawn, `:654` broadcasts `reconnect`.
+    LevelChange,
+    /// Frozen by an intermission (`PM_FREEZE`). Under the STOCK yquake2 gamecode a
+    /// scenario bot can ONLY freeze in intermission: `PM_DEAD` on death (`client.c:767`),
+    /// `PM_NORMAL` on respawn (`:2158`), `PM_FREEZE` only while `level.intermissiontime`
+    /// (`:2119`) or at the intermission teleport (`hud.c:47`) — and unlike the fleet
+    /// (Plan 64) the scenario bot never presses a button, so per `client.c:2122` it
+    /// stays frozen to the cap. A third writer exists, `g_chase.c:120`, excluded by
+    /// construction: chase cam needs a `clc_stringcmd`, which scenarios never send.
+    /// A MODDED gamecode could freeze for another reason and would be tagged
+    /// `intermission` — the run is still correctly voided, only the tag misattributes.
+    /// Hence ANY freeze frame voids (no ratio); `t_secs` is first-observed onset, for
+    /// diagnosis only.
+    Intermission { t_secs: f32 },
+}
+
+impl DeferredReason {
+    /// Machine-readable tag for the `# RESULT` line and the aggregate, so grepping
+    /// `logs/` days later never has to parse prose.
+    fn tag(&self) -> &'static str {
+        match self {
+            Self::LevelChange => "level-change",
+            Self::Intermission { .. } => "intermission",
+        }
+    }
+
+    /// Extra `key=value` detail for the `# RESULT` line only; the aggregate groups
+    /// by [`Self::tag`], so the onset time never fragments a tally.
+    fn detail(&self) -> String {
+        match self {
+            Self::Intermission { t_secs } => format!(" frozen_from_t={t_secs:.1}"),
+            Self::LevelChange => String::new(),
+        }
+    }
+}
+
+/// The one-word verdict of a single scenario run. Replaces the old boolean
+/// reached/fail: a run that learned nothing no longer shares an outcome (or an exit
+/// code) with a run that legitimately failed to move.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ScenarioVerdict {
+    /// Held the goal within tolerance for the settle window. Genuine success — and
+    /// immune to the contamination sources polled here (the run breaks the instant
+    /// this is true, so no later server event can retroactively void it). Frame
+    /// STALLS are not among the polled sources: a link repeating a stale in-tolerance
+    /// playerstate could still credit this — follow-up recorded in `context/pitfalls.md`.
+    Reached,
+    /// A full, uncontaminated window that ended without reaching. The only outcome
+    /// that counts against movement.
+    Failed,
+    /// Measurement void — see [`DeferredReason`].
+    Deferred(DeferredReason),
+    /// Setup/IO error (bad config, nav cache, never-Active connection). Terminal
+    /// failure, distinct from Deferred: this is OUR bug surface, not the server's.
+    SetupError,
+}
+
+impl ScenarioVerdict {
+    /// Machine tag for per-bot log lines (`reached|failed|deferred|setup-error`).
+    pub fn log_tag(&self) -> &'static str {
+        match self {
+            Self::Reached => "reached",
+            Self::Failed => "failed",
+            Self::Deferred(_) => "deferred",
+            Self::SetupError => "setup-error",
+        }
+    }
+
+    /// Suffix baked into the log FILENAME so `ls logs/` alone distinguishes a voided
+    /// run from a failed one (a stale archive must be self-explaining).
+    pub fn filename_tag(&self) -> &'static str {
+        match self {
+            Self::Reached => "reached",
+            Self::Failed => "failed",
+            Self::Deferred(_) => "deferred",
+            Self::SetupError => "error",
+        }
+    }
+}
+
+/// Cross-bot tally for a `--count N` run. Exit precedence is computed from these
+/// counters, never from arrival order: `SetupError > 3 > 2 > 0` — the old
+/// "adopt the first non-success code" rule made a 24-bot exit a coin flip of which
+/// bot finished first.
+#[derive(Debug, Default)]
+pub struct BatchTally {
+    pub reached: usize,
+    pub failed: usize,
+    /// Per-tag deferred counts (first-seen tag order for display).
+    pub deferred: Vec<(DeferredReason, usize)>,
+    pub setup_errors: usize,
+}
+
+impl BatchTally {
+    pub fn add(&mut self, v: &ScenarioVerdict) {
+        match v {
+            ScenarioVerdict::Reached => self.reached += 1,
+            ScenarioVerdict::Failed => self.failed += 1,
+            ScenarioVerdict::SetupError => self.setup_errors += 1,
+            ScenarioVerdict::Deferred(r) => {
+                // Group by TAG, not full reason equality: two intermission deferrals
+                // at different onset times are ONE bucket here (the per-bot log line
+                // keeps its own exact onset). Matching on `PartialEq` would fragment a
+                // 24-bot batch into a dozen "deferred" entries and read like chaos.
+                match self.deferred.iter_mut().find(|(k, _)| k.tag() == r.tag()) {
+                    Some((_, n)) => *n += 1,
+                    None => self.deferred.push((r.clone(), 1)),
+                }
+            }
+        }
+    }
+
+    pub fn deferred_total(&self) -> usize {
+        self.deferred.iter().map(|(_, n)| n).sum()
+    }
+
+    /// Runs that produced a USABLE locomotion datapoint (reached or failed — a
+    /// deferred run counted against neither). Printing this beats making a reader
+    /// mentally subtract from N: `13/16` is the number that means "movement",
+    /// `13/24` is the number that got contaminated.
+    pub fn effective_denominator(&self) -> usize {
+        self.reached + self.failed
+    }
+
+    /// Batch exit code. Precedence ladder: a setup error dominates (our bug); else
+    /// zero-usable-samples ⇒ 3 (nothing was learned — CI must distinguish
+    /// "unmeasurable" from "broken"); else any genuine failure ⇒ 2 (measured); else
+    /// 0. A run with reached>0 AND failed>0 is "the goal is reachable, some bots
+    /// didn't make it" ⇒ 2, same as the old contract.
+    pub fn exit_code(&self) -> ExitCode {
+        if self.setup_errors > 0 {
+            return ExitCode::FAILURE;
+        }
+        if self.effective_denominator() == 0 {
+            return ExitCode::from(3);
+        }
+        if self.failed > 0 {
+            return ExitCode::from(2);
+        }
+        ExitCode::SUCCESS
+    }
+}
+
+impl std::fmt::Display for BatchTally {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Effective fraction FIRST: it is the answer to "did movement regress?", and
+        // `acceptance.rs::parse_reached` parses it as the token after `): `. Prose last.
+        let ed = self.effective_denominator();
+        if ed > 0 {
+            write!(
+                f,
+                "effective {}/{} ({:.0}%)",
+                self.reached,
+                ed,
+                100.0 * self.reached as f64 / ed as f64
+            )?;
+        } else {
+            write!(f, "NO effective runs — nothing learned about movement")?;
+        }
+        write!(f, " | {} reached, {} failed", self.reached, self.failed)?;
+        let dt = self.deferred_total();
+        if dt > 0 {
+            write!(f, ", {dt} deferred by SERVER (")?;
+            for (i, (r, n)) in self.deferred.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{n} {}", r.tag())?;
+            }
+            write!(f, ")")?;
+        }
+        if self.setup_errors > 0 {
+            // The line must never read clean while the process exits FAILURE.
+            write!(f, ", {} setup-error", self.setup_errors)?;
+        }
+        Ok(())
+    }
+}
+
 /// Run a movement scenario: connect one bot, drive it to `goal`, record + dump.
-/// Returns a process exit code: `SUCCESS` if the goal was reached, `2` if the run
-/// ended without reaching it, `FAILURE` on a setup error or if the bot never became
-/// active (so no recorder exists).
+/// Returns the run's [`ScenarioVerdict`]: `Reached`/`Failed` are real measurements;
+/// `Deferred(reason)` means the server voided the datapoint (intermission, level
+/// change, or a post-Active drop) and it must not be counted either way;
+/// `SetupError` is a setup/IO failure including a bot that never became Active.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_scenario(
     cfg: &Config,
@@ -101,7 +294,7 @@ pub async fn run_scenario(
     // Decision plugin (`--brain`): `runtester` (default — the lifted scenario pathfinder) or
     // `main` for an A/B against the live combat brain (combat is forced off here regardless).
     brain_kind: BrainKind,
-) -> std::io::Result<ExitCode> {
+) -> std::io::Result<ScenarioVerdict> {
     // The caller (`run_scenario_cmd`) autodetects the server's map and passes it here;
     // a `None` at this point means autodetection was skipped/failed, which is a bug,
     // not a reason to silently guess a map (a wrong map produces garbage navigation).
@@ -413,6 +606,16 @@ pub async fn run_scenario(
     // Farthest-spawn goal, resolved lazily on the first active frame.
     let mut resolved_goal: Option<[f32; 3]> = goal_origin;
     let mut reached = false;
+    // Set only on the shutdown break below: an operator-interrupted run is OUR teardown,
+    // not the bot's locomotion or the server's schedule, so it must not reach
+    // `decide_verdict` as a Failed datapoint (a Ctrl-C batch would exit 2 = regression).
+    let mut interrupted = false;
+    // Contamination tracking (see `DeferredReason`). A scenario bot only leaves its
+    // level because the server took it (timelimit/fraglimit rotation, intermission,
+    // or a drop), so ANY of those voids the datapoint instead of counting as failure.
+    let mut was_active = false;
+    let mut servercount_at_start: Option<i32> = None;
+    let mut deferred: Option<DeferredReason> = None;
 
     // Memoized configstring clone (see the fleet loop in main.rs and `Conn::cs_revision`):
     // the scenario loop drives one bot over a 30 s cap, and re-cloning up to 2080
@@ -425,6 +628,7 @@ pub async fn run_scenario(
 
     loop {
         if shutdown.requested() {
+            interrupted = true;
             break;
         }
         let elapsed = start.elapsed().as_secs_f32();
@@ -440,12 +644,48 @@ pub async fn run_scenario(
                     let _ = sock.send(&pkt).await;
                 }
                 if conn.state() == ConnState::Disconnected {
-                    tracing::warn!("scenario: server disconnected");
+                    // Vendor contract (`conn.rs` drain_prints doc): a kick reason rides as
+                    // `svc_print` and dies with the Conn — drain it BEFORE reporting, or
+                    // the reason degrades from a diagnosis ("Server is full.") to a shrug.
+                    let reason = conn.drain_prints().into_iter().next_back();
+                    // Post-Active drops void the datapoint (the server ended our level
+                    // from under a measured run); pre-Active drops stay SetupError.
+                    if was_active {
+                        deferred.get_or_insert(DeferredReason::LevelChange);
+                    }
+                    tracing::warn!(reason = ?reason, "scenario: server disconnected");
                     break;
                 }
             }
 
             _ = ticker.tick() => {
+                // Contamination poll — first thing every tick, BEFORE the reach-settle
+                // check below. Sticky and unconditional: a scenario bot only leaves its
+                // level because the server took it, and measuring locomotion towards a
+                // goal on a map that no longer exists yields data that must not enter
+                // any baseline. Detecting BEFORE the settle check closes the settle
+                // race: `goal_settle_start` is checked outside the Active guard, so a
+                // bot dropped from the level while sitting near the goal used to be
+                // credited `reached` 0.5 s after the level vanished. Contamination wins
+                // the tick it is detected on; only a settle completed on a PRIOR tick
+                // can be Reached.
+                if conn.state() == ConnState::Active {
+                    if !was_active {
+                        was_active = true;
+                        servercount_at_start = conn.serverdata.as_ref().map(|sd| sd.servercount);
+                    } else if servercount_at_start
+                        != conn.serverdata.as_ref().map(|sd| sd.servercount)
+                    {
+                        // Includes the `None` case: the level-change path nulls
+                        // `serverdata` (conn.rs) before the fresh svc_serverdata lands.
+                        // Never order-compare these — `randk()` seeds `svs.spawncount`
+                        // per PROCESS (`sv_init.c:495`), so a restarted server can hand
+                        // back a LOWER number and still be a level change (beacon.rs).
+                        deferred.get_or_insert(DeferredReason::LevelChange);
+                    }
+                } else if was_active {
+                    deferred.get_or_insert(DeferredReason::LevelChange);
+                }
                 let cmd = if conn.state() == ConnState::Active {
                     let frame_opt = conn.frame.clone();
                     let rev = conn.cs_revision();
@@ -559,7 +799,26 @@ pub async fn run_scenario(
                                 });
                             }
 
+                            if frame.playerstate.pmove.pm_type == PM_FREEZE {
+                                // ANY freeze frame voids the run: for a scenario bot the
+                                // only PM_FREEZE source is intermission (variant doc has
+                                // the vendor proof), and the run would idle frozen to the
+                                // cap. No ratio threshold — there is no benign freeze.
+                                deferred.get_or_insert(DeferredReason::Intermission {
+                                    t_secs: elapsed,
+                                });
+                                // Sampled above (the archive must show the freeze onset),
+                                // but return before the settle update: intermission
+                                // TELEPORTS the bot (`hud.c:42-47`), so this frame's origin
+                                // is the teleport spot — feeding it to the settle test could
+                                // manufacture a reached by coordinate coincidence.
+                                return cmd;
+                            }
+
                             // Goal-reach settle: hold within GOAL_TOL for GOAL_SETTLE s.
+                            // A frozen frame NEVER feeds this timer (returned above), and
+                            // contamination detected this tick breaks below BEFORE this
+                            // check can credit a reach.
                             let now_reached = dist3(origin_arr, goal) < GOAL_TOL;
                             if now_reached {
                                 goal_settle_start.get_or_insert(elapsed);
@@ -575,6 +834,24 @@ pub async fn run_scenario(
 
                 if let Some(pkt) = conn.transmit_cmd(&cmd) {
                     let _ = sock.send(&pkt).await;
+                }
+                // Single contamination break site, BEFORE the settle check: a run that
+                // lost its level (poll-detected, or freeze detected mid-closure above)
+                // voids on this same tick — it can never be credited a reach by the
+                // settle check racing it. The one usercmd sent after detection is
+                // harmless (the server has us on a dead level).
+                if let Some(reason) = deferred.as_ref() {
+                    // The observed triple, not just the inferred tag: "voided" must be
+                    // auditable as legitimately-void vs harness-over-eager.
+                    tracing::warn!(
+                        reason = reason.tag(),
+                        elapsed,
+                        state = ?conn.state(),
+                        servercount = ?conn.serverdata.as_ref().map(|sd| sd.servercount),
+                        was_active,
+                        "scenario: datapoint voided — the server changed the run's conditions"
+                    );
+                    break;
                 }
                 if goal_settle_start.is_some_and(|s| elapsed - s >= GOAL_SETTLE) {
                     reached = true;
@@ -600,6 +877,8 @@ pub async fn run_scenario(
         name,
         unix_ts,
         reached,
+        deferred,
+        interrupted,
     ))
 }
 
@@ -754,21 +1033,59 @@ fn farthest_reachable_spawn(
     from
 }
 
-/// Dump the recorder log + emit the SUMMARY line; map outcome → exit code.
+/// The verdict decision, extracted pure so the precedence is unit-testable:
+/// a completed settle wins over contamination (it was earned on live data from
+/// prior ticks — the loop breaks on reach before contamination can even be seen);
+/// contamination (`deferred`) outranks a plain non-reach; never-Active is a
+/// SetupError owned by the caller and must never collapse into Deferred.
+fn decide_verdict(reached: bool, deferred: Option<DeferredReason>) -> ScenarioVerdict {
+    if reached {
+        ScenarioVerdict::Reached
+    } else if let Some(r) = deferred {
+        ScenarioVerdict::Deferred(r)
+    } else {
+        ScenarioVerdict::Failed
+    }
+}
+
+/// Decide this run's verdict, dump the recorder log (named + annotated with the
+/// verdict, so a post-hoc `ls`/grep of `logs/` can't mistake a voided run for a
+/// failed one), emit the SUMMARY line. Precedence lives in [`decide_verdict`];
+/// an operator interrupt short-circuits to `SetupError` before any of that.
+#[allow(clippy::too_many_arguments)]
 fn finalize(
     recorder: Option<&MovementRecorder>,
     scenario_name: &str,
     name: &str,
     unix_ts: u64,
     reached: bool,
-) -> ExitCode {
+    deferred: Option<DeferredReason>,
+    interrupted: bool,
+) -> ScenarioVerdict {
     let Some(rec) = recorder else {
+        // No recorder ⇒ never Active with a frame ⇒ OUR surface (setup/connect bug),
+        // never the server's — routing this into Deferred would hide real bugs.
         tracing::warn!("scenario ended before the bot became active (no recorder)");
-        return ExitCode::FAILURE;
+        return ScenarioVerdict::SetupError;
+    };
+    let verdict = if interrupted {
+        ScenarioVerdict::SetupError
+    } else {
+        decide_verdict(reached, deferred)
     };
     let dir = std::path::Path::new("logs").join(scenario_name);
-    let path = dir.join(format!("{unix_ts}.{name}.log"));
-    if let Err(e) = rec.dump(&path) {
+    let path = dir.join(format!("{unix_ts}.{name}.{}.log", verdict.filename_tag()));
+    let result_line = match &verdict {
+        ScenarioVerdict::Reached => "verdict=reached".to_string(),
+        ScenarioVerdict::Failed => "verdict=failed".to_string(),
+        ScenarioVerdict::Deferred(r) => {
+            format!("verdict=deferred deferred={}{}", r.tag(), r.detail())
+        }
+        // Reachable only via the interrupt short-circuit above; a real string, not
+        // an `unreachable!`, so a future refactor can't turn a log write into a panic.
+        ScenarioVerdict::SetupError => "verdict=setup-error".to_string(),
+    };
+    if let Err(e) = rec.dump(&path, Some(&result_line)) {
         tracing::warn!("recorder dump failed: {e}");
     } else {
         tracing::info!(path = %path.display(), "movement log written");
@@ -776,6 +1093,7 @@ fn finalize(
     let s = rec.summary();
     tracing::info!(
         reached = reached,
+        verdict = verdict.log_tag(),
         elapsed = format!("{:.2}", s.elapsed_secs),
         distance = format!("{:.0}", s.distance),
         mean_speed = format!("{:.0}", s.mean_speed),
@@ -785,12 +1103,7 @@ fn finalize(
         hindered_frames = s.hindered_frames,
         "SUMMARY",
     );
-    if reached {
-        ExitCode::SUCCESS
-    } else {
-        // Exit code 2 = ran but did not reach the goal (distinct from a setup error).
-        ExitCode::from(2)
-    }
+    verdict
 }
 
 fn dist3(a: [f32; 3], b: [f32; 3]) -> f32 {
@@ -836,5 +1149,127 @@ mod tests {
         assert_eq!(item_classname("Item_Health"), "item_health");
         // Unknown names get the `item_` prefix.
         assert_eq!(item_classname("health"), "item_health");
+    }
+
+    #[test]
+    fn verdict_precedence_reached_beats_deferred_beats_failed() {
+        // A completed settle was won on live data from prior ticks — contamination
+        // cannot retroactively void it.
+        assert_eq!(
+            decide_verdict(true, Some(DeferredReason::LevelChange)),
+            ScenarioVerdict::Reached
+        );
+        // A non-reach WITH contamination is Deferred, not Failed: counting a
+        // server-voided run against movement is the exact lie this commit kills.
+        assert_eq!(
+            decide_verdict(false, Some(DeferredReason::LevelChange)),
+            ScenarioVerdict::Deferred(DeferredReason::LevelChange)
+        );
+        // A clean non-reach stays Failed — the only outcome that counts.
+        assert_eq!(decide_verdict(false, None), ScenarioVerdict::Failed);
+    }
+
+    #[test]
+    fn tally_groups_deferrals_by_tag_not_by_exact_onset() {
+        // The bug this pins: keying on PartialEq would make three intermissions at
+        // t=12.0/12.5/13.0 three buckets — a 24-bot batch would "read like chaos".
+        let mut t = BatchTally::default();
+        for secs in [12.0f32, 12.5, 13.0] {
+            t.add(&ScenarioVerdict::Deferred(DeferredReason::Intermission {
+                t_secs: secs,
+            }));
+        }
+        assert_eq!(t.deferred.len(), 1, "one intermission bucket");
+        assert_eq!(t.deferred[0].1, 3);
+        assert_eq!(t.deferred_total(), 3);
+    }
+
+    #[test]
+    fn batch_exit_code_precedence_is_a_ladder_not_arrival_order() {
+        let mut t = BatchTally::default();
+        t.add(&ScenarioVerdict::Reached);
+        t.add(&ScenarioVerdict::Deferred(DeferredReason::LevelChange));
+        assert_eq!(
+            t.exit_code(),
+            ExitCode::SUCCESS,
+            "every VALID run succeeded; the deferred line says what was voided"
+        );
+        t.add(&ScenarioVerdict::Failed);
+        assert_eq!(
+            t.exit_code(),
+            ExitCode::from(2),
+            "measured + a genuine failure"
+        );
+        // SetupError outranks everything (our bug surface).
+        t.add(&ScenarioVerdict::SetupError);
+        assert_eq!(t.exit_code(), ExitCode::FAILURE);
+
+        // ALL deferred (the frozen-server shape that started this: 24 voided runs)
+        // ⇒ 3: nothing was measured; CI must distinguish "unmeasurable" from "broken".
+        let mut t2 = BatchTally::default();
+        for _ in 0..24 {
+            t2.add(&ScenarioVerdict::Deferred(DeferredReason::Intermission {
+                t_secs: 0.1,
+            }));
+        }
+        assert_eq!(t2.exit_code(), ExitCode::from(3));
+        assert_eq!(t2.effective_denominator(), 0, "zero valid datapoints");
+
+        // The literal anti-arrival-order property (neckbeard): the same multiset fed
+        // in a different insertion order must exit with the same code.
+        let mut t3 = BatchTally::default();
+        t3.add(&ScenarioVerdict::Deferred(DeferredReason::LevelChange));
+        t3.add(&ScenarioVerdict::SetupError);
+        t3.add(&ScenarioVerdict::Failed);
+        t3.add(&ScenarioVerdict::Reached);
+        assert_eq!(
+            t3.exit_code(),
+            t.exit_code(),
+            "insertion order is not an input"
+        );
+    }
+
+    #[test]
+    fn batch_display_shows_the_effective_denominator() {
+        // The line a human reads must kill the mental division: 13 of 24 is NOT 54%
+        // movement when 8 runs never measured anything.
+        let mut t = BatchTally::default();
+        for _ in 0..13 {
+            t.add(&ScenarioVerdict::Reached);
+        }
+        for _ in 0..3 {
+            t.add(&ScenarioVerdict::Failed);
+        }
+        for _ in 0..5 {
+            t.add(&ScenarioVerdict::Deferred(DeferredReason::LevelChange));
+        }
+        // Three intermissions at distinct onsets — tag-grouping folds them into ONE
+        // "3 intermission" bucket. (13+3+5+3 = a full 24-bot batch.)
+        for secs in [4.0f32, 9.5, 15.0] {
+            t.add(&ScenarioVerdict::Deferred(DeferredReason::Intermission {
+                t_secs: secs,
+            }));
+        }
+        let s = t.to_string();
+        // Display leads with the effective fraction (hoodie: the number that answers
+        // "did movement regress?" arrives first; acceptance.rs parses this position).
+        assert!(s.starts_with("effective 13/16 (81%)"), "{s}");
+        assert!(s.contains("13 reached, 3 failed"), "{s}");
+        assert!(
+            s.contains("8 deferred by SERVER (5 level-change, 3 intermission)"),
+            "{s}"
+        );
+        // Zero valid runs: say so in words, no bare 0/0 percentage.
+        let t0 = BatchTally::default();
+        assert!(t0.to_string().contains("NO effective runs"), "{t0}");
+        // neckbeard: the line must never read clean while the process exits FAILURE.
+        let mut t1 = BatchTally::default();
+        for _ in 0..21 {
+            t1.add(&ScenarioVerdict::Reached);
+        }
+        t1.add(&ScenarioVerdict::SetupError);
+        let s1 = t1.to_string();
+        assert!(s1.contains("1 setup-error"), "{s1}");
+        assert_eq!(t1.exit_code(), ExitCode::FAILURE);
     }
 }

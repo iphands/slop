@@ -331,33 +331,49 @@ structured log + a SUMMARY line. They never set velocity or teleport — a
 grounded `max_speed` > ~320 in a log flags a physics bug, not a feature.
 
 ```bash
-# Farthest DM spawn from where the bot spawns.
-cargo run -p qbots -- spawn-to-spawn [--map q2dm1] [--addr host:27910] [--name qb0]
+# Farthest DM spawn from where the bot spawns. (--map is an OVERRIDE; the map is
+# autodetected from the server — there is no default.)
+cargo run -p qbots -- spawn-to-spawn [--map <name>] [--addr host:27910] [--name qb0]
 # A named weapon's BSP origin (resolved as weapon_<name>).
-cargo run -p qbots -- spawn-to-weapon rocketlauncher [--map q2dm1] [--name qb1]
+cargo run -p qbots -- spawn-to-weapon rocketlauncher [--map <name>] [--name qb1]
 # A named item's BSP origin (alias-resolved: quaddamage→item_quad, mega, invuln, …).
-cargo run -p qbots -- spawn-to-item quaddamage [--map q2dm3] [--name qb2]
+cargo run -p qbots -- spawn-to-item quaddamage [--map <name>] [--name qb2]
 # --instance N picks among multiple matches (q2dm3 has two weapon_railgun:
 #   0 = (-368,-64,352), 1 = (768,816,208) the loop-train+elevator one). All
 #   candidates are logged on resolve so you can pick.
 cargo run -p qbots -- spawn-to-weapon railgun --instance 1 --map q2dm3
 ```
 
-- **Map**: `--map` selects the BSP; if omitted it defaults to `q2dm1`. The map
+- **Map**: the harness **autodetects** the server's loaded map via the connectionless
+  `status` query (there is NO silent default — a server that answers no `status` fails
+  with a clear error rather than guessing `q2dm1`). `--map <name>` overrides. The map
   **must match the server's loaded map** (the nav graph + spawn/weapon origins come
-  from the BSP, so a mismatch produces garbage). Discover the server's map with a
-  brief `qbots connect-one` (it logs `loading nav graph map=…`).
-- **Output**: `./logs/<scenario>/<unix_ts>.<bot>.log` — one frame per line, 16
+  from the BSP, so a mismatch produces garbage). For movement harnesses, preflight
+  double-probes (2.5 s apart) and refuses a mid-rotation server unless `--map` was
+  explicitly asserted (then it warns and lets in-run detection void datapoints).
+- **Output**: `./logs/<scenario>/<unix_ts>.<bot>.<verdict>.log` — one frame per line, 16
   positional columns + a `flags` run (`B`=wall-bump, `W`=wrong-turn, `H`=hindered,
-  `A`=airborne), ending in a `# SUMMARY reached=… elapsed=… …` line. The schema is
-  documented in `crates/brain/src/recorder.rs`. `./logs/` is gitignored.
-- **Exit code**: `0` = reached the goal (held within 48 u for 0.5 s); `2` = ran to
-  the 30 s cap without reaching it; `FAILURE` = setup/IO error.
+  `A`=airborne), a `# RESULT verdict=…` line (which shifts frame rows to `lines[4]` —
+  key off the `#` prefix, not an index), then a `# SUMMARY verdict=… reached=… elapsed=… …`
+  line. The schema is documented in `crates/brain/src/recorder.rs`. `./logs/` is gitignored.
+- **Exit code**: `0` = every valid run reached (held within 48 u for 0.5 s); `2` = at
+  least one valid run hit the cap without reaching; `3` = **every** run was deferred by
+  the server (intermission, mid-run level change, post-Active drop) — a void measurement,
+  NOT a movement failure; `FAILURE` = setup/IO error, including a bot that never became
+  Active. Contaminated runs are reported as `deferred` and excluded from the printed
+  *effective* denominator; the in-loop detectors (PM_FREEZE onset, `servercount` change)
+  and the pitfalls entry in `context/pitfalls.md` explain why a naive `N/M` used to lie.
 
-The **baseline** (current steering code) lives in
-`context/plans/10_movement_test_harness_tracker.md`'s Baseline table — both runs
-fail to reach, with low mean speed and many hindered/bump frames. That is the
-contract Plans 11–14 must beat; re-run the same scenarios after each and compare.
+The **baseline** for regression comparison is the README's dated headline band
+(`effective 13–15/24`, measured 2026-09-12), stated in the tool's own units — compare
+`effective R/C`, deferred runs excluded. Read it as a gate, not a vibe: **`effective <
+13/24` with 0 deferred is an investigation**; `effective >= 16/24` is an improvement; and
+if the effective denominator is itself below ~16 the batch is LOW POWER (the tool warns)
+and is not comparable at all — fix the server conditions before believing any number.
+Do NOT compare against the Baseline table in
+`context/plans/completed/10_movement_test_harness_tracker.md`: it is two single-run
+`reached=false` rows from 2026-06-15, before Plans 11–46 changed the steering code, and
+is kept as history only. Re-run the same scenarios after each change and compare.
 
 ---
 

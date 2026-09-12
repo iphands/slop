@@ -13,9 +13,17 @@ collision model + navigation graph parsed locally.
 > **Status: full pipeline works live against Yamagi Q2.** A bot connects, perceives,
 > navigates, fights, and respawns; an N-bot fleet fills a server. The world model (`.bsp`
 > parse + trace + PVS + nav graph + navmesh), the combat/navigation brain, and the fleet
-> supervisor are all complete and verified live. `spawn-to-spawn` reaches **24/24** on
-> q2dm1 at the default grid spacing. Current work: moving-platform ride behavior + q2dm3
-> reachability (Plan 43). Full roadmap: `context/plans/SERIES.md` (Plans 01–43).
+> supervisor are all complete and verified live. `spawn-to-spawn --count 24` on a parked
+> q2dm1 measured **effective 13–15/24** (0 deferred) on 2026-09-12 — each endpoint an
+> *independent* full 24-bot batch, so the band is run-to-run variance, not an average.
+> Compare only under the same constants (q2dm1, default brain + `astar`, default spacing,
+> server parked with 0 other players); a q2dm3 or non-default-brain run is a different
+> measurement. Stated in the tool's own units so future runs compare without arithmetic.
+> An earlier **24/24** headline is retired: it predates this measurement *and* the
+> contamination guards described in `context/pitfalls.md`, without which a rotating or
+> frozen server was silently counted against movement. Current work: moving-platform ride
+> behavior + q2dm3 reachability (Plan 43). Full roadmap: `context/plans/SERIES.md`
+> (Plans 01–43).
 
 ---
 
@@ -155,12 +163,20 @@ qbots spawn-to-spawn [--count 24] [--max-secs 60] [--spacing 24] [--navmode asta
 qbots spawn-to-weapon rocketlauncher [--count 24] [--max-secs 60]
 ```
 
-- **Output**: `./logs/<scenario>/<unix_ts>.<bot>.log` — one frame per line (16 positional
-  columns + a `flags` run: `B`=wall-bump, `W`=wrong-turn, `H`=hindered, `A`=airborne,
-  `R`=recovery), ending in `# SUMMARY reached=… elapsed=… …`. Schema lives in
-  `crates/brain/src/recorder.rs`. `./logs/` is gitignored.
-- **Exit code**: `0` = reached the goal; `2` = ran to the cap without reaching it;
-  `FAILURE` = setup/IO error. Multi-bot runs print an `N/M bots reached the goal` summary.
+- **Output**: `./logs/<scenario>/<unix_ts>.<bot>.<verdict>.log` — one frame per line
+  (16 positional columns + a `flags` run: `B`=wall-bump, `W`=wrong-turn, `H`=hindered,
+  `A`=airborne, `R`=recovery), a `# RESULT verdict=…` line after the column header, and a
+  trailing `# SUMMARY verdict=… reached=… …`. Filename, `# RESULT` and the SUMMARY's
+  `verdict=` token all carry the verdict, so `ls logs/` — or a grep of the SUMMARY alone —
+  distinguishes a *deferred* (server-voided) run from a genuine *failed* one. Schema lives
+  in `crates/brain/src/recorder.rs`. `./logs/` is gitignored.
+- **Exit code**: `0` = every valid run reached; `2` = at least one valid run failed to
+  reach; `3` = **every** run was deferred — the server voided all of them (intermission,
+  mid-run level change, or a post-Active drop), so the run measured *nothing* and is NOT
+  a movement failure; `FAILURE` = setup/IO error (a bot that never went Active, a local
+  interrupt, or a task panic). Multi-bot runs print
+  `effective R/C (P%) | N reached, M failed, K deferred by SERVER (…)` — the leading
+  **effective** fraction is the regression number and already excludes deferred runs.
 - **The map is autodetected from the server** (via the connectionless `status` query) — the
   nav graph and goal origins come from the BSP, so the loaded map must match the server's.
   Pass `--map <name>` only to override; a mismatch produces garbage navigation.
