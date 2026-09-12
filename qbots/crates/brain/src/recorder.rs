@@ -31,6 +31,9 @@
 //!
 //! Both `# RESULT` and the `SUMMARY` `verdict=` token appear only when `dump` is given
 //! a `result_line`; a caller that passes `None` gets the pre-verdict byte format back.
+//! `SUMMARY distance=` is cumulative TRAVELLED path, never distance-to-goal, and
+//! `path_efficiency=` clamps at 1.0 — so 1.00 means "travelled less than its crow-flight",
+//! which a nearly-stationary bot also satisfies. See the [`RunSummary`] field docs.
 //! `verdict` is `reached|failed|deferred|setup-error`; `deferred` means the server voided
 //! the run (rotated the map / threw it in intermission / dropped us) so it measured
 //! NOTHING about locomotion, and `reached=0` on such a run is not a movement failure.
@@ -199,7 +202,11 @@ impl WallProbe for CmWallProbe {
 pub struct RunSummary {
     pub reached: bool,
     pub elapsed_secs: f32,
-    /// Cumulative `|Δorigin|` over sampled frames (3D).
+    /// Cumulative `|Δorigin|` over sampled frames (3D) — the path LENGTH TRAVELLED, NOT
+    /// the distance to the goal. Non-zero proves the bot moved, never that it closed on
+    /// the goal; a bot circling a dead-end accrues distance. To judge "did it get close"
+    /// recompute from the frame rows' `x y z` against the header's `goal=(x,y,z)` — the
+    /// `wpd` column is distance to the current *waypoint*, which is a different thing.
     pub distance: f32,
     /// `distance / elapsed` — average speed over the run.
     pub mean_speed: f32,
@@ -211,8 +218,12 @@ pub struct RunSummary {
     /// Frames with `phantom_target=true` (combat/fire with no LOS). Should be ~0
     /// after Plan 11; always 0 in scenario mode (no combat).
     pub phantom_frames: u32,
-    /// `straight_line_dist / distance_traveled` (Plan 14 T4). Closer to 1.0 means
-    /// less grid zigzag. `0.0` when no frames or the bot didn't move.
+    /// `min(1, straight_line_dist(start→goal) / distance_traveled)` (Plan 14 T4).
+    /// CLAMPS AT 1.0, so 1.0 is the FLOOR of meaning, not the ceiling: any run that
+    /// travelled LESS than its crow-flight to the goal reads a perfect 1.000. A barely
+    /// moving bot therefore scores 1.00 — the opposite of a good path. Treat high values
+    /// as "not zigzaggy", never as "made progress"; read it against `distance`. `0.0`
+    /// when no frames or the bot didn't move.
     pub path_efficiency: f32,
 }
 

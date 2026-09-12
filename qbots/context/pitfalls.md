@@ -1521,6 +1521,14 @@ fed into the tag — classifying reason-text (`full|kick|banned|maxclients`) as 
 would move those batches from exit 2 to exit `FAILURE`, which is the honest diagnosis.
 Until then: read the deferred breakdown on the aggregate line before believing an exit 2.
 
+Third deferral, a triage aid rather than a bug: `SUMMARY` has no goal-distance token, so
+"failed at 1336 travelled" cannot be told apart from "stalled 1336 short of goal" without
+recomputing per-frame origins against the header `goal=`. The recorder already computes
+`dist3(origin, goal)` for its own reach test and discards it; carrying `goal_dist_min` /
+`goal_dist_final` into `RunSummary` (hoodie's proposal, endorsed by both reviewers) is
+~10 lines and splits ride-stall from dead-end from throttle at a glance. Deferred to keep
+the verdict commit single-purpose.
+
 ## Sources
 - qbots: crates/qbots/src/scenario.rs (`run_scenario` frame re-read, `decide_verdict`)
 - qbots: crates/client/src/conn.rs (frame overwritten only on successful decode)

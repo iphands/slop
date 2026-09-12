@@ -165,7 +165,8 @@ qbots spawn-to-weapon rocketlauncher [--count 24] [--max-secs 60]
 
 - **Output**: `./logs/<scenario>/<unix_ts>.<bot>.<verdict>.log` — one frame per line
   (16 positional columns + a `flags` run: `B`=wall-bump, `W`=wrong-turn, `H`=hindered,
-  `A`=airborne, `R`=recovery), a `# RESULT verdict=…` line after the column header, and a
+  `A`=airborne, `T`=phantom-target, `R`=recovery, `S`=swimming, `P`=riding a mover,
+  `L`=ladder, `.`=none), a `# RESULT verdict=…` line after the column header, and a
   trailing `# SUMMARY verdict=… reached=… …`. Filename, `# RESULT` and the SUMMARY's
   `verdict=` token all carry the verdict, so `ls logs/` — or a grep of the SUMMARY alone —
   distinguishes a *deferred* (server-voided) run from a genuine *failed* one. The `# RESULT`

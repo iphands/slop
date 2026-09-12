@@ -353,7 +353,8 @@ cargo run -p qbots -- spawn-to-weapon railgun --instance 1 --map q2dm3
   explicitly asserted (then it warns and lets in-run detection void datapoints).
 - **Output**: `./logs/<scenario>/<unix_ts>.<bot>.<verdict>.log` — one frame per line, 16
   positional columns + a `flags` run (`B`=wall-bump, `W`=wrong-turn, `H`=hindered,
-  `A`=airborne), a `# RESULT verdict=…` line (which shifts frame rows to `lines[4]` —
+  `A`=airborne, `T`=phantom-target, `R`=recovery, `S`=swimming, `P`=riding a mover,
+  `L`=ladder, `.`=none), a `# RESULT verdict=…` line (which shifts frame rows to `lines[4]` —
   key off the `#` prefix, not an index), then a `# SUMMARY verdict=… reached=… elapsed=… …`
   line. The schema is documented in `crates/brain/src/recorder.rs`. `./logs/` is gitignored.
 - **Exit code**: `0` = every valid run reached (held within 48 u for 0.5 s); `2` = at
