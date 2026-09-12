@@ -23,6 +23,10 @@ use q2proto::{Frame, PlayerState};
 pub const CS_PLAYERSKINS: usize = 1312;
 /// `MAX_CLIENTS` (`shared.h:184`) — bounds valid client slots for name lookup.
 const MAX_CLIENTS: usize = 256;
+/// `CS_MAXCLIENTS` (`shared.h:1200`) — the server's `maxclients` as a decimal string.
+/// Player entities are exactly `1..=maxclients` (`CL_EDICT`), and the body queue that
+/// holds corpses is allocated right after them (`client.c:1305`, `InitBodyQue`).
+pub const CS_MAXCLIENTS: usize = 30;
 
 /// Stats indices (from shared.h:1130-1148)
 const STAT_HEALTH: usize = 1;
@@ -363,6 +367,17 @@ impl Worldview {
                 .and_then(Weapon::from_view_model);
         }
         let self_entity = (playernum + 1) as i32;
+        // Player entities are `1..=maxclients`; anything above with the player-model
+        // sentinel is a CORPSE. `CopyToBodyQue` (`client.c:1352`) copies the dead
+        // player's whole `entity_state_t` — `modelindex = 255` included — into a body
+        // queue entity at `maxclients + 1 ..= maxclients + BODY_QUEUE_SIZE`, where it
+        // lies until reused. Verified live: entities 66/70/71 on a 64-slot server, still,
+        // read as "enemy" and got shot for five seconds. An absent configstring (bare
+        // test tables) leaves the bound at `MAX_CLIENTS`, i.e. unfiltered.
+        let maxclients = configstrings
+            .get(CS_MAXCLIENTS)
+            .and_then(|s| s.trim().parse::<i32>().ok())
+            .unwrap_or(MAX_CLIENTS as i32);
 
         // Parse entities
         let mut entities: Vec<PerceivedEntity> = Vec::new();
@@ -371,8 +386,12 @@ impl Worldview {
                 EntityClass::SelfPlayer
             } else if entity_state.modelindex == 255 {
                 // Q2 protocol sentinel: modelindex=255 means "use player skin from
-                // CS_PLAYERSKINS" — i.e., this is always a player entity.
-                EntityClass::EnemyPlayer
+                // CS_PLAYERSKINS" — a player entity, OR a corpse wearing one (above).
+                if (1..=maxclients).contains(&entity_state.number) {
+                    EntityClass::EnemyPlayer
+                } else {
+                    EntityClass::Unknown
+                }
             } else {
                 // `.get`, never `[..]`: `modelindex` is an `i32` off the wire, and a
                 // negative or oversized value must classify Unknown rather than panic
@@ -1143,6 +1162,50 @@ mod tests {
         assert_eq!(player_name(&cs, -1), None);
         assert_eq!(player_name(&cs, MAX_CLIENTS as i32 + 1), None);
         assert_eq!(player_name(&cs, 5), None); // slot never set
+    }
+
+    /// A corpse is a body-queue entity (number > maxclients) carrying the dead player's
+    /// `modelindex == 255` (`CopyToBodyQue`, client.c:1352). It must not classify as an
+    /// enemy player: live, bots stood shooting corpses at 66/70/71 for seconds. The bound
+    /// comes from `CS_MAXCLIENTS`; a real player at or below it is unaffected, and a
+    /// table with no `CS_MAXCLIENTS` keeps the old unbounded behaviour.
+    #[test]
+    fn corpse_in_the_body_queue_is_not_an_enemy_player() {
+        use q2proto::{EntityState, Frame};
+        let player_model = |number: i32| EntityState {
+            number,
+            modelindex: 255,
+            ..Default::default()
+        };
+        let frame = Frame {
+            entities: vec![
+                player_model(2),
+                player_model(64),
+                player_model(65),
+                player_model(70),
+            ],
+            ..Frame::default()
+        };
+        let mut cs = ConfigStrings::default();
+        cs.set(CS_MAXCLIENTS, "64");
+        let classes: Vec<(i32, EntityClass)> = Worldview::from_frame(&frame, &cs, 0)
+            .entities()
+            .map(|e| (e.entity_number, e.class))
+            .collect();
+        assert_eq!(
+            classes,
+            vec![
+                (2, EntityClass::EnemyPlayer),
+                (64, EntityClass::EnemyPlayer), // last real slot
+                (65, EntityClass::Unknown),     // first body-queue slot
+                (70, EntityClass::Unknown),
+            ]
+        );
+        // No CS_MAXCLIENTS at all: unbounded, as every bare-table test relies on.
+        let unbounded = Worldview::from_frame(&frame, &ConfigStrings::default(), 0);
+        assert!(unbounded
+            .entities()
+            .all(|e| e.class == EntityClass::EnemyPlayer));
     }
 
     /// Configstrings for the cache tests: a weapon whose name ALSO resolves through

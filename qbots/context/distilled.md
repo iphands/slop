@@ -47,6 +47,9 @@ Reaches "test connected" / "test entered the game" on a real yquake2 server:
   as `bits=0` + `number=0` (not one byte).
 - `event` is single-frame: force-cleared to 0 when `U_EVENT` is absent.
 - Entity delta field order matters (decoder reads FRAME8 before ORIGIN1, etc.).
+- `modelindex == 255` marks "player model" but NOT "player": corpses copy it (`CopyToBodyQue`,
+  client.c:1352) into body-queue entities at `maxclients+1..=maxclients+8`. Player entities
+  are exactly `1..=maxclients` (`CS_MAXCLIENTS`, configstring 30) — gate on the number.
 - Confirmed live: frames stream at ~10 Hz, delta-resolve across the 16-frame ring, `ents`
   tracks the PVS. Bot perceives its own origin + visible world.
 - **`old_origin` semantics (VERIFIED LIVE 2026-09-12).** Two different things by entity class:

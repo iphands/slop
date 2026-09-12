@@ -1585,3 +1585,31 @@ for some entity class, ask what VALUE is sent, not just that the bits are there.
 - vendor: yquake2/src/server/sv_entities.c (`SV_EmitPacketEntities`, newentity for players)
 - vendor: yquake2/src/game/g_main.c (`G_RunFrame`, `old_origin = origin`)
 - vendor: yquake2/src/server/sv_main.c (`SV_Frame`: read → run → send)
+
+---
+
+# Corpses wear `modelindex == 255` — the player sentinel is not a player test
+
+## Problem
+
+Perception classified every entity with `modelindex == 255` (the "use the CS_PLAYERSKINS
+skin" sentinel) as `EnemyPlayer`. Corpses carry it too: `CopyToBodyQue` (`client.c:1352`)
+copies the dead player's whole `entity_state_t` into a body-queue entity — allocated right
+after the client slots, `maxclients + 1 ..= maxclients + 8` (`InitBodyQue`, `client.c:1305`)
+— where it lies, still, until the slot is reused. Live on a 64-slot server: entities 66, 70
+and 71 read as enemies, the `MotionTracker` dutifully measured them at 0 u/s, and a bot
+stood 85 u from one shooting it for five seconds ("shooting at player target=66"). Nothing
+in the wire delta distinguishes them; the entity NUMBER does.
+
+## Fix
+
+A player entity is `1..=maxclients`, and the server states `maxclients` in `CS_MAXCLIENTS`
+(configstring 30, `shared.h:1200`). Sentinel above that bound ⇒ not a player (`Unknown` for
+now; a `Corpse` class is the follow-up if the heatmap wants death sites). A table with no
+`CS_MAXCLIENTS` stays unbounded so bare-table tests keep working. General rule: a rendering
+hint is not an identity — when the wire gives you an index range that IS the identity, gate
+on the range.
+
+## Sources
+- qbots: crates/brain/src/perception.rs (`assemble`, `CS_MAXCLIENTS`)
+- vendor: yquake2/src/game/player/client.c (`InitBodyQue`, `CopyToBodyQue`)
