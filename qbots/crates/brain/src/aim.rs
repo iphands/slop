@@ -19,10 +19,11 @@ use world::{CollisionModel, MASK_SOLID};
 /// around freely for navigation.
 pub const PITCH_CLAMP_DEG: f32 = 15.0;
 
-/// Compute the aim direction toward a target for the given weapon, applying
-/// Eraser's exact per-weapon lead factor and, for the grenade launcher, the
-/// piecewise pitch-lob. Returns `(yaw_deg, pitch_deg)` with pitch clamped to
-/// ±[`PITCH_CLAMP_DEG`] (Eraser `bot_wpns.c:368`).
+/// Eraser's per-weapon lead point (`bot_wpns.c` lead table): the world-space point
+/// the shot should be aimed *at*, i.e. the target origin advanced by the projectile's
+/// flight time. Exposed separately from [`aim_direction`] because the skill jitter
+/// (`aim_hitscan`) is defined as a perturbation of this POINT in world units, not of
+/// the resulting angles.
 ///
 /// Lead factors (`distilled/eraser.md` §5 lead table):
 /// - Blaster / Hyperblaster: `dist/1000` (speed 1000).
@@ -32,16 +33,16 @@ pub const PITCH_CLAMP_DEG: f32 = 15.0;
 ///   then pitches up piecewise (`bot_wpns.c:1042-1048`).
 /// - BFG: `dist/400` (Eraser's `dist/550` is a bug vs the 400 fired speed).
 /// - Hitscan (MG/SG/SSG/CG/Railgun): no lead (Railgun trails `−0.2*vel`).
-pub fn aim_direction(
+pub fn lead_point(
     shooter_origin: Vec3,
     target_origin: Vec3,
     target_velocity: Option<Vec3>,
     weapon: Weapon,
-) -> (f32, f32) {
+) -> Vec3 {
     let dist = (target_origin - shooter_origin).length();
     let vel = target_velocity.unwrap_or(Vec3::ZERO);
 
-    let predicted = match weapon {
+    match weapon {
         // Hitscan: aim at current origin; Railgun trails slightly behind motion.
         Weapon::Shotgun | Weapon::SuperShotgun | Weapon::Machinegun | Weapon::Chaingun => {
             target_origin
@@ -59,20 +60,31 @@ pub fn aim_direction(
         }
         // Grenade: dist/550 (over-leads to compensate for arc).
         Weapon::GrenadeLauncher => target_origin + vel * (dist / 550.0),
-        // BFG: dist/400 (Eraser's dist/550 was a bug vs the 400 fired speed).
+        // BFG: dist/400 (Eraser's dist/550 was a bug vs the 400 speed).
         Weapon::Bfg10k => target_origin + vel * (dist / 400.0),
-    };
+    }
+}
 
-    let direction = predicted - shooter_origin;
-    let (yaw, pitch) = vec3_to_angles(direction);
+/// Yaw/pitch (degrees, pitch clamped) from `shooter_origin` at the world-space point
+/// `aim_point`, applying the grenade lob. The single place angles are produced, so
+/// leaded aim and jittered aim cannot drift apart.
+///
+/// `range` is the PHYSICAL shooter→target distance, deliberately NOT
+/// `aim_point - shooter_origin`: the GL lob pays for projectile flight time, which is
+/// set by how far the grenade actually travels, so it must not wobble when lead or
+/// jitter displaces the aim point. Eraser computed `dist` from the real enemy origin
+/// and reused it for both `tf` and the lob (`bot_wpns.c:423,1042`).
+fn angles_from(shooter_origin: Vec3, aim_point: Vec3, weapon: Weapon, range: f32) -> (f32, f32) {
+    let (yaw, pitch) = vec3_to_angles(aim_point - shooter_origin);
 
     // GL lob (`bot_wpns.c:1042-1048`): pitch up piecewise — +15° at/above 384u,
-    // ramping down to −15° at dist=0.
+    // ramping down to −15° at dist=0. Only the GL reaches this branch; `combat.rs`
+    // routes every other non-hitscan weapon through its own arc code.
     let pitch = if matches!(weapon, Weapon::GrenadeLauncher) {
-        let lob = if dist >= 384.0 {
+        let lob = if range >= 384.0 {
             15.0
         } else {
-            15.0 * (2.0 * dist / 384.0 - 1.0)
+            15.0 * (2.0 * range / 384.0 - 1.0)
         };
         pitch + lob
     } else {
@@ -84,12 +96,40 @@ pub fn aim_direction(
     (yaw, pitch.clamp(-PITCH_CLAMP_DEG, PITCH_CLAMP_DEG))
 }
 
+/// Compute the aim direction toward a target for the given weapon, applying
+/// Eraser's exact per-weapon lead factor and, for the grenade launcher, the
+/// piecewise pitch-lob. Returns `(yaw_deg, pitch_deg)` with pitch clamped to
+/// ±[`PITCH_CLAMP_DEG`] (Eraser `bot_wpns.c:368`).
+pub fn aim_direction(
+    shooter_origin: Vec3,
+    target_origin: Vec3,
+    target_velocity: Option<Vec3>,
+    weapon: Weapon,
+) -> (f32, f32) {
+    let dist = (target_origin - shooter_origin).length();
+    angles_from(
+        shooter_origin,
+        lead_point(shooter_origin, target_origin, target_velocity, weapon),
+        weapon,
+        dist,
+    )
+}
+
 /// Eraser skill-jittered aim for hitscan weapons (`bot_wpns.c:423-430` skeleton):
 /// ```text
 /// tf = min(dist/2, 256) * ((5−accuracy)/5) * 2   // acc5→0 (perfect), acc1→1.6×
 /// jitter target by crandom()*tf in x,y and crandom()*tf*zscale in z (MG 0.1, else 0.2)
 /// ```
-/// `accuracy` is 1..5. Returns `(yaw, pitch)` clamped to ±[`PITCH_CLAMP_DEG`].
+/// `accuracy` is 1..5. `tf` is a **world-unit offset added to the aim point** — the
+/// reference perturbs `target` then re-aims, so `zscale` is a height scale and the
+/// error shrinks with range as real inaccuracy does. Returns `(yaw, pitch)` clamped
+/// to ±[`PITCH_CLAMP_DEG`].
+///
+/// The angular error is bounded at ANY range, which is the guarantee the turn
+/// controller relies on: worst case (acc1, target straight ahead, the x-draw pulling
+/// back against range while the y-draw saturates) the aim point lands 0.8·dist to one
+/// side of a 0.2·dist forward component, so `atan(0.8/0.2) ≈ 76°` — the aim may spray,
+/// but can never spin or reverse. acc4 ≤ 13.5°, acc3 ≤ 22.6°.
 pub fn aim_hitscan(
     shooter_origin: Vec3,
     target_origin: Vec3,
@@ -101,8 +141,7 @@ pub fn aim_hitscan(
     let dist = (target_origin - shooter_origin).length();
 
     // Start from the no-jitter leaded aim point for this weapon.
-    let (base_yaw, mut base_pitch) =
-        aim_direction(shooter_origin, target_origin, target_velocity, weapon);
+    let mut aim = lead_point(shooter_origin, target_origin, target_velocity, weapon);
 
     if accuracy < 5.0 {
         let tf = (dist / 2.0).min(256.0) * ((5.0 - accuracy) / 5.0) * 2.0;
@@ -111,18 +150,14 @@ pub fn aim_hitscan(
         } else {
             0.2
         };
-        // Jitter is applied as an angular offset around the base aim.
-        let yaw_jitter = rng.next_signed() * tf;
-        let pitch_jitter = rng.next_signed() * tf * zscale;
-        let yaw = base_yaw + yaw_jitter.to_degrees();
-        base_pitch += pitch_jitter.to_degrees();
-        (yaw, base_pitch.clamp(-PITCH_CLAMP_DEG, PITCH_CLAMP_DEG))
-    } else {
-        (
-            base_yaw,
-            base_pitch.clamp(-PITCH_CLAMP_DEG, PITCH_CLAMP_DEG),
-        )
+        aim += Vec3::new(
+            rng.next_signed() * tf,
+            rng.next_signed() * tf,
+            rng.next_signed() * tf * zscale,
+        );
     }
+
+    angles_from(shooter_origin, aim, weapon, dist)
 }
 
 /// Convert a direction vector to Q2 view angles (yaw, pitch) in degrees.
@@ -157,7 +192,8 @@ pub struct JitterRng {
 }
 
 impl JitterRng {
-    /// Seed from a frame counter and a per-bot id so different bots diverge.
+    /// Seed the RNG. Callers mix the tick with a per-bot salt before calling
+    /// (`CombatDriver::jitter_rng`) so fleet bots on shared server frames diverge.
     pub fn new(seed: u32) -> Self {
         // Avoid the degenerate 0 state; mix in a nonzero constant.
         Self {
@@ -305,6 +341,187 @@ mod tests {
         let mut rng = ConstRng(1.0); // constant +1 jitter
         let (yaw, _) = aim_hitscan(shooter, target, None, Weapon::Shotgun, 1.0, &mut rng);
         assert!(yaw.abs() > 1.0, "acc1 should jitter, got {yaw}");
+    }
+
+    /// The invariant the radians-vs-world-units bug violated: jitter is a WORLD
+    /// offset (max 409.6 u), so the angular error must stay bounded by whatever
+    /// that offset subtends — never thousands of degrees. `aim_hitscan` must land
+    /// within 90° of true aim at every distance/skill, i.e. it may miss, but it
+    /// may never spin.
+    #[test]
+    fn jitter_stays_within_half_a_circle() {
+        for dist in [64.0, 128.0, 300.0, 500.0, 1024.0, 4096.0] {
+            for acc in [1.0f32, 2.0, 3.0, 4.0, 4.9] {
+                for sign in [1.0f32, -1.0] {
+                    let shooter = Vec3::ZERO;
+                    let target = Vec3::new(dist, 0.0, 0.0);
+                    let mut rng = ConstRng(sign);
+                    let (yaw, pitch) =
+                        aim_hitscan(shooter, target, None, Weapon::Shotgun, acc, &mut rng);
+                    let err = yaw - 0.0;
+                    assert!(
+                        err.abs() <= 90.0 && pitch.abs() <= PITCH_CLAMP_DEG + 0.001,
+                        "dist={dist} acc={acc} sign={sign}: jitter must stay bounded, got yaw={yaw} pitch={pitch}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// At close range a low-skill bot's shots must still land near the target:
+    /// 64 u away at acc 4 is tf=12.8 u of offset = under 12° of aim error. The
+    /// old code produced 12.8 radians (≈733°) here.
+    #[test]
+    fn near_range_low_skill_error_is_small() {
+        let shooter = Vec3::ZERO;
+        let target = Vec3::new(64.0, 0.0, 0.0);
+        let mut rng = ConstRng(1.0);
+        let (yaw, _) = aim_hitscan(shooter, target, None, Weapon::Shotgun, 4.0, &mut rng);
+        assert!(
+            yaw.abs() < 12.0,
+            "12.8u of jitter at 64u range is <12°, got {yaw}"
+        );
+    }
+
+    /// The refactor's load-bearing invariant: at `accuracy == 5` (perfect) jitter is
+    /// not applied, so the jittered path must agree with `aim_direction` to the bit —
+    /// for EVERY weapon, GL included. `accuracy_5_is_perfect_no_jitter` tests a target
+    /// on the +x axis where lead and jitter in y barely move yaw, so it passes for
+    /// almost any wrong implementation; this pins the two paths directly at an oblique
+    /// target with motion. It is also the guard for the GL-lob-range regression.
+    #[test]
+    fn acc5_hitscan_matches_aim_direction() {
+        let sh = Vec3::new(10.0, -20.0, 32.0);
+        let tgt = Vec3::new(410.0, 130.0, 96.0);
+        let vel = Some(Vec3::new(-140.0, 60.0, 0.0));
+        for w in [
+            Weapon::Blaster,
+            Weapon::Railgun,
+            Weapon::Shotgun,
+            Weapon::Machinegun,
+            Weapon::Chaingun,
+            Weapon::RocketLauncher,
+            Weapon::GrenadeLauncher,
+            Weapon::Bfg10k,
+        ] {
+            let a = aim_direction(sh, tgt, vel, w);
+            let b = aim_hitscan(sh, tgt, vel, w, 5.0, &mut ConstRng(1.0));
+            assert!(
+                (a.0 - b.0).abs() < 1e-4 && (a.1 - b.1).abs() < 1e-4,
+                "{w:?}: acc5 must be bit-identical to aim_direction, {a:?} vs {b:?}"
+            );
+        }
+    }
+
+    /// Pins the one place the split could silently change `aim_direction`'s behaviour:
+    /// the GL lob must key on the PHYSICAL range, never the leaded aim-point distance.
+    /// Target 200u out, strafing at 400 u/s -> lead displaces the aim point to 247u.
+    /// Lob on true range 200 = +0.625 deg; on leaded range 247 it would be +4.3 deg.
+    #[test]
+    fn grenade_lob_uses_true_range_not_leaded_distance() {
+        let pitch = aim_direction(
+            Vec3::ZERO,
+            Vec3::new(200.0, 0.0, 0.0),
+            Some(Vec3::new(0.0, 400.0, 0.0)),
+            Weapon::GrenadeLauncher,
+        )
+        .1;
+        assert!(
+            (pitch - 0.625).abs() < 0.05,
+            "GL lob must key on true range 200 (+0.625 deg); leaded range 247 would give \
+             +4.3 deg, got {pitch}"
+        );
+    }
+
+    /// `lead_point` is the load-bearing half of the split (and now public), so pin the
+    /// lead TABLE numerically — a future factor edit must fail on the origin, not on
+    /// some downstream yaw delta.
+    #[test]
+    fn lead_point_matches_eraser_lead_table() {
+        let sh = Vec3::ZERO;
+        // Rocket: dist/650, and upward velocity is zeroed so jumpers aren't led skyward.
+        let rl = lead_point(
+            sh,
+            Vec3::new(650.0, 0.0, 0.0),
+            Some(Vec3::new(0.0, 650.0, 900.0)),
+            Weapon::RocketLauncher,
+        );
+        assert_eq!(
+            rl,
+            Vec3::new(650.0, 650.0, 0.0),
+            "RL: dist/650, +z velocity ignored"
+        );
+        // Grenade: dist/550 — deliberately over-leads vs the 700 fired speed.
+        let gl = lead_point(
+            sh,
+            Vec3::new(550.0, 0.0, 0.0),
+            Some(Vec3::new(0.0, -550.0, 0.0)),
+            Weapon::GrenadeLauncher,
+        );
+        assert_eq!(gl, Vec3::new(550.0, -550.0, 0.0), "GL: dist/550");
+        // BFG: dist/400 (Eraser's dist/550 is a bug vs the 400 fired speed).
+        let bfg = lead_point(
+            sh,
+            Vec3::new(400.0, 0.0, 0.0),
+            Some(Vec3::new(0.0, 400.0, 0.0)),
+            Weapon::Bfg10k,
+        );
+        assert_eq!(bfg, Vec3::new(400.0, 400.0, 0.0), "BFG: dist/400");
+        // Hitscan: no lead at all; blaster is dist/1000.
+        let mg = lead_point(
+            sh,
+            Vec3::new(500.0, 0.0, 0.0),
+            Some(Vec3::new(0.0, 300.0, 0.0)),
+            Weapon::Machinegun,
+        );
+        assert_eq!(mg, Vec3::new(500.0, 0.0, 0.0), "hitscan: never leads");
+        let bl = lead_point(
+            sh,
+            Vec3::new(1000.0, 0.0, 0.0),
+            Some(Vec3::new(0.0, 100.0, 0.0)),
+            Weapon::Blaster,
+        );
+        assert_eq!(bl, Vec3::new(1000.0, 100.0, 0.0), "blaster: dist/1000");
+    }
+
+    /// The physical property Eraser's `tf` formula has and the exact inversion of the
+    /// old unit bug: because `tf` is proportional to `dist` below its 256 cap, the
+    /// angular error is flat with range and then SHRINKS once the cap binds — it never
+    /// grows. The old code (tf read as radians) was flat-but-multiplying-by-57.3, so
+    /// the strict decrease above 512u is what discriminates.
+    #[test]
+    fn jitter_error_never_grows_with_range() {
+        // Target straight along +x, so the NO-JITTER yaw is 0 at every range and the
+        // measured error is purely the tf/dist geometry (an oblique target would make
+        // the baseline yaw itself move with range and mask the property).
+        let err_at = |dist: f32| {
+            let mut rng = ConstRng(1.0);
+            aim_hitscan(
+                Vec3::ZERO,
+                Vec3::new(dist, 0.0, 0.0),
+                None,
+                Weapon::Shotgun,
+                1.0,
+                &mut rng,
+            )
+            .0
+            .abs()
+        };
+        let ladder = [128.0, 256.0, 512.0, 1024.0, 2048.0, 4096.0];
+        let errs: Vec<f32> = ladder.iter().map(|d| err_at(*d)).collect();
+        for w in errs.windows(2) {
+            assert!(
+                w[1] <= w[0] + 1e-3,
+                "jitter error must not grow with range: {ladder:?} -> {errs:?}"
+            );
+        }
+        // `tf` saturates at 256 * 1.6 = 409.6u once dist > 512, so beyond that the same
+        // world offset subtends a strictly smaller angle. The old bug (tf read as
+        // radians) was flat-in-radians here, i.e. ~23000 degrees of wrapped nonsense.
+        assert!(
+            errs[3] < errs[2] * 0.9,
+            "past the tf cap the error must shrink with range: {ladder:?} -> {errs:?}"
+        );
     }
 
     #[test]

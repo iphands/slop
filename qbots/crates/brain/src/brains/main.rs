@@ -302,7 +302,9 @@ impl crate::brains::core::Brain for MainBrain {
         // frame (Plan 30 T2/T3) — PVS-honest, per-bot.
         self.time += dt;
         self.item_memory.observe(&self.map_items, view, self.time);
-        let jitter = (ticks as f32) * 0.1;
+        // Per-tick seed; CombatDriver mixes in its own per-bot ordinal so the fleet
+        // does not draw identical jitter on shared server frames (fleet jitter audit).
+        let jitter = ticks;
         let combat_dec = if self.cfg.combat_enabled {
             self.combat.evaluate(view, &self.skill, jitter, cm)
         } else {

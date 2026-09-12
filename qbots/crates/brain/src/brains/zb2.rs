@@ -425,8 +425,7 @@ impl Brain for Zb2Brain {
 
         // ── 1. Combat read (shared driver; movement stays on the route) ─────────────
         let combat_dec = if self.combat_enabled {
-            self.combat
-                .evaluate(view, &self.skill, (ticks as f32) * 0.1, cm)
+            self.combat.evaluate(view, &self.skill, ticks, cm)
         } else {
             CombatDecision::default()
         };

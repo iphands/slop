@@ -32,7 +32,7 @@ impl Brain for SentryBrain {
     fn set_map(&mut self, _map: BrainMap) {}
 
     fn tick(&mut self, ctx: BrainContext) -> BrainOutput {
-        let jitter = (ctx.ticks as f32) * 0.1;
+        let jitter = ctx.ticks;
         let dec = self.combat.evaluate(ctx.view, &self.skill, jitter, ctx.cm);
         let mut mv = MovementIntent::new();
         if dec.should_fire {

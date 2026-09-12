@@ -9,6 +9,8 @@
 //! is server-driven), so we request optimistically and the server grants it
 //! only if we own the weapon.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use crate::aim::{aim_direction, aim_hitscan, JitterRng};
 use crate::perception::{EntityClass, Worldview};
 use crate::skill::BotSkill;
@@ -101,7 +103,17 @@ pub struct CombatDriver {
     last_health: Option<i32>,
     /// Frames of pain-widened acquisition remaining (Plan 49).
     pain_frames: u32,
+    /// This driver's process-wide ordinal (fleet jitter audit): bots tick on the SAME server
+    /// frames, so a jitter seed derived from tick count alone makes every bot draw the
+    /// SAME random value on the same tick — the whole fleet misses in one direction at
+    /// once, which reads as a broken RNG and is trivially predictable by an opponent.
+    /// Mixing a per-driver ordinal in decorrelates them, like zb2's roam ordinal (51 R3).
+    jitter_salt: u32,
 }
+
+/// Process-wide construction order of [`CombatDriver`]s (fleet jitter audit). Each driver takes the
+/// next value as its jitter salt; see the field doc.
+static COMBAT_ORDINAL: AtomicUsize = AtomicUsize::new(0);
 
 impl CombatDriver {
     pub fn new() -> Self {
@@ -115,7 +127,23 @@ impl CombatDriver {
             sight_grace_remaining: 0,
             last_health: None,
             pain_frames: 0,
+            // `usize as u32` wrap is intentional: ordinals are small and both the
+            // multiply and the golden-ratio add are bijections mod 2^32, so a wrap
+            // still yields distinct, well-mixed salts. +0x9E3779B9 keeps ordinal 0
+            // (the first driver — single-bot `connect-one`, the dev workflow) nonzero,
+            // since 0 is the identity for the XOR that mixes the salt in.
+            jitter_salt: (COMBAT_ORDINAL.fetch_add(1, Ordering::Relaxed) as u32)
+                .wrapping_mul(2654435761)
+                .wrapping_add(0x9E37_79B9),
         }
+    }
+
+    /// The jitter RNG for this tick: caller's per-tick `seed` mixed with this driver's
+    /// per-bot salt. The single owner of the mixing expression — `evaluate` and the
+    /// decorrelation test both call it, so a future edit to the mixing cannot silently
+    /// un-decorrelate the fleet while leaving a green test.
+    fn jitter_rng(&self, seed: u32) -> JitterRng {
+        JitterRng::new(seed.rotate_left(7) ^ self.jitter_salt)
     }
 
     /// The weapon we currently believe we're holding.
@@ -141,7 +169,7 @@ impl CombatDriver {
         &mut self,
         view: &Worldview,
         skill: &BotSkill,
-        jitter_seed: f32,
+        jitter_seed: u32,
         los: Option<&CollisionModel>,
     ) -> CombatDecision {
         // Pain detection (Plan 49): a health drop widens fresh acquisition to the full
@@ -222,7 +250,7 @@ impl CombatDriver {
         // bot's level). Seed a deterministic jitter RNG.
         let accuracy = skill.accuracy();
         let combat = skill.combat();
-        let mut rng = JitterRng::new(jitter_seed.to_bits());
+        let mut rng = self.jitter_rng(jitter_seed);
 
         let (yaw, pitch) = if weapon.is_hitscan() {
             aim_hitscan(
@@ -416,10 +444,38 @@ mod tests {
         let frame = Frame::default();
         let config = ConfigStrings::default();
         let view = crate::perception::Worldview::from_frame(&frame, &config, 0);
-        let decision = driver.evaluate(&view, &BotSkill::default(), 0.0, None);
+        let decision = driver.evaluate(&view, &BotSkill::default(), 0, None);
         assert!(!decision.should_fire);
         assert!(decision.target_entity.is_none());
         assert!(decision.weapon_request.is_none());
+    }
+
+    /// Fleet jitter audit: bots tick on the SAME server frames, so a jitter seed derived
+    /// from the tick alone makes every bot draw the same random number and miss in
+    /// the same direction simultaneously. Each driver must carry a distinct salt,
+    /// and seeding the RNG with (tick seed mixed with the salt) must decorrelate
+    /// the aim — checked through the same expression `evaluate` uses.
+    #[test]
+    fn jitter_salt_decorrelates_drivers() {
+        let a = CombatDriver::new();
+        let b = CombatDriver::new();
+        assert_ne!(a.jitter_salt, b.jitter_salt, "drivers need distinct salts");
+        // Ordinal 0 must not be the unsalted baseline (XOR identity) — the very bot a
+        // developer watches under single-bot `connect-one`.
+        assert_ne!(a.jitter_salt, 0, "first driver must still be salted");
+
+        let tick_seed: u32 = 77; // identical for both bots: shared server frame
+        let shooter = glam::Vec3::ZERO;
+        let target = glam::Vec3::new(500.0, 0.0, 0.0);
+        // Seed THROUGH the production helper, not a re-implementation of it.
+        let yaw_of = |d: &CombatDriver| {
+            let mut rng = d.jitter_rng(tick_seed);
+            aim_hitscan(shooter, target, None, Weapon::Machinegun, 3.0, &mut rng).0
+        };
+        assert!(
+            (yaw_of(&a) - yaw_of(&b)).abs() > 0.001,
+            "same tick + same target must not produce identical jitter"
+        );
     }
 
     #[test]
@@ -453,7 +509,7 @@ mod tests {
 
         // Healthy: the behind-enemy is outside the cone → no target.
         let view = crate::perception::Worldview::from_frame(&frame, &cs, 0);
-        let dec = driver.evaluate(&view, &skill, 0.0, None);
+        let dec = driver.evaluate(&view, &skill, 0, None);
         assert!(
             dec.target_entity.is_none(),
             "no pain → behind-enemy must stay unacquired"
@@ -462,7 +518,7 @@ mod tests {
         // Shot for 40: acquisition widens → the attacker behind is acquired.
         frame.playerstate.stats[1] = 60;
         let view = crate::perception::Worldview::from_frame(&frame, &cs, 0);
-        let dec = driver.evaluate(&view, &skill, 0.1, None);
+        let dec = driver.evaluate(&view, &skill, 1, None);
         assert_eq!(
             dec.target_entity,
             Some(7),
@@ -552,7 +608,7 @@ mod tests {
         driver.sight_grace_remaining = SIGHT_GRACE_FRAMES; // 2
 
         // Grace frame 1: LOS absent, grace 2→1 — target kept.
-        let dec1 = driver.evaluate(&view, &BotSkill::default(), 0.0, Some(&cm));
+        let dec1 = driver.evaluate(&view, &BotSkill::default(), 0, Some(&cm));
         assert_eq!(
             dec1.target_entity,
             Some(5),
@@ -560,7 +616,7 @@ mod tests {
         );
 
         // Grace frame 2: LOS absent, grace 1→0 — target kept (last grace tick).
-        let dec2 = driver.evaluate(&view, &BotSkill::default(), 0.0, Some(&cm));
+        let dec2 = driver.evaluate(&view, &BotSkill::default(), 0, Some(&cm));
         assert_eq!(
             dec2.target_entity,
             Some(5),
@@ -568,7 +624,7 @@ mod tests {
         );
 
         // Frame 3: grace=0, LOS still absent — target dropped.
-        let dec3 = driver.evaluate(&view, &BotSkill::default(), 0.0, Some(&cm));
+        let dec3 = driver.evaluate(&view, &BotSkill::default(), 0, Some(&cm));
         assert!(
             dec3.target_entity.is_none(),
             "target dropped after grace expires"
