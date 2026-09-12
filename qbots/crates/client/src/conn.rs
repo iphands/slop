@@ -169,22 +169,26 @@ impl Conn {
         if oob_reply.is_some() {
             return oob_reply;
         }
-        // Pre-Active, ACK server reliables immediately: YamagiQ2 drives the handshake
-        // via reliable "cmd configstrings N K" / "precache" stufftexts, and the reply
-        // (the next stringcmd) is what moves it forward. This is vendor's ca_connected
-        // path (`cl_input.c:757-761`: a header-only transmit whenever a reliable is
-        // queued) — the only state in which a real client sends a packet with no
-        // `clc_move` in it.
+        // Until the server has us SPAWNED, ACK server reliables immediately: YamagiQ2
+        // drives the handshake via reliable "cmd configstrings N K" / "cmd baselines" /
+        // "precache" stufftexts, and the reply (the next stringcmd) is what moves it
+        // forward. This is vendor's ca_connected path (`cl_input.c:757-761`: a
+        // header-only transmit whenever a reliable is queued) — the only state in which
+        // a real client sends a packet with no `clc_move` in it. NOTE the gate is
+        // `spawned()`, NOT `state != Active`: `ConnState::Active` is set on
+        // `svc_serverdata`, i.e. at the START of that pull (see `spawned` doc). Gating
+        // on the state name starved the pull under a 24-bot join and the server dropped
+        // 10 of them while still cs_connected (8e4546290, corrected here).
         //
-        // Once Active, do NOT: the next tick's `clc_move` (≤100 ms away) carries the
-        // ack in its header, exactly as vendor's ca_active path does. A header-only
+        // Once frames arrive, do NOT: the next tick's `clc_move` (≤100 ms away) carries
+        // the ack in its header, exactly as vendor's ca_active path does. A header-only
         // packet here would consume an outgoing sequence with no real cmd behind it;
         // if the server then missed that packet it would count a drop and REPLAY the
         // window's filler slot as a genuine cmd (`sv_user.c:744`) — a tick of movement
         // executed twice. The delay is safe: `Netchan_NeedReliable` only resends a
         // reliable when the client has acked a LATER sequence without the toggle, and
         // our next move acks this sequence with the toggle in the same header.
-        if has_reliable && self.state != ConnState::Active {
+        if has_reliable && !self.spawned() {
             // ACK + flush any queued stringcmds. No clc_move in this packet, so the
             // window REPEATS its newest slot (transmit_payload) rather than punching a
             // hole a later loss-recovery replay would read as a stand-still cmd.
@@ -192,6 +196,17 @@ impl Conn {
         } else {
             None
         }
+    }
+
+    /// Vendor's `ca_active`: the server has run our `begin`, we are `cs_spawned` there,
+    /// and it is sending us frames. This is NOT [`ConnState::Active`] — that state is
+    /// entered on `svc_serverdata`, which is the *start* of the reliable configstring /
+    /// baseline pull, while the server still holds us in `cs_connected`. The reference
+    /// client draws the same line at the first parsed frame (`cl_parse.c`,
+    /// `CL_ParseFrame` flips `cls.state = ca_active`), and [`Conn::reset_level_state`]
+    /// clears `frame` on a level change so a soft map change drops back below it.
+    fn spawned(&self) -> bool {
+        self.state == ConnState::Active && self.frame.is_some()
     }
 
     fn on_oob(&mut self, payload: &[u8]) -> Option<Bytes> {
@@ -1156,15 +1171,63 @@ mod tests {
         w.freeze()
     }
 
-    /// While Active, a server reliable must NOT trigger a header-only transmit: vendor's
-    /// ca_active path acks on the next `clc_move` (`cl_input.c:757-761` is the
-    /// ca_connected-only header-only send). A cmd-less packet here consumes a sequence
-    /// the server can count as a drop and then replay the window's filler slot as a
-    /// real cmd (`sv_user.c:744`) — one tick of movement executed twice. So: no packet,
-    /// no sequence step, no window push; the ack rides the next move's header.
+    /// A minimal `svc_frame` body (mirrors q2proto's `minimal_frame_body`): header,
+    /// no areabits, a null playerinfo, an empty packetentities. Parsing one is what
+    /// makes the conn `spawned()` — vendor's ca_active.
+    fn frame_payload(serverframe: i32) -> Bytes {
+        let mut w = Writer::new();
+        w.write_u8(SvcOp::Frame.into());
+        w.write_i32(serverframe);
+        w.write_i32(-1); // uncompressed
+        w.write_u8(0); // surpressCount
+        w.write_u8(0); // areabits len
+        w.write_u8(SvcOp::Playerinfo.into());
+        w.write_i16(0); // ps flags
+        w.write_i32(0); // stats mask
+        w.write_u8(SvcOp::Packetentities.into());
+        w.write_i16(0); // end sentinel
+        w.freeze()
+    }
+
+    /// The regression that 8e4546290 shipped: `ConnState::Active` is entered on
+    /// `svc_serverdata`, while the server still has us `cs_connected` and is pulling
+    /// us through "cmd configstrings N K" / "cmd baselines" / "precache" with reliable
+    /// stufftexts that each need a prompt reply. Gating the immediate ack on the state
+    /// NAME switched it off for that whole pull; under a 24-bot join the server dropped
+    /// 10 bots mid-handshake (bare `svc_disconnect`, the `cs_connected` drop shape). So:
+    /// Active but no frame yet ⇒ still ack immediately, flushing the queued reply.
     #[test]
-    fn active_reliable_is_acked_by_the_next_move_not_a_header_only_packet() {
+    fn active_without_a_frame_still_acks_reliables_immediately() {
         let mut c = active_conn();
+        assert!(c.frame.is_none(), "active_conn has parsed no frame yet");
+        assert!(!c.spawned());
+
+        // The server's next pull step: a reliable stufftext asking for more.
+        let mut w = Writer::new();
+        w.write_i32(4 | (1 << 31)); // sequence 4 + reliable
+        w.write_i32(3);
+        w.write_bytes(&stufftext_payload("cmd configstrings 4242 128\n"));
+        let out = c
+            .on_recv(&w.freeze())
+            .expect("handshake pull: the reply must go out now, not on the next tick");
+        assert!(
+            out.windows(20).any(|s| s == b"configstrings 4242 1"),
+            "the immediate ack carries the queued reply"
+        );
+    }
+
+    /// Once frames arrive (`spawned()`), a server reliable must NOT trigger a
+    /// header-only transmit: vendor's ca_active path acks on the next `clc_move`
+    /// (`cl_input.c:757-761` is the ca_connected-only header-only send). A cmd-less
+    /// packet here consumes a sequence the server can count as a drop and then replay
+    /// the window's filler slot as a real cmd (`sv_user.c:744`) — one tick of movement
+    /// executed twice. So: no packet, no sequence step, no window push; the ack rides
+    /// the next move's header.
+    #[test]
+    fn spawned_reliable_is_acked_by_the_next_move_not_a_header_only_packet() {
+        let mut c = active_conn();
+        c.on_recv(&server_frame(4, 3, &frame_payload(1)));
+        assert!(c.spawned(), "a parsed frame is vendor's ca_active");
         let (a, b, d) = (
             cmd(10, 100, 1000, 0),
             cmd(11, 0, 2000, 1),

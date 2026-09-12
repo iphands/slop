@@ -1358,14 +1358,22 @@ qbots doesn't run. Make the sole transmit path take the cmd so the invariant hol
 construction, and don't reset the window on a soft map change — the netchan and its
 sequence survive that path.
 
-Corollary (found in review of the fix): while **Active**, never send a cmd-less packet at
-all. The immediate reliable-ack in `on_recv` used to fire in every state; vendor sends a
-header-only packet only in ca_connected (`cl_input.c:757-761`) and, once active, acks on
-the next `clc_move`. A cmd-less packet consumes a sequence with no real cmd behind it, so
-if the server misses it, `net_drop` counts one and the filler slot is replayed as a genuine
-cmd (`sv_user.c:744`) — one tick of movement executed twice. Delaying the ack to the next
-move (≤100 ms) is safe: `Netchan_NeedReliable` resends only when a LATER sequence is acked
-without the toggle. The immediate ack now runs pre-Active only.
+Corollary (found in review of the fix): once **frames arrive**, never send a cmd-less
+packet at all. The immediate reliable-ack in `on_recv` used to fire in every state; vendor
+sends a header-only packet only in ca_connected (`cl_input.c:757-761`) and, once active,
+acks on the next `clc_move`. A cmd-less packet consumes a sequence with no real cmd behind
+it, so if the server misses it, `net_drop` counts one and the filler slot is replayed as a
+genuine cmd (`sv_user.c:744`) — one tick of movement executed twice. Delaying the ack to
+the next move (≤100 ms) is safe: `Netchan_NeedReliable` resends only when a LATER sequence
+is acked without the toggle. The immediate ack now runs until the first frame is parsed
+(`Conn::spawned`).
+
+**Trap inside the corollary:** the first version gated on `ConnState::Active` — but that
+state is entered on `svc_serverdata`, the START of the reliable configstring/baseline pull,
+not on the first frame. It silenced the pull's replies for ~100 ms per step; a lone bot
+survived, a 24-bot join did not: the server dropped 10 of 24 while still `cs_connected`
+(bare `svc_disconnect`, no print — the `SV_DropClient` shape for an unspawned client).
+`ConnState::Active` ≠ `ca_active`; "spawned" is `state == Active && frame.is_some()`.
 
 ## Sources
 - qbots: crates/client/src/conn.rs (`cmd_window`, `cmd_triple`, `transmit_payload`)
