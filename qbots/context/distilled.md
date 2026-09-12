@@ -49,6 +49,24 @@ Reaches "test connected" / "test entered the game" on a real yquake2 server:
 - Entity delta field order matters (decoder reads FRAME8 before ORIGIN1, etc.).
 - Confirmed live: frames stream at ~10 Hz, delta-resolve across the 16-frame ring, `ents`
   tracks the PVS. Bot perceives its own origin + visible world.
+- **`old_origin` semantics (VERIFIED LIVE 2026-09-12).** Two different things by entity class:
+  - *Non-players*: `U_OLDORIGIN` is sent only for `newentity || RF_BEAM` (movemsg.c:348), so
+    the client fills it itself as the DELTA SOURCE's origin (`CL_ParseDelta`, cl_parse.c:159;
+    ours `entitystate.rs::read_delta`). `(origin − old_origin) / ((serverframe − deltaframe)
+    × 0.1 s)` is a real velocity (`Frame::velocity_dt`); divide by the delta's own span, not
+    the tick, or a 2-frame gap doubles it. Carry-through entities (omitted because unchanged)
+    must be stamped `old_origin = origin` in `parse_packet_entities` or a stale delta replays.
+  - *Players*: `SV_EmitPacketEntities` passes `newentity = number <= maxclients`
+    (sv_entities.c:99-102, "players are always 'newentities'"), so `U_OLDORIGIN` is forced
+    every delta and carries the game's `s.old_origin` — which `G_RunFrame` sets `= s.origin`
+    (g_main.c:453) AFTER that frame's `ClientThink` already moved the player (`SV_Frame`:
+    ReadPackets → RunGameFrame → SendClientMessages, sv_main.c:411/448/451). So a player's
+    wire `old_origin == origin` in EVERY packet: 101/101 live samples read `[0,0,0]` while the
+    bot ran at ~300 u/s. Enemy-player velocity must be measured across frames by the client
+    (`brain::perception::MotionTracker`: last origin + serverframe per entity, gap ≤ 5 frames,
+    same-frame re-observation returns the same answer, cleared on level change). The original
+    Q2 client never needs this: it lerps `centity.prev → current`, and uses `old_origin` only
+    to seed `prev` when an entity (re)appears (cl_parse.c:343).
 
 ## clc_move — movement (VERIFIED LIVE)
 - Format (`CL_SendMove`, cl_input.c:786): `clc_move` op + checksum byte + serverframe ack
@@ -63,6 +81,13 @@ Reaches "test connected" / "test entered the game" on a real yquake2 server:
   to `w1` (i.e. the pre-increment value).
 - Timing: 3 usercmds × `msec=33` ≈ 99 ms per 100 ms heartbeat ≈ realtime. Observed the bot
   walk at ~100 u/s with `forwardmove=400`; yaw 0 ⇒ forward ≈ −X here.
+- The triple is a LOSS-RECOVERY window, not redundancy: the server runs `newcmd` always and
+  `oldest`/`oldcmd` only when `netchan.dropped > 0` (sv_user.c:727-750). Send the last three
+  DISTINCT cmds (`cl_input.c:807-819`, ring slots `seq-2..=seq`), shifted once per transmitted
+  packet. Once frames arrive, never send a cmd-less packet (vendor's ca_active acks on the next
+  move; a lost header-only packet makes the server replay the filler slot as a real cmd). Until
+  then ack reliables immediately — the handshake pull needs it, and `ConnState::Active` is
+  entered on `svc_serverdata`, NOT on the first frame (see pitfalls).
 
 ## Ping = reply phase + RTT, not RTT (Plan 57, VERIFIED LIVE)
 The scoreboard ping is **not** network RTT. `SV_CalcPings` (`server/sv_main.c:131-164`)
