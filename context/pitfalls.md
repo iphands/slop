@@ -762,3 +762,53 @@ not one client — starvation of a request/reply pull only shows under contentio
 ## Sources
 - qbots: crates/client/src/conn.rs (`Conn::spawned`, `on_recv`; commits 8e4546290 → 8d8645f24)
 - qbots: context/pitfalls.md ("`clc_move` sent the same usercmd 3×", corollary)
+
+# CMake enable_language(CUDA) self-seeds CMAKE_CUDA_ARCHITECTURES before your default runs
+
+`enable_language(CUDA)` initializes `CMAKE_CUDA_ARCHITECTURES` itself (historically to `75`)
+the first time it runs, and a project default written as `if(NOT DEFINED ...)` AFTER the
+`enable_language()` call sees an already-defined variable and never fires. The cache value then
+seeds every `nvcc` invocation, kernels compile for `sm_75`, and a Blackwell (sm_120) / newer
+driver rejects the artifact with "PTX compiled with an unsupported toolchain" — a toolchain-sounding
+error that is really an architecture mismatch. Any `--arch=` passthrough or preset-style override
+is silently dead for the same reason if the override check sits after the language call.
+
+Avoidance: set `CMAKE_CUDA_ARCHITECTURES` (and any honor-the-user-cache `if(NOT CACHE ...)`
+logic) BEFORE `enable_language(CUDA)`; treat user cache entries as authoritative over project
+defaults. Diagnostic: CMake configure banner prints the arch line — verify it there, not in
+build logs after a failure.
+## Sources
+- kin (vendor/azu): CMakeLists.txt — arch default must precede enable_language; fixed 89;120 for RTX 4060 + Blackwell PRO 6000
+
+# Lazy `if(!ptr)` GPU scratch buffers survive a resize and go stale
+
+Point-cloud/raycast scratch buffers allocated lazily on first use (`if (!d_pc_is_valid_) cudaMalloc(n)`)
+are correct until the owning object changes size. If a TSDF volume grows (setParams / resolution
+bump) the buffers keep the OLD element count while consumers assume the new one — silent
+out-of-bounds reads or garbage frames, not a clean error. The lazy pattern has no place to put
+the invalidation, because "first use" already happened.
+
+Avoidance: any setter that changes capacity must call a guarded, idempotent `freeGPU()`-style
+teardown BEFORE the next lazy reallocation; free every scratch pointer, not just the first
+(`d_pc_is_valid_/offsets_/out_points_/out_colors_` in Azu), since partial frees leave the same
+class of stale buffer. Mirror the teardown in the HIP twin. Test by growing the volume mid-session,
+not just boot-size.
+## Sources
+- kin (vendor/azu): src/tsdf/TSDFVolume.cpp setParams, TSDFVolume_cuda.cu/_hip.hip freeGPU
+
+# Kinect v1 free-hand room scan: default TSDF box smaller than the room ⇒ "Tracking lost" loop
+
+A KinFusion-style tracker fails as a *loop*, not a crash: camera walks outside the fixed TSDF
+volume (default 256³ @ 10 mm = 2.56 m box), live points stop finding model correspondences, and
+the UI repeats "Tracking lost!" while frames keep integrating whenever the user swings back.
+Signature in logs: valid_live huge, valid_model collapsed (observed 304190 vs 11744) — the camera
+sees the room but not the *model*. Nothing is broken; the capture volume is a shoebox.
+
+Avoidance: match volume to the room before scanning (Room preset, or resolution 256 with voxel
+12-15 mm), raise ICP distance threshold toward 0.15, and scan in arcs/traverses — rotation about
+the camera position moves the FOV out of a small box even without translation. GUI aids that make
+this self-evident: overlap % gauge (valid_model/valid_live, note it tops out ~85-92 % at identity
+pose) and a wireframe cage of the volume, amber when the pose leaves it (inset the exit test:
+identity start pose sits exactly on a default origin face).
+## Sources
+- kin (vendor/azu): TSDFVolume.h defaults, ICPTracker CUDA/CPU counters, PipelineController lost-logging
