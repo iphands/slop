@@ -1,0 +1,10 @@
+# Raise client-side readahead on NFS mounts (kernel default is 128 KB).
+# NFS has no mount option for this; the knob lives on the bdi created at mount time.
+# Matches only bdis listed in /proc/fs/nfsfs/volumes (column 4 = DEV, e.g. 0:67).
+# "$$4" is awk's $4: a bare "$4" is parsed as a udev substitution and the rule is ignored.
+# Named 99-z-* on purpose: must sort AFTER nfs-utils' 99-nfs.rules, which otherwise
+# overwrites the value with nfsrahead's default of 128. ALTERNATIVE to nfs.conf; install one, not both.
+#
+# install: cp config/99-z-nfs-readahead.rules /etc/udev/rules.d/ && udevadm control --reload
+# applies on next mount of each share; existing mounts keep their current value.
+SUBSYSTEM=="bdi", ACTION=="add", PROGRAM="/usr/bin/awk -v bdi=$kernel 'BEGIN{ret=1} {if ($$4 == bdi) {ret=0}} END{exit ret}' /proc/fs/nfsfs/volumes", ATTR{read_ahead_kb}="16384"
