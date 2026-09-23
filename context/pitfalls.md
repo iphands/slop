@@ -832,3 +832,51 @@ and a tick-sweep (phase offsets across a full slip cycle), plus a fakenect end-t
 asserting paired fps > N. Show capture fps decaying to 0 when frames stop.
 ## Sources
 - kin (vendor/azu): src/sensor/KinectSensor.cpp onDepth/onRgb, KinectSensor.h pairing gate (commit c311c69)
+
+# Kinect v1 depth intrinsics: 525 px is the RGB camera; IR depth is ~576 px
+
+Unregistered `FREENECT_DEPTH_11BIT` depth is in IR-camera geometry. The common
+fx = fy = 525 value belongs to the RGB camera. The unit's own IR focal length comes
+from its factory registration: `freenect_copy_registration(dev).zero_plane_info`,
+f = reference_distance / (2 * reference_pixel_size) = 120 / (2 * 0.1042) = 575.8 px
+(fakenect-record saves the same block as device.json). The 9.7% error cancels under
+translation but not rotation: tracking sees ~9% less turn than happened, and a full
+spin stops matching itself when it comes back around (synthetic spin: 327 deg tracked,
+lost, 34 deg end error; with 575.8: 359.9 deg, 0.3 deg).
+
+Avoidance: read intrinsics from the device registration at init, carry one intrinsics
+value through back-projection, ICP projection, integration and raycast, and keep the
+525 fallback only for data without calibration. libfakenect serves
+freenect_copy_registration from device.json, so replays get it too.
+## Sources
+- kin (vendor/azu): include/sensor/CameraIntrinsics.h, KinectSensor.cpp init
+
+# Grading ICP frames by inliers / ALL live points starves the model when turning
+
+A tracking gate like "Good if inliers / valid_live >= 0.3" looks harmless, but when
+valid_live counts every live point in front of the model camera, points that land
+outside the old model image, outside the volume, or on unobserved space all count
+against the frame. Turning toward new geometry lowers the ratio, the frame is graded
+Poor and not integrated, the model never grows, the ratio keeps falling: Lost after
+~15 degrees of slow rotation. KinectFusion integrates every tracked frame for exactly
+this reason.
+
+Avoidance: measure fit over correspondences (inliers / points that hit a valid model
+pixel) plus RMS and an absolute inlier floor; never let "unseen geometry in view" veto
+integration.
+## Sources
+- kin (vendor/azu): include/tracking/TrackingPolicy.h (policy v2)
+
+# Point-to-plane ICP facing one wall: constant-velocity prediction carries null-space noise
+
+Facing a single plane, sliding along it and rolling about its normal are unobservable:
+the solve returns the initial guess plus noise there, Tikhonov damping keeps it near the
+guess, and a constant-velocity motion model turns that noise into velocity and
+re-applies it every frame. A synthetic in-place 360 degree spin drifted 0.35 m while
+graded Good the whole time.
+
+Avoidance: keep the final undamped J^T W J, eigen-decompose it, and hold motion along
+eigen-directions below ~5e-3 of the largest eigenvalue at the previous pose
+(degeneracy-aware update; 2e-2 started discarding real yaw). Drift fell to ~3 mm.
+## Sources
+- kin (vendor/azu): TrackingPolicy.h keepObservableMotion, ICPResult::information
