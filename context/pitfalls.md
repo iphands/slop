@@ -812,3 +812,23 @@ pose) and a wireframe cage of the volume, amber when the pose leaves it (inset t
 identity start pose sits exactly on a default origin face).
 ## Sources
 - kin (vendor/azu): TSDFVolume.h defaults, ICPTracker CUDA/CPU counters, PipelineController lost-logging
+
+# libfreenect timestamps are 60 MHz ticks, not µs ⇒ RGB/depth pairing gate silently starves pipeline
+
+`freenect_*_cb(dev, data, uint32_t timestamp)` timestamps are raw Kinect v1 hardware counter
+ticks at **60 MHz** (OpenNI2-FreenectDriver VideoStream.hpp divides by 60000 for ms; measured
+~2,002,155 ticks per 33.37 ms depth frame). uint32 wraps every **71.58 s**. Azu divided by 1000
+("µs → ms"), so a 50 ms pairing window was really **0.83 ms**. Depth (29.968 fps) and RGB
+(29.996 fps) run on slightly different periods, so their phase slides ~1,868 ticks/frame: pairs
+succeed in ~54-frame (1.8 s) bursts, then nothing for ~34 s. Symptom: "captures a few frames then
+hangs" while UI still reports Running and capture fps shows its last stale value. Real 80 s trace:
+162/2400 paired; under libfakenect: 0 in 12 s. Base code had the same wrong divisor — harmless
+until a strict gate was added on top.
+
+Avoidance: define one tick-unit constant (`kFreenectTicksPerMs = 60000`), compute deltas as wrap-safe
+`int32_t(a - b)`, pair each depth frame with the *nearest* RGB within ~half a frame (17 ms), and
+publish depth-only instead of stalling when none fits. Test with a recorded real timestamp trace
+and a tick-sweep (phase offsets across a full slip cycle), plus a fakenect end-to-end smoke test
+asserting paired fps > N. Show capture fps decaying to 0 when frames stop.
+## Sources
+- kin (vendor/azu): src/sensor/KinectSensor.cpp onDepth/onRgb, KinectSensor.h pairing gate (commit c311c69)
