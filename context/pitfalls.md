@@ -945,3 +945,52 @@ the pre-re-acquisition pose. A self-consistent wrong basin can still pass (synth
 21.6 cm off at 15 deg from the last good pose), so the relocalizer's reach matters too.
 ## Sources
 - kin (vendor/azu): PipelineController.cpp (reacquire_probation_), big-fix-two T4.5
+
+# Labelling relocalization results against pre-loss frames only mislabels correct ones
+
+To judge whether a re-acquisition was right, I compared each re-acquired frame's RGB
+with the most similar-posed frame tracked before the FIRST loss. After a correct
+re-acquisition, tracking maps new areas (a closet, shelves); a later re-acquisition of
+those areas then has no pre-loss twin, looks "wrong", and I declared 7 of 8 wrong on a
+run that was mostly right. Worse, the verdict drove a threshold change.
+
+Avoidance: label against the most similar pose among ALL frames tracked Good before that
+re-acquisition's loss, and state the pose distance next to the pair. Remember chains: a
+frame tracked after a wrong re-acquisition "confirms" the wrong basin. Check the final
+mesh too (duplicated/rotated structure is the tell), not only per-event labels.
+## Sources
+- kin (vendor/azu): cap_001 relocalization analysis; tracking/Relocalizer.h max_visited_*
+
+# Depth-only relocalization in a plain room: fit and consistency do not tell right from wrong
+
+On a handheld photosphere take (cap_001), wrong re-acquisitions (closet doors matched to
+the wall under a monitor, bare ceiling corners to other corners) passed ICP at Good fit
+and render-and-compare at 0.6-0.96 consistency, as high as right ones. The information
+matrix constraint ratio, colour NCC against the model, and rotation/translation from the
+last good pose all overlapped too. Accepting them wrote rooms in twice (a second window
+and desk rotated 90 deg).
+
+Avoidance: require the re-acquired pose to be near one the camera actually tracked
+(within 0.2 m and 45 deg of a stored Good pose): right ones sat 4-15 cm from such a pose,
+wrong ones 26-142 cm. Prefer waiting over guessing; verify with the mesh.
+## Sources
+- kin (vendor/azu): tracking/Relocalizer.h (max_visited_distance_m / max_visited_angle_deg)
+
+# OpenMP `schedule(dynamic)` + per-thread float sums: the CPU path is nondeterministic too
+
+The CPU ICP summed its 6x6 normal equations into per-thread accumulators under
+`schedule(dynamic, 32)`, then combined them in thread order. Dynamic scheduling hands rows
+out first-come, so which rows land in which partial sum changes run to run, and float
+addition is not associative. On a marginal frame the difference flipped a Good/Poor
+grade: a synthetic room-spin test passed alone and in most gate runs, and failed in
+others (lost at 121-123 deg, 77/249 Good). It looked like a regression from unrelated
+changes and cost several gate cycles to tell apart from one.
+
+Avoidance: for float reductions use `schedule(static)` (same rows per thread every run)
+and combine partials in a fixed order; the result is then bit-reproducible for a given
+thread count (results still differ ACROSS thread counts, so pin `OMP_NUM_THREADS` in
+tests). Before blaming a change for a flaky failure, run the test 3x at the same thread
+count and diff the numbers: identical = deterministic, investigate; different = fix the
+nondeterminism first. After the fix: 3/3 identical runs, 249/249 Good.
+## Sources
+- kin (vendor/azu): src/tracking/ICPTracker.cpp (track level accumulation), tests pipeline_spin_room_preset
