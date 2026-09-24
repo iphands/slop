@@ -912,3 +912,36 @@ run each variant several times and compare distributions; make the reduction
 deterministic (fixed-order block sums) before trusting end-to-end metrics.
 ## Sources
 - kin (vendor/azu): tools/azu_replay.cpp runs on cap_001; ICPTracker_cuda.cu reduction
+
+# Constant-velocity prediction replays a relocalization jump
+
+A predictor of the form `predicted = current * (last^-1 * current)` treats whatever
+happened between the last two frames as motion. After a relocalization, `current` is
+the re-acquired pose and `last` is the stale pose from before the loss, so the next
+frame is predicted one whole jump further (cap_001: 16.6 deg / 116 mm). ICP from that
+guess fails or lands wrong, the retry from the previous pose may also miss, and three
+failures later the track is lost again, right after a correct recovery. A separate
+velocity model in the same code already reset on relocalization; the default path did
+not.
+
+Avoidance: on any pose that is not motion (re-acquisition, reset, manual re-anchor),
+set the motion source to the new pose so the next prediction is zero motion. Test it
+through the prediction seam, not end to end: end-to-end runs on real data were too
+noisy to show it.
+## Sources
+- kin (vendor/azu): src/app/PipelineController.cpp (last_pose_ on re-acquisition), tests/pipeline_gravity_contract.cpp (D)
+
+# A re-acquired pose can have the orientation right and the position wrong
+
+Relocalization that scores hypotheses by ICP fit can lock onto a basin with the
+right rotation (and a clean fit: 7.7 mm RMS, tilt 5 deg vs gravity) but a position
+~26 cm off. Integrated at once, it writes a ghost into the model; the next frame's ICP
+then wants to move 26 cm, trips the per-frame motion gate, and the track is lost
+again. Gravity cannot see position or yaw.
+
+Avoidance: probation. Integrate nothing until N (3) consecutive Good frames have
+tracked from the re-acquired pose; any failure goes straight back to relocalizing from
+the pre-re-acquisition pose. A self-consistent wrong basin can still pass (synthetic:
+21.6 cm off at 15 deg from the last good pose), so the relocalizer's reach matters too.
+## Sources
+- kin (vendor/azu): PipelineController.cpp (reacquire_probation_), big-fix-two T4.5
