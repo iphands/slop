@@ -994,3 +994,21 @@ count and diff the numbers: identical = deterministic, investigate; different = 
 nondeterminism first. After the fix: 3/3 identical runs, 249/249 Good.
 ## Sources
 - kin (vendor/azu): src/tracking/ICPTracker.cpp (track level accumulation), tests pipeline_spin_room_preset
+
+# Parallel OpenMP test processes spin-starve each other (set OMP_WAIT_POLICY=PASSIVE)
+
+A test gate ran 4 ctest jobs at once, each with OMP_NUM_THREADS=16, pinned to the same
+16 CPUs. libgomp spin-waits at barriers and only throttles the spin when ONE process has
+more threads than CPUs, so four processes with 16 spinning threads each burned the CPUs
+the working threads needed. A relocalization test with thousands of short parallel
+regions took 13 s alone and 195-197 s in the gate, and timed out (240 s) in Debug while
+passing its checks. It looked like the new feature had made the test slow.
+
+Avoidance: when several OpenMP processes share a CPU set (ctest -j, parallel benches),
+export OMP_WAIT_POLICY=PASSIVE: 4 concurrent copies went 210 s -> 36 s, and the whole
+Release lane 202 s -> 176 s. It is not free: lockstep pipeline tests with many tiny
+regions got 10-40% slower (thread wake-up), and a single live process gained nothing,
+so set it where processes share CPUs, not blindly in the app. Before blaming code for a
+slow test, time it alone vs under the gate's concurrency.
+## Sources
+- kin (vendor/azu): scripts/gate.sh, tests relocalizer_contract / pipeline_*_contract
