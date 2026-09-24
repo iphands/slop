@@ -880,3 +880,35 @@ eigen-directions below ~5e-3 of the largest eigenvalue at the previous pose
 (degeneracy-aware update; 2e-2 started discarding real yaw). Drift fell to ~3 mm.
 ## Sources
 - kin (vendor/azu): TrackingPolicy.h keepObservableMotion, ICPResult::information
+
+# Kinect v1 depth is rolling shutter: fast handheld sweeps bend every frame
+
+The Kinect v1 IR sensor reads its rows top to bottom over most of the ~33 ms frame, so
+each depth row is seen from a slightly different pose. A 90 deg/s pitch sweep stretches
+or squashes the frame vertically by ~1.5 deg top to bottom; a pan shears it. Rigid ICP
+cannot absorb that: on a handheld photosphere-style room take the point-to-plane RMS
+rose from ~4 mm (still) to 10-20 mm, correlated with pitch rate (r = 0.58), not depth.
+Above the RMS gate the frames grade Poor, integration stops, the model stops growing,
+and the next flat wall ends in Lost. Looks like "noise at range", is not.
+
+Avoidance: unwarp each row by the constant-velocity step before ICP (pose at row time =
+mid-row pose * exp(s * log(step)), s = (v/(H-1) - 0.5) * readout / period), resampling
+by inverse mapping so there are no splat holes. Readout ~20-33 ms fits (mean RMS in the
+worst segment 15.1 -> 8.7 mm); a negative readout makes it worse, which confirms the
+direction. Also tell the operator to sweep slower (<= ~30 deg/s).
+## Sources
+- kin (vendor/azu): include/sensor/RollingShutter.h (AZU_RS_READOUT_MS), cap_001
+
+# Nondeterministic GPU ICP reductions make single-run A/B comparisons meaningless near a failure
+
+Float atomics in a GPU reduction sum in a different order every run. Far from a failure
+the results agree to ~1e-6; near the edge (the frame where tracking is lost) the tiny
+differences pick different basins, and after the first loss relocalization amplifies
+them. Four identical replays of one recording gave 397-908 Good frames and 89-359 deg
+of tracked yaw. An A/B "win" from one run each is noise.
+
+Avoidance: compare only up to the first loss (it was stable: same frame every run), or
+run each variant several times and compare distributions; make the reduction
+deterministic (fixed-order block sums) before trusting end-to-end metrics.
+## Sources
+- kin (vendor/azu): tools/azu_replay.cpp runs on cap_001; ICPTracker_cuda.cu reduction
