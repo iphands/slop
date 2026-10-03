@@ -28,7 +28,7 @@ tree's existing columns. No markers here — HTML comments inside a code fence r
 ```text
 ├── context/                  # living memory — READ context/AGENTS.md before new work
 │   ├── plans/                # plan system — RULES.md is authoritative; read in full
-│   │   ├── RULES.md          #   format + Rules A–E + project rules
+│   │   ├── RULES.md          #   format + per-task rules + project rules
 │   │   ├── SERIES.md         #   dependency chain, status, next free plan number
 │   │   ├── NN_example*.md    #   skeletons to copy for a new plan + tracker
 │   │   ├── completed/        #   closed plans (git mv here at 100%)
