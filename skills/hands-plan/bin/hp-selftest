@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""hp-selftest — maintainer check for the hands-plan skill itself. Read-only.
+
+Run after editing templates, reference/ or verbs/:  bin/hp-selftest
+Exits non-zero on any failure. Checks:
+  1. every probe in reference/sections.md hits the shipped template section it describes
+  2. every {{PLACEHOLDER}} used in templates/ and packs/ is documented in reference/placeholders.md
+  3. every $SKILL_DIR/... path named in SKILL.md and verbs/ exists
+  4. templates never hard-code a rule letter ("Rule C") — they use {{R_*}}
+  5. SKILL.md frontmatter has the required keys; bin/ scripts pass bash -n (and shellcheck if present)
+"""
+import glob
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+os.chdir(ROOT)
+fails = []
+
+
+def fail(msg):
+    fails.append(msg)
+    print("FAIL", msg)
+
+
+# 1. probes vs templates -------------------------------------------------------------------
+TARGETS = {
+    "## `context/plans/RULES.md`": "templates/plans/RULES.md",
+    "## `context/plans/SERIES.md`": "templates/plans/SERIES.md",
+    "## `context/plans/NN_example.md`, `NN_example_tracker.md`": None,
+    "## `context/AGENTS.md` (+ `CLAUDE.md` symlink)": "templates/context/AGENTS.md",
+}
+SKIP = {"context-map", "context-routing", "plans", "project-rules", "constraints", "gate-project"}
+LINE_SCOPED = {"rules-header", "series-header"}
+WHOLE_FILE = {"next-free", "north-star", "compaction"}
+nprobes = 0
+for sec in re.split(r"\n(?=## )", open("reference/sections.md").read()):
+    head = sec.split("\n", 1)[0]
+    if head not in TARGETS:
+        continue
+    rules_table = head.startswith("## `context/plans/RULES") or head.startswith("## `context/plans/SERIES")
+    for line in sec.split("\n"):
+        if not line.startswith("| `"):
+            continue
+        cells = [c.strip() for c in re.split(r"(?<!\\)\|", line)[1:-1]]
+        rid = cells[0].strip("`").split("`")[0]
+        if rid in SKIP:
+            continue
+        cell = cells[3] if rules_table else cells[2]
+        probes = [p.replace("\\|", "|") for p in re.findall(r'"((?:[^"\\]|\\.)*)"', cell)]
+        files = re.findall(r"`file:([A-Za-z0-9_./]+)", cell)
+        target = TARGETS[head] or (
+            "templates/plans/NN_example.md" if rid == "example-plan" else "templates/plans/NN_example_tracker.md")
+        for fpath in files:  # file: probes name project paths; check the template exists
+            tpl = "templates/" + fpath.replace("context/plans/", "plans/").replace("context/", "context/")
+            if not os.path.exists(tpl) and "CLAUDE.md" not in fpath:
+                fail(f"{rid}: file probe {fpath} has no template {tpl}")
+        if not probes:
+            continue
+        if rid in LINE_SCOPED:
+            scope = ["--lines", "1-15"]
+        elif rid in WHOLE_FILE or not head.startswith("## `context/plans/RULES"):
+            scope = [] if rid not in ("active", "abandoned") else ["--section", rid]
+        else:
+            scope = ["--section", rid]
+        r = subprocess.run(["bin/hp-probe", target, *scope, "--", *probes], capture_output=True, text=True)
+        for out in r.stdout.splitlines():
+            nprobes += 1
+            if out.startswith("MISS"):
+                fail(f"probe {rid}: {out}")
+print(f"probes: {nprobes} checked")
+
+# 2. placeholders documented ---------------------------------------------------------------
+used = set()
+for f in glob.glob("templates/**/*.md", recursive=True) + glob.glob("packs/*.md"):
+    used |= set(re.findall(r"\{\{([A-Z0-9_]+)\}\}", open(f).read()))
+doc = open("reference/placeholders.md").read()
+for u in sorted(used):
+    if "{{" + u + "}}" not in doc and not u.startswith("TIER_"):
+        fail(f"placeholder {{{{{u}}}}} is used in templates but not documented in reference/placeholders.md")
+print(f"placeholders: {len(used)} used")
+
+# 3. $SKILL_DIR paths ----------------------------------------------------------------------
+for f in ["SKILL.md"] + glob.glob("verbs/*.md"):
+    for m in re.findall(r"\$SKILL_DIR/([A-Za-z0-9_./*-]+)", open(f).read()):
+        p = m.rstrip(".,;:)`")
+        if "<" in p or "*" in p:
+            if not glob.glob(p.replace("<", "").replace(">", "*")):
+                continue
+            continue
+        if not os.path.exists(p):
+            fail(f"{f} names $SKILL_DIR/{p}, which does not exist")
+
+# 4. no hard-coded rule letters in templates -----------------------------------------------
+for f in glob.glob("templates/**/*.md", recursive=True):
+    for n, line in enumerate(open(f), 1):
+        if re.search(r"\bRules? [A-E](\d)?\b", line):
+            fail(f"{f}:{n} hard-codes a rule letter: {line.strip()[:80]}")
+
+# 5. frontmatter + scripts -----------------------------------------------------------------
+fm = open("SKILL.md").read().split("---")[1]
+for key in ("name:", "description:", "argument-hint:", "disable-model-invocation:", "allowed-tools:"):
+    if key not in fm:
+        fail(f"SKILL.md frontmatter lacks {key}")
+for s in ("bin/hp-scan", "bin/hp-probe"):
+    if subprocess.run(["bash", "-n", s]).returncode:
+        fail(f"{s}: bash -n failed")
+    if shutil.which("shellcheck") and subprocess.run(["shellcheck", "-S", "style", s]).returncode:
+        fail(f"{s}: shellcheck findings")
+
+print("OK" if not fails else f"{len(fails)} failure(s)")
+sys.exit(1 if fails else 0)
