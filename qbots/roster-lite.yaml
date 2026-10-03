@@ -1,0 +1,21 @@
+# competition roster — ranked by K/D. Delete groups you don't want, edit
+# counts, then rerun:  qbots competition --roster <this file>
+groups:
+  # rank 1  kd=1.00 kills=5501 deaths=5479
+  - brain: mai
+    navmode: sg
+    count: 1
+  # rank 2  kd=0.93 kills=5216 deaths=5630
+  - brain: mai
+    navmode: nm
+    count: 1
+  # rank 3  kd=0.91 kills=4169 deaths=4580
+  - brain: q3
+    navmode: sg
+    char: cam
+    count: 1
+  # rank 4  kd=0.88 kills=4139 deaths=4699
+  - brain: q3
+    navmode: nm
+    char: cam
+    count: 1

@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+#
+# docker-affinity — shove docker builds/containers onto the other CCD.
+#
+# Writes cpuset.cpus on every docker cgroup under system.slice, so every task
+# in it moves now AND every process it forks later stays put (a build spawns
+# thousands of short-lived nvcc/cicc/cc1plus — taskset on pids would miss them).
+#
+#   system.slice:docker:<id>   buildkit RUN steps (`docker build`)
+#   docker-<id>.scope          running containers
+#
+# Also tasksets (all threads of) plain background hogs by name — bees by
+# default, -p NAME to add more.
+#
+# Each RUN step gets a FRESH cgroup, so a one-shot only covers the current
+# step. Use -w to keep catching new ones until the build is done.
+#
+#   docker-affinity                  # pin to 8-15,24-31 (CCD1) once
+#   docker-affinity -w               # ...and re-check every 2s (ctrl-c to stop)
+#   docker-affinity -b               # buildkit steps only, leave containers alone
+#   docker-affinity -p ninja         # also taskset every process named ninja
+#   docker-affinity -c 0-31          # undo
+#   docker-affinity -n               # dry run (automatic when not root)
+#
+set -euo pipefail
+
+CPUS=8-15,24-31
+WATCH=0 DRY=0 BUILD_ONLY=0
+PROCS=(bees)
+ROOT=/sys/fs/cgroup/system.slice
+
+while getopts 'c:p:wnbh' o; do
+  case $o in
+    c) CPUS=$OPTARG ;;
+    p) PROCS+=("$OPTARG") ;;
+    w) WATCH=1 ;;
+    n) DRY=1 ;;
+    b) BUILD_ONLY=1 ;;
+    *) sed -n '3,/^set -/p' "$0" | sed '$d;s/^# \{0,1\}//'; exit 0 ;;
+  esac
+done
+
+if ((EUID != 0 && !DRY)); then
+  echo "${0##*/}: not root — DRY RUN" >&2
+  DRY=1
+fi
+
+pin_all() {
+  local cg cur
+  shopt -s nullglob
+  local cgs=("$ROOT"/system.slice:docker:*/)
+  ((BUILD_ONLY)) || cgs+=("$ROOT"/docker-*.scope/)
+  for cg in "${cgs[@]}"; do
+    [[ -w ${cg}cpuset.cpus || $DRY == 1 ]] || continue
+    cur=$(<"${cg}cpuset.cpus") || continue      # step cgroups vanish under us
+    [[ $cur == "$CPUS" ]] && continue
+    if ((DRY)); then
+      printf 'would pin %-4s procs  %s  (%s -> %s)\n' \
+        "$(wc -l <"${cg}cgroup.procs")" "$(basename "$cg")" "${cur:-unset}" "$CPUS"
+    elif echo "$CPUS" >"${cg}cpuset.cpus" 2>/dev/null; then
+      printf 'pinned %-4s procs  %s  -> %s\n' \
+        "$(wc -l <"${cg}cgroup.procs")" "$(basename "$cg")" "$(<"${cg}cpuset.cpus.effective")"
+    fi
+  done
+}
+
+# Plain processes, matched by exact comm. These share a cgroup with whatever
+# shell launched them (bees lives in a tmux scope), so cpuset is the wrong tool:
+# taskset every thread instead. Long-lived, and new threads inherit the mask.
+pin_procs() {
+  local name pid cur
+  for name in "${PROCS[@]}"; do
+    for pid in $(pgrep -x "$name" || true); do
+      cur=$(awk '/^Cpus_allowed_list/ {print $2}' "/proc/$pid/status" 2>/dev/null) || continue
+      [[ $cur == "$CPUS" ]] && continue
+      if ((DRY)); then
+        printf 'would pin %-4s threads %s[%s]  (%s -> %s)\n' \
+          "$(ls "/proc/$pid/task" | wc -l)" "$name" "$pid" "$cur" "$CPUS"
+      elif taskset -a -c -p "$CPUS" "$pid" >/dev/null 2>&1; then
+        printf 'pinned %-4s threads %s[%s]  -> %s\n' \
+          "$(ls "/proc/$pid/task" | wc -l)" "$name" "$pid" "$CPUS"
+      fi
+    done
+  done
+}
+
+pin_all; pin_procs
+if ((WATCH)); then
+  while sleep 2; do pin_all; pin_procs; done
+fi
