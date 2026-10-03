@@ -39,6 +39,7 @@ cite it.
 | `{{PLAN_GATE_ROWS}}` | RULES `plan-gate` | 2–4 rows `\| <risky change type in this project> \| **Yes.** <why> \|`, one per line |
 | `{{PROJECT_GATE}}` | RULES `gate-project` | the approved gate (see `guides/rule_a.md`): numbered steps, fenced commands, mechanical pass conditions, blind spots, prerequisites, the init baseline result |
 | `{{COMMIT_FORMAT}}` | RULES commit rule, item 3 | the format in backticks, one sentence on its parts, the outside-plan form, the bookkeeping forms, and two example sub-bullets — wrapped at ~100 columns. Default: `` `[P<n>][T<n>][<topic>] <imperative summary>` `` — plan number (not zero-padded), task number, short area tag. Outside a plan: `[<topic>] <summary>`. Plan bookkeeping replaces the task tag: `[P<n>][plan] add <title>`, `[P<n>][revise] …`, `[P<n>][close] <title>: <outcome>`. Sub-project in a monorepo (recommended): prefix the scope — `[<sub>][P<n>][T<n>][<topic>]` — so plan numbers don't collide between sub-projects. |
+| | | **Legacy project (resync):** keep the project's own format text verbatim; forms it doesn't document (outside-plan, bookkeeping) become an INFO question with the hp-scan `COMMITFMT` tally — never invented. A format documented in the root agent file counts as the project's. |
 | `{{COMMIT_FORMAT_SHORT}}` | root block, tracker template | the bare format, e.g. `[P<n>][T<n>][<topic>] <summary>` |
 | `{{COMMIT_EXAMPLE}}` | NN_example T1 | the format instantiated with `<n>` and `T1`, e.g. `` `[P<n>][T1][<topic>] <short description>` `` |
 | `{{USER_DOC}}` | RULES commit rule, item 6 | `` `README.md` `` (or the real user-facing doc) |
@@ -51,11 +52,19 @@ cite it.
 | `{{ACTIVE}}` | SERIES | `None yet — start with \`/hands-plan new <first piece of work>\`.` (adopt mode: the in-progress plans) |
 | `{{PLAN_ROWS}}` | SERIES | adopt mode: one row per existing plan; otherwise **delete the line** |
 | `{{CONSTRAINTS}}` | SERIES | standing constraints from the description/survey (missing tools, "this workstation is not the server"), else `None recorded yet.` |
-| `{{VERIFY_CMD}}` | NN_example T1 | the gate's main command line(s) — the task-specific check sits above it |
+| `{{VERIFY_CMD}}` | NN_example T1 | the gate's single-line commands chained with `&&`; a multi-line behavioral step becomes a comment pointing to it (`# + project gate step 5 (behavior)`) — the task-specific check sits above it |
 | `{{CONTEXT_MAP_ROWS}}` | context/AGENTS.md map | one row per knowledge file that exists after init (real names, paths relative to `context/`), plus a row for the parent context (path computed as above) when one exists |
 | `{{ROUTING_ROWS}}` | context/AGENTS.md routing | rows pointing at the **actual** files: confirmed fact → `distilled.md` (or its equivalent), bug/gotcha → `pitfalls.md`, dependency choice → `high_level.md` (or the parent's, if that is where the project already records them), project-specific logs found in the survey; for a new project also `<lib_name>.md` / `algo.md` / `patterns.md` (create on first use) |
 | `{{PARENT_CONTEXT}}` | context/AGENTS.md routing | sub-project with a parent `context/` → `\| Anything that generalizes beyond this project \| also \`<rel>/pitfalls.md\` (or a \`<lib>.md\` / \`high_level.md\` there) \| Same shape; keep project-specific detail here \|`; else delete the line |
 | `{{PROVENANCE}}` | context/AGENTS.md | the default tag set (`[SOURCE]` `[DOC]` `[REPO]` `[LIVE YYYY-MM-DD]`), or the project's own evidence vocabulary if it has one (e.g. rig / exe table / decomp / capture) |
 | `{{VENDOR_LINE}}` | context/AGENTS.md style | `vendor/` exists → `- \`vendor/\` holds third-party source clones: **read-only** reference; never write docs into it — distill into \`context/\`.`; else delete the line |
 | `{{PARENT_PITFALLS}}` | pitfalls.md | sub-project with a parent context → `Cross-cutting entries also go up to \`<rel>/pitfalls.md\`; project-specific ones stay here.`; else delete the line |
-| `{{ORACLE}}`, `{{TIER_*}}` | parity pack | asked at init; default tiers `stub` → `behaves` (same results on the same inputs) → `exact` (value/byte/frame-exact on the reference set) → `verified` |
+| `{{ORACLE}}` | parity pack | the original, named concretely (e.g. "GNU coreutils `wc` 9.x on this host", "the retail `ff7.exe` under Wine") — asked at init |
+| `{{TIER_2}}`, `{{TIER_2_GATE}}`, `{{TIER_2_EVIDENCE}}`, `{{TIER_3}}`, `{{TIER_3_GATE}}`, `{{TIER_3_EVIDENCE}}` | parity pack | defaults: `behaves` / "the same results as the oracle on the same inputs" / "a recorded run of both on a shared input set"; `exact` / "value-, byte- or frame-exact on the reference set" / "a diff against the oracle's output that comes back empty". Offer them; the user may rename. |
+
+## Symlink direction (`context/CLAUDE.md` ↔ `context/AGENTS.md`, and a new root pair)
+
+Mirror the project's own root files: a pair (`CLAUDE.md -> AGENTS.md` or the reverse) → the same
+direction; a lone real root file → that name is the real file in `context/` too, and the other
+links to it; no root agent file → the nearest ancestor pair's direction (hp-scan `PARENTFILE`);
+nothing anywhere → real `AGENTS.md`, `CLAUDE.md -> AGENTS.md`.

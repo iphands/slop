@@ -15,9 +15,10 @@ good as its grounding: real paths, real Before code, Key Facts that were actuall
 - **Migrate mode:** the description is a plan-system migration ("migrate the plan system to
   hands-plan vN", following a `resync`). Then: use the resync checklist from this conversation (or
   run `resync` first if there is none); one task per checklist group, CONFLICTs first, each task's
-  Verify = the relevant `hp-probe` / `hp-scan` checks passing; the last task stamps
-  `hands-plan:v<N>` on RULES, SERIES, both `NN_example*` files, `context/AGENTS.md` and any
-  `*_RULES.md` it touched, and the root block's begin marker. Skip step 3 (the gate may not exist
+  Verify = the relevant `hp-probe` / `hp-scan` checks passing; the last task adds the
+  `<!-- hp:<id> -->` marker to **every** mapped heading (untouched sections too — otherwise the
+  next resync can't find them) and stamps `hands-plan:v<N>` on RULES, SERIES, both `NN_example*`
+  files, `context/AGENTS.md` and any `*_RULES.md` it touched, and the root block's begin marker. Skip step 3 (the gate may not exist
   yet); if the project lacks `NN_example*.md`, use `$SKILL_DIR/templates/plans/` as the skeleton.
   Check active plans for edits to RULES/SERIES (their Critical Files) and sequence around them.
 

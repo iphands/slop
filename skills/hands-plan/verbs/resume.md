@@ -48,7 +48,9 @@ order). Mark it `in-progress` in the tracker. Announce: `Plan NN · TN — <titl
 
 **First task of the plan?** Also flip the started state, in this task's commit (RULES
 tracker-format): plan metadata `Status: in-progress`, the SERIES row `in-progress` and listed under
-*Currently Active*, tracker `Start date:` today.
+*Currently Active* (format in the SERIES template comment: `- **Plan NN** — <title>: in progress,
+X/Y tasks done; next TN (…).`), tracker `Start date:` today. Later tasks keep that Currently
+Active line current.
 
 ## 6. Do it
 
@@ -86,13 +88,18 @@ Then report: what changed, the gate output summary, the commit hash, what's next
 next task **only if the user asked for more than one**. All rows closed → suggest
 `/hands-plan close NN`.
 
-## 9. `--ralph`: print a loop command (do no work)
+## 9. `--ralph`: print a loop command (no task work)
 
-Print this, filled in — it must not depend on `/hands-plan` (the loop re-feeds the prompt as plain
-text, and this skill is user-invoked only):
+Run steps 1–2 (read-only) to pick the plan and count the remaining tasks. If the plan has not
+started, run step 3's premise refresh first (it may need a `revise` commit, with approval) — the
+loop does not refresh premises. Then print this, filled in; drop the parenthetical about the first
+task if T1 has already started. It must not depend on `/hands-plan` (the loop re-feeds the prompt
+as plain text, and this skill is user-invoked only):
 
 ```text
 /ralph-loop "Work Plan NN in <project-dir>. Each iteration: read context/plans/RULES.md in full, then context/plans/NN_name.md and context/plans/NN_name_tracker.md. Take the first task that is not done, in Resume Instructions order. Do only that task (on the first task, also set the plan and its SERIES row to in-progress and the tracker Start date). Pass the task's Verify and the RULES project gate, showing real output; if the task added behavior the gate should cover, update the gate. Update the tracker row (and Notes/Deviations, Evidence, context/ findings) and commit everything in ONE commit using the task's Commit line, staging explicit paths and chaining with &&. Never push, never amend/rebase/reset/revert, never touch changes you did not make. If a plan premise is wrong, record it, follow reality, and mark the item invalid. If a task cannot be done, mark it blocked with the reason and commit. When every task row is done/skipped/invalid, or every remaining one is blocked with a recorded reason, output <promise>PLAN NN HALTED</promise>." --max-iterations <2 × remaining tasks + 2> --completion-promise "PLAN NN HALTED"
 ```
 
-Remind the user: the loop does not run `close` — run `/hands-plan close NN` after it halts.
+Remind the user: the loop does not run `close` — run `/hands-plan close NN` after it halts. If
+`.gitignore` lacks it, suggest adding `.claude/ralph-loop.local.md` (the plugin's state file;
+otherwise it shows up as an untracked file).

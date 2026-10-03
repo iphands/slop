@@ -16,6 +16,10 @@ contract** — re-read and revise it before starting (RULES.md {{R_LIFECYCLE}}).
 
 ## Currently Active <!-- hp:active -->
 
+<!-- One line per in-progress plan, in the order they should be worked:
+     - **Plan NN** — <title>: in progress, X/Y tasks done; next TN (<short title>).
+     When nothing is in progress: "None in progress — next up: Plan NN (`/hands-plan resume NN`)." -->
+
 {{ACTIVE}}
 
 ## Plans <!-- hp:plans -->

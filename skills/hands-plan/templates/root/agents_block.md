@@ -22,8 +22,12 @@ approval, it is outside the project — a one-line pointer in the parent's agent
 ## Snippet 1 — layout-tree lines
 
 Only if the file already has a directory tree (usually a ```` ```text ```` block under
-"Workspace Layout" / "Directory Structure"). Insert under the project root, aligned with the
-tree's existing columns. No markers here — HTML comments inside a code fence render as text.
+"Workspace Layout" / "Directory Structure"). Insert under the project root, in alphabetical order
+among its siblings (before the last `└──` entry if `context/` sorts earlier; if it becomes the
+last entry, turn the previous `└──` into `├──`). Keep the snippet's own comment column when the
+tree's column is too narrow — never re-pad existing lines. If the tree already lists `context/`,
+merge: add only the missing lines. No markers here — HTML comments inside a code fence render as
+text.
 
 ```text
 ├── context/                  # living memory — READ context/AGENTS.md before new work
@@ -45,10 +49,10 @@ Replace the three knowledge lines with the project's real files when they differ
 
 ## Snippet 2 — the marked block
 
-Place it where the file describes how work is done — after "Development Workflow" if present,
-otherwise after the project summary; never next to a section snippet 3 proposes to remove. Keep
-the markers exactly; `resync` looks for them. Fill `{{COMMIT_FORMAT_SHORT}}` and the `{{R_*}}`
-names (`reference/placeholders.md`).
+Place it as its own top-level section **right after the section that describes how work is done**
+("Development Workflow", "Workflow", "Contributing" — after its last subsection), otherwise right
+after the project summary. Keep the markers exactly; `resync` looks for them. Fill
+`{{COMMIT_FORMAT_SHORT}}` and the `{{R_*}}` names (`reference/placeholders.md`).
 
 ```markdown
 <!-- hands-plan:begin v1 -->
@@ -89,7 +93,7 @@ picks. Never delete project-specific substance (domain rules, architecture, cons
 | "Knowledge Management" / "Context Is Mandatory" sections restating where findings go | Duplicates `context/AGENTS.md` routing | "Read `context/AGENTS.md` for what lives where." (move unique routing rows there first) |
 | "Build Verification" restating the gate, or claiming RULES' gate is stricter when it isn't | Drifts from the RULES project gate; can silently loosen it | Make the RULES project gate the full pre-commit set, then point to it. If the root file's set is stricter, **do not** de-dup until the gate absorbs it. |
 | A section RULES *defers to* ("see Commit message format in AGENTS.md") | Authority inversion: RULES says it wins but points here | Offer: move the text into RULES as a `#### Project addendum` and leave a pointer, or keep it and qualify the authority clause. |
-| "Status" / "Current phase" / "Next step" sections | Stale the day after they are written | "Current state lives in `context/plans/SERIES.md`." |
+| "Status" / "Current phase" / "Next step" sections | Stale the day after they are written | "Current state lives in `context/plans/SERIES.md`." — but first move any backlog item it names ("next step: add line counting") into SERIES as a pending row or a Backlog Rationale line |
 | "Getting Started: create Plan 01 …" on a project past Plan 01 | Stale | Point to SERIES *Currently Active*. |
 | References to files that do not exist (`NN_example.md` missing, renamed context files) | Dead references mislead every agent | Fix the path, or create the missing file. |
 | Git rules that contradict the RULES append-only rule ("rebase to clean up", "squash", "revert to last good") | Conflict — the human decides | Flag as **CONFLICT**; do not silently pick a side. |

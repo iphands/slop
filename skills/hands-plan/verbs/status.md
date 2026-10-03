@@ -38,8 +38,8 @@ Recently closed (last 5): NN <title> (<closed date>, completed|abandoned), …
 - "next" = the first non-closed Progress row in Resume Instructions order, else table order; all
   rows closed → `— (all closed → /hands-plan close NN)`.
 - "last activity" = hp-scan `last=`; "closed date" = hp-scan `closed=` (`git log` add/rename date).
-- Last commit under ~10 minutes old, or uncommitted files present → add one line: *another session
-  may be working here; this view can go stale.*
+- Uncommitted files you didn't create, or HEAD moving while you read → add one line: *another
+  session may be working here; this view can go stale.*
 
 ## 3. Lint
 

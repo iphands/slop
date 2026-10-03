@@ -19,8 +19,8 @@ project.
 A task that ports behavior of the original is done when it is **shown to match the original**,
 not when it runs. This applies to outputs, timings, numbers and placement alike.
 
-**The oracle** is {{ORACLE}} — the original itself, its own tables/specs, or its source read raw.
-A test that asserts our own values proves nothing about accuracy.
+**The oracle** is {{ORACLE}}: the original itself, its own tables/specs, or its source read raw —
+never our own output. A test that asserts our own values proves nothing about accuracy.
 
 | Tier | Gate | Evidence |
 |---|---|---|

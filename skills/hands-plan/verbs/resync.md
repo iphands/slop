@@ -18,23 +18,22 @@ template under `$SKILL_DIR/templates/`.
 ## 2. Load the project side
 
 ```bash
-"$SKILL_DIR/bin/hp-scan" --brief .
-git log --format=%s -300 -- . \
-  | sed -E 's/^(\[[^]]*\](\[[^]]*\])*|[a-z]+\([^)]*\):|[a-z]+:).*/\1/; s/[0-9]+/N/g; s/^(\[PN\]\[TN\])\[[^]]*\]/\1[topic]/' \
-  | sort | uniq -c | sort -rn | head -15        # commit-format shapes actually in use
+"$SKILL_DIR/bin/hp-scan" --brief .                  # incl. COMMITFMT: commit-format shapes in use
+"$SKILL_DIR/bin/hp-probe" <root agent file> --toc   # real headings (fenced code skipped)
 ```
 
 Read in full: `context/plans/RULES.md`, `NN_example.md`, `NN_example_tracker.md`,
 `context/AGENTS.md`, any `*_RULES.md` (hp-scan `RULESFILE`). Read SERIES' header and structure, not
 every row. For the root agent file (follow its symlink), read the sections that matter — layout
-tree, workflow/planning/knowledge/commit/verification/git/status sections (`grep -n '^#'` first);
+tree, workflow/planning/knowledge/commit/verification/git/status sections (from `hp-probe --toc`);
 a 50 KB root file is not read end to end. Note each file's stamp (`FILE … stamp=`): `vN` =
 stamped, `none` = legacy. No `context/plans/` at all → suggest `/hands-plan init`; numbered plans
 but no RULES → suggest `/hands-plan init` (adopt mode).
 
 ## 3. Map sections — by id, never by letter
 
-- Stamped file → by `<!-- hp:<id> -->` marker (hp-scan `MARKER`).
+- Stamped file → by `<!-- hp:<id> -->` marker (hp-scan `MARKER`); a marker that is missing falls
+  back to the legacy heading ERE (and its absence is itself a finding: add the marker).
 - Legacy → by the *Legacy heading ERE* in `reference/sections.md`; if that finds nothing, by
   meaning (read the file). An unlettered section that does the job (materia's `## Completed
   Plans`) counts as **present** → UPDATE, not ADD.
@@ -59,7 +58,7 @@ classify:
 | Class | Meaning | Applies to |
 |---|---|---|
 | **OK** | every probe hit | any |
-| **ADD** | the section is missing entirely | `core`; `seeded`/`local` only when missing (`seeded-optional` → INFO) |
+| **ADD** | the section is missing entirely | `core`; `seeded` when missing; `local`: only the empty `project-rules` shell (other `local` → INFO); `seeded-optional` → INFO |
 | **UPDATE** | the section exists but probes missed (older wording, missing items) | `core`, `core-preamble`; root `heuristic` items (optional) |
 | **SHAPE** | present but malformed — the project gate lacks required parts from `guides/rule_a.md`, or is weaker than what the root file / `justfile` demand before commits; SERIES lacks Next free | `seeded` |
 | **CONFLICT** | local text contradicts a core rule (`reference/sections.md` *Known patterns*) | any |
@@ -68,7 +67,9 @@ classify:
 
 For each ADD/UPDATE give the text: either verbatim, or `template <file>:<lines> verbatim` plus the
 listed adaptations (letters, the project's commit format, its gate, its paths) — whichever is
-shorter to review. Note heading **renames** explicitly (old plans may cite titles). Use
+shorter to review. Items that are *pure* "template lines verbatim + letter map" may be grouped
+into one item per file; keep the full why/text/risk form for anything with an addendum, a rename,
+a TIGHTENING, or a risk. Note heading **renames** explicitly (old plans may cite titles). Use
 `CHANGELOG.md` entries newer than the project's stamp (all of them for legacy) for the *why* and
 the migrate hint.
 
@@ -77,20 +78,21 @@ the migrate hint.
 - **Packs:** if the project already has the substance of a pack (materia's tier rule ≈ parity; gpu
   Rules D/E ≈ measurement) → INFO "present, no action". If the project clearly fits one it lacks →
   INFO suggestion with the pack's blocks.
-- **Commit format (param):** compare RULES, the root file, and the `git log` tally from step 2.
+- **Commit format (param):** compare RULES, the root file, and hp-scan `COMMITFMT`.
   Drift (history uses forms RULES doesn't document) → INFO with the counts and a question for the
   human; never change the format unasked.
 
 ## 6. Structure, hygiene, active plans
 
-- From hp-scan: missing files (`NN_example_tracker.md`, `context/AGENTS.md` + symlink), missing
-  SERIES structure (Next free line, Abandoned table), `PLACEHOLDER`s, `DUP`s, `SIZE`,
-  `DEADREF`s.
+- From hp-scan: missing files (`NN_example_tracker.md`, `context/AGENTS.md` + symlink),
+  `PLACEHOLDER`s, `DUP`s, `SIZE`, `DEADREF`s. From the SERIES probes: missing structure (Next free
+  line, Abandoned table, compaction footer).
 - SERIES **row** problems (`LINT series-*`, `next-free-stale`) and archive metadata drift
   (`meta-location-closed`) → **INFO only**; their fixes belong to `status` / the human, not to the
   migration.
 - `context/AGENTS.md` (ADD): build its rows from hp-scan `KNOWLEDGE` — the project's actual files;
-  route a role the parent's context already serves there; never propose a parallel file.
+  route a role the parent's context already serves there; never propose a parallel file. Symlink
+  direction per `reference/placeholders.md` § *Symlink direction*.
 - **Active plans:** if an active plan's Critical Files include RULES.md, SERIES.md or the root
   agent file, say so and recommend sequencing the migration after it.
 
@@ -138,5 +140,6 @@ End with exactly this, filled:
 
 > **Nothing was changed.** To execute this migration under the plan rules:
 > `/hands-plan new migrate the plan system to hands-plan v<N>` — `new`'s migrate mode turns this
-> checklist into tasks (CONFLICTs first); its last task stamps `hands-plan:v<N>` on RULES, SERIES,
+> checklist into tasks (CONFLICTs first); its last task adds the `<!-- hp:<id> -->` marker to every
+> mapped heading (including sections left untouched) and stamps `hands-plan:v<N>` on RULES, SERIES,
 > both `NN_example*` files, `context/AGENTS.md`, and the root block's begin marker.

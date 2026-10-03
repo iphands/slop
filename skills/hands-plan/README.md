@@ -95,7 +95,7 @@ packs/                optional Project Rules packs
 reference/sections.md ids, kinds, probes, legacy aliases, never-touch list, known conflicts
 reference/placeholders.md  every {{PLACEHOLDER}}, {{R_*}} letters, parent-path rules
 bin/hp-scan           read-only inventory + lint (bash/awk, no deps) used by every verb
-bin/hp-probe          read-only, section-scoped, markdown-normalized probe matching (resync)
+bin/hp-probe          read-only, section-scoped, markdown-normalized probe matching; --toc lists real headings
 bin/hp-selftest       maintainer check of the skill itself (python3)
 CHANGELOG.md, VERSION
 ```

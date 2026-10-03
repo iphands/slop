@@ -32,12 +32,12 @@ From these and a quick look at the tree, establish:
 |---|---|
 | Git repo? Project dir == git root, or a **sub-project**? | hp-scan `ROOT` (`git=`, `sub=`). Not a repo → warn that commits (the commit rule) can't apply and ask whether to continue; **never `git init` unasked**. |
 | Parent conventions (sub-project) | hp-scan `parent_agents`, `parent_context`, `PARENTFILE`. Read the parent agent file's git section (append-only "Git discipline"?) and its `context/` convention. |
-| Root agent files and symlink direction | hp-scan `ROOTFILE` (or `ROOTFILE none`). With none in the project dir, the direction to use is the nearest ancestor pair's (`PARENTFILE … link=`), else `CLAUDE.md -> AGENTS.md`. |
+| Root agent files and symlink direction | hp-scan `ROOTFILE` (or `ROOTFILE none`) and `PARENTFILE`; direction per `reference/placeholders.md` § *Symlink direction*. |
 | Existing knowledge files and their roles | hp-scan `KNOWLEDGE`. Map each to a role: confirmed facts (`distilled`), bugs/gotchas (`pitfalls`), dependency choices (`high_level`), project-specific logs. **Existing files keep their names**; create a knowledge file only when no file — in the project, or the parent's context for a role the project already records there — serves that role. A sub-project still gets its own `pitfalls.md`/`distilled.md` (project-specific); cross-cutting entries go up. |
 | Existing plan system | hp-scan `FILE context/plans/RULES.md exists=y` → **stop**: "This project already has a plan system — run `/hands-plan resync` to see how it differs from v<N>." Numbered plan files but no RULES → **adopt mode** (below). |
 | Stray plan documents | `PLAN*.md`, `TODO*.md`, `*_PLAN.md`, `plans/*.md`, `docs/plans/` outside `context/plans/`. Never move them; list them in SERIES (adopt mode) and in the report. |
 | Stack, runners, tools | Marker files per `$SKILL_DIR/guides/rule_a.md`; `justfile`/`Makefile`/CI workflows; `command -v` for each tool the gate will need (configured ≠ installed). |
-| Commit style | From `git log`: a plan-commit style already in use (`[P<n>][T<n>]…`, `task(TN):`, `task(P<n>-T<n>)`, `[PNN][TNN]`) → **adopt it**. Otherwise the default `[P<n>][T<n>][<topic>] <summary>` for plan work; keep a repo-wide non-plan style (e.g. ≥ 5 commits of conventional `type(scope):`) for non-plan commits. **Sub-project in a monorepo** → recommend the scoped form `[<sub>][P<n>][T<n>][<topic>]` (plan numbers repeat across sub-projects). |
+| Commit style | hp-scan `COMMITFMT` (shapes of recent commits) **and** any commit convention written in the root agent file / `CONTRIBUTING`. A plan-commit style already in use (`[P<n>][T<n>]…`, `task(TN):`, `task(P<n>-T<n>)`, `[PNN][TNN]`) → **adopt it**. Otherwise the default `[P<n>][T<n>][<topic>] <summary>` for plan work, and keep the repo's documented or habitual non-plan style (`feat: …`, `type(scope): …`) as the *outside-plan* form — the scaffold commit itself uses that form. **Sub-project in a monorepo** → recommend the scoped form `[<sub>][P<n>][T<n>][<topic>]` (plan numbers repeat across sub-projects). |
 | User-facing doc | `README.md` if present; else whatever the description names; else `README.md`. |
 | `vendor/` | Present → third-party source, read-only (goes into `context/AGENTS.md`). |
 | Packs | Suggest `measurement` when the description/stack is about performance, profiling, benchmarks, tuning, evaluation; `parity` when it ports/reimplements/emulates/must byte-match an original. Otherwise none (settled — don't ask). |
@@ -70,7 +70,9 @@ or the survey). Recommended option first, marked `(Recommended)`; drafts go in `
 
 1. Commit format — detected/default vs alternatives.
 2. Project gate — the draft with its baseline result (preview) vs "I'll describe it" (Other).
-3. Packs — only if the survey suggested one: the suggestion (Recommended) / none.
+3. Packs — only if the survey suggested one: the suggestion (Recommended) / none. If `parity` is
+   chosen, ask a follow-up for the oracle and the tier names (defaults in
+   `reference/placeholders.md`).
 4. Only if existing knowledge files don't match the default roles — the proposed role mapping.
 
 Steps 7 and 9 later ask to **confirm** what will be written; they are not new decisions.
@@ -90,7 +92,7 @@ from `context/AGENTS.md`.
 | `context/plans/NN_example.md` | `templates/plans/NN_example.md` |
 | `context/plans/NN_example_tracker.md` | `templates/plans/NN_example_tracker.md` |
 | `context/AGENTS.md` | `templates/context/AGENTS.md` |
-| `context/CLAUDE.md` | a symlink, in the direction chosen in step 2 (default `ln -s AGENTS.md context/CLAUDE.md`; mirrored pair: real `CLAUDE.md` + `ln -s CLAUDE.md context/AGENTS.md`) |
+| `context/CLAUDE.md` | a symlink, in the direction chosen in step 2 (`reference/placeholders.md` § *Symlink direction*): e.g. `ln -s AGENTS.md context/CLAUDE.md`, or real `context/CLAUDE.md` + `ln -s CLAUDE.md context/AGENTS.md` |
 | `context/distilled.md`, `pitfalls.md`, `high_level.md` | `templates/context/…` — only for roles no existing file covers |
 
 Do **not** create `completed/` or `abandoned/` (close does, with `mkdir -p`). Do not copy
@@ -115,12 +117,17 @@ Read `$SKILL_DIR/templates/root/agents_block.md` and the project's real root age
 the symlink). Build a **unified diff** tailored to it:
 
 - **Existing root file:** snippet 1 tree lines inserted into an existing directory tree (real
-  knowledge-file names), snippet 2 placed per agents_block.md, and a numbered snippet-3 list of
-  sections that restate, contradict, or have gone stale against RULES (heading + first line, each
-  with its one-line replacement). Contradictions with append-only git are **CONFLICTs**; text
-  stricter than RULES is carried into RULES as an addendum, never dropped.
-  Ask: **Apply block + tree lines (Recommended)** / **Apply block + tree + the listed de-dups** /
-  **Skip — I'll paste it myself**.
+  knowledge-file names), snippet 2 placed per agents_block.md, and a numbered snippet-3 list in
+  two groups, each item with heading + first line and its replacement:
+  - **contradictions** — text that tells agents something RULES now forbids or changes (a
+    different commit format or cadence for plan work, "commit when a feature is done", a gate
+    looser than RULES'). The replacement keeps the project's non-plan conventions and points plan
+    work to RULES. Contradictions with append-only git are **CONFLICTs** — the human picks.
+  - **restatements / stale** — text that merely repeats RULES, or a stale Status/Phase section.
+    Backlog items inside a stale section move into SERIES first, never just disappear.
+  Text stricter than RULES is carried into RULES as an addendum, never dropped.
+  Ask: **Apply block + tree + fix contradictions (Recommended)** / **…+ also the restatements** /
+  **Block + tree only** / **Skip — I'll paste it myself**.
 - **No root file:** propose creating it per agents_block.md (title, description, build & verify
   line, snippet 2; symlink direction from step 2). Ask: **Create it (Recommended)** / **Skip**.
 - **Sub-project:** the sub-project's own root file as above, including the parent line; then
@@ -132,8 +139,8 @@ Apply exactly what was chosen, to the real file once.
 ## 8. Suggest `.gitignore` lines (don't write unasked)
 
 Stack caches the gate or probes produce and the `.gitignore` lacks (`target/`, `__pycache__/`,
-`.pytest_cache/`, `.ruff_cache/`, `node_modules/`, `dist/`), pack entries (e.g. `/captures/`), and —
-only if the user runs ralph loops — `.claude/ralph-loop.local.md`.
+`.pytest_cache/`, `.ruff_cache/`, `node_modules/`, `dist/`), and pack entries (e.g. `/captures/`).
+(`.claude/ralph-loop.local.md` is suggested by `resume --ralph`, where the user opts in.)
 
 ## 9. Commit — confirm first
 
@@ -144,7 +151,7 @@ the files and symlinks created or edited — re-read each first — and chain:
 git add context/plans/RULES.md context/plans/SERIES.md context/plans/NN_example.md \
         context/plans/NN_example_tracker.md context/AGENTS.md context/CLAUDE.md \
         <created knowledge files> <root file + its symlink, if created/edited> \
-  && git commit -m "<non-plan format, e.g. [plans] scaffold context/plans + context/ knowledge base (hands-plan v<N>)>"
+  && git commit -m "<the outside-plan form, e.g. [plans] scaffold … or chore: scaffold context/plans + context/ knowledge base (hands-plan v<N>)>"
 ```
 
 Never `git add -A`. Files generated by the baseline gate run (lockfiles, caches) are not staged —
