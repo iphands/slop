@@ -1,34 +1,43 @@
 #!/usr/bin/env bash
 # hp-scan — read-only inventory + lint of a project's hands-plan system.
 #
-# Usage: hp-scan [project-dir]        (default: current directory)
+# Usage: hp-scan [--brief] [project-dir]        (default: current directory)
 #
-# Prints one tab-separated record per line. Never writes anything (temp files live in mktemp).
+# Prints one tab-separated record per line. Never writes to the project (temp files live in
+# mktemp, removed on exit). --brief drops MARKER and SERIESROW records and PLAN records of closed
+# plans (completed/, abandoned/, …) — use it on large projects.
+#
 #   ROOT      dir=… git=<root|none> sub=<yes|no> parent_context=<path|none> parent_agents=<file|none>
 #   SKILL     v<N>                                hands-plan version this script ships with
+#   PARENTFILE <path> link=<target|->             agent files of the nearest ancestor that has any
 #   FILE      <rel> exists=<y|n> stamp=<vN|none> link=<target|-> bytes=<n>
 #   MARKER    <rel> <id>                          each <!-- hp:<id> --> marker found
-#   ROOTFILE  <name> link=<target|-> block=<vN|none>
-#   PLAN      <num> <loc> status=<meta> tracker=<y|n> rows=<closed>/<total> blocked=<n> pct=<n|-> last=<date|-> file=<rel>
-#   TRACKER   <num> <loc> file=<rel>              a tracker whose plan file was not found
+#   ROOTFILE  <name> link=<target|-> block=<vN|none>      (or: ROOTFILE none)
+#   KNOWLEDGE <rel> <bytes>                       every context/*.md and context/*/ (knowledge files)
+#   RULESFILE <rel>                               series-scoped context/plans/*_RULES.md
+#   PLAN      <num> <loc> status=<meta> tracker=<y|n> rows=<closed>/<total> blocked=<n> pct=<n|-> last=<date|-> closed=<date|-> file=<rel>
+#   TRACKER   <num> <loc> file=<rel>              a tracker no plan file claims (orphan / combined)
 #   DUP       <num> <rel> <rel> …                 two or more plan files share a number
 #   SERIESROW <num> <status>                      rows from SERIES tables that have a Status column
 #   NEXT      computed=<NN> files_max=<n> series_rows_max=<n> series=<NN|missing>
 #   PLACEHOLDER <rel>:<line> <text>               leftover {{INIT}} placeholders
 #   LEFTOVER  <rel>:<line> <text>                 template text left in an active plan/tracker
 #   SIZE      <rel> <bytes> limit=<bytes>         files past the size guidance
-#   DEADREF   <rel>:<line> <path>                 a referenced context/… path that does not exist
+#   DEADREF   <rel>:<line> <path>                 a referenced path that does not exist
 #   LINT      <kind> <num|-> <detail>             heuristics: no-tracker, orphan-tracker,
-#                                                 done-not-moved, stale, series-missing,
-#                                                 series-status, series-missing-closed,
-#                                                 next-free-stale
-#   SUMMARY   plans=<n> active=<n> completed=<n> abandoned=<n> other=<n> trackers=<n>
+#             done-not-moved, meta-behind, stale, series-missing, series-missing-closed,
+#             series-status, series-dup-row, meta-location-closed, next-free-stale
+#   SUMMARY   plans=<unique numbers> files=<plan files> active=<n> completed=<n> abandoned=<n> other=<n> trackers=<n>
 #
+# Plan numbers are normalized: 09.1 and 09_1 are the same sub-plan. A plan's tracker is matched
+# by file stem (NN_name.md ↔ NN_name_tracker.md) first, then by number.
 # Env knobs: HP_STALE_DAYS (14), HP_SERIES_LIMIT (30000 bytes), HP_CONTEXT_LIMIT (40000 bytes).
 
 set -uo pipefail
 export LC_ALL=C
 
+BRIEF=n
+if [ "${1:-}" = --brief ]; then BRIEF=y; shift; fi
 SCRIPT_DIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 SKILL_DIR=$(dirname "$SCRIPT_DIR")
 P=$(cd "${1:-.}" 2>/dev/null && pwd) || { echo "hp-scan: no such directory: ${1:-.}" >&2; exit 2; }
@@ -46,17 +55,21 @@ stamp_of() { # version from a first-lines "hands-plan:vN" stamp, or "none"
     v=$(head -n 3 "$1" 2>/dev/null | sed -n 's/.*hands-plan:v\([0-9][0-9]*\).*/\1/p' | head -n 1)
     if [ -n "$v" ]; then printf 'v%s' "$v"; else printf none; fi
 }
+link_of() { if [ -L "$1" ]; then readlink "$1"; else printf -- -; fi; }
 
 # ------------------------------------------------------------------ ROOT / SKILL
 GITROOT=$(git -C "$P" rev-parse --show-toplevel 2>/dev/null || true)
-SUB=no; PARENT_CTX=none; PARENT_AGENTS=none
+SUB=no; PARENT_CTX=none; PARENT_AGENTS=none; PARENT_DIR=
 if [ -n "$GITROOT" ] && [ "$GITROOT" != "$P" ]; then
     SUB=yes
     d=$(dirname "$P")
-    while :; do   # nearest ancestor context/ and agent file, stopping at the git root
+    while :; do   # nearest ancestor context/ and agent files, stopping at the git root
         [ "$PARENT_CTX" = none ] && [ -d "$d/context" ] && PARENT_CTX="$d/context"
-        if [ "$PARENT_AGENTS" = none ]; then
-            for n in CLAUDE.md AGENTS.md; do [ -f "$d/$n" ] && { PARENT_AGENTS="$d/$n"; break; }; done
+        if [ -z "$PARENT_DIR" ] && { [ -e "$d/AGENTS.md" ] || [ -e "$d/CLAUDE.md" ]; }; then
+            PARENT_DIR=$d
+            for n in CLAUDE.md AGENTS.md; do   # report the real (non-symlink) file
+                [ -f "$d/$n" ] && [ ! -L "$d/$n" ] && { PARENT_AGENTS="$d/$n"; break; }
+            done
         fi
         [ "$d" = "$GITROOT" ] || [ "$d" = / ] && break
         d=$(dirname "$d")
@@ -64,33 +77,47 @@ if [ -n "$GITROOT" ] && [ "$GITROOT" != "$P" ]; then
 fi
 out ROOT "dir=$P" "git=${GITROOT:-none}" "sub=$SUB" "parent_context=$PARENT_CTX" "parent_agents=$PARENT_AGENTS"
 out SKILL "v$(tr -d '[:space:]' < "$SKILL_DIR/VERSION" 2>/dev/null || printf '?')"
+if [ -n "$PARENT_DIR" ]; then
+    for n in AGENTS.md CLAUDE.md; do
+        [ -e "$PARENT_DIR/$n" ] && out PARENTFILE "$PARENT_DIR/$n" "link=$(link_of "$PARENT_DIR/$n")"
+    done
+fi
 
 # ------------------------------------------------------------------ FILES + MARKERS
 for r in context/plans/RULES.md context/plans/SERIES.md context/plans/NN_example.md \
-         context/plans/NN_example_tracker.md context/AGENTS.md context/CLAUDE.md \
-         context/distilled.md context/pitfalls.md context/high_level.md; do
+         context/plans/NN_example_tracker.md context/AGENTS.md context/CLAUDE.md; do
     f="$P/$r"
     if [ -e "$f" ] || [ -L "$f" ]; then
-        link=-; [ -L "$f" ] && link=$(readlink "$f")
-        out FILE "$r" exists=y "stamp=$(stamp_of "$f")" "link=$link" "bytes=$(wc -c < "$f" 2>/dev/null | tr -d ' ')"
-        [ -L "$f" ] && continue   # markers are reported once, on the real file
+        out FILE "$r" exists=y "stamp=$(stamp_of "$f")" "link=$(link_of "$f")" "bytes=$(wc -c < "$f" 2>/dev/null | tr -d ' ')"
+        [ -L "$f" ] || [ "$BRIEF" = y ] && continue   # markers are reported once, on the real file
         grep -o '<!-- hp:[a-z0-9-]* -->' "$f" 2>/dev/null | sed 's/<!-- hp:\(.*\) -->/\1/' | sort -u |
             while read -r id; do out MARKER "$r" "$id"; done
     else
         out FILE "$r" exists=n stamp=none link=- bytes=0
     fi
 done
+nroot=0
 for n in AGENTS.md CLAUDE.md; do
     f="$P/$n"; [ -e "$f" ] || [ -L "$f" ] || continue
-    link=-; [ -L "$f" ] && link=$(readlink "$f")
+    nroot=$((nroot + 1))
     b=$(sed -n 's/.*hands-plan:begin v\([0-9][0-9]*\).*/v\1/p' "$f" 2>/dev/null | head -n 1)
-    out ROOTFILE "$n" "link=$link" "block=${b:-none}"
+    out ROOTFILE "$n" "link=$(link_of "$f")" "block=${b:-none}"
 done
+[ "$nroot" -eq 0 ] && out ROOTFILE none
+if [ -d "$P/context" ]; then
+    for f in "$P"/context/*; do
+        b=$(basename "$f")
+        case "$b" in plans|AGENTS.md|CLAUDE.md) continue;; esac
+        if [ -d "$f" ]; then out KNOWLEDGE "context/$b/" "$(du -sb "$f" 2>/dev/null | cut -f1)"
+        elif [[ $b == *.md ]]; then out KNOWLEDGE "context/$b" "$(wc -c < "$f" | tr -d ' ')"; fi
+    done
+fi
+for f in "$PL"/*_RULES.md; do [ -f "$f" ] && out RULESFILE "$(rel "$f")"; done
 
 # ------------------------------------------------------------------ PLANS
-declare -A PLAN_FILE PLAN_LOC TRACK_FILE TRACK_LOC
+declare -A PLAN_FILE PLAN_LOC PLAN_NUM PLAN_TRACKER TRACK_BY_KEY TRACK_CLAIMED LOC_COUNT
 ORDER=()
-n_active=0; n_completed=0; n_abandoned=0; n_other=0; n_trackers=0; max_top=0
+n_files=0; n_trackers=0; max_top=0
 : > "$TMP/plans"
 
 parse_name() { # basename -> "num<TAB>is_tracker"; prints nothing for non-plan files
@@ -99,57 +126,70 @@ parse_name() { # basename -> "num<TAB>is_tracker"; prints nothing for non-plan f
     [[ $b =~ ^([0-9]+([_.][0-9]+)*)([-_.].*)?$ ]] || return
     local num=${BASH_REMATCH[1]} rest=${BASH_REMATCH[3]:-} t=n
     [[ $rest == *_tracker || $rest == *-tracker ]] && t=y
-    printf '%s\t%s' "$num" "$t"
+    printf '%s\t%s' "${num//./_}" "$t"
 }
 scan_dir() { # dir loc
-    local dir=$1 loc=$2 f info num t key top
+    local dir=$1 loc=$2 f info num t key top stem
     for f in "$dir"/*.md; do
         [ -f "$f" ] || continue
         info=$(parse_name "$(basename "$f")"); [ -n "$info" ] || continue
-        num=${info%%$'\t'*}; t=${info##*$'\t'}; key="$loc|$num"
+        num=${info%%$'\t'*}; t=${info##*$'\t'}
         if [ "$t" = y ]; then
-            TRACK_FILE[$key]=$f; TRACK_LOC[$key]=$loc; n_trackers=$((n_trackers + 1))
+            n_trackers=$((n_trackers + 1))
+            [ -z "${TRACK_BY_KEY["$loc|$num"]:-}" ] && TRACK_BY_KEY["$loc|$num"]=$f
             continue
         fi
+        n_files=$((n_files + 1)); LOC_COUNT[$loc]=$(( ${LOC_COUNT[$loc]:-0} + 1 ))
         printf '%s\t%s\n' "$num" "$(rel "$f")" >> "$TMP/plans"
-        if [ -z "${PLAN_FILE[$key]:-}" ]; then ORDER+=("$key"); PLAN_FILE[$key]=$f; PLAN_LOC[$key]=$loc; fi
-        case $loc in
-            active) n_active=$((n_active + 1));; completed) n_completed=$((n_completed + 1));;
-            abandoned) n_abandoned=$((n_abandoned + 1));; *) n_other=$((n_other + 1));;
-        esac
-        top=${num%%[_.]*}; top=$((10#$top)); [ "$top" -gt "$max_top" ] && max_top=$top
+        key="$loc|$(rel "$f")"
+        ORDER+=("$key"); PLAN_FILE[$key]=$f; PLAN_LOC[$key]=$loc; PLAN_NUM[$key]=$num
+        stem=${f%.md}
+        [ -f "${stem}_tracker.md" ] && PLAN_TRACKER[$key]="${stem}_tracker.md"
+        top=${num%%_*}; top=$((10#$top)); [ "$top" -gt "$max_top" ] && max_top=$top
     done
 }
 if [ -d "$PL" ]; then
     scan_dir "$PL" active
     for sd in "$PL"/*/; do [ -d "$sd" ] && scan_dir "${sd%/}" "$(basename "$sd")"; done
 fi
+# claim trackers: exact stem first, then the first unclaimed tracker with the same number
+for key in "${ORDER[@]}"; do [ -n "${PLAN_TRACKER[$key]:-}" ] && TRACK_CLAIMED[${PLAN_TRACKER[$key]}]=1; done
+for key in "${ORDER[@]}"; do
+    [ -n "${PLAN_TRACKER[$key]:-}" ] && continue
+    t=${TRACK_BY_KEY["${PLAN_LOC[$key]}|${PLAN_NUM[$key]}"]:-}
+    if [ -n "$t" ] && [ -z "${TRACK_CLAIMED[$t]:-}" ]; then PLAN_TRACKER[$key]=$t; TRACK_CLAIMED[$t]=1; fi
+done
 
-meta_status() { # lower-cased first word of the first "Status:" metadata line
-    awk '{ l = tolower($0) }
+KNOWN_STATUS='^(pending|in-progress|in_progress|blocked|deferred|done|complete|completed|abandoned|skipped|superseded|invalid|ready|stopped|active|planned|future|n/a)$'
+meta_status() { # first "Status:" metadata value -> a known word, or ?:<snippet>
+    awk -v known="$KNOWN_STATUS" '{ l = tolower($0) }
          l ~ /^[>[:space:]-]*\**status\**[[:space:]]*:/ {
-            sub(/^[^:]*:[[:space:]]*/, "", l); gsub(/[*`]/, "", l)
-            if (match(l, /[a-z][a-z-]*/)) print substr(l, RSTART, RLENGTH); else print "-"
-            exit }' "$1" 2>/dev/null
+            sub(/^[^:]*:[[:space:]]*/, "", l); gsub(/[*`]/, "", l); raw = l
+            w = "-"; if (match(l, /[a-z][a-z\/_-]*/)) w = substr(l, RSTART, RLENGTH)
+            if (w !~ known) { gsub(/[[:space:]]+/, "_", raw); w = "?:" substr(raw, 1, 24) }
+            print w; exit }' "$1" 2>/dev/null
 }
-tracker_counts() { # -> "closed total blocked pct"; rows keyed by their first cell, last wins
+tracker_counts() { # -> "closed total blocked pct" over every table with Task + Status columns
     awk '
     function trim(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); return s }
-    BEGIN { pct = "-"; sc = 0; nrow = 0 }
+    BEGIN { pct = "-"; sc = 0; nrow = 0; nk = 0 }
     pct == "-" && match(tolower($0), /[0-9]+%[[:space:]]*(complete|done)/) {
         pct = substr($0, RSTART, RLENGTH); sub(/%.*/, "", pct) }
     /^[[:space:]]*\|/ {
         n = split($0, c, "|")
-        if (!sc) {   # header: needs a Status column and a Task or # column
+        if (!sc) {   # header: needs a Task column and a Status column
             st = 0; tk = 0
-            for (i = 2; i < n; i++) { h = tolower(trim(c[i])); if (h == "status") st = i; if (h == "task" || h == "#") tk = 1 }
-            if (st && tk) sc = st
+            for (i = 2; i < n; i++) { h = tolower(trim(c[i])); if (h == "status") st = i; if (h ~ /^task/) tk = i }
+            if (st && tk) { sc = st; tc = tk }
             next
         }
         if ($0 ~ /^[[:space:]]*\|[[:space:]:|-]+$/) next
         s = tolower(trim(c[sc])); gsub(/[*`~]/, "", s)
         if (s == "") next
-        k = trim(c[2]); gsub(/[*`]/, "", k); if (k == "") k = "row" (++nrow)
+        k = ""
+        if (match(c[tc], /T[0-9]+([._][0-9]+)*/)) k = substr(c[tc], RSTART, RLENGTH)
+        else { k = trim(c[2]); gsub(/[*`]/, "", k) }
+        if (k == "") k = "row" (++nrow)
         if (!(k in st_of)) keys[++nk] = k
         st_of[k] = s          # a restated table (e.g. "Progress (actual)") overrides earlier rows
         next
@@ -166,35 +206,65 @@ tracker_counts() { # -> "closed total blocked pct"; rows keyed by their first ce
     }' "$1" 2>/dev/null
 }
 
+# closing date of closed plans: one git pass, newest add/rename of each path under context/plans
+declare -A CLOSED_AT=()
+if [ -n "$GITROOT" ] && [ -d "$PL" ]; then
+    prefix=$(git -C "$P" rev-parse --show-prefix 2>/dev/null)
+    git -C "$P" log --format='@%cs' --name-only --diff-filter=AR -- context/plans 2>/dev/null |
+        awk '/^@/ { d = substr($0, 2); next } NF && !($0 in seen) { seen[$0] = 1; print d "\t" $0 }' > "$TMP/closed"
+    while IFS=$'\t' read -r d path; do CLOSED_AT["${path#"$prefix"}"]=$d; done < "$TMP/closed"
+fi
+
 now=$(date +%s)
+meta_closed=()
+: > "$TMP/planlines"
 for key in "${ORDER[@]}"; do
-    f=${PLAN_FILE[$key]}; loc=${PLAN_LOC[$key]}; num=${key#*|}
+    f=${PLAN_FILE[$key]}; loc=${PLAN_LOC[$key]}; num=${PLAN_NUM[$key]}; r=$(rel "$f")
     st=$(meta_status "$f"); st=${st:--}
-    tf=${TRACK_FILE[$key]:-}; has=n; cl=0; tot=0; blk=0; pct=-; last=-
+    tf=${PLAN_TRACKER[$key]:-}; has=n; cl=0; tot=0; blk=0; pct=-; last=-; closed=-
     if [ -n "$tf" ]; then has=y; read -r cl tot blk pct < <(tracker_counts "$tf"); fi
     if [ "$loc" = active ]; then
         if [ -n "$GITROOT" ]; then last=$(git -C "$P" log -1 --format=%cs -- "${tf:-$f}" 2>/dev/null); last=${last:--}; fi
-        [ "$has" = n ] && out LINT no-tracker "$num" "$(rel "$f")"
+        [ "$has" = n ] && out LINT no-tracker "$num" "$r"
         if [ "$tot" -gt 0 ] && [ "$cl" = "$tot" ]; then
             out LINT done-not-moved "$num" "all $tot tracker rows closed but the plan is still active"
         elif [[ $st == "done" || $st == complete* ]]; then
             out LINT done-not-moved "$num" "metadata says '$st' but the plan is still active"
         fi
+        if [ "$st" = pending ] && [ "$cl" -gt 0 ]; then
+            out LINT meta-behind "$num" "metadata says pending but $cl/$tot tracker rows are closed"
+        fi
         if [ "$last" != - ] && { [ "$st" = in-progress ] || [ "$cl" -gt 0 ]; }; then
             age=$(( (now - $(date -d "$last" +%s)) / 86400 ))
             [ "$age" -gt "$STALE_DAYS" ] && out LINT stale "$num" "last commit touching tracker/plan: $last ($age days ago)"
         fi
+    else
+        closed=${CLOSED_AT[$r]:--}
+        case "$loc:$st" in
+            completed:done|completed:complete*|abandoned:abandoned|abandoned:skipped|abandoned:superseded|*:-) ;;
+            completed:*|abandoned:*) meta_closed+=("$num($st)");;
+        esac
     fi
-    out PLAN "$num" "$loc" "status=$st" "tracker=$has" "rows=$cl/$tot" "blocked=$blk" "pct=$pct" "last=$last" "file=$(rel "$f")"
+    if [ "$BRIEF" = n ] || [ "$loc" = active ]; then
+        printf '%s\t' "$num" >> "$TMP/planlines"
+        out PLAN "$num" "$loc" "status=$st" "tracker=$has" "rows=$cl/$tot" "blocked=$blk" "pct=$pct" "last=$last" "closed=$closed" "file=$r" >> "$TMP/planlines"
+    fi
 done
-for key in "${!TRACK_FILE[@]}"; do
-    [ -n "${PLAN_FILE[$key]:-}" ] && continue
-    out TRACKER "${key#*|}" "${TRACK_LOC[$key]}" "file=$(rel "${TRACK_FILE[$key]}")"
-    [ "${TRACK_LOC[$key]}" = active ] && out LINT orphan-tracker "${key#*|}" "$(rel "${TRACK_FILE[$key]}")"
-done | sort -V
+sort -t$'\t' -k1,1V "$TMP/planlines" | cut -f2-
+if [ "${#meta_closed[@]}" -gt 0 ]; then
+    out LINT meta-location-closed - "${#meta_closed[@]} closed plan(s) whose metadata Status is not done/abandoned (archive; report only): $(printf '%s ' "${meta_closed[@]:0:15}")$([ "${#meta_closed[@]}" -gt 15 ] && printf '…')"
+fi
+for t in "$PL"/*_tracker.md "$PL"/*/*_tracker.md; do
+    [ -f "$t" ] || continue
+    [ -n "${TRACK_CLAIMED[$t]:-}" ] && continue
+    info=$(parse_name "$(basename "$t")"); [ -n "$info" ] || continue
+    d=$(dirname "$t"); loc=active; [ "$d" != "$PL" ] && loc=$(basename "$d")
+    out TRACKER "${info%%$'\t'*}" "$loc" "file=$(rel "$t")"
+    [ "$loc" = active ] && out LINT orphan-tracker "${info%%$'\t'*}" "$(rel "$t")"
+done
 
 sort "$TMP/plans" | awk -F'\t' '{ files[$1] = files[$1] "\t" $2; cnt[$1]++ }
-    END { for (k in files) if (cnt[k] > 1) print "DUP\t" k files[k] }' | sort -V
+    END { for (k in files) if (cnt[k] > 1) print "DUP\t" k files[k] }' | sort -t$'\t' -k2,2V
 
 # ------------------------------------------------------------------ SERIES
 series_next=missing
@@ -210,16 +280,19 @@ if [ -f "$S" ]; then
         if ($0 ~ /^[[:space:]]*\|[[:space:]:|-]+$/) next
         k = trim(c[2]); gsub(/[*`]/, "", k); s = tolower(trim(c[sc])); gsub(/[*`]/, "", s)
         if (match(k, /^[0-9]+([_.][0-9]+)*/)) {
-            num = substr(k, RSTART, RLENGTH)
+            num = substr(k, RSTART, RLENGTH); gsub(/\./, "_", num)
             if (match(s, /[a-z][a-z\/-]*/)) s = substr(s, RSTART, RLENGTH); else s = "-"
             print "SERIESROW\t" num "\t" s
         }
         next
     }
-    { sc = 0 }' "$S" | sort -u -V > "$TMP/series"
+    { sc = 0 }' "$S" | sort -u | sort -t$'\t' -k2,2V -k3,3 > "$TMP/series"
 fi
-cat "$TMP/series"
-series_max=$(awk -F'\t' '{ n = $2; sub(/[_.].*/, "", n); n += 0; if (n > m) m = n } END { print m + 0 }' "$TMP/series")
+[ "$BRIEF" = n ] && cat "$TMP/series"
+awk -F'\t' '{ s[$2] = s[$2] (s[$2] ? "," : "") $3; c[$2]++ }
+    END { for (k in c) if (c[k] > 1) print "LINT\tseries-dup-row\t" k "\tSERIES has rows with different statuses: " s[k] }' \
+    "$TMP/series" | sort -t$'\t' -k3,3V
+series_max=$(awk -F'\t' '{ n = $2; sub(/_.*/, "", n); n += 0; if (n > m) m = n } END { print m + 0 }' "$TMP/series")
 reserved=$max_top; [ "$series_max" -gt "$reserved" ] && reserved=$series_max
 out NEXT "computed=$(printf '%02d' $((reserved + 1)))" "files_max=$max_top" "series_rows_max=$series_max" "series=$series_next"
 if [ "$series_next" != missing ] && [ $((10#$series_next)) -le "$reserved" ]; then
@@ -227,26 +300,29 @@ if [ "$series_next" != missing ] && [ $((10#$series_next)) -le "$reserved" ]; th
 fi
 if [ -f "$S" ]; then   # SERIES vs where the plan files actually are (by plan number)
     declare -A LOCS_OF=()
-    for key in "${ORDER[@]}"; do num=${key#*|}; LOCS_OF[$num]="${LOCS_OF[$num]:-} ${PLAN_LOC[$key]}"; done
+    for key in "${ORDER[@]}"; do num=${PLAN_NUM[$key]}; LOCS_OF[$num]="${LOCS_OF[$num]:-} ${PLAN_LOC[$key]}"; done
     closed_missing=()
     for num in $(printf '%s\n' "${!LOCS_OF[@]}" | sort -V); do
         locs=${LOCS_OF[$num]}
-        sst=$(awk -F'\t' -v n="$num" '$2 == n { print $3; exit }' "$TMP/series")
-        if [ -z "$sst" ]; then
+        ssts=$(awk -F'\t' -v n="$num" '$2 == n { print $3 }' "$TMP/series")
+        if [ -z "$ssts" ]; then
             if [[ $locs == *active* ]]; then out LINT series-missing "$num" "active plan has no SERIES row"
             else closed_missing+=("$num"); fi
             continue
         fi
         ok=n
         for loc in $locs; do
-            case "$loc:$sst" in
-                completed:done*|completed:complete*|completed:closed*|completed:shipped*|completed:n/a*) ok=y;;
-                abandoned:abandoned*|abandoned:skipped*|abandoned:superseded*|abandoned:n/a*|abandoned:retired*) ok=y;;
-                active:pending*|active:in-progress*|active:blocked*|active:deferred*|active:active*) ok=y;;
-                [!ac]*:*) ok=y;;   # other directories (moved/, skipped/, …): no opinion
-            esac
+            for sst in $ssts; do
+                case "$loc:$sst" in
+                    completed:done*|completed:complete*|completed:closed*|completed:shipped*|completed:n/a*|completed:superseded*) ok=y;;
+                    abandoned:abandoned*|abandoned:skipped*|abandoned:superseded*|abandoned:n/a*|abandoned:retired*) ok=y;;
+                    active:pending*|active:in-progress*|active:blocked*|active:deferred*|active:active*|active:planned*|active:future*) ok=y;;
+                    active:*|completed:*|abandoned:*) ;;
+                    *) ok=y;;   # other directories (moved/, skipped/, …): no opinion
+                esac
+            done
         done
-        [ "$ok" = y ] || out LINT series-status "$num" "plan is in${locs} but SERIES says '$sst'"
+        [ "$ok" = y ] || out LINT series-status "$num" "plan is in${locs} but SERIES says '$(printf '%s' "$ssts" | tr '\n' ',' | sed 's/,$//')'"
     done
     if [ "${#closed_missing[@]}" -gt 0 ]; then
         out LINT series-missing-closed - "${#closed_missing[@]} closed plan(s) have no SERIES row: $(printf '%s ' "${closed_missing[@]:0:20}")$([ "${#closed_missing[@]}" -gt 20 ] && printf '…')"
@@ -267,7 +343,7 @@ done
 LEFT_RE='\{\{[A-Z0-9_]+\}\}|\[Title\]|^# Plan NN\b|^> \*\*(Created|Revised)\*\*: YYYY|^- Start date: YYYY|hands-plan:v[0-9]'
 for key in "${ORDER[@]}"; do
     [ "${PLAN_LOC[$key]}" = active ] || continue
-    for f in "${PLAN_FILE[$key]}" "${TRACK_FILE[$key]:-}"; do
+    for f in "${PLAN_FILE[$key]}" "${PLAN_TRACKER[$key]:-}"; do
         [ -n "$f" ] && [ -f "$f" ] || continue
         grep -nE "$LEFT_RE" "$f" 2>/dev/null | head -n 10 | while IFS=: read -r ln txt; do
             out LEFTOVER "$(rel "$f"):$ln" "$(printf '%s' "$txt" | cut -c1-100)"
@@ -279,25 +355,40 @@ done
 if [ -f "$S" ]; then
     b=$(wc -c < "$S" | tr -d ' '); [ "$b" -gt "$SERIES_LIMIT" ] && out SIZE "$(rel "$S")" "$b" "limit=$SERIES_LIMIT"
 fi
-for f in "$P"/context/*.md "$PL"/RULES.md; do
-    [ -f "$f" ] && [ ! -L "$f" ] || continue
+{
+    [ -d "$P/context" ] && find "$P/context" -maxdepth 2 -path "$PL" -prune -o -type f -name '*.md' -print
+    for f in "$PL/RULES.md" "$P/AGENTS.md" "$P/CLAUDE.md"; do [ -f "$f" ] && [ ! -L "$f" ] && echo "$f"; done
+} | sort -u | while read -r f; do
     b=$(wc -c < "$f" | tr -d ' '); [ "$b" -gt "$CONTEXT_LIMIT" ] && out SIZE "$(rel "$f")" "$b" "limit=$CONTEXT_LIMIT"
 done
 
 # ------------------------------------------------------------------ DEAD REFERENCES
 declare -A SEEN=()
-for r in AGENTS.md CLAUDE.md context/AGENTS.md; do
+for r in AGENTS.md CLAUDE.md context/AGENTS.md context/plans/RULES.md context/plans/SERIES.md; do
     f="$P/$r"; [ -f "$f" ] || continue
     real=$(readlink -f "$f"); [ -n "${SEEN[$real]:-}" ] && continue; SEEN[$real]=1
     base=$P; [ "$r" = context/AGENTS.md ] && base=$P/context
     # shellcheck disable=SC2016  # the backticks are literal markdown, not an expansion
-    grep -noE '`(\.\./)*(context|plans)/[A-Za-z0-9_./-]*`' "$f" 2>/dev/null | sort -u -t: -k2,2 |
+    grep -noE '`((\.\./)*(context|plans)/[A-Za-z0-9_./-]*|NN_example(_tracker)?\.md)`' "$f" 2>/dev/null | sort -u -t: -k2,2 |
     while IFS=: read -r ln m; do
         path=${m//\`/}; path=${path%/}
-        case "$path" in *NN_example*) ;; *NN*|*'<'*|*'*'*|*'{'*|*_name*|*TOPIC*|*'…'*) continue;; esac
-        [ -e "$base/$path" ] || [ -e "$P/$path" ] || out DEADREF "$r:$ln" "$path"
+        case "$path" in
+            *NN_example*) ;;
+            *NN*|*'<'*|*'*'*|*'{'*|*_name*|*TOPIC*|*'…'*) continue;;
+        esac
+        case "$path" in */completed|*/abandoned) continue;; esac   # created by the first close
+        if [[ $path == NN_example* ]]; then
+            [ -e "$PL/$path" ] || out DEADREF "$r:$ln" "context/plans/$path"
+            continue
+        fi
+        [ -e "$base/$path" ] && continue
+        [[ $path == context || $path == context/* ]] && [ -e "$P/$path" ] && continue
+        out DEADREF "$r:$ln" "$path"
     done
 done
 
-out SUMMARY "plans=${#ORDER[@]}" "active=$n_active" "completed=$n_completed" "abandoned=$n_abandoned" \
-    "other=$n_other" "trackers=$n_trackers"
+nuniq=$(cut -f1 "$TMP/plans" | sort -u | grep -c . || true)
+out SUMMARY "plans=$nuniq" "files=$n_files" "active=${LOC_COUNT[active]:-0}" "completed=${LOC_COUNT[completed]:-0}" \
+    "abandoned=${LOC_COUNT[abandoned]:-0}" \
+    "other=$(( n_files - ${LOC_COUNT[active]:-0} - ${LOC_COUNT[completed]:-0} - ${LOC_COUNT[abandoned]:-0} ))" \
+    "trackers=$n_trackers"
