@@ -1012,3 +1012,36 @@ so set it where processes share CPUs, not blindly in the app. Before blaming cod
 slow test, time it alone vs under the gate's concurrency.
 ## Sources
 - kin (vendor/azu): scripts/gate.sh, tests relocalizer_contract / pipeline_*_contract
+
+# `git log --since=<YYYY-MM-DD>` silently skips that day's commits
+
+A premise check meant to ask "did anything change since this plan was written?" ran
+`git log --since=2026-10-03 -- <files>` on the day the plan was written. It returned
+nothing, even for commits made minutes earlier, so the check always answered "unchanged"
+on day one. Git reads a bare date as that date *at the current time of day*, so with a
+12:56 clock `--since=2026-10-03` means "after 12:56 today". Verified: 0 commits with the
+bare date, 7 with `--since="2026-10-03 00:00"`. Even with midnight added, a date cannot
+tell commits from before the plan apart from commits after it on the same day.
+
+Avoidance: compare against a commit, not a date. For "what changed since file X was
+added", take the commit that added it as the base:
+`base=$(git log --diff-filter=A --format=%h -1 -- X); git log "$base"..HEAD -- <files>`.
+If a date is unavoidable, always spell out the time (`"<date> 00:00"`) and treat
+same-day results as ambiguous.
+## Sources
+- skills/hands-plan: verbs/resume.md (premise refresh), found by the end-to-end test run
+
+# `git log --grep='[P1]'` is a regex character class, not the literal tag
+
+A close-out audit looked for a plan's commits with `git log --grep='[P1]'` to check that
+every task was committed under the `[P1][T…]` tag format. Unquoted brackets in a regex are
+a character class: the pattern matches any subject containing `P` or `1`. It reported a
+commit `[plans] scaffold … (hands-plan v1)` as belonging to Plan 1, through the `1` in
+`v1`, so the audit could count commits that are not the plan's. Verified: 6 matches with
+the regex, 5 with `-F`.
+
+Avoidance: grep commit tags as fixed strings, `git log -F --grep='[P1]'`, or escape the
+brackets (`'\[P1\]'`). In a monorepo, also scope by path (`-- <sub-project>`), because
+plan numbers repeat across sub-projects with their own plan systems.
+## Sources
+- skills/hands-plan: verbs/close.md, verbs/status.md (commit audits), found by the end-to-end test run
