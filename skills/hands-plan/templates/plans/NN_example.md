@@ -16,7 +16,8 @@
   CANONICAL TEMPLATE. Copy to NN_name.md using the next number from SERIES.md, drop the
   first-line hands-plan stamp, create the paired NN_name_tracker.md from NN_example_tracker.md,
   and fill in EVERY section. Delete these instructional comments as you go. Never delete a
-  section heading — if a section genuinely does not apply, write "N/A — <reason>" under it.
+  required section heading — if it genuinely does not apply, write "N/A — <reason>" under it.
+  Sections marked (optional) may be removed.
 -->
 
 ---
@@ -35,7 +36,7 @@
 
 ## Scope
 
-<!-- Optional — include when the work must stay inside a boundary. -->
+<!-- (optional) Include when the work must stay inside a boundary; remove otherwise. -->
 
 **In**: `path/to/area/` only.
 **Out**: everything else. If a fix needs to cross this line, **stop** and record the blocker in
@@ -52,7 +53,7 @@ Cite the `context/` entries you relied on.
 
 <!-- Confirmed problems documented BEFORE work starts. State the evidence — the command you ran
      and what it printed, verbatim — not just the claim. A bug described without a reproduction
-     gets "fixed" without being verified. -->
+     gets "fixed" without being verified. For a feature: the command showing today's behavior. -->
 
 ```bash
 $ <command that reproduces it>
@@ -71,7 +72,7 @@ $ <command that reproduces it>
 
 ### Rejected Claims
 
-<!-- Optional. Things that look like bugs or obvious fixes but are not — "do NOT re-fix", with
+<!-- (optional) Things that look like bugs or obvious fixes but are not — "do NOT re-fix", with
      the evidence. Saves the next agent from "fixing" a non-bug. -->
 
 ---
@@ -90,26 +91,27 @@ Cross-reference sources (`path:line`) when the behavior has a spec.
 
 **Before**:
 ```{{CODE_LANG}}
-// old code — enough context to locate the hunk uniquely
+<old code — enough surrounding context to locate the hunk uniquely>
 ```
 
 **After**:
 ```{{CODE_LANG}}
-// new code
+<new code>
 ```
 
 **Verify**:
 ```bash
+<command that exercises THIS task's change>    # → <expected observable output>
 {{VERIFY_CMD}}
 ```
-Expected: <the observable result that proves this task works>.
+Expected: <the observable result that proves this task works — not just "the build passes">.
 
 **Expected observation**: *(measurement / investigation tasks — write this BEFORE running anything)*
 - **Confirms if**: …
 - **Refutes if**: …
 - **Within noise if**: …
 
-**Commit**: {{COMMIT_EXAMPLE}} — *commit before marking done (Rule B), tracker row in the same commit.*
+**Commit**: {{COMMIT_EXAMPLE}} — *commit before marking done ({{R_COMMIT}}), tracker row in the same commit.*
 
 ### T2: [Task title]
 
@@ -133,7 +135,7 @@ Priority values: `P0` = blocking, `P1` = important, `P2` = nice-to-have.
 2. **Question: [what is undecided].** *How we'll settle it*: [who decides, and when].
 
 <!-- Never delete a question because it went unanswered — resolve it in place
-     (~~strike~~ + "RESOLVED (T3): …") or mark it "deferred — <reason>". -->
+     (~~strike~~ + "RESOLVED (T3): …") or mark it "deferred — <reason>" when you defer it. -->
 
 ---
 
@@ -145,6 +147,6 @@ Priority values: `P0` = blocking, `P1` = important, `P2` = nice-to-have.
 
 - [ ] T1: <command> → <expected observable result>
 - [ ] T2: …
-- [ ] All: Rule A gate passes on the final commit
-- [ ] All: findings harvested into `context/` (Rule D) — bytes on disk, re-read
-- [ ] All: plan + tracker `git mv`'d to `completed/`, `SERIES.md` marked done (Rule C)
+- [ ] All: the project gate ({{R_GATE}}) passes on the final commit
+- [ ] All: findings harvested into `context/` ({{R_HARVEST}}) — bytes on disk, re-read
+- [ ] All: plan + tracker `git mv`'d to `completed/`, `SERIES.md` marked done ({{R_LIFECYCLE}})

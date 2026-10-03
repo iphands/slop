@@ -6,7 +6,7 @@ a plan is added, starts, completes, or is abandoned** — in the same commit as 
 
 Plan status: `pending` | `in-progress` | `blocked` | `done` | `abandoned`.
 Plans further out are intentionally light: an untouched pending plan is a **hypothesis, not a
-contract** — re-read and revise it before starting (RULES.md Rule C).
+contract** — re-read and revise it before starting (RULES.md {{R_LIFECYCLE}}).
 
 **Next free plan number: `{{NEXT_FREE}}`.** <!-- hp:next-free -->
 
@@ -60,6 +60,6 @@ doesn't know it failed.)*
 
 ---
 
-Completed plans move to `completed/`, abandoned ones to `abandoned/` (RULES.md Rule C). When this
+Completed plans move to `completed/`, abandoned ones to `abandoned/` (RULES.md {{R_LIFECYCLE}}). When this
 file passes ~30 KB, move the narrative of fully closed series to `completed/SERIES_ARCHIVE.md` and
 leave one summary row per series here.

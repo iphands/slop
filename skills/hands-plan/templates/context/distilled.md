@@ -1,7 +1,8 @@
 # Distilled — confirmed facts for {{PROJECT_NAME}}
 
 Compact, confirmed learnings: formats, protocols, tool/library behavior, measured limits. Read
-before new work; append whenever something is confirmed. Keep it dense.
+before new work; add an entry whenever something is confirmed — **above the `## Open Questions`
+section**, which always stays last. Keep it dense.
 
 **Provenance discipline:** every entry carries a tag — `[SOURCE]` (upstream code, cite
 `path:line`), `[DOC]` (documentation), `[REPO]` (this repo's own code/config), `[LIVE YYYY-MM-DD]`

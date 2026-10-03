@@ -12,7 +12,7 @@ full before writing or executing a plan.
 
 | Path | Holds | Read when |
 |------|-------|-----------|
-| `plans/RULES.md` | Plan/tracker format, Rules A–E, project rules | Before any plan work — in full |
+| `plans/RULES.md` | Plan/tracker format; the per-task rules (verification gate, commits, append-only git, lifecycle, harvest, evidence); project rules | Before any plan work — in full |
 | `plans/SERIES.md` | Dependency chain, status, next free plan number, north star | Before creating or picking a plan |
 | `plans/NN_example.md`, `plans/NN_example_tracker.md` | The skeletons to copy | Writing a plan |
 | `plans/completed/`, `plans/abandoned/` | Closed plans (newest = current conventions) | Looking for precedent |
@@ -23,19 +23,14 @@ full before writing or executing a plan.
 | You discovered… | Write it in | Shape |
 |-----------------|-------------|-------|
 {{ROUTING_ROWS}}
-| How a library/API works, its signatures, its sharp edges | `<lib_name>.md` (create on first use) | Compact usage + signatures; no full source |
-| An algorithm known to be the right/fast way to do something | `algo.md` (create on first use) | Name, formula/idea, when it applies, link |
-| A design pattern worth reusing | `patterns.md` (create on first use) | Problem → pattern → where we used it |
 | Progress, a deviation from a plan, a negative result | The active plan's tracker | A row or a Notes/Deviations line |
 {{PARENT_CONTEXT}}
 
 ## Provenance <!-- hp:context-provenance -->
 
-Tag every fact with how it is known, and **never upgrade a tag without doing the work**:
+Tag every new fact with how it is known, and **never upgrade a tag without doing the work**:
 
-- `[SOURCE]` read in upstream source code (cite `path:line`) · `[DOC]` read in documentation ·
-  `[REPO]` asserted by this repo's own code/config · `[LIVE YYYY-MM-DD]` observed on a running
-  system.
+- {{PROVENANCE}}
 - Pitfalls that actually bit are tagged `[OBSERVED YYYY-MM-DD]`, to tell them apart from hazards
   seeded from reading.
 

@@ -3,8 +3,9 @@
 
 > **Read this file in full before writing a plan, a tracker, or any code for a plan.**
 > **This file wins** over a root `AGENTS.md`/`CLAUDE.md`, a plan, or a habit that disagrees.
-> Sections marked `<!-- hp:… -->` come from the `hands-plan` skill; project-specific text
-> inside them lives under a `#### Project addendum` heading.
+> Sections marked `<!-- hp:… -->` come from the `hands-plan` skill. The plan-gate rows and the
+> project gate belong to this project; in the other skill sections, project-specific text lives
+> under a `#### Project addendum` heading — an addendum may tighten a rule, never loosen it.
 
 ---
 
@@ -12,7 +13,7 @@
 
 | Change | Plan? |
 |---|---|
-| A typo, a comment, a doc fix, a constant tweak, a one-file obvious fix | **No.** Do it, verify (Rule A), commit. |
+| A typo, a comment, a doc fix, a constant tweak, a one-file obvious fix | **No.** Do it, verify ({{R_GATE}}), commit. |
 {{PLAN_GATE_ROWS}}
 
 When in doubt, write the plan. It is cheap; an unplanned multi-file change is not.
@@ -23,13 +24,13 @@ When in doubt, write the plan. It is cheap; an unplanned multi-file change is no
 
 - `NN_name.md` — the plan. Number is **at least two digits** (`01`…`99`) and keeps growing past
   `99` (`100_…`). snake_case name. **Never renumber a file that exists.**
-- `NN_N_name.md` — a sub-plan of plan `NN` (e.g. `06_2_arch_pacman.md`).
+- `NN_N_name.md` — a sub-plan of plan `NN` (e.g. `03_1_storage_schema.md`).
 - `NN_name_tracker.md` — the paired tracker. Every plan has one.
 - `SERIES.md` — dependency chain, status of every plan, and the **next free plan number**.
 - `NN_example.md` + `NN_example_tracker.md` — the canonical skeletons. Copy them; never edit
   them to write a plan.
 - `<TOPIC>_RULES.md` — optional series-scoped rules (see *Series-Scoped Rules*).
-- `completed/` and `abandoned/` — closed plans (Rule C). Created by the first close.
+- `completed/` and `abandoned/` — closed plans ({{R_LIFECYCLE}}). Created by the first close.
 
 Take the next number from `SERIES.md` and confirm it is unused across the active directory,
 `completed/` and `abandoned/`. If they disagree, use the larger and fix SERIES.
@@ -55,18 +56,18 @@ header — in this order:
 > For historical context, completed plans live in `context/plans/completed/`.
 ```
 
-Required sections, in order. Fill **every** one; if a section genuinely does not apply, write
-`N/A — <reason>` under its heading. Never delete a heading.
+Required sections, in order. A required section is never deleted: if it genuinely does not apply,
+write `N/A — <reason>` under its heading. Sections marked *optional* may be left out.
 
 | Section | Must contain |
 |---|---|
 | `## TL;DR` | **What** (one sentence), numbered **Deliverables**, **Estimated effort**. |
 | `## Scope` *(optional)* | What is in, what is out, and: if the work must cross the line, stop and record a blocker in the tracker instead of expanding scope. |
-| `## Context` | Why the plan exists. `### Pre-Identified Bug/Issue` with the **command that reproduces it and its verbatim output** — never a paraphrase. `### Why [Approach]` naming the rejected alternative. `### Key Facts` as a table with a **How confirmed** column (command + date, `path:line`, or "unconfirmed — confirm in T1"). `### Rejected Claims` *(optional)*: things that look like bugs but are not — "do NOT re-fix", with the evidence. |
-| `## Step-by-Step Tasks` | One `### TN: [title]` per task with **File**, **What to do**, **Before/After** (when the edit is known at planning time; otherwise name the target symbol and the evidence source), **Verify** (exact command + expected output — mandatory), **Expected observation** (mandatory on measurement/investigation tasks: what would confirm, what would refute, what counts as noise — written *before* running anything), and **Commit** (the Rule B message). Large plans group tasks into **waves**, each with a stated exit gate. |
+| `## Context` | Why the plan exists. `### Pre-Identified Bug/Issue` with the **command that reproduces it and its verbatim output** (for a feature: the command showing today's behavior) — never a paraphrase. `### Why [Approach]` naming the rejected alternative. `### Key Facts` as a table with a **How confirmed** column (command + date, `path:line`, or "unconfirmed — confirm in T1"). `### Rejected Claims` *(optional)*: things that look like bugs but are not — "do NOT re-fix", with the evidence. |
+| `## Step-by-Step Tasks` | One `### TN: [title]` per task with **File**, **What to do**, **Before/After** (when the edit is known at planning time; otherwise name the target symbol and the evidence source), **Verify** (the command that exercises *this task's* change + expected output, then the project gate — mandatory), **Expected observation** (mandatory on measurement/investigation tasks: what would confirm, what would refute, what counts as noise — written *before* running anything), and **Commit** (the message, per {{R_COMMIT}}). Large plans group tasks into **waves**, each with a stated exit gate. |
 | `## Critical Files` | Table `File \| Change \| Priority` — `P0` blocking, `P1` important, `P2` nice-to-have. |
-| `## Open Questions / Risks` | Numbered. Each names the risk or question and its *Mitigation* / *How we'll settle it*. **Never delete one.** Resolve it in place (~~strike~~ + "RESOLVED (T3): …") or mark it `deferred — <reason>`. |
-| `## Verification Checklist` | One checkbox per task, each a **testable assertion with an observable result** — not a restatement of the task. Closers: findings harvested (Rule D); plan + tracker moved and SERIES updated (Rule C). **Tick a box only against evidence you produced.** An untickable box stays unticked with a note saying why. |
+| `## Open Questions / Risks` | Numbered. Each names the risk or question and its *Mitigation* / *How we'll settle it*. **Never delete one.** Resolve it in place (~~strike~~ + "RESOLVED (T3): …") or mark it `deferred — <reason>` at the moment it is deferred. |
+| `## Verification Checklist` | One checkbox per task, each a **testable assertion with an observable result** — not a restatement of the task. Closers: findings harvested ({{R_HARVEST}}); plan + tracker moved and SERIES updated ({{R_LIFECYCLE}}). **Tick a box only against evidence you produced.** An untickable box stays unticked with a note saying why. |
 
 ---
 
@@ -79,12 +80,14 @@ ordering constraints, commit format), **Open Unknowns** *(optional)*, **Progress
 **Follow-ups**.
 
 - Task status values: `pending` | `in-progress` | `done` | `blocked` | `skipped` | `invalid`.
-  `blocked`, `skipped` and `invalid` **always carry a reason** in Notes.
+  `blocked`, `skipped` and `invalid` always carry a reason in the row's Notes cell.
 - Record negative and inconclusive results ("tried X, no measurable effect, 3 runs"). They stop
   the next session from repeating the work.
 - **Notes / Deviations** is where a plan premise that turned out wrong is written down. Be blunt.
-- A row never records its own commit hash — the row lands in the same commit (Rule B). The
+- A row never records its own commit hash — the row lands in the same commit ({{R_COMMIT}}). The
   commit format makes the commit findable instead.
+- When the first task starts: plan `Status` → `in-progress`, the SERIES row → `in-progress` and
+  listed under *Currently Active*, tracker `Start date` set — all in that task's commit.
 
 ---
 
@@ -92,26 +95,28 @@ ordering constraints, commit format), **Open Unknowns** *(optional)*, **Progress
 
 These apply to **every task** (T1, T2, …). They are not optional.
 
-### Rule A — The verification gate <!-- hp:rule-a -->
+### {{R_GATE}} — The verification gate <!-- hp:gate -->
 
 A task is verified when you have **observed the change working**, not when it compiles and not
 when the diff looks right. Reading the diff is not verification.
 
 1. Run the project gate below after every task. It must exit 0 with zero errors and zero warnings.
    Fix warnings before marking anything done.
-2. Know what the gate **cannot** see. Exercise the behavior the task changed — run it, hit it,
+2. Know what the gate cannot see. Exercise the behavior the task changed — run it, hit it,
    render it, measure it — and record what you observed in the tracker.
 3. Prove the thing you tested is the thing you built — that the new build actually loaded.
    A binary, image or driver that never ran "passes" every test.
 4. Anything a human sees (UI, output, logs) must be **looked at**, not inferred from a passing
    build.
-5. **Never mark a task `done` on unverified work.**
+5. **Keep the gate current.** A task that adds behavior the gate should exercise (a flag, a mode,
+   an endpoint) updates the project gate in the same commit.
+6. **Never mark a task `done` on unverified work.**
 
-#### Project gate <!-- hp:rule-a-gate -->
+#### Project gate <!-- hp:gate-project -->
 
 {{PROJECT_GATE}}
 
-### Rule B — Commit at every task boundary (or more often) <!-- hp:commit -->
+### {{R_COMMIT}} — Commit at every task boundary (or more often) <!-- hp:commit -->
 
 **YOU MUST COMMIT BEFORE MARKING ANY TASK COMPLETE.** If you haven't committed, you haven't
 finished.
@@ -122,12 +127,12 @@ finished.
 3. Message format: {{COMMIT_FORMAT}}
 4. **Tracker row in the same commit.** The row update — and any `context/` update the task
    produced — lands with the work. Stage explicit paths: `git add <paths>`, never `git add -A`.
-5. Rule A passes **before** every commit — lint, format and tests included.
+5. The full project gate ({{R_GATE}}) passes before every commit.
 6. A change in observable behavior updates {{USER_DOC}} in the same commit.
 7. **Never push** — the human pushes after review. **No co-author trailers** unless asked.
 8. Every task in a plan carries its `**Commit**:` line, so the reminder is baked in.
 
-### Rule B2 — Git history is append-only <!-- hp:append-only -->
+### {{R_APPEND}} — Git history is append-only <!-- hp:append-only -->
 
 **Never rewrite a commit — not even the one you just made.** Banned unless the human explicitly
 asks, in that moment:
@@ -149,18 +154,19 @@ asks, in that moment:
 4. **A commit message is a factual claim about the tree.** If it says a file was updated,
    re-read that file before writing the message.
 
-> **Why this rule exists (2026-07-18).** A scripted edit hit an assertion and wrote nothing, but
-> the unchained `git commit` on the next line ran anyway — producing a commit whose message
-> claimed updates it did not contain. The human had already pushed it. "Fixing" it with
-> `--amend` diverged `main` from `origin/main` and forced a force-push. A follow-up commit would
-> have cost nothing.
+> **Why this rule exists** (the incident behind it, in the project this skill came from,
+> 2026-07-18): a scripted edit hit an assertion and wrote nothing, but the unchained `git commit`
+> on the next line ran anyway — a commit whose message claimed updates it did not contain. It had
+> already been pushed; "fixing" it with `--amend` diverged `main` from `origin/main` and forced a
+> force-push. A follow-up commit would have cost nothing.
+
 {{PARENT_GIT_RULE}}
 
-### Rule C — Plan lifecycle: `completed/` and `abandoned/` <!-- hp:lifecycle -->
+### {{R_LIFECYCLE}} — Plan lifecycle: `completed/` and `abandoned/` <!-- hp:lifecycle -->
 
 1. When a plan and its tracker reach 100% (every row `done`, `skipped` or `invalid` with a
    reason; checklist ticked against evidence), move them **immediately**, in the same commit as
-   the SERIES update:
+   the SERIES update, and fix links that pointed at the old path:
    ```bash
    mkdir -p context/plans/completed
    git mv context/plans/NN_name.md context/plans/completed/NN_name.md
@@ -173,19 +179,21 @@ asks, in that moment:
 4. Before starting a plan, every other `in-progress` plan must be listed in SERIES under
    *Currently Active*, or marked `blocked`/`deferred` there with a reason.
 5. **A pending plan is a hypothesis, not a contract.** Before starting one, re-read it against
-   what earlier plans learned, update it, and add a `Revised` line.
+   what has landed since it was written; if anything it relies on changed, update it and add a
+   `Revised` line.
 
-### Rule D — Harvest the knowledge before you close the plan <!-- hp:harvest -->
+### {{R_HARVEST}} — Harvest the knowledge before you close the plan <!-- hp:harvest -->
 
 A plan is not done when the code works. It is done when what you learned is on disk.
 
 1. Record findings **as you go**, in the same commit as the task that found them. Where each
    kind of finding goes is defined in `context/AGENTS.md`.
-2. Anything that cost more than one attempt becomes a pitfall entry.
+2. Anything that took more than one attempt to understand or fix (not a formatter re-run)
+   becomes a pitfall entry.
 3. At close, check that every finding the tracker mentions actually landed.
 4. **Never claim a finding is recorded unless the bytes are in the file.**
 
-### Rule E — Evidence over assertion <!-- hp:evidence -->
+### {{R_EVIDENCE}} — Evidence over assertion <!-- hp:evidence -->
 
 1. **Reality is the oracle** — the running system, the upstream source, the measured output. A
    test that asserts our own values proves nothing about correctness.

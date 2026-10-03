@@ -4,20 +4,21 @@
 ## Overview
 
 - Status: 0% complete (0/N tasks)
-- Start date: YYYY-MM-DD
+- Start date: — (set when T1 starts)
 - Plan: `context/plans/NN_name.md`
 - Evidence: <where logs, captures or outputs for this plan live; the test environment used>
 
 ## Resume Instructions
 
-1. Read the root `AGENTS.md`/`CLAUDE.md`, `context/plans/RULES.md` (in full), then `NN_name.md`.
+1. Read the project's root `AGENTS.md`/`CLAUDE.md` (and the parent's, in a sub-project),
+   `context/plans/RULES.md` (in full), then `NN_name.md`.
 2. Environment: <anything a fresh session needs set up — env vars, services, test data>.
 3. Ordering: <which task is next and why; constraints between tasks>.
-4. Commit per task: {{COMMIT_EXAMPLE}}, with **this tracker's row in the same commit**.
+4. Commit per task as `{{COMMIT_FORMAT_SHORT}}`, with **this tracker's row in the same commit**.
 
 ## Open Unknowns
 
-<!-- Optional. Things that must be resolved before or during the work. Never delete one:
+<!-- (optional) Things that must be resolved before or during the work. Never delete one:
      ~~strike~~ it and add "RESOLVED (T2): <answer, with evidence>". -->
 
 ## Progress
@@ -28,12 +29,12 @@
 | 2 | T2: … | `path/file.ext` | pending | |
 
 **Status values**: `pending` | `in-progress` | `done` | `blocked` | `skipped` | `invalid` —
-the last three always carry a reason in Notes.
+the last three always carry a reason in the row's Notes cell.
 
 ## Evidence
 
-<!-- Required when the plan produces numbers or live checks; delete otherwise. A claim not in
-     this table has no provenance and cannot be cited by a later plan. -->
+<!-- Required when the plan produces numbers or live checks; (optional) otherwise — remove it.
+     A claim not in this table has no provenance and cannot be cited by a later plan. -->
 
 | Date | What ran (command / build / input) | Result | Runs | Spread / notes |
 |------|------------------------------------|--------|------|----------------|
@@ -41,7 +42,7 @@ the last three always carry a reason in Notes.
 ## Notes / Deviations
 
 <!-- Anything the plan asserted that turned out to be wrong, and what was done instead
-     (RULES Rule E). Negative and inconclusive results too. Be blunt — a wrong Key Fact
+     ({{R_EVIDENCE}}). Negative and inconclusive results too. Be blunt — a wrong Key Fact
      recorded honestly is worth more than a clean-looking tracker. -->
 
 ## Follow-ups

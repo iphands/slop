@@ -1,4 +1,4 @@
-<!-- hands-plan:v1 YYYY-MM-DD -->
+<!-- hands-plan:v1 {{DATE}} -->
 # [Topic] Rules — Plans NN–MM
 
 > **MANDATORY for every agent implementing Plans NN–MM.** Read this before touching

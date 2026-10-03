@@ -1,15 +1,17 @@
-# Guide — writing the Rule A project gate
+# Guide — writing the project gate (the verification rule)
 
-`init` uses this to draft the `#### Project gate` under RULES.md Rule A (`hp:rule-a-gate`), and the
-`{{VERIFY_CMD}}` line in `NN_example.md`. The draft is shown to the user before it is written.
-After init the gate belongs to the project; `resync` only checks that it is non-empty and has the
-required parts.
+`init` uses this to draft the `#### Project gate` under the RULES verification rule
+(`hp:gate-project`), and the `{{VERIFY_CMD}}` line in `NN_example.md`. The draft is shown to the
+user before it is written. After init the gate belongs to the project; `resync` checks it against
+the required parts below and reports what is missing — it never rewords it.
 
 ## Required parts of a gate
 
 1. **Commands, in order**, copy-pasteable from the project root.
-2. **Pass condition** for each — exit 0 *and* zero warnings, an exact string, a status code, a
-   count. "Looks fine" is not a pass condition.
+2. **Pass condition** for each, **mechanically checkable** — exit 0, an exact string, a status
+   code, a count. "Looks fine" is not a pass condition. Beware tools whose exit code ignores
+   warnings (`cargo build` exits 0 with warnings → rely on `clippy -- -D warnings` or
+   `RUSTFLAGS='-D warnings'`), and `grep -c` (exits 1 exactly when the count is 0).
 3. **Blind spots** — what the gate cannot catch, said out loud (e.g. "`nginx -t` passing means
    almost nothing: it is blind to a wrong upstream path"). Every blind spot gets a behavioral
    check that covers it.
@@ -17,7 +19,20 @@ required parts.
    or cached, a check that proves the new build is the one running.
 5. **Look at it** — for anything with a UI or human-read output, a step that renders it and has a
    human or a screenshot look.
-6. **Pre-commit** — which of these run before every commit (normally all of them).
+6. **Pre-commit** — which of these run before every commit (normally all of them). The gate is
+   the project's *full* pre-commit set: if the root agent file or a `justfile` recipe demands more
+   (format, tests, coverage), the gate includes it.
+7. **Prerequisites** — tools the gate needs. If a configured tool is **not installed** (e.g.
+   `ruff` configured in `pyproject.toml` but absent), still write the configured gate, add a
+   *Prerequisites* line with the install command, record it as a SERIES standing constraint, and
+   say so in the init report. Never install tools unasked; until they exist, a task that needs
+   them is `blocked`, not `done`.
+
+**Run the draft once before writing it (baseline).** At init, run the drafted gate on the
+untouched tree and record the result in the gate text (`Baseline at init (<date>): steps 1–3
+pass; step 4 fails on pre-existing <x>`). A failing baseline is not hidden: it becomes the first
+task of the first plan. Files the run generates (lockfiles, caches, build dirs) are reported, not
+staged — suggest `.gitignore` lines or committing the lockfile in that first task.
 
 One gate **per component** in multi-component repos (backend / frontend / scripts / infra), each
 with its own trigger ("touched `frontend/` → run the frontend gate").
@@ -37,8 +52,8 @@ Before inventing commands, look for what the project already uses and wrap that:
 | Marker | Draft gate (adjust to what the project actually configures) |
 |---|---|
 | `Cargo.toml` | `cargo build` (0 warnings) · `cargo clippy --all-targets -- -D warnings` · `cargo test` · `cargo fmt --check`. Workspace: add `--workspace`. Coverage target optional (`cargo llvm-cov`). |
-| `package.json` | Lockfile picks the runner (`pnpm-lock.yaml` → pnpm, `bun.lock*` → bun, `yarn.lock` → yarn, else npm). Run the existing `lint`, `typecheck`/`tsc --noEmit`, `test`, `build` scripts. UI → open it and look (Rule A.4). |
-| `pyproject.toml` / `setup.cfg` / `requirements*.txt` | `ruff check .` · `ruff format --check .` (or `black --check`) · the configured type checker (`pyright`/`mypy`/`pyrefly`) · `pytest`. |
+| `package.json` | Lockfile picks the runner (`pnpm-lock.yaml` → pnpm, `bun.lock*` → bun, `yarn.lock` → yarn, else npm). Run the existing `lint`, `typecheck`/`tsc --noEmit`, `test`, `build` scripts. UI → open it and look (gate rule, item 4). |
+| `pyproject.toml` / `setup.cfg` / `requirements*.txt` | `ruff check .` · `ruff format --check .` (or `black --check`) · the configured type checker (`pyright`/`mypy`/`pyrefly`; none configured but typing is a goal → say so as a blind spot or a first task) · `pytest`. **`src/` layout:** tests need the package importable — run through the project's env (`uv run`, an installed editable package) or `PYTHONPATH=src`. Run probes with `PYTHONDONTWRITEBYTECODE=1` so they don't leave `__pycache__/`. |
 | `go.mod` | `go build ./...` · `go vet ./...` · `test -z "$(gofmt -l .)"` · `go test ./...`. |
 | `CMakeLists.txt` / `meson.build` | Configure + build with warnings as errors on touched files · `ctest` / `meson test`. |
 | `*.sh` / scripts without extension | `shellcheck <files>` · `bash -n <file>` · `shfmt -d` if used. |
@@ -49,7 +64,7 @@ Before inventing commands, look for what the project already uses and wrap that:
 ## Worked example (a config-only service, condensed from a real project)
 
 ```markdown
-#### Project gate <!-- hp:rule-a-gate -->
+#### Project gate <!-- hp:gate-project -->
 
 There is **no build step that can catch a mistake here**: the image builds fine with a broken
 config; failures appear only when the container crash-loops or silently serves misses.

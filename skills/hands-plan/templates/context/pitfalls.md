@@ -3,6 +3,7 @@
 Every bug, gotcha and trap — **especially anything that took more than one attempt to fix.** Read
 before new work. Tag entries that actually bit `[OBSERVED YYYY-MM-DD]`; untagged entries are
 hazards seeded from reading, not incidents.
+
 {{PARENT_PITFALLS}}
 
 <!-- Entry template (~200 words per half; quote the symptom verbatim):
