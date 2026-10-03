@@ -4,8 +4,8 @@
 # Usage: hp-scan [--brief] [project-dir]        (default: current directory)
 #
 # Prints one tab-separated record per line. Never writes to the project (temp files live in
-# mktemp, removed on exit). --brief drops MARKER and SERIESROW records and PLAN records of closed
-# plans (completed/, abandoned/, …) — use it on large projects.
+# mktemp, removed on exit). --brief drops SERIESROW records and PLAN records of closed plans
+# (completed/, abandoned/, …) — use it on large projects.
 #
 #   ROOT      dir=… git=<root|none> sub=<yes|no> parent_context=<path|none> parent_agents=<file|none>
 #   SKILL     v<N>                                hands-plan version this script ships with
@@ -27,6 +27,8 @@
 #   LINT      <kind> <num|-> <detail>             heuristics: no-tracker, orphan-tracker,
 #             done-not-moved, meta-behind, stale, series-missing, series-missing-closed,
 #             series-status, series-dup-row, meta-location-closed, next-free-stale
+#   COMMITFMT <count> <shape>                     subject shapes of the last 300 commits touching the
+#                                                 project (digits → N, a [P][T][topic] tag → [topic])
 #   SUMMARY   plans=<unique numbers> files=<plan files> active=<n> completed=<n> abandoned=<n> other=<n> trackers=<n>
 #
 # Plan numbers are normalized: 09.1 and 09_1 are the same sub-plan. A plan's tracker is matched
@@ -89,7 +91,7 @@ for r in context/plans/RULES.md context/plans/SERIES.md context/plans/NN_example
     f="$P/$r"
     if [ -e "$f" ] || [ -L "$f" ]; then
         out FILE "$r" exists=y "stamp=$(stamp_of "$f")" "link=$(link_of "$f")" "bytes=$(wc -c < "$f" 2>/dev/null | tr -d ' ')"
-        [ -L "$f" ] || [ "$BRIEF" = y ] && continue   # markers are reported once, on the real file
+        [ -L "$f" ] && continue   # markers are reported once, on the real file
         grep -o '<!-- hp:[a-z0-9-]* -->' "$f" 2>/dev/null | sed 's/<!-- hp:\(.*\) -->/\1/' | sort -u |
             while read -r id; do out MARKER "$r" "$id"; done
     else
@@ -386,6 +388,14 @@ for r in AGENTS.md CLAUDE.md context/AGENTS.md context/plans/RULES.md context/pl
         out DEADREF "$r:$ln" "$path"
     done
 done
+
+# ------------------------------------------------------------------ COMMIT FORMAT TALLY
+if [ -n "$GITROOT" ]; then
+    git -C "$P" log --format=%s -300 -- . 2>/dev/null \
+        | sed -E 's/^(\[[^]]*\](\[[^]]*\])*|[a-z]+\([^)]*\):|[a-z]+:).*/\1/; s/[0-9]+/N/g; s/^(\[PN\]\[TN\])\[[^]]*\]/\1[topic]/' \
+        | sort | uniq -c | sort -rn | head -n 10 \
+        | while read -r n shape; do out COMMITFMT "$n" "$shape"; done
+fi
 
 nuniq=$(cut -f1 "$TMP/plans" | sort -u | grep -c . || true)
 out SUMMARY "plans=$nuniq" "files=$n_files" "active=${LOC_COUNT[active]:-0}" "completed=${LOC_COUNT[completed]:-0}" \
