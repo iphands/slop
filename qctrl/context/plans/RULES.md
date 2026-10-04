@@ -1,3 +1,4 @@
+<!-- hands-plan:v1 2026-10-04 -->
 # Plans — Rules & Conventions
 
 > **Read this file in full before writing a plan, a tracker, or any code for a plan.**

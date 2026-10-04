@@ -1,3 +1,4 @@
+<!-- hands-plan:v1 2026-10-04 -->
 # qctrl Plan Series
 
 This document tracks the dependency chain and status of all plans for the qctrl project.
@@ -8,7 +9,7 @@ Plan status: `pending` | `in-progress` | `blocked` | `done` | `abandoned`.
 Plans further out are intentionally light: an untouched pending plan is a **hypothesis, not a
 contract** — re-read and revise it before starting (RULES.md Rule C).
 
-**Next free plan number: `15`.**
+**Next free plan number: `15`.** <!-- hp:next-free -->
 
 > **North star (user directive, 2026-10-04):** qctrl keeps an unattended Q2 server healthy:
 > rotation, guards and status run headless; the UI is a convenience, not a dependency. <!-- hp:north-star -->
@@ -22,8 +23,8 @@ contract** — re-read and revise it before starting (RULES.md Rule C).
      - **Plan NN** — <title>: in progress, X/Y tasks done; next TN (<short title>).
      When nothing is in progress: "None in progress — next up: Plan NN (`/hands-plan resume NN`)." -->
 
-- **Plan 14** — hands-plan v1 Migration: in progress, 5/7 tasks done; next T6 (root `AGENTS.md`
-  block, de-dup, `CLAUDE.md` link).
+- **Plan 14** — hands-plan v1 Migration: in progress, 7/7 tasks done; next: close
+  (`/hands-plan close 14`).
 
 ## Plan Dependencies
 
@@ -44,7 +45,7 @@ contract** — re-read and revise it before starting (RULES.md Rule C).
         └── 11_deployment
 ```
 
-## Plan Status
+## Plan Status <!-- hp:plans -->
 
 | # | Plan | Status | Depends On |
 |---|------|--------|------------|

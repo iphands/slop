@@ -1,3 +1,4 @@
+<!-- hands-plan:v1 2026-10-04 -->
 # Plan NN — [Title] — Tracker
 
 ## Overview

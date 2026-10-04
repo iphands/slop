@@ -1,3 +1,4 @@
+<!-- hands-plan:v1 2026-10-04 -->
 # context/ — qctrl's living memory
 
 You are reading inside `context/`, the project's knowledge base. Agents that skip it repeat

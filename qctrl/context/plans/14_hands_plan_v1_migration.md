@@ -496,7 +496,7 @@ Priority values: `P0` = blocking, `P1` = important, `P2` = nice-to-have.
 - [x] T4: `context/AGENTS.md` probes `HIT`; every mapped path exists; `readlink context/CLAUDE.md` → `AGENTS.md`; no `AGENTS.md:66` dead reference.
 - [x] T5: SERIES probes all `HIT`; `git diff -U0 SERIES.md | grep '^-|'` empty.
 - [x] T6: `hp-scan` `ROOTFILE … block=v1`, no `DEADREF`; `readlink CLAUDE.md` → `AGENTS.md`; declined items listed in the tracker.
-- [ ] T7: five `FILE … stamp=v1`; every id found by `--section`; `/hands-plan resync` reports 0 ADD / 0 UPDATE / 0 SHAPE.
+- [x] T7: five `FILE … stamp=v1`; every id found by `--section`; `/hands-plan resync` reports 0 ADD / 0 UPDATE / 0 SHAPE.
 - [ ] All: the project gate (Rule A) passes on the final commit.
 - [ ] All: findings harvested into `context/` (Rule D) — bytes on disk, re-read.
 - [ ] All: plan + tracker `git mv`'d to `completed/`, `SERIES.md` marked done (Rule C).
