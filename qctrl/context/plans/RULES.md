@@ -1,126 +1,98 @@
 # Plans — Rules & Conventions
 
-> Read this before writing any plan file or tracker file in `context/plans/`.
+> **Read this file in full before writing a plan, a tracker, or any code for a plan.**
+> **This file wins** over a root `AGENTS.md`/`CLAUDE.md`, a plan, or a habit that disagrees.
+> Sections marked `<!-- hp:… -->` come from the `hands-plan` skill. The plan-gate rows and the
+> project gate belong to this project; in the other skill sections, project-specific text lives
+> under a `#### Project addendum` heading — an addendum may tighten a rule, never loosen it.
 
 ---
 
-## Plan File Format
+## When Does a Change Need a Plan? <!-- hp:plan-gate -->
 
-### Naming
+| Change | Plan? |
+|---|---|
+| A typo, a comment, a doc fix, a constant tweak, a one-file obvious fix | **No.** Do it, verify (Rule A), commit. |
+| Anything that changes what qctrl sends to the live server — rcon commands, cvar pushes, the watchdog/rotator/poller cadence | **Yes.** Both live incidents (empty `sv_maplist`, rcon quote stripping) were rcon behavior no unit test sees. |
+| A change spanning `crates/` and `frontend/` (an endpoint plus its UI) | **Yes.** Two gates, and the contract between them. |
+| A new background task, or anything that acts with no browser open | **Yes.** It acts on the live server unattended. |
 
-- `NN_name.md` — two-digit zero-padded number, snake_case name (e.g. `65_modelview_skel_fix.md`)
-- Sub-plans: `NN_N_name.md` (e.g. `15_1_worldmap_parser_terrain.md`)
-- Trackers: `NN_name_tracker.md` — always paired with the plan
-- `SERIES.md` — master dependency chain across all plans (no number)
+When in doubt, write the plan. It is cheap; an unplanned multi-file change is not.
 
-### Metadata Block
+---
 
-Every plan file must open with a title and this metadata block:
+## Files & Naming <!-- hp:naming -->
+
+- `NN_name.md` — the plan. Number is **at least two digits** (`01`…`99`) and keeps growing past
+  `99` (`100_…`). snake_case name. **Never renumber a file that exists.**
+- `NN_N_name.md` — a sub-plan of plan `NN` (e.g. `03_1_storage_schema.md`).
+- `NN_name_tracker.md` — the paired tracker. Every plan has one.
+- `SERIES.md` — dependency chain, status of every plan, and the **next free plan number**.
+- `NN_example.md` + `NN_example_tracker.md` — the canonical skeletons. Copy them; never edit
+  them to write a plan.
+- `<TOPIC>_RULES.md` — optional series-scoped rules (see *Series-Scoped Rules*).
+- `completed/` and `abandoned/` — closed plans (Rule C). Created by the first close.
+
+Take the next number from `SERIES.md` and confirm it is unused across the active directory,
+`completed/` and `abandoned/`. If they disagree, use the larger and fix SERIES.
+
+---
+
+## Plan Format <!-- hp:plan-format -->
+
+Copy `NN_example.md`. It must open with the title, this metadata block, and the mandatory
+header — in this order:
 
 ```markdown
 # Plan NN — [Title]
 
-> **Status**: pending | in-progress | done
+> **Status**: pending | in-progress | blocked | done | abandoned
 > **Created**: YYYY-MM-DD
+> **Revised**: YYYY-MM-DD — what changed (optional; add one every time the plan is re-scoped)
 > **Depends on**: Plan N | N/A
-> **Goal**: One-sentence deliverable description.
-> **Agent**: implementation agent (ralph-loop) | sub-agent | etc.
+> **Goal**: One-sentence deliverable.
+> **Agent**: implementation agent | ralph-loop | sub-agent
 
----
+> **Before writing any code, re-read `context/plans/RULES.md` in full.**
+> For historical context, completed plans live in `context/plans/completed/`.
 ```
 
-### Required Sections (in this order)
+Required sections, in order. A required section is never deleted: if it genuinely does not apply,
+write `N/A — <reason>` under its heading. Sections marked *optional* may be left out.
 
-#### `## TL;DR`
+| Section | Must contain |
+|---|---|
+| `## TL;DR` | **What** (one sentence), numbered **Deliverables**, **Estimated effort**. |
+| `## Scope` *(optional)* | What is in, what is out, and: if the work must cross the line, stop and record a blocker in the tracker instead of expanding scope. |
+| `## Context` | Why the plan exists. `### Pre-Identified Bug/Issue` with the **command that reproduces it and its verbatim output** (for a feature: the command showing today's behavior) — never a paraphrase. `### Why [Approach]` naming the rejected alternative. `### Key Facts` as a table with a **How confirmed** column (command + date, `path:line`, or "unconfirmed — confirm in T1"). `### Rejected Claims` *(optional)*: things that look like bugs but are not — "do NOT re-fix", with the evidence. |
+| `## Step-by-Step Tasks` | One `### TN: [title]` per task with **File**, **What to do**, **Before/After** (when the edit is known at planning time; otherwise name the target symbol and the evidence source), **Verify** (the command that exercises *this task's* change + expected output, then the project gate — mandatory), **Expected observation** (mandatory on measurement/investigation tasks: what would confirm, what would refute, what counts as noise — written *before* running anything), and **Commit** (the message, per Rule B). Large plans group tasks into **waves**, each with a stated exit gate. |
+| `## Critical Files` | Table `File \| Change \| Priority` — `P0` blocking, `P1` important, `P2` nice-to-have. |
+| `## Open Questions / Risks` | Numbered. Each names the risk or question and its *Mitigation* / *How we'll settle it*. **Never delete one.** Resolve it in place (~~strike~~ + "RESOLVED (T3): …") or mark it `deferred — <reason>` at the moment it is deferred. |
+| `## Verification Checklist` | One checkbox per task, each a **testable assertion with an observable result** — not a restatement of the task. Closers: findings harvested (Rule D); plan + tracker moved and SERIES updated (Rule C). **Tick a box only against evidence you produced.** An untickable box stays unticked with a note saying why. |
 
-```markdown
-**What**: One sentence describing what is being done.
-
-**Deliverables**:
-1. Concrete output one
-2. Concrete output two
-
-**Estimated effort**: Small (2 h) | Small–Medium (half day) | Medium (1 day) | Large (3 days)
-```
-
-#### `## Context`
-
-Background, rationale, prior findings, and decisions made. Use H3 subsections for complex plans:
-
-- `### Pre-Identified Bug/Issue` — confirmed bugs documented before coding starts
-- `### Why [Approach]` — justification for a design choice
-- `### Key Facts` — research findings, format details
-
-#### `## Step-by-Step Tasks`
-
-One H3 per task, labeled `T1`, `T2`, etc.:
-
-```markdown
-### T1: [Task title]
-
-**File**: `path/to/file.rs`
-
-**What to do**: Detailed instructions.
-
-**Before**:
-```rust
-// old code
-```
-
-**After**:
-```rust
-// corrected code
-```
-```
+#### Project addendum
 
 For large plans, group tasks into parallel waves with an explicit dependency matrix.
 
-#### `## Critical Files`
-
-| File | Change | Priority |
-|------|--------|----------|
-| `path/to/file.rs` | Description of change | P0 |
-
-Priority values: `P0` = blocking, `P1` = important, `P2` = nice-to-have.
-
-#### `## Open Questions / Risks`
-
-Numbered list. Each point names the risk and suggests a mitigation.
-
-#### `## Verification Checklist`
-
-One checkbox per task, each a testable assertion:
-
-```markdown
-- [ ] T1: `cargo test` passes with ≥ 90% coverage on touched modules
-- [ ] T2: `./bin/debug-image` confirms humanoid silhouette
-```
-
 ---
 
-## Tracker File Format
+## Tracker Format <!-- hp:tracker-format -->
 
-Every non-trivial plan gets a paired tracker: `NN_name_tracker.md`.
+Copy `NN_example_tracker.md`. Sections: **Overview** (percent complete as `N% (X/Y)`, start
+date, where evidence lives), **Resume Instructions** (numbered — what to read, environment,
+ordering constraints, commit format), **Open Unknowns** *(optional)*, **Progress**, **Evidence**
+*(required when the plan produces numbers or live checks)*, **Notes / Deviations**,
+**Follow-ups**.
 
-```markdown
-# [Plan Title] — Tracker
-
-## Overview
-- Status: N% complete
-- Start date: YYYY-MM-DD
-- [Other plan-specific metrics]
-
-## Resume Instructions
-[How to pick up work if interrupted]
-
-## Progress
-
-| # | Task | File / Module | Status | Notes |
-|---|------|---------------|--------|-------|
-| 1 | T1: ... | `path/file.rs` | pending | |
-```
-
-**Status values**: `pending` | `in-progress` | `done` | `blocked` | `skipped`
+- Task status values: `pending` | `in-progress` | `done` | `blocked` | `skipped` | `invalid`.
+  `blocked`, `skipped` and `invalid` always carry a reason in the row's Notes cell.
+- Record negative and inconclusive results ("tried X, no measurable effect, 3 runs"). They stop
+  the next session from repeating the work.
+- **Notes / Deviations** is where a plan premise that turned out wrong is written down. Be blunt.
+- A row never records its own commit hash — the row lands in the same commit (Rule B). The
+  commit format makes the commit findable instead.
+- When the first task starts: plan `Status` → `in-progress`, the SERIES row → `in-progress` and
+  listed under *Currently Active*, tracker `Start date` set — all in that task's commit.
 
 ---
 
@@ -309,31 +281,23 @@ extracted to a shared home, kept where it is, or used only as a reference.** Fix
 
 ---
 
-## Content Style
+## Content Style <!-- hp:style -->
 
-- **Bold** for important terms; `code` for file names, variable names, commands.
-- Dates always ISO format: `YYYY-MM-DD`.
+- **Bold** for important terms; `code` for file names, identifiers and commands.
+- Dates are ISO `YYYY-MM-DD`, taken from `date +%F` — never guessed.
+- Code blocks always carry a language (` ```rust `, ` ```bash `).
+- Cross-reference plans as "Plan N" or "Plan N T2"; cite sources as `path/file:line`.
+- Dense, no fluff — but never so compressed a detail is lost.
+
+#### Project addendum
+
 - Absolute paths preferred in doc sections; relative paths acceptable inside task code blocks.
-- Code blocks always carry a language specifier (` ```rust `, ` ```bash `, etc.).
-- Cross-reference other plans as "Plan N" or "Plan N T2".
 
 ---
 
-## Canonical Template
+## Templates & History <!-- hp:templates -->
 
-Use `context/plans/NN_example.md` as the template for every new plan. Copy it, rename it to
-`NN_name.md` (with the next zero-padded plan number), and fill in all sections.
-
-For historical context and real examples of the live format, browse `context/plans/completed/`.
-Plans 60–67 are the most recent and reflect current conventions.
-
----
-
-## Mandatory Header in Every New Plan
-
-Every plan file must include this reminder block immediately after the metadata block:
-
-```markdown
-> **Before writing any code, re-read `context/plans/RULES.md` in full.**
-> For historical context, completed plans live in `context/plans/completed/`.
-```
+- New plan: copy `NN_example.md` → `NN_name.md` and `NN_example_tracker.md` →
+  `NN_name_tracker.md` (drop their first-line `hands-plan` stamp), take the number from SERIES,
+  fill every section, add the SERIES row, and bump **Next free plan number**.
+- For real examples of the live format, browse `context/plans/completed/` — newest first.
