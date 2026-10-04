@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 43% complete (3/7 tasks)
+- Status: 57% complete (4/7 tasks)
 - Start date: 2026-10-04
 - Plan: `context/plans/14_hands_plan_v1_migration.md`
 - Evidence: probe and scan output from `$SKILL_DIR/bin/hp-probe` / `hp-scan`
@@ -37,7 +37,7 @@
 | 1 | T1: per-task rules — commit format (B), append-only (B2), lifecycle (C), harvest (D), evidence (E), Project/Series rules | `context/plans/RULES.md` | done | Rule B rewritten to the template plus the `[qctrl][P<n>][T<n>][<topic>]` format; NOTE lines kept verbatim as its project addendum. Added B2, C (replaces the unlettered `## Completed Plans`), D, E, Project Rules, Series-Scoped Rules. 39/39 probes HIT |
 | 2 | T2: the verification gate — full pre-commit set, backend + frontend, baseline run | `context/plans/RULES.md` (Rule A) | done | Heading renamed to "The verification gate" (operator, 2026-10-04); template preamble; project gate per component (backend 1–4, frontend 5 vitest-only, docs-only = steps 1–3 by operator choice), blind spots, build-loaded, look-at-it, prerequisites. Baseline 1–5 green. 17/17 probes HIT |
 | 3 | T3: plan/tracker format, header, plan-gate, naming, style, templates + NN_example skeletons | `context/plans/RULES.md`, `NN_example*.md` (new) | done | Header ("This file wins"), plan-gate with the operator's 3 rows, naming, plan format (addendum: dependency matrix), tracker format, style (addendum: absolute paths), Templates & History; Mandatory Header and the embedded skeleton removed. Per-task rules byte-identical. Both skeletons created (stamp deferred to T7). 33 + 19 probes HIT |
-| 4 | T4: `context/AGENTS.md` + `context/CLAUDE.md` link + `distilled.md` | `context/` (new files) | pending | |
+| 4 | T4: `context/AGENTS.md` + `context/CLAUDE.md` link + `distilled.md` | `context/` (new files) | done | `context/AGENTS.md` (map, routing: facts → `distilled.md`, gotchas → `pitfalls.md`, deps → `../../context/high_level.md`, cross-cutting → parent; default provenance tags; vendor line), `context/CLAUDE.md -> AGENTS.md`, `distilled.md` header only. Dead refs RULES:243, SERIES:42, AGENTS.md:66 cleared |
 | 5 | T5: SERIES v1 structure | `context/plans/SERIES.md` | pending | |
 | 6 | T6: root `AGENTS.md` block, de-dup, dead refs + root `CLAUDE.md` link (per-item approval) | `AGENTS.md`, `CLAUDE.md` (new) | pending | |
 | 7 | T7: `hp:<id>` markers + hands-plan v1 stamps; clean resync | RULES, SERIES, `NN_example*`, `context/AGENTS.md` | pending | |
@@ -56,6 +56,7 @@ the last three always carry a reason in the row's Notes cell.
 | 2026-10-04 07:52 | T2 baseline: gate steps 1–5 on the untouched tree (no `qctrl-api` running) | all pass: fmt OK; clippy 0 warnings; `cargo test` 163 passed / 0 failed (2 ignored); `RUSTFLAGS="-D warnings" cargo build --release` OK, 22.6 s; lint OK, vitest 31/31, `vite build` OK | 1 | recorded in the gate's Baseline line |
 | 2026-10-04 | T2 Verify: `hp-probe` gate preamble (7) + gate-project shape (10) | 17/17 HIT; no `{{` | 1 | commit gate = docs-only steps 1–3, re-run after the edit |
 | 2026-10-04 | T3 Verify: `hp-probe` RULES format/header/naming/style/templates (33), `NN_example.md` (12), `NN_example_tracker.md` (7) | all HIT; no foreign text or `{{`; dead refs `RULES.md:169` and `AGENTS.md:60` gone; RULES per-task section (old 127–311 vs new 99–283) `diff` IDENTICAL | 1 | gate (docs-only 1–3): fmt OK, clippy 0, `cargo test` 163 passed |
+| 2026-10-04 | T4 Verify: `hp-probe context/AGENTS.md` (8), mapped-path `test -e` loop (11 paths), `readlink`, `hp-scan` DEADREF | 8/8 HIT; 0 missing; `context/CLAUDE.md -> AGENTS.md`; only `AGENTS.md:148` (T6) remains | 1 | gate (docs-only 1–3): fmt OK, clippy 0, `cargo test` 163 passed |
 
 ## Notes / Deviations
 
@@ -63,6 +64,7 @@ the last three always carry a reason in the row's Notes cell.
   findings via `context/AGENTS.md`, which T4 creates. So `hp-scan` now reports
   `DEADREF context/plans/RULES.md:226 → context/AGENTS.md`, the same kind as the
   `SERIES.md:42` one from the Plan 14 row. Both clear at T4; T4's Verify should show neither.
+  **RESOLVED (T4):** both gone once `context/AGENTS.md` existed.
 - **T1 — *Currently Active* doesn't exist yet** (plan Risk 5). The started-state flip set the
   plan `Status`, the SERIES row (`in-progress`) and the `Start date`; T5 adds the section.
 
