@@ -491,7 +491,7 @@ Priority values: `P0` = blocking, `P1` = important, `P2` = nice-to-have.
 ## Verification Checklist
 
 - [x] T1: the T1 probe set all `HIT`; `grep '^### Rule'` lists A, B, B2, C, D, E in order; no `{{`, no legacy `## Completed Plans`.
-- [ ] T2: gate probes and gate-project shape probes all `HIT`; the Baseline line records a real run of steps 1–5 (or step 4 explicitly "not run — <reason>").
+- [x] T2: gate probes and gate-project shape probes all `HIT`; the Baseline line records a real run of steps 1–5 (or step 4 explicitly "not run — <reason>").
 - [ ] T3: format/header/naming/style/templates probes all `HIT`; no foreign text or `{{`; `hp-scan` shows no `RULES.md:169` dead reference.
 - [ ] T4: `context/AGENTS.md` probes `HIT`; every mapped path exists; `readlink context/CLAUDE.md` → `AGENTS.md`; no `AGENTS.md:66` dead reference.
 - [ ] T5: SERIES probes all `HIT`; `git diff -U0 SERIES.md | grep '^-|'` empty.

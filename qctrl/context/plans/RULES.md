@@ -128,14 +128,59 @@ Every non-trivial plan gets a paired tracker: `NN_name_tracker.md`.
 
 These rules apply to **every task** (T1, T2, …) during implementation. They are not optional.
 
-### Rule A — Zero build errors and warnings
+### Rule A — The verification gate <!-- hp:gate -->
 
-After completing each task:
+A task is verified when you have **observed the change working**, not when it compiles and not
+when the diff looks right. Reading the diff is not verification.
 
-1. Run `cargo build` — must exit 0 with **zero** errors and **zero** warnings.
-2. Run `cargo clippy` — must exit 0 with **zero** warnings.
-3. If any warnings remain, fix them before marking the task done.
-4. **Never mark a task `done` while compiler warnings are outstanding.**
+1. Run the project gate below after every task. It must exit 0 with zero errors and zero warnings.
+   Fix warnings before marking anything done.
+2. Know what the gate cannot see. Exercise the behavior the task changed — run it, hit it,
+   render it, measure it — and record what you observed in the tracker.
+3. Prove the thing you tested is the thing you built — that the new build actually loaded.
+   A binary, image or driver that never ran "passes" every test.
+4. Anything a human sees (UI, output, logs) must be **looked at**, not inferred from a passing
+   build.
+5. **Keep the gate current.** A task that adds behavior the gate should exercise (a flag, a mode,
+   an endpoint) updates the project gate in the same commit.
+6. **Never mark a task `done` on unverified work.**
+
+#### Project gate <!-- hp:gate-project -->
+
+Before **every** commit (Rule B), run the steps for every component the task touched, in order.
+Unit tests cannot see what rcon does to a command on the server — see *Blind spots*.
+
+**Backend** (touched `crates/`, `Cargo.*`, `config*.yaml`):
+1. `cargo fmt --all --check` → exit 0.
+2. `cargo clippy --all-targets --all-features -- -D warnings` → exit 0.
+3. `cargo test --all-targets --all-features` → every `test result: ok`, `0 failed`.
+4. `RUSTFLAGS="-D warnings" cargo build --release` → exit 0 (= `just be-all` without its
+   mutating `cargo fmt`). ⚠ It rebuilds `target/release/qctrl-api`: if `pgrep -a qctrl-api`
+   shows the operator's API running from it, ask first.
+
+**Frontend** (touched `frontend/`):
+5. `cd frontend && npm run lint && npm run test && npm run build` → exit 0 each. `npm run test`
+   is vitest only. **Never** `just fe-test`, `npm run testall` or `just fe-e2e` as a gate:
+   `e2e-test.js` drives the live server (`context/pitfalls.md`).
+
+**Docs only** (touched nothing but `context/` and `*.md`): steps 1–3. Nothing compiled changed,
+so the release build adds no signal.
+
+**Blind spots → behavioral checks:**
+- Anything that changes what qctrl **sends** (rcon commands, cvar pushes, the watchdog/rotator)
+  is verified on the live server by **reading the result back**. A `set` that replies with
+  usage looks like success: quote stripping hid for months that way.
+- **The build actually loaded:** for a live check, the running `qctrl-api` must have started
+  after the build (`ps -o lstart -p <pid>` vs. the binary mtime), and `/api/health` → `ok`.
+- **Look at it:** a UI change is opened in a browser and looked at. A passing build proves
+  nothing about the page.
+
+**Prerequisites:** `just`; node per `frontend/.nvmrc` (22); live checks need the operator's API
+and the server on noir.lan.
+
+**Baseline (2026-10-04):** steps 1–5 pass on the untouched tree — fmt OK; clippy 0 warnings;
+`cargo test` 163 passed / 0 failed (2 ignored); release build OK (22.6 s); lint OK, vitest 31/31,
+`vite build` OK.
 
 ### Rule B — Commit at every task boundary (or more often) <!-- hp:commit -->
 
