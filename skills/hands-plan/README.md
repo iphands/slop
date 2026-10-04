@@ -23,7 +23,7 @@ every write — files, `git add/commit/mv`, `mkdir`, symlinks — still asks.
 | `/hands-plan init <one line about the project>` | Scaffold `context/plans/` + `context/AGENTS.md` (+ `CLAUDE.md` symlink) + missing knowledge files; **suggest** a diff for the root `AGENTS.md`/`CLAUDE.md` and apply it only if you say so. Flags: `--commit-format "…"`, `--packs measurement,parity`, `--dir P`. |
 | `/hands-plan new <what>` | Research the work, write `NN_name.md` + `NN_name_tracker.md`, register in SERIES, commit on approval. Flags: `--parent NN` (sub-plan), `--series-rules TOPIC`. |
 | `/hands-plan status [NN]` | Read-only dashboard + hygiene lint (unmoved finished plans, SERIES drift, stale plans, dead refs, oversized files). |
-| `/hands-plan resume [NN]` | Do the next task: gate → tracker → one commit. `--ralph` prints a self-contained `/ralph-loop` command instead. |
+| `/hands-plan resume [NN \| NN-MM \| all]` | Do the plan's remaining tasks (gate → tracker → one commit each), stopping only when blocked. A range or `all` closes each plan and continues. `--one` does just the next task. `--ralph` prints a self-contained `/ralph-loop` command instead. |
 | `/hands-plan close NN [--abandon "why"]` | Audit, harvest findings into `context/`, `git mv` to `completed/` or `abandoned/`, update SERIES, one commit. |
 | `/hands-plan resync` | Read-only: compare the project (stamped or legacy) with the current templates and print an ordered migration checklist. Execute it with `/hands-plan new migrate the plan system to hands-plan vN`. |
 | `/hands-plan` | `status` if the project has a plan system, else help. |

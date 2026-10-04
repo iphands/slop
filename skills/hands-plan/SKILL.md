@@ -1,6 +1,6 @@
 ---
 name: hands-plan
-description: Numbered plan + tracker system under context/plans/ (RULES.md, SERIES.md, NN_example.md, completed/, abandoned/) with a context/ knowledge base. Verbs — init (scaffold into a new project or sub-project), new (draft the next plan + tracker), status (read-only dashboard + hygiene lint), resume (execute the next task under the rules), close (complete or abandon a plan), resync (compare a project's plan system with the current templates and show a migration plan, never applying it).
+description: Numbered plan + tracker system under context/plans/ (RULES.md, SERIES.md, NN_example.md, completed/, abandoned/) with a context/ knowledge base. Verbs — init (scaffold into a new project or sub-project), new (draft the next plan + tracker), status (read-only dashboard + hygiene lint), resume (execute a plan's remaining tasks under the rules), close (complete or abandon a plan), resync (compare a project's plan system with the current templates and show a migration plan, never applying it).
 argument-hint: "<init|new|status|resume|close|resync> [args]"
 disable-model-invocation: true
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/bin/hp-scan:*), Bash(${CLAUDE_SKILL_DIR}/bin/hp-probe:*), Bash(git log:*), Bash(git status:*), Bash(git ls-files:*), Bash(git diff:*), Bash(git rev-parse:*), Bash(date:*), Bash(readlink:*), Bash(realpath:*), Bash(ls:*), Bash(grep:*), Bash(head:*), Bash(wc:*), Bash(command -v:*)
@@ -27,7 +27,7 @@ literal path. Verb files are not substituted; only this file is.
    | `init` | `[--dir P] [--commit-format F] [--packs measurement,parity] <description>` | Scaffold `context/plans/` + `context/AGENTS.md`; **suggest** root AGENTS.md/CLAUDE.md additions | only missing files; root files only on approval; commit on approval |
    | `new` | `[--dir P] [--parent NN] [--series-rules TOPIC] <what>` | Research + draft the next `NN_name.md` + tracker, register in SERIES | yes (asks before commit) |
    | `status` | `[--dir P] [NN]` | Dashboard of active plans + hygiene lint | **never** |
-   | `resume` | `[--dir P] [NN] [--ralph]` | Load rules/plan/tracker, do the next task under the rules | yes (one task + commit) |
+   | `resume` | `[--dir P] [NN \| NN-MM \| all] [--one] [--ralph]` | Load rules/plan/tracker, do the plan's remaining tasks under the rules (a range/`all`: plan after plan, closing each) | yes (one commit per task) |
    | `close` | `[--dir P] NN [--abandon "reason"]` | Audit, harvest, move to `completed/`/`abandoned/`, update SERIES | yes (asks before commit) |
    | `resync` | `[--dir P]` | Compare against the current templates, print a migration plan | **never** |
 

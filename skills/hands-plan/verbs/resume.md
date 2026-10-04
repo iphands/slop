@@ -1,17 +1,25 @@
-# verb: resume — do the next task of a plan, under the rules
+# verb: resume — work a plan to the end, under the rules
 
-`resume [--dir P] [NN] [--ralph]`
+`resume [--dir P] [NN | NN-MM | all] [--one] [--ralph]`
 
-Picks up a plan where the tracker says it stands, does **one task** end to end (implement →
-project gate → tracker → commit), and stops. `--ralph` skips the work and prints a self-contained
-`/ralph-loop` command that executes the rest of the plan task by task.
+Picks up a plan where the tracker says it stands and works **every remaining task**, one at a time
+(implement → project gate → tracker → commit, then the next), until all rows are closed or it is
+seriously blocked (the stop conditions below). It stops at the end of the plan; a range or `all`
+closes each finished plan and moves on to the next (see Multi-plan runs). `--one` does only the next
+task and stops. `--ralph` skips the work and prints a self-contained `/ralph-loop` command that
+executes the rest of the plan task by task.
 
-## 1. Pick the plan
+## 1. Pick the plan(s)
 
 `NN` given → that plan. Otherwise: the single `in-progress` plan (hp-scan `PLAN … active`), else
 the first entry under SERIES *Currently Active*, else the lowest-numbered pending plan whose
 dependencies are done — and if that is still ambiguous, ask. A plan in `completed/` or `abandoned/`
 is not resumable; say so.
+
+`NN-MM` (or the user asking in plain words for "plans N through M") → those plans in number order.
+`all` (or "do all plans") → every pending/in-progress plan in SERIES order, dependencies first. A
+plan in the range that is already completed/abandoned → skip it and say so. Only these forms run
+more than one plan; anything else stops at the end of one.
 
 ## 2. Load the rules and the state — in full
 
@@ -34,12 +42,42 @@ git log --oneline "$base"..HEAD -- <Critical Files> <files named in Key Facts>
 Anything there, or a dependency closed after the plan's `Created`/`Revised` date → re-check its Key
 Facts and Before snippets against the tree, propose concrete revisions, and on approval apply them
 with a `> **Revised**: <date> — <what changed>` line, committed on its own (the RULES `revise`
-bookkeeping form) before starting T1. Nothing changed → say so and go on.
+bookkeeping form) before starting T1, then go on into the task loop. Nothing changed → say so and
+go on.
 
 ## 4. Working tree
 
 `git status --short`. Note pre-existing changes that are not yours and **leave them alone** — no
 stash, checkout, restore or clean. Stage only explicit paths you changed.
+
+## Loop and stop conditions
+
+Steps 5–8 run once per task. After each task's commit, go straight back to step 5 for the next open
+row — don't ask, don't pause for confirmation between tasks; a one-line progress note is enough.
+Each task still gets its own commit (RULES: one task per commit).
+
+Stop only when:
+
+- (a) every row is done/skipped/invalid — the plan is finished;
+- (b) a task is blocked and every remaining task depends on it or is blocked too;
+- (c) the project gate fails and the fix is outside the task's scope;
+- (d) a decision is genuinely the user's: a destructive or outward-facing action, a plan revision
+  that changes scope, an ambiguity the plan and RULES don't settle;
+- (e) changes you did not make collide with the task.
+
+A blocked task with independent tasks after it is **not** a stop: mark it `blocked`, commit, and
+continue with the next task that doesn't depend on it. `--one` → stop after the first task.
+
+## Multi-plan runs (`NN-MM`, `all`)
+
+- A plan finishes (stop condition a) → run `$SKILL_DIR/verbs/close.md` for it. The user's range
+  request is the approval to commit the close. Close's audit finds work gaps → stop the whole run.
+- Close's other questions (Follow-ups that name later plans, harvest entries awaiting approval)
+  don't pause the run: take the conservative default — write no unapproved entry, edit no other
+  plan — and list each one in the final report for the user to decide.
+- Then pick the next plan in the range and start from step 2. Its step-3 premise refresh needing a
+  `revise` is stop condition (d): report and halt.
+- Any stop condition in any plan ends the whole run.
 
 ## 5. The next task
 
@@ -61,7 +99,8 @@ Active line current.
 - **Premise wrong?** (RULES evidence rule) Record what reality showed (command + output), do what
   reality requires, mark the plan item `invalid` as written in the tracker Notes **and** the commit
   body, and add a Follow-ups row for anything left below the bar.
-- Blocked → set the row `blocked` with the reason, record what was learned, commit that, stop.
+- Blocked → set the row `blocked` with the reason, record what was learned, commit that, then
+  apply the stop conditions (continue if an independent task remains).
 
 ## 7. Record
 
@@ -84,8 +123,11 @@ git add <changed paths> context/plans/NN_name_tracker.md context/plans/NN_name.m
   && git commit -m "<the task's **Commit** line, in the project's format>"
 ```
 
-Then report: what changed, the gate output summary, the commit hash, what's next. Continue to the
-next task **only if the user asked for more than one**. All rows closed → suggest
+Then a one-line report (task, gate result, commit hash) and back to step 5 — unless a stop
+condition holds or `--one` was given.
+
+When the run stops, report: tasks done with their hashes, any blocked rows and why, plans closed,
+deferred close questions, and what's next. A single plan with all rows closed → suggest
 `/hands-plan close NN`.
 
 ## 9. `--ralph`: print a loop command (no task work)
