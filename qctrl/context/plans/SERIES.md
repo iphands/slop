@@ -23,8 +23,8 @@ contract** — re-read and revise it before starting (RULES.md Rule C).
      - **Plan NN** — <title>: in progress, X/Y tasks done; next TN (<short title>).
      When nothing is in progress: "None in progress — next up: Plan NN (`/hands-plan resume NN`)." -->
 
-- **Plan 14** — hands-plan v1 Migration: in progress, 7/7 tasks done; next: close
-  (`/hands-plan close 14`).
+None in progress, and no pending plans. Candidates for the next one: Plan 12's open follow-ups
+(`completed/12_sv_maplist_resilience_tracker.md` → Follow-ups 1–2).
 
 ## Plan Dependencies
 
@@ -61,7 +61,7 @@ contract** — re-read and revise it before starting (RULES.md Rule C).
 | 10 | Final Testing & Polish | `done` | 01-09 |
 | 11 | Deployment Setup | `done` | 10 |
 | 12 | sv_maplist Resilience + Empty-Map Guards | `done` — closed 2026-10-04; verified live on noir (drift repaired in ≤60 s, guards return 400, fraglimit end rotates via `sv_maplist`) | 11 |
-| 14 | hands-plan v1 Migration | `in-progress` — migrate RULES, SERIES, skeletons, `context/AGENTS.md` and root `AGENTS.md` to hands-plan v1 (2026-10-04 resync checklist) | N/A |
+| 14 | hands-plan v1 Migration | `done` — closed 2026-10-04; plan system on hands-plan v1 (129/129 resync probes), root `CLAUDE.md` now loads qctrl's rules | N/A |
 
 ## Post-1.0 Plans
 

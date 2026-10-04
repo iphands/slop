@@ -2,9 +2,9 @@
 
 ## Overview
 
-- Status: 100% complete (7/7 tasks)
+- Status: 100% complete (7/7 tasks) — closed 2026-10-04
 - Start date: 2026-10-04
-- Plan: `context/plans/14_hands_plan_v1_migration.md`
+- Plan: `context/plans/completed/14_hands_plan_v1_migration.md`
 - Evidence: probe and scan output from `$SKILL_DIR/bin/hp-probe` / `hp-scan`
   (`SKILL_DIR=~/.claude/skills/hands-plan`), recorded in the Evidence table below; baseline
   input = the 2026-10-04 `/hands-plan resync` (0 CONFLICT · 0 TIGHTENING · 8 ADD · 12 UPDATE ·
@@ -40,7 +40,7 @@
 | 4 | T4: `context/AGENTS.md` + `context/CLAUDE.md` link + `distilled.md` | `context/` (new files) | done | `context/AGENTS.md` (map, routing: facts → `distilled.md`, gotchas → `pitfalls.md`, deps → `../../context/high_level.md`, cross-cutting → parent; default provenance tags; vendor line), `context/CLAUDE.md -> AGENTS.md`, `distilled.md` header only. Dead refs RULES:243, SERIES:42, AGENTS.md:66 cleared |
 | 5 | T5: SERIES v1 structure | `context/plans/SERIES.md` | done | Update-trigger + statuses + hypothesis line (under the untouched intro), operator's north star + ordering principle, *Currently Active* listing Plan 14, *Abandoned / Superseded* table replacing the `## Completed Plans` footer, compaction footer at the end. No row or narrative edited |
 | 6 | T6: root `AGENTS.md` block, de-dup, dead refs + root `CLAUDE.md` link (per-item approval) | `AGENTS.md`, `CLAUDE.md` (new) | done | Diff shown; operator: "do what you think is best … reflect the facts" + parent pointer approved. Block (v1), tree, de-dup §1–§3, Server Source → yquake2, stale sections → Current State, fact fixes (q2pro → yquake2, axum 0.7, TanStack Query only, Tailwind w/o component lib, WS rcon-activity logs), root `CLAUDE.md -> AGENTS.md`, pointer in `slop/CLAUDE.md`. No DEADREF left |
-| 7 | T7: `hp:<id>` markers + hands-plan v1 stamps; clean resync | RULES, SERIES, `NN_example*`, `context/AGENTS.md` | done | Only 2 markers were missing (SERIES `next-free`, `plans`); RULES' 15 and `context/AGENTS.md`'s 4 came with the template text. Stamped `hands-plan:v1 2026-10-04` on 5 files. Full resync probe set by `--section`: 129/129 HIT |
+| 7 | T7: `hp:<id>` markers + hands-plan v1 stamps; clean resync | RULES, SERIES, `NN_example*`, `context/AGENTS.md` | done | Only 2 markers were missing (SERIES `next-free`, `plans`); RULES' 15 and `context/AGENTS.md`'s 4 came with the template text. Stamped the hands-plan v1 line-1 stamp (2026-10-04) on 5 files. Full resync probe set by `--section`: 129/129 HIT |
 
 **Status values**: `pending` | `in-progress` | `done` | `blocked` | `skipped` | `invalid` —
 the last three always carry a reason in the row's Notes cell.
@@ -60,6 +60,7 @@ the last three always carry a reason in the row's Notes cell.
 | 2026-10-04 | T5 Verify: `hp-probe SERIES.md` (7); `git diff -U0 SERIES.md \| grep '^-\|'` | 7/7 HIT; no table row removed or edited (only the 2-line `## Completed Plans` footer removed) | 1 | gate (docs-only 1–3): fmt OK, clippy 0, `cargo test` 163 passed |
 | 2026-10-04 | T6 Verify: `hp-probe AGENTS.md` (4), `hp-scan` ROOTFILE/DEADREF, `readlink CLAUDE.md`, stale-string grep, tree-path `test -e` loop | 4/4 HIT; `ROOTFILE AGENTS.md block=v1` (+ `CLAUDE.md` link); **0 DEADREF**; symlink OK; no stale strings; all tree paths exist (`abandoned/` created by the first abandon) | 1 | gate (docs-only 1–3): fmt OK, clippy 0, `cargo test` 163 passed |
 | 2026-10-04 | T7 Verify: `hp-scan --brief` + the full `reference/sections.md` probe set by `--section <id>` (21 groups) | 5× `FILE … stamp=v1`; 24 `MARKER`s (RULES 15, SERIES 5, context 4); `ROOTFILE block=v1`; 0 DEADREF/PLACEHOLDER/LEFTOVER; **129/129 probes HIT** → resync would report 0 ADD · 0 UPDATE · 0 SHAPE · 0 CONFLICT | 1 | gate (docs-only 1–3): fmt OK, clippy 0, `cargo test` 163 passed |
+| 2026-10-04 | Close: full project gate (steps 1–5) on HEAD `902a5fb19`; `git log -F --grep='[qctrl][P14]'` | all green (fmt; clippy 0; `cargo test` 163 passed; release build OK; lint OK; vitest 31/31; `vite build` OK); 8 commits found by fixed-string grep (plan + T1–T7) | 1 | harvest: `context/distilled.md` (log stream), `../../context/pitfalls.md` (AGENTS.md-only invisible; hp-scan LEFTOVER false positives) |
 
 ## Notes / Deviations
 
@@ -82,6 +83,11 @@ the last three always carry a reason in the row's Notes cell.
     `main.rs` `/logs/ws`, confirmed in Plan 12 T4
   - "q2pro" → yquake2 (live server reports `8.70`)
   Left as is because unverified: "hosted in a Podman container" and "Read/write `server.cfg`".
+- **Close — one scripted edit failed on a wrong anchor and was re-run.** The first close script
+  asserted an Evidence-row anchor that didn't match: the cell text runs on before `**129/129…`.
+  It stopped after writing only the plan file. Nothing had been moved or committed. The plan
+  edits were checked complete (6 RESOLVED, 10/10 ticked), and the rest was re-run with the fixed
+  anchor.
 - **T6 missed a Rule C duty; corrected in T7.** Rule C says later tasks keep the SERIES
   *Currently Active* line current. T6's commit left it at "5/7 tasks done; next T6". T7 sets it
   to 7/7, next: close.
@@ -90,3 +96,6 @@ the last three always carry a reason in the row's Notes cell.
 
 | Follow-up | Why | Lands in |
 |-----------|-----|----------|
+| Verify or correct two root `AGENTS.md` claims: "hosted in a Podman container" and "Read/write `server.cfg`" | T6 reflected the facts it could check and left these two unverified (Rule E: below the bar is a row) | A `[qctrl][docs]` commit outside a plan, once checked on noir and in the code |
+| SERIES *Standing Constraints* (optional, absent) | Resync INFO. Candidates: server on noir.lan with the API on cosmo; `testall`/e2e hit the live server; no live server console from cosmo; node per `frontend/.nvmrc` | A `[qctrl][series]` commit, if the operator wants it |
+| Archive drift: Plan 13 has no SERIES row; plans 01–11 still say `Status: pending` in `completed/` | `status` lint, report-only. Closed plans are history; adding a Plan 13 row is the operator's call | Operator's call; no plan |

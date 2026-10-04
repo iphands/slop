@@ -1,6 +1,6 @@
 # Plan 14 — hands-plan v1 Migration
 
-> **Status**: in-progress
+> **Status**: done (closed 2026-10-04)
 > **Created**: 2026-10-04
 > **Depends on**: N/A
 > **Goal**: qctrl's plan system (RULES, SERIES, skeletons, `context/AGENTS.md`, root `AGENTS.md`) matches hands-plan v1, so a fresh `/hands-plan resync` reports no ADD/UPDATE/SHAPE items.
@@ -467,24 +467,34 @@ Priority values: `P0` = blocking, `P1` = important, `P2` = nice-to-have.
 
 ## Open Questions / Risks
 
-1. **Risk: T2's gate step 4 rebuilds the binary the operator's API runs from.** *Mitigation*:
+1. ~~**Risk: T2's gate step 4 rebuilds the binary the operator's API runs from.**~~ *Mitigation*:
    check `pgrep -a qctrl-api` first. If it's running, ask before step 4. If the operator
    declines, record step 4 as not run in the baseline line, never as passed.
-2. **Risk: between T1 and T6, root `AGENTS.md` still says `task(TN)` and "just be-all", while
-   RULES says otherwise.** *Mitigation*: T3 lands "This file wins", and qctrl's root file isn't
+   **RESOLVED (T2):** no `qctrl-api` was running, so the baseline ran step 4 (22.6 s). The ⚠
+   stays in the gate for next time.
+2. ~~**Risk: between T1 and T6, root `AGENTS.md` still says `task(TN)` and "just be-all", while
+   RULES says otherwise.**~~ *Mitigation*: T3 lands "This file wins", and qctrl's root file isn't
    auto-loaded until T6 adds `CLAUDE.md`. Keep T1–T6 back to back.
-3. **Question: the plan-gate rows (T3) and the north star (T5) are the operator's words.** *How
+   **RESOLVED (T6):** T1–T6 landed back to back on 2026-10-04, and the root now points to Rule A
+   and Rule B.
+3. ~~**Question: the plan-gate rows (T3) and the north star (T5) are the operator's words.**~~ *How
    we'll settle it*: show the drafts in those tasks and use the operator's wording. A declined
    draft leaves only the template's default row or line, noted in the tracker.
-4. **Risk: heading renames.** Rule A, Rule B, `Completed Plans` → Rule C, `Canonical Template`
+   **RESOLVED (T3, T5):** the operator approved all three drafted rows, the north star and the
+   ordering principle as written.
+4. ~~**Risk: heading renames.**~~ Rule A, Rule B, `Completed Plans` → Rule C, `Canonical Template`
    → `Templates & History`; `Mandatory Header` merges away. *Mitigation*: confirmed
    2026-10-04 that old plans cite only "Rule A", by letter, and letters never change.
-5. **Risk: the started-state flip names *Currently Active*, which doesn't exist until T5.**
+   **RESOLVED (T2, T3):** renamed as planned; the letters A and B are unchanged.
+5. ~~**Risk: the started-state flip names *Currently Active*, which doesn't exist until T5.**~~
    *Mitigation*: T1 sets the plan and its SERIES row to `in-progress`; T5 adds the section and
    lists Plan 14 there.
-6. **Question: the root edits (T6) may be partly declined.** *How we'll settle it*: per-item
+   **RESOLVED (T5):** it went as mitigated. T6 then forgot to update the line; T7 corrected it.
+   See tracker Notes.
+6. ~~**Question: the root edits (T6) may be partly declined.**~~ *How we'll settle it*: per-item
    approval. A declined item is recorded in the tracker, and T7 stamps whatever exists. A
    missing block stays a resync INFO/ADD, not a failure of this plan.
+   **RESOLVED (T6):** nothing was declined. The operator asked for more: "reflect the facts".
 
 ---
 
@@ -497,6 +507,6 @@ Priority values: `P0` = blocking, `P1` = important, `P2` = nice-to-have.
 - [x] T5: SERIES probes all `HIT`; `git diff -U0 SERIES.md | grep '^-|'` empty.
 - [x] T6: `hp-scan` `ROOTFILE … block=v1`, no `DEADREF`; `readlink CLAUDE.md` → `AGENTS.md`; declined items listed in the tracker.
 - [x] T7: five `FILE … stamp=v1`; every id found by `--section`; `/hands-plan resync` reports 0 ADD / 0 UPDATE / 0 SHAPE.
-- [ ] All: the project gate (Rule A) passes on the final commit.
-- [ ] All: findings harvested into `context/` (Rule D) — bytes on disk, re-read.
-- [ ] All: plan + tracker `git mv`'d to `completed/`, `SERIES.md` marked done (Rule C).
+- [x] All: the project gate (Rule A) passes on the final commit. *(Close, 2026-10-04: steps 1–5 on HEAD `902a5fb19` all green.)*
+- [x] All: findings harvested into `context/` (Rule D) — bytes on disk, re-read. *(Close: `context/distilled.md` and two entries in `../../context/pitfalls.md`; see tracker.)*
+- [x] All: plan + tracker `git mv`'d to `completed/`, `SERIES.md` marked done (Rule C). *(Close commit.)*

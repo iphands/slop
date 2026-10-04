@@ -1045,3 +1045,45 @@ brackets (`'\[P1\]'`). In a monorepo, also scope by path (`-- <sub-project>`), b
 plan numbers repeat across sub-projects with their own plan systems.
 ## Sources
 - skills/hands-plan: verbs/close.md, verbs/status.md (commit audits), found by the end-to-end test run
+
+# Claude Code never loads a sub-project's `AGENTS.md` — only `CLAUDE.md`
+
+[OBSERVED 2026-10-04] qctrl kept every agent rule — the pre-commit gate, TDD, the commit format,
+"never commit broken code" — in a root `AGENTS.md`, with no `CLAUDE.md` beside it. Claude Code
+auto-loads `CLAUDE.md` files (the user's global one, plus the working directory and its
+ancestors), not `AGENTS.md`. A full session with the working directory at `qctrl/` loaded only
+`~/.claude/CLAUDE.md` and `slop/CLAUDE.md`. qctrl's own rules were never in context, so they
+were never followed, or knowingly broken. Nothing warns about this: the file exists and humans
+reading the repo assume agents read it too. It surfaced only because a plan-system resync asked
+which root files exist.
+
+How to avoid: every sub-project whose rules live in `AGENTS.md` gets a `CLAUDE.md -> AGENTS.md`
+symlink (or the reverse pair), committed with the file. Mirror the pair direction the project
+already uses; `slop/` and `qbots/` already have pairs. Find the gaps from the slop root:
+`for d in */; do [ -e "$d/AGENTS.md" ] && [ ! -e "$d/CLAUDE.md" ] && echo "$d"; done`.
+After adding it, a fresh session started in that directory should list the file among its loaded
+instructions.
+
+## Sources
+- qctrl: `AGENTS.md`, `CLAUDE.md` (symlink added in Plan 14 T6)
+
+# hp-scan LEFTOVER fires on a plan that *mentions* template slots or stamps
+
+[OBSERVED 2026-10-04] hands-plan's `hp-scan` reports `LEFTOVER` for any active plan or tracker
+line that looks like an unfilled skeleton: a template slot (a CAPS name in double braces), the
+title slot, a `# Plan NN` heading, a date-pattern `Created:`/`Start date:`, or the hands-plan
+version stamp (`bin/hp-scan`, `LEFT_RE`). It cannot tell an unfilled skeleton from prose *about*
+those things, and a plan-system migration plan is exactly that prose. qctrl Plan 14 named slots
+and the stamp literally in its task text, and its first self-check printed a screen of
+LEFTOVER records. After the rewording, one tracker note written in T7 (quoting the literal stamp)
+brought a record back, and `status` reported it until close. That's two rounds for one pattern.
+
+How to avoid: in plans and trackers, write slot names bare (`R_GATE`, `CODE_LANG`) and describe
+stamps ("the hands-plan v1 line-1 stamp") instead of quoting them. The literal forms belong only
+in the skill's templates, and in `hp-scan`'s own regex. Re-run `hp-scan --brief .` after
+writing *any* plan or tracker text, not just at creation. Completed plans aren't scanned, so a
+leftover found at close can simply be reworded in the close commit.
+
+## Sources
+- skills/hands-plan: `bin/hp-scan` (`LEFT_RE`)
+- qctrl: `context/plans/completed/14_hands_plan_v1_migration*.md`
