@@ -2,8 +2,8 @@
 
 ## Overview
 
-- Status: 0% complete (0/7 tasks)
-- Start date: — (set when T1 starts)
+- Status: 14% complete (1/7 tasks)
+- Start date: 2026-10-04
 - Plan: `context/plans/14_hands_plan_v1_migration.md`
 - Evidence: probe and scan output from `$SKILL_DIR/bin/hp-probe` / `hp-scan`
   (`SKILL_DIR=~/.claude/skills/hands-plan`), recorded in the Evidence table below; baseline
@@ -34,7 +34,7 @@
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: per-task rules — commit format (B), append-only (B2), lifecycle (C), harvest (D), evidence (E), Project/Series rules | `context/plans/RULES.md` | pending | |
+| 1 | T1: per-task rules — commit format (B), append-only (B2), lifecycle (C), harvest (D), evidence (E), Project/Series rules | `context/plans/RULES.md` | done | Rule B rewritten to the template plus the `[qctrl][P<n>][T<n>][<topic>]` format; NOTE lines kept verbatim as its project addendum. Added B2, C (replaces the unlettered `## Completed Plans`), D, E, Project Rules, Series-Scoped Rules. 39/39 probes HIT |
 | 2 | T2: the verification gate — full pre-commit set, backend + frontend, baseline run | `context/plans/RULES.md` (Rule A) | pending | |
 | 3 | T3: plan/tracker format, header, plan-gate, naming, style, templates + NN_example skeletons | `context/plans/RULES.md`, `NN_example*.md` (new) | pending | |
 | 4 | T4: `context/AGENTS.md` + `context/CLAUDE.md` link + `distilled.md` | `context/` (new files) | pending | |
@@ -51,8 +51,17 @@ the last three always carry a reason in the row's Notes cell.
 |------|------------------------------------|--------|------|----------------|
 | 2026-10-04 | `hp-scan --brief .` (pre-migration) | RULES/SERIES `stamp=none`; NN_example*, `context/AGENTS.md` missing; `ROOTFILE … block=none`; 4 DEADREF | 1 | baseline, quoted in the plan's Pre-Identified Issue |
 | 2026-10-04 | `/hands-plan resync` | 0 CONFLICT · 0 TIGHTENING · 8 ADD · 12 UPDATE · 2 SHAPE · 7 INFO | 1 | the checklist this plan executes |
+| 2026-10-04 | T1 Verify: 4 `hp-probe` sets (commit, append-only, lifecycle, harvest+evidence+series+project) | 39/39 HIT; rules in order A, B, B2, C, D, E; no `{{`, no legacy `## Completed Plans` | 1 | |
+| 2026-10-04 | T1 gate: `cargo fmt --all --check`, `cargo build`, clippy `-D warnings`, `cargo test --all-targets --all-features`, `npm run lint`, `npm run test` | fmt OK; 0 warnings; 163 passed / 0 failed (2 ignored); lint OK; vitest 31/31 | 1 | docs-only change; `testall` NOT run (live server) |
 
 ## Notes / Deviations
+
+- **T1 — temporary dead reference, not predicted by the plan.** Rule D's template text routes
+  findings via `context/AGENTS.md`, which T4 creates. So `hp-scan` now reports
+  `DEADREF context/plans/RULES.md:226 → context/AGENTS.md`, the same kind as the
+  `SERIES.md:42` one from the Plan 14 row. Both clear at T4; T4's Verify should show neither.
+- **T1 — *Currently Active* doesn't exist yet** (plan Risk 5). The started-state flip set the
+  plan `Status`, the SERIES row (`in-progress`) and the `Start date`; T5 adds the section.
 
 ## Follow-ups
 

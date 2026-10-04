@@ -39,7 +39,7 @@ This document tracks the dependency chain and status of all plans for the qctrl 
 | 10 | Final Testing & Polish | `done` | 01-09 |
 | 11 | Deployment Setup | `done` | 10 |
 | 12 | sv_maplist Resilience + Empty-Map Guards | `done` — closed 2026-10-04; verified live on noir (drift repaired in ≤60 s, guards return 400, fraglimit end rotates via `sv_maplist`) | 11 |
-| 14 | hands-plan v1 Migration | `pending` — migrate RULES, SERIES, skeletons, `context/AGENTS.md` and root `AGENTS.md` to hands-plan v1 (2026-10-04 resync checklist) | N/A |
+| 14 | hands-plan v1 Migration | `in-progress` — migrate RULES, SERIES, skeletons, `context/AGENTS.md` and root `AGENTS.md` to hands-plan v1 (2026-10-04 resync checklist) | N/A |
 
 ## Post-1.0 Plans
 
