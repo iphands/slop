@@ -4,13 +4,14 @@ A Rust REST API + React TypeScript frontend for managing a Quake 2 deathmatch se
 
 ## Project Goal
 
-Provide a mobile-responsive web interface to control a running Quake 2 server (q2pro) hosted in a Podman container.
+Provide a mobile-responsive web interface to control a running Quake 2 server (yquake2) hosted in a Podman container.
 
 ### Core Features
 - **RCON Command Execution**: Send commands (`dmflags`, `map`, `kick`, `ban`, etc.) to the server.
 - **Server Configuration**: Read/write `server.cfg` and map settings.
 - **Map Management**: List available `.bsp` maps from `baseq2/maps/` and select via UI (no typing).
-- **Real-time Logs**: Stream server console output to the frontend (WebSocket/SSE).
+- **Real-time Logs**: Stream qctrl's RCON activity (commands sent, replies, refusals) to the frontend
+  over WebSocket (`/api/logs/ws`). The Q2 server console itself is not streamed.
 - **Config-Driven**: API reads a local YAML config pointing to `server.cfg` path and `baseq2` directory.
 
 ---
@@ -18,7 +19,7 @@ Provide a mobile-responsive web interface to control a running Quake 2 server (q
 ## Architecture
 
 ### Backend (Rust)
-- **Framework**: `axum` or `actix-web` (REST + WebSockets).
+- **Framework**: `axum` 0.7 (REST + WebSockets); `tower-http` for CORS, tracing and static files.
 - **RCON Client**: Custom implementation based on Quake 2 RCON protocol (UDP/TCP).
 - **Config**: `serde_yaml` for loading server paths.
 - **Testing**: `cargo test` (Unit + Integration).
@@ -26,22 +27,28 @@ Provide a mobile-responsive web interface to control a running Quake 2 server (q
 
 ### Frontend (TypeScript + React)
 - **Stack**: Vite + React + TypeScript.
-- **UI Library**: TailwindCSS + shadcn/ui (or similar) for mobile-first components.
-- **State**: React Query / Zustand.
+- **UI Library**: TailwindCSS 3 (no component library) for mobile-first components.
+- **State**: TanStack React Query v5.
 - **Docs**: Inline JSDoc / TSDoc.
 
 ### Directory Structure
 ```text
 qctrl/
 ├── AGENTS.md              # This file
-├── context/               # Knowledge base
-│   ├── plans/             # Active plans (NN_name.md)
-│   ├── distilled.md       # Summarized learnings (RCON, Protocol, Patterns)
-│   ├── pitfalls.md        # Known issues & corrections
-│   └── high_level.md      # High-level architecture notes
+├── CLAUDE.md              # → AGENTS.md (symlink — the name Claude Code loads)
+├── context/               # living memory — READ context/AGENTS.md before new work
+│   ├── plans/             # plan system — RULES.md is authoritative; read in full
+│   │   ├── RULES.md       #   format + per-task rules + project rules
+│   │   ├── SERIES.md      #   dependency chain, status, next free plan number
+│   │   ├── NN_example*.md #   skeletons to copy for a new plan + tracker
+│   │   ├── completed/     #   closed plans (git mv here at 100%)
+│   │   └── abandoned/     #   dropped plans, reason recorded in SERIES
+│   ├── AGENTS.md          # what lives where in context/ (CLAUDE.md links here)
+│   ├── distilled.md       # confirmed facts (provenance-tagged)
+│   └── pitfalls.md        # bugs & gotchas, especially multi-attempt fixes
 ├── vendor/                # External source/docs
 │   ├── quakeiicom.html    # RCON command reference (MANDATORY READ)
-│   └── q2pro/             # q2pro source code (MANDATORY READ for protocol)
+│   └── yquake2/           # yquake2 source — the live server (MANDATORY READ for protocol)
 ├── crates/                # Rust workspace
 │   ├── api/               # Main REST/WS server
 │   ├── rcon/              # RCON client logic
@@ -54,39 +61,53 @@ qctrl/
 ## Development Workflow
 
 ### 1. Planning (MANDATORY)
-Before writing code for any non-trivial feature:
-1. **Create a Plan**: `context/plans/NN_name.md`
-   - Follow `context/plans/RULES.md`.
-   - Use `context/plans/NN_example.md` as template.
-   - Include `TL;DR`, `Context`, `Tasks`, `Files`, `Verification`.
-2. **Update Tracker**: `context/plans/NN_name_tracker.md`.
-3. **Execute**: Follow the plan step-by-step.
+Non-trivial work gets a plan: see *Plans & Context* below and `context/plans/RULES.md` (its first
+table says what needs a plan).
 
 ### 2. Knowledge Management
-- **Distilled Learning**: After reading `vendor/` or solving hard problems, summarize findings in `context/distilled.md`.
-  - *Example*: RCON packet structure, `dmflags` bitmasks.
-- **Pitfalls**: Document bugs, mistakes, or corrections in `context/pitfalls.md`.
-  - *Template*: `# Pitfall Name → Problem → Fix → Source`.
-- **Re-use**: Always read `distilled.md` and `pitfalls.md` before starting new tasks.
+Read `context/AGENTS.md` for what lives where (`distilled.md`, `pitfalls.md`, the slop-wide
+`../context/`). Read the relevant files before new tasks; record findings as you go.
 
 ### 3. Code Quality
 - **Tests**: Write tests FIRST (Red → Green → Refactor).
   - Rust: `cargo test --all-features`.
   - TS: `npm test`.
 - **Linting**: `cargo clippy`, `cargo fmt`, `eslint`, `prettier`.
-- **Build Verification**: **NEVER commit broken code**. Always run:
-  - Frontend: `just fe-build` → Must pass before ANY frontend commit
-  - Backend: `just be-all` → Must pass before ANY backend commit
+- **Build Verification**: **NEVER commit broken code.** The pre-commit gate is RULES Rule A
+  (*Project gate*: backend, frontend, docs-only). Never use `just fe-test` / `npm run testall` as a
+  gate — they drive the live server.
   - **If build fails, FIX IT FIRST. Do NOT claim "done" if build is broken.**
-- **Commits**:
-  - Pass all tests/lints before committing.
-  - Message format: `task(TN): <description>` (e.g., `task(T1): add rcon client`).
-  - Commit small, frequent changes.
+- **Commits**: format, cadence and git rules live in RULES Rule B / B2
+  (`[qctrl][P<n>][T<n>][<topic>] <summary>`). Commit small, frequent changes.
 
 ### 4. Tooling & Scripts
 - **NO `tmp/` Scripts**: All helper tools must live in `crates/tools/`.
   - Create a binary: `cargo run --bin tools -- <command>`.
   - Keep tools reusable and documented.
+
+---
+
+<!-- hands-plan:begin v1 -->
+## Plans & Context
+
+`context/` is this project's living memory and `context/plans/` its plan system.
+**`context/plans/RULES.md` is authoritative** — where this file and RULES.md disagree, RULES.md wins.
+This is a sub-project of `slop`: `../CLAUDE.md` (git discipline, shared conventions) also applies.
+
+- **Before non-trivial work:** read `context/plans/RULES.md` in full (its first table says what
+  needs a plan), then `context/plans/SERIES.md` (active plans, next free number, north star).
+  New plan = copy `NN_example.md` + `NN_example_tracker.md`, register it in SERIES.
+- **Working a plan:** follow the tracker's Resume Instructions → pass the project gate
+  (Rule A) → commit `[qctrl][P<n>][T<n>][<topic>] <summary>` with the tracker row in the same
+  commit. One task per commit.
+- **Git:** never push; no co-author trailers; history is append-only — fix a bad commit with a
+  new one, and chain `edit && git commit`.
+- **Knowledge:** read `context/AGENTS.md` for what lives where; record findings as you go, and
+  harvest them before a plan moves to `completed/`.
+- **Current state lives in `SERIES.md`**, not in this file.
+- **Honesty:** never claim something is done, verified or recorded unless it is — on disk, in the
+  command output.
+<!-- hands-plan:end -->
 
 ---
 
@@ -105,10 +126,10 @@ Before writing code for any non-trivial feature:
   - `timelimit <mins>` / `fraglimit <score>`.
 
 ### Server Source (Vendor Reference)
-**READ**: `./vendor/q2pro/src/`
+**READ**: `./vendor/yquake2/src/` — the live server runs yquake2 8.70.
 - **Files to Study**:
-  - `cl_console.c`, `sv_main.c`: RCON handling logic.
-  - `common.h`, `q_shared.h`: Protocol definitions.
+  - `server/sv_conless.c` (`SVC_RemoteCommand`), `server/sv_main.c`: RCON handling logic.
+  - `common/header/common.h`, `common/header/shared.h`: Protocol definitions.
 - **Goal**: Understand how the server parses RCON packets and logs output.
 
 ### Mobile UI Requirements
@@ -141,16 +162,7 @@ Before writing code for any non-trivial feature:
 
 ---
 
-## Getting Started
+## Current State
 
-1. **Read Rules**: `context/plans/RULES.md`.
-2. **Read Vendor**: `vendor/quakeiicom.html` (RCON section).
-3. **Create Plan**: `context/plans/01_setup.md` (Project scaffolding).
-4. **Initialize**: `cargo init`, `npm init`, etc.
-
----
-
-## Status
-
-- **Phase**: Planning / Scaffolding
-- **Next Step**: Create Plan T1 (Project Setup & Config Loading).
+Current state — active plans and what's next — lives in `context/plans/SERIES.md`, not in this
+file. New here? Read `context/plans/RULES.md`, then `vendor/quakeiicom.html` (RCON section).

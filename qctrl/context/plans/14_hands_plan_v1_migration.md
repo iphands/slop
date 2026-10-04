@@ -495,7 +495,7 @@ Priority values: `P0` = blocking, `P1` = important, `P2` = nice-to-have.
 - [x] T3: format/header/naming/style/templates probes all `HIT`; no foreign text or `{{`; `hp-scan` shows no `RULES.md:169` dead reference.
 - [x] T4: `context/AGENTS.md` probes `HIT`; every mapped path exists; `readlink context/CLAUDE.md` → `AGENTS.md`; no `AGENTS.md:66` dead reference.
 - [x] T5: SERIES probes all `HIT`; `git diff -U0 SERIES.md | grep '^-|'` empty.
-- [ ] T6: `hp-scan` `ROOTFILE … block=v1`, no `DEADREF`; `readlink CLAUDE.md` → `AGENTS.md`; declined items listed in the tracker.
+- [x] T6: `hp-scan` `ROOTFILE … block=v1`, no `DEADREF`; `readlink CLAUDE.md` → `AGENTS.md`; declined items listed in the tracker.
 - [ ] T7: five `FILE … stamp=v1`; every id found by `--section`; `/hands-plan resync` reports 0 ADD / 0 UPDATE / 0 SHAPE.
 - [ ] All: the project gate (Rule A) passes on the final commit.
 - [ ] All: findings harvested into `context/` (Rule D) — bytes on disk, re-read.

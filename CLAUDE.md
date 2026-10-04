@@ -2,6 +2,10 @@
 
 A place to house random AI assisted experiments. Cool stuff may migrate away from here into standalone projects.
 
+## Sub-projects with their own plan system
+
+- `qctrl/` — has its own plan system: `qctrl/context/plans/`.
+
 ## Git discipline
 
 Applies to every sub-project here — `cache`, `qbots`, `qctrl`, and anything added later.
