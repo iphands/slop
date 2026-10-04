@@ -1,6 +1,6 @@
 # Plan 12 — sv_maplist Resilience + Empty-Map Guards
 
-> **Status**: in-progress (T1–T3 done, T4 live verification pending)
+> **Status**: in-progress (T1–T4 done; close pending — open Follow-ups in the tracker)
 > **Created**: 2026-07-12
 > **Depends on**: Plan 11 (deployed API), rotation feature (post-Plan-11, unplanned)
 > **Goal**: The Q2 server can never again crash on `maps/.bsp` — `sv_maplist` is continuously re-synced, and every path that could emit a `map`/`gamemap` command with an empty or bogus argument is guarded at the API and frontend layers.
@@ -447,10 +447,10 @@ Protocol — record every result in the tracker:
 ## Verification Checklist
 
 - [ ] T1: `cargo build` + `cargo clippy` zero warnings; new unit tests 1–9 pass (`cargo test -p qctrl-api` or workspace equivalent). **Committed.**
-- [ ] T1: live: `set sv_maplist ""` by hand → auto-restored within ~60 s (logged).
+- [x] T1: live: `set sv_maplist ""` by hand → auto-restored within ~60 s (logged). *(T4, 2026-10-03: `""` cannot be sent over rcon — blanked with `,` and set to `q2dm1` instead; restored in 22 s and 60 s, observed by reading the cvar back. The API's own warn line was not captured — see tracker.)*
 - [ ] T2: unit tests 1–11 pass; `curl` with `{"command":"map"}` returns 400 and the server console shows NO corresponding `Rcon from` map line. **Committed.**
 - [ ] T3: `npm run test` green including the 7 new applyLogic cases; `npm run lint` + `npm run build` clean. **Committed.**
-- [ ] T4: fraglimit match-end rotation completes on the live server with a qbots fleet connected — no `maps/.bsp`, no game shutdown; results recorded in tracker. **Committed.**
+- [x] T4: fraglimit match-end rotation completes on the live server with a qbots fleet connected — no `maps/.bsp`, no game shutdown; results recorded in tracker. **Committed.** *(2026-10-03: q2dm2 → q2dm3 via `sv_maplist`, 4 bots back, server online; fraglimit set to the current top score, not 5 — see tracker.)*
 - [ ] SERIES.md updated with Plan 12; plan + tracker moved to `completed/` when done.
 
 ---

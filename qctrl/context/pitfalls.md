@@ -116,3 +116,48 @@ response as "4086 chars"). Fixed to slice `buf[4..n]` using the actual `recv` co
 - qctrl: `crates/rcon/src/lib.rs` (`ServerQuery`)
 - qctrl: `crates/api/src/oob.rs` (reply parser), `crates/api/src/status_cache.rs` (hybrid poller, player merge)
 - vendor/q2repro: `src/server/main.c:425` (SV_StatusString), `src/server/main.c:2189` (sv_status_show/sv_status_limit defaults)
+
+# `just fe-test` / `npm run testall` Drives the LIVE Server — Never Use It as a Gate
+
+`testall` is `lint && build && node e2e-test.js`, and `e2e-test.js` is not a mock: it
+talks to a hard-coded `http://cosmo.lan:3000/api`. Whenever a qctrl API is up on cosmo
+(it binds `0.0.0.0:3000`, so `localhost` and `cosmo.lan` are the same server), the "test"
+runs its apply flows against the real Q2 server. Seen 2026-10-03 during Plan 12 T4, with a
+bot fleet connected: in 11 s it sent `dmflags 0` and **never restored it** (server had
+17424), flipped `timelimit` and `fraglimit`, fired three `map` restarts, and deleted the
+pre-existing favorite `q2dm1` — its cleanup deletes `maps[0]` even when the add was a
+no-op because the map was already a favorite. The output gives no hint any of this
+happened. Same run: `_nm`'s `ln -sfn node_modules.gentoo node_modules` dropped a
+self-referencing link *inside* `frontend/node_modules` because that path was a real
+directory, not the per-env symlink.
+
+How to avoid: as a pre-commit gate, run vitest alone — `cd frontend && npm run test` (it
+already excludes `**/e2e/**`) — plus `npm run lint` / `npm run build` if needed. Treat
+`fe-test`, `testall` and `fe-e2e` as live operations: only with the operator's go-ahead,
+after snapshotting `dmflags`/`timelimit`/`fraglimit`/map and `favorites.json`, and diff
+them afterwards. If `frontend/node_modules` is a real directory, `just fe-*` leaves litter
+in it — check `ls -la frontend/node_modules | grep node_modules.` after.
+
+## Sources
+- qctrl: `frontend/e2e-test.js` (`API_BASE`, `testFavorites`), `frontend/package.json` (`testall`), `justfile` (`fe-test`, `_nm`)
+- qctrl: Plan 12 tracker (T4 gate incident, Follow-up 2)
+
+# Live-Testing a Match End: Set fraglimit to the Current Top Score, Not a Round Number
+
+A `roster-lite` qbots fleet frags slowly — top score 3 after 10 minutes — so the plan's
+"fraglimit 5, let a match end" sat for 10 minutes and proved nothing. A timelimit end is
+the wrong substitute when the point is the game's own `sv_maplist` rotation: qctrl's
+rotator preempts at `timelimit - 5 s` and fires its own `map <next>` (Random mode), so the
+server never reaches `EndDMLevel`'s `sv_maplist` walk at all.
+
+How to avoid: read the scores (`/api/status` → `players[].score`), then set `fraglimit` to
+the current top score. `CheckDMRules` ends the match on the next frame through exactly the
+same `EndDMLevel` → intermission path; bots press ATTACK after the 5 s minimum and the
+changelevel lands ~8 s later. The prediction is crisp: the next map is the `sv_maplist`
+successor of the current one, and the absence of a `Rotating to` line on the API log
+stream (`/api/logs/ws`) proves the rotator didn't do it. Scores reset on the new map, so
+the match can't cascade; still restore `fraglimit 0` as soon as the map changes.
+
+## Sources
+- qctrl: Plan 12 tracker (T4 step 4, runs 1 and 2); `crates/api/src/rotator.rs` (`EARLY_FIRE_SECONDS`)
+- yquake2: `src/game/g_main.c` (`CheckDMRules`, `EndDMLevel`)
