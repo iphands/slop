@@ -494,7 +494,7 @@ Priority values: `P0` = blocking, `P1` = important, `P2` = nice-to-have.
 - [x] T2: gate probes and gate-project shape probes all `HIT`; the Baseline line records a real run of steps 1–5 (or step 4 explicitly "not run — <reason>").
 - [x] T3: format/header/naming/style/templates probes all `HIT`; no foreign text or `{{`; `hp-scan` shows no `RULES.md:169` dead reference.
 - [x] T4: `context/AGENTS.md` probes `HIT`; every mapped path exists; `readlink context/CLAUDE.md` → `AGENTS.md`; no `AGENTS.md:66` dead reference.
-- [ ] T5: SERIES probes all `HIT`; `git diff -U0 SERIES.md | grep '^-|'` empty.
+- [x] T5: SERIES probes all `HIT`; `git diff -U0 SERIES.md | grep '^-|'` empty.
 - [ ] T6: `hp-scan` `ROOTFILE … block=v1`, no `DEADREF`; `readlink CLAUDE.md` → `AGENTS.md`; declined items listed in the tracker.
 - [ ] T7: five `FILE … stamp=v1`; every id found by `--section`; `/hands-plan resync` reports 0 ADD / 0 UPDATE / 0 SHAPE.
 - [ ] All: the project gate (Rule A) passes on the final commit.

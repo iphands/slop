@@ -1,8 +1,29 @@
 # qctrl Plan Series
 
 This document tracks the dependency chain and status of all plans for the qctrl project.
+**Read this before creating a plan. Update it whenever a plan is added, starts, completes, or is
+abandoned** — in the same commit as that change.
+
+Plan status: `pending` | `in-progress` | `blocked` | `done` | `abandoned`.
+Plans further out are intentionally light: an untouched pending plan is a **hypothesis, not a
+contract** — re-read and revise it before starting (RULES.md Rule C).
 
 **Next free plan number: `15`.**
+
+> **North star (user directive, 2026-10-04):** qctrl keeps an unattended Q2 server healthy:
+> rotation, guards and status run headless; the UI is a convenience, not a dependency. <!-- hp:north-star -->
+>
+> **Ordering principle:** Safety of the live server first (guards, sync), then headless behavior,
+> then UI.
+
+## Currently Active <!-- hp:active -->
+
+<!-- One line per in-progress plan, in the order they should be worked:
+     - **Plan NN** — <title>: in progress, X/Y tasks done; next TN (<short title>).
+     When nothing is in progress: "None in progress — next up: Plan NN (`/hands-plan resume NN`)." -->
+
+- **Plan 14** — hands-plan v1 Migration: in progress, 5/7 tasks done; next T6 (root `AGENTS.md`
+  block, de-dup, `CLAUDE.md` link).
 
 ## Plan Dependencies
 
@@ -62,12 +83,22 @@ reads the value back), and `e2e-test.js` mutating the live server from inside
 5. **Phase 5 (QA)**: Plan 10
 6. **Phase 6 (Release)**: Plan 11
 
-## Completed Plans
+## Abandoned / Superseded <!-- hp:abandoned -->
 
-Completed plans are moved to `context/plans/completed/`.
+| Plan | Reason | Superseded by | Date |
+|------|--------|---------------|------|
+
+*(Record the reason. A plan dropped without one gets re-attempted six months later by someone who
+doesn't know it failed.)*
 
 ## Notes
 
 - Plans are numbered sequentially
 - Sub-plans use `NN_N_name` format (e.g., `02_1_map_scanner`)
 - Trackers pair with each plan: `NN_name_tracker.md`
+
+---
+
+Completed plans move to `completed/`, abandoned ones to `abandoned/` (RULES.md Rule C). When this
+file passes ~30 KB, move the narrative of fully closed series to `completed/SERIES_ARCHIVE.md` and
+leave one summary row per series here.
