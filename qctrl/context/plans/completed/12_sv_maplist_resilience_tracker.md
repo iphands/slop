@@ -1,7 +1,7 @@
 # sv_maplist Resilience + Empty-Map Guards — Tracker
 
 ## Overview
-- Status: 100% complete (4/4) — T4 executed live 2026-10-03; one open anomaly (Follow-ups)
+- Status: 100% complete (4/4) — closed 2026-10-04; Follow-ups 1–2 open (tracker only)
 - Start date: 2026-07-12
 - Incident reference: server died on `ERROR: Couldn't load maps/.bsp` (2026-07-12)
   when a qbots fleet ended a fraglimit match while `sv_maplist` was empty.
@@ -11,7 +11,8 @@
   server moved to noir.)
 
 ## Resume Instructions
-All four tasks are closed; next is `/hands-plan close 12` (carry the Follow-ups).
+**Closed 2026-10-04** and moved to `context/plans/completed/`. Follow-ups 1–2 below are
+open; they were deliberately not registered as SERIES plans.
 Read Plan 12 in full — the Context section carries the incident forensics and the
 design constraints (check-then-push, never push empty, never push on unparseable
 reply). T1/T2 are pure-Rust in `crates/api`; T3 is frontend (vitest); T4 needs the
@@ -117,7 +118,7 @@ table in the plan; implement to those tables.
 |---|------|-----|-------|
 | 1 | **Step-1 anomaly: `sv_maplist` was `q2dm1` 74 s after API start**, after the startup push and the ~13:44:46 watchdog tick should both have set the full list | Unexplained. The same watchdog repaired the identical `q2dm1` state in 60 s later (step 2c). Leads: the fleet connected at 13:44:47, the same second as that tick — a lost/garbled reply is logged only at `debug` (`sv_maplist check skipped`) or parses as `None` (no push, by design); and `push_sv_maplist` maps *any* reply to `Ok`, so a push the server rejected still logs `Synced sv_maplist`. yquake2 has no rcon rate limiter, so throttling is not the cause. Next: capture the API's stdout from a cold start (`RUST_LOG=debug`), and consider verifying the push by reading the cvar back (the rcon pitfall's own advice) | `crates/api/src/main.rs` (`push_sv_maplist`, `spawn_sv_maplist_watchdog`) |
 | 2 | **`e2e-test.js` mutates a live server and is wired into `testall`/`just fe-test`** | Hard-coded `cosmo.lan:3000`; leaves `dmflags 0`; deletes a pre-existing favorite. Make it opt-in (env var for the target, refuse without it), snapshot + restore the cvars it touches, and only delete a favorite it actually added | `frontend/e2e-test.js`, `frontend/package.json` (`testall`), `justfile` (`fe-test`) |
-| 3 | Plan 12 T4 step 2 text still says `rcon set sv_maplist ""` | Invalid as written (see Notes) — use `set sv_maplist ,` | `12_sv_maplist_resilience.md` T4 |
+| 3 | ~~Plan 12 T4 step 2 text still says `rcon set sv_maplist ""`~~ **RESOLVED (close):** annotated in the plan as invalid as written | Invalid as written (see Notes) — use `set sv_maplist ,` | `12_sv_maplist_resilience.md` T4 |
 
 ## Live Verification Log
 

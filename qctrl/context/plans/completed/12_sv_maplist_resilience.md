@@ -1,6 +1,6 @@
 # Plan 12 — sv_maplist Resilience + Empty-Map Guards
 
-> **Status**: in-progress (T1–T4 done; close pending — open Follow-ups in the tracker)
+> **Status**: done (closed 2026-10-04; open Follow-ups in the tracker)
 > **Created**: 2026-07-12
 > **Depends on**: Plan 11 (deployed API), rotation feature (post-Plan-11, unplanned)
 > **Goal**: The Q2 server can never again crash on `maps/.bsp` — `sv_maplist` is continuously re-synced, and every path that could emit a `map`/`gamemap` command with an empty or bogus argument is guarded at the API and frontend layers.
@@ -395,6 +395,10 @@ Protocol — record every result in the tracker:
    must log the `sv_maplist drifted … re-pushing` warning and
    `rcon sv_maplist` must show the queue again. This is THE regression test
    for the incident.
+   *(Invalid as written — found in T4, 2026-10-03: `set sv_maplist ""` cannot be
+   sent over rcon; the empty quoted token is lost when the server rebuilds the
+   command from argv, and `set` replies with usage. Use `set sv_maplist ,`, which
+   is zero maps to both the game and the watchdog. See tracker.)*
 3. **Guard checks** (expect HTTP 400 + no server console `Rcon from` line for
    the map command):
    - `curl -X POST …/api/rcon/execute -d '{"command":"map"}'`
@@ -429,29 +433,42 @@ Protocol — record every result in the tracker:
    `/api/rcon/execute` errors before choosing between plain `400` and
    `400 + JSON body`; keep the UI's error toast working. Mitigation: grep
    `frontend/src/lib/api.ts` for the execute call's error handling first.
+   **RESOLVED (T2):** `executeRcon` throws on any `!res.ok`, so a bare 400 keeps
+   the error path working; the refusal is also broadcast as an `ERROR` log line.
 2. **rcon flood protection** — the extra 1 query/min is negligible, but if the
    loop ever logs `Bad rcon_password` style replies, that is throttling, not a
    wrong password; the unparseable-reply → no-push rule already covers it.
    Do not "fix" the password on that symptom.
+   **RESOLVED (T1, T4):** unparseable → no push is implemented and unit-tested
+   (`throttle_reply_is_unparseable`, `unparseable_reply_is_never_drift`). The live
+   server (yquake2) has no rcon rate limiter at all, so it never throttles.
 3. **Server console noise** — every rcon command echoes on the server console.
    Steady-state addition is one `sv_maplist` query per minute. If the operator
    objects, raise the interval to 300 s (do not go below 30 s).
+   **RESOLVED (T1):** kept at 60 s; no objection from the operator.
 4. **`interval` first-tick-immediate** overlaps the startup push (two pushes in
    the first minute if the server was empty). Harmless — `set` is idempotent.
+   **RESOLVED (T1):** accepted as designed. See tracker Follow-up 1 for a related
+   open anomaly at startup.
 5. **Frontend `'unknown'` literal** appears in `ServerStatusSync` (existing) and
    the new guards — keep the `UNKNOWN_MAPS` set in ONE exported place
    (`applyLogic.ts`) and import it, so the sentinel can't drift.
+   **RESOLVED (T3):** `UNKNOWN_MAPS` and `isKnownMap` live only in
+   `applyLogic.ts`, and `RestartMap` imports them. `ServerStatusSync` only
+   *produces* the `'unknown'` fallback, which `isKnownMap` recognises.
 6. **Do not** touch rotation "Random" mode or `next_map()` dead code in this
    plan (noted in Key Facts; separate cleanup if ever).
+   **RESOLVED (superseded by `df8de260f`):** `next_map()` is gone and Random lives in
+   `rotator::select_next` (see Follow-up below).
 
 ## Verification Checklist
 
-- [ ] T1: `cargo build` + `cargo clippy` zero warnings; new unit tests 1–9 pass (`cargo test -p qctrl-api` or workspace equivalent). **Committed.**
+- [x] T1: `cargo build` + `cargo clippy` zero warnings; new unit tests 1–9 pass (`cargo test -p qctrl-api` or workspace equivalent). **Committed.** *(Close, 2026-10-04: cases 1–9 map to `parses_cvar_echo` … `surrounding_whitespace_is_not_drift`; clippy `-D warnings` clean, `cargo test` 163 pass on HEAD; `15234be02` + `0ea97f490`.)*
 - [x] T1: live: `set sv_maplist ""` by hand → auto-restored within ~60 s (logged). *(T4, 2026-10-03: `""` cannot be sent over rcon — blanked with `,` and set to `q2dm1` instead; restored in 22 s and 60 s, observed by reading the cvar back. The API's own warn line was not captured — see tracker.)*
-- [ ] T2: unit tests 1–11 pass; `curl` with `{"command":"map"}` returns 400 and the server console shows NO corresponding `Rcon from` map line. **Committed.**
-- [ ] T3: `npm run test` green including the 7 new applyLogic cases; `npm run lint` + `npm run build` clean. **Committed.**
+- [x] T2: unit tests 1–11 pass; `curl` with `{"command":"map"}` returns 400 and the server console shows NO corresponding `Rcon from` map line. **Committed.** *(Cases 1–11 are covered by 5 grouped tests, green on HEAD; 400 seen live in T4 step 3. The server console isn't reachable from cosmo. Instead, the API log stream shows the refusal and no `Executing:` line, and `validate_rcon_command` runs before any rcon call. `605d43dbb`.)*
+- [x] T3: `npm run test` green including the 7 new applyLogic cases; `npm run lint` + `npm run build` clean. **Committed.** *(Close, 2026-10-04: vitest 31 pass, including 7 in `applyLogic.test.ts`; lint and build clean on HEAD; `26c6fabbc`.)*
 - [x] T4: fraglimit match-end rotation completes on the live server with a qbots fleet connected — no `maps/.bsp`, no game shutdown; results recorded in tracker. **Committed.** *(2026-10-03: q2dm2 → q2dm3 via `sv_maplist`, 4 bots back, server online; fraglimit set to the current top score, not 5 — see tracker.)*
-- [ ] SERIES.md updated with Plan 12; plan + tracker moved to `completed/` when done.
+- [x] SERIES.md updated with Plan 12; plan + tracker moved to `completed/` when done. *(Close commit, 2026-10-04.)*
 
 ---
 
