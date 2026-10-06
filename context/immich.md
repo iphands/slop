@@ -21,7 +21,7 @@ removeOnFail: false`. So REST alone cannot count throughput. Best you can do is 
 
 ## Telemetry (Prometheus via OTel) — exact per-job counters
 - Enable: `IMMICH_TELEMETRY_INCLUDE=all` or comma list `api,host,io,job,repo` (also `IMMICH_TELEMETRY_EXCLUDE`). Server container only.
-- Ports: API worker `8081`, microservices worker `8082`. **Jobs run in microservices → scrape `:8082/metrics`.** Expose the port on `immich_server`.
+- Ports: API worker `8081`, microservices worker `8082` (override: `IMMICH_API_METRICS_PORT`, `IMMICH_MICROSERVICES_METRICS_PORT`; or just map e.g. `18082:8082` when the host port is taken). **Jobs run in microservices → scrape `:8082/metrics`.** Expose the port on `immich_server`.
 - `telemetry.service.ts`:
   - `JobSuccess` → counter `immich.jobs.<snake(job.name)>.<success|skipped|failed>` (only when the handler returns a JobStatus)
   - `JobError` → `...failed`
@@ -29,6 +29,7 @@ removeOnFail: false`. So REST alone cannot count throughput. Best you can do is 
   - `QueueStart` → counter `immich.queues.<queue>.started`
 - Prometheus name: dots→`_`, counters get `_total`, e.g. `immich_jobs_asset_generate_thumbnails_success_total`,
   plus labels like `otel_scope_name`. Counters reset when the worker restarts.
+- Other groups: `host` = nestjs-otel hostMetrics (process/CPU/mem); `api` = HTTP server durations + `immich_users_total`; `repo` = histogram `immich_<class>_<method>_duration` (ms) for every repository method (DB/media/ML call latency — good for finding the slow step inside a job).
 - Job names are per job (`asset_generate_thumbnails`, `asset_extract_metadata`, …), not per queue. One queue can run several job names.
 
 ## Tooling
