@@ -1129,3 +1129,23 @@ timing first.
 
 ## Sources
 - immich (deployment on noir, not code): compose `immich` / `immich-database` services
+
+# ONNX Runtime CUDA arena never shrinks — dynamic-shape models ratchet VRAM until OOM
+
+[OBSERVED 2026-10-06] Immich ML container (`release-cuda`, ORT 1.26) sat at ~55 GB with fixed job
+concurrency, then died ~1 h after OCR (PP-OCRv5_server) jobs started: `BFCArena::AllocateRawInternal
+… Failed to allocate memory`, then thousands of `CUBLAS failure 3 … cublasCreate` (new per-thread
+contexts can't get VRAM). Looks like a leak. It isn't: the CUDA EP BFC arena keeps every region it ever
+grabbed while the session lives, and OCR det/rec see a new input shape nearly every image. Immich only
+sets `arena_extend_strategy=kSameAsRequested` (exact-size regions → fragmentation), and the default
+cuDNN `EXHAUSTIVE` search + `cudnn_conv_use_max_workspace=1` add per-shape workspaces. Model TTL never
+fires under constant jobs, so nothing is released. Bench: 150 random shapes, single thread, 6.7→15.5 GB.
+
+How to avoid: per Run, pass `RunOptions.add_run_config_entry("memory.enable_memory_arena_shrinkage",
+"gpu:<id>")` (frees fully-idle regions; ~13% slower per OCR run). Also set `cudnn_conv_algo_search=
+HEURISTIC` and `cudnn_conv_use_max_workspace=0` (no measurable cost). Optionally cap each session with
+`gpu_mem_limit` so one runaway model fails its own requests instead of starving all of them. Same bench
+patched: flat 792 MB. Diagnose by sampling `nvidia-smi --query-compute-apps` per job type. A
+never-falling sawtooth means arena growth, and a straight line means a real leak.
+## Sources
+- immich: `ml-patch/ort.py` (`OrtSession.run`, `_provider_options_default`), `docker-compose.yaml`
