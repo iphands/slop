@@ -13,8 +13,8 @@ services:
       # Pinned to this image's ort.py; re-diff against ml-patch/ort.py.orig when IMMICH_VERSION changes.
       - ./ml-patch/ort.py:/usr/src/immich_ml/sessions/ort.py:ro
     environment:
-      # Keep models loaded in VRAM longer (seconds); default is 300
-      MACHINE_LEARNING_MODEL_TTL: 600
+      # Unload idle models from VRAM sooner (seconds); default is 300
+      MACHINE_LEARNING_MODEL_TTL: 240
       ORT_ARENA_SHRINK: "1"
       ORT_CUDA_CONV_ALGO: HEURISTIC
       ORT_CUDA_CONV_MAX_WS: "0"
