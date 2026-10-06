@@ -30,5 +30,33 @@ services:
     healthcheck:
       disable: false
 
+  # Remote NVENC ffmpeg for immich_server on noir (client: ffmpeg-over-ip/noir-override.yaml).
+  # File I/O is tunneled back to the client, so no shared FS / path mapping. Run ffmpeg-over-ip/fetch.sh first.
+  ffmpeg-over-ip:
+    container_name: ffmpeg_over_ip
+    image: debian:trixie-slim
+    # Server runs the patched jellyfin-ffmpeg next to its own binary, not anything on PATH
+    command: ["/opt/ffoip/ffmpeg-over-ip-server"]
+    ports:
+      - "192.168.2.2:5050:5050"
+    volumes:
+      - ./ffmpeg-over-ip/bin/server:/opt/ffoip:ro
+    environment:
+      FFMPEG_OVER_IP_SERVER_ADDRESS: 0.0.0.0:5050
+      FFMPEG_OVER_IP_SERVER_AUTH_SECRET: ${FFOIP_SECRET:?set FFOIP_SECRET in .env}
+      FFMPEG_OVER_IP_SERVER_LOG: stdout
+      # Per-file sequential readahead over the tunnel (default 2 MiB, max 16 MiB)
+      FFOIP_READAHEAD_BYTES: "16777216"
+      # Default is compute,utility; NVENC/NVDEC need the video libs (libnvidia-encode, nvcuvid)
+      NVIDIA_DRIVER_CAPABILITIES: compute,video,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${FFOIP_GPU:-0}"]
+              capabilities: [gpu, compute, video, utility]
+    restart: unless-stopped
+
 volumes:
   model-cache:

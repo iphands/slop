@@ -1,0 +1,18 @@
+# Client side, for noir's Immich compose. Merge into the `immich` (immich_server) service, or use as
+#   podman-compose -f docker-compose.yml -f noir-override.yaml up -d
+# Stock image; only ffmpeg is swapped. ffprobe stays local (cheap, per-asset, not worth a round trip).
+#
+# Copy bin/client/ffmpeg-over-ip-client (from ./fetch.sh) to noir:/opt/ffoip/ffmpeg-over-ip-client.
+# Put FFOIP_SECRET=<same as cosmo's immich/.env> in noir's compose .env.
+services:
+  immich:
+    volumes:
+      # Mounted name must not contain "ffprobe" (the client picks ffmpeg/ffprobe mode from its own name).
+      # Don't mount over /usr/bin/ffmpeg: fallbackToLocal needs the real one still on PATH.
+      - /opt/ffoip/ffmpeg-over-ip-client:/opt/ffoip/ffmpeg:ro
+    environment:
+      FFMPEG_PATH: /opt/ffoip/ffmpeg                    # fluent-ffmpeg resolves ffmpeg from this
+      FFMPEG_OVER_IP_CLIENT_ADDRESS: 192.168.2.2:5050   # cosmo
+      FFMPEG_OVER_IP_CLIENT_AUTH_SECRET: ${FFOIP_SECRET:?set FFOIP_SECRET in .env}
+      # Connect failure -> run the container's own (CPU) ffmpeg instead of failing the job.
+      FFMPEG_OVER_IP_CLIENT_FALLBACK_TO_LOCAL: "true"

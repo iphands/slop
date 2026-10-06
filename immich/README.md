@@ -65,3 +65,22 @@ Pausing/resuming a queue isn't counted as work: BullMQ moves waiting jobs into `
 2. Watch the `1m` rate settle.
 3. Change concurrency in Admin → Jobs (the worker applies it live), press `r`, and wait ~1m.
 4. Compare. Stop raising concurrency once the 1m rate stops rising, or when CPU/IO saturates.
+
+# Remote NVENC transcoding (noir → cosmo)
+
+The stock `immich_server` on noir uses cosmo's GPU for ffmpeg through
+[ffmpeg-over-ip](https://github.com/steelbrain/ffmpeg-over-ip). File I/O is tunneled back to noir,
+so cosmo needs no NFS mount or path mapping. If cosmo is unreachable, the client falls back to
+noir's own CPU ffmpeg.
+
+1. Run `./ffmpeg-over-ip/fetch.sh` to get the pinned release, sha-checked, into `ffmpeg-over-ip/bin/` (gitignored).
+2. On cosmo, put `FFOIP_SECRET=<openssl rand -hex 32>` in `.env` (gitignored; the compose file
+   requires it), then `docker compose up -d ffmpeg-over-ip`. It listens on `192.168.2.2:5050` and
+   uses GPU `${FFOIP_GPU:-0}`.
+3. On noir, copy `ffmpeg-over-ip/bin/client/ffmpeg-over-ip-client` to `/opt/ffoip/`, put the same `FFOIP_SECRET` in
+   the compose `.env`, merge `ffmpeg-over-ip/noir-override.yaml` into the `immich` service, and recreate it.
+4. In Immich, go to Admin → Video Transcoding and set Hardware acceleration: **NVENC**, Hardware decoding: on.
+
+Check it: run `docker exec immich_server /opt/ffoip/ffmpeg -hide_banner -f lavfi -i testsrc2=d=3 -c:v h264_nvenc /tmp/t.mp4`
+on noir. The file shows up on noir, and `docker logs ffmpeg_over_ip` on cosmo logs the argv.
+Only ffmpeg goes remote; ffprobe stays local.
