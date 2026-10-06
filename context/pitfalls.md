@@ -1149,3 +1149,19 @@ patched: flat 792 MB. Diagnose by sampling `nvidia-smi --query-compute-apps` per
 never-falling sawtooth means arena growth, and a straight line means a real leak.
 ## Sources
 - immich: `ml-patch/ort.py` (`OrtSession.run`, `_provider_options_default`), `docker-compose.yaml`
+
+# BullMQ pause moves waiting → paused: backlog-derived rates spike
+Immich's `/api/queues` reports BullMQ counts (`waiting`, `active`, `delayed`, `paused`, `failed`).
+Pausing a queue moves every waiting job into `paused` at once. Any throughput that is inferred
+from the backlog shrinking, e.g. "done += drop in waiting+active+delayed", sees the whole
+backlog vanish in one poll and books tens of thousands of fake completions. That poisons the
+rate, the totals and the min/max. Resume moves the jobs back, but a rise is ignored as
+"enqueued", so the error never cancels out.
+
+To avoid it, count drops in *all* outstanding work (`waiting+active+delayed+paused`), so
+pause/resume nets to zero, while in-flight `active` jobs that finish during a pause still count.
+Also re-base, counting nothing, on any poll where `isPaused` flips, in case some API version hides
+paused jobs from every count. More generally, a state move is not a completion: before treating
+a counter drop as work, check every bucket the job could have moved into.
+## Sources
+- immich: `src/source.rs` (`Drain::update`, `Backlog::outstanding`)
