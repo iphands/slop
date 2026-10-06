@@ -178,12 +178,8 @@ fn draw_stats(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_jobs(f: &mut Frame, app: &App, area: Rect) {
     let drain = app.mode == Some(Mode::Drain);
-    // Name order (BTreeMap), same as cycle order, so `.` walks down the table.
-    let rows: Vec<(&str, f64, u64)> = app
-        .job_stats
-        .iter()
-        .map(|(name, s)| (name.as_str(), s.rate(60.0).map_or(0.0, |r| r.per_sec), s.total_done()))
-        .collect();
+    // Busiest first, same order as cycling, so `.` walks down the table.
+    let rows = app.job_rows();
 
     let block = Block::bordered().title(if drain { " per queue (1m) " } else { " per job (1m) " });
     if rows.is_empty() {

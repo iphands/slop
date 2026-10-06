@@ -187,11 +187,24 @@ impl App {
         }
     }
 
+    /// `(name, 1m jobs/s, done)` per job/queue: busiest first, then most done, then by name.
+    /// Shared by the table and `,`/`.` cycling so `.` walks down the table.
+    pub fn job_rows(&self) -> Vec<(&str, f64, u64)> {
+        let mut rows: Vec<(&str, f64, u64)> = self
+            .job_stats
+            .iter()
+            .map(|(name, s)| (name.as_str(), s.rate(60.0).map_or(0.0, |r| r.per_sec), s.total_done()))
+            .collect();
+        // Stable sort over BTreeMap order keeps name as the final tiebreak.
+        rows.sort_by(|a, b| b.1.total_cmp(&a.1).then(b.2.cmp(&a.2)));
+        rows
+    }
+
     /// `(name, 1-based position, slot count)` of the current selection, All being slot 1.
     pub fn selection(&self) -> (&str, usize, usize) {
         let slots = self.job_stats.len() + 1;
         match &self.selected {
-            Some(j) => (j, self.job_stats.keys().position(|k| k == j).map_or(0, |i| i + 2), slots),
+            Some(j) => (j, self.job_rows().iter().position(|r| r.0 == j).map_or(0, |i| i + 2), slots),
             None => ("All", 1, slots),
         }
     }
@@ -201,7 +214,7 @@ impl App {
             self.flash = Some((Instant::now(), "nothing to cycle yet: no busy queues / job types seen".into()));
             return;
         }
-        let jobs: Vec<&str> = self.job_stats.keys().map(String::as_str).collect();
+        let jobs: Vec<&str> = self.job_rows().into_iter().map(|r| r.0).collect();
         self.selected = cycle(&jobs, self.selected.as_deref(), dir);
     }
 
