@@ -71,3 +71,15 @@
     `std::thread::scope` (not rayon) for the N-maps-at-once outer parallelism — rayon is
     reserved for within-one-map work so the work-stealing scheduler isn't fighting the outer pool.
     Result: 2.4× wall-clock speedup (8 q2dm maps: 22.9s → 9.5s at --jobs 4).
+
+## Media / Remote Transcoding
+
+### Remote ffmpeg (GPU on another box)
+| | ffmpeg-over-ip (v5) | rffmpeg |
+|---|---|---|
+| Transport | own TCP proto, HMAC-signed argv | SSH |
+| Files | **tunneled back to client** (no NFS, no path mapping) | needs shared FS with identical paths |
+| ffmpeg on server | bundled patched jellyfin-ffmpeg 7.1 (NVENC/NVDEC/tonemap_cuda/VAAPI/QSV) | whatever is installed |
+| Fallback | `fallbackToLocal` on connect failure | local fallback host |
+| Cons | 3rd-party binary sees every file ffmpeg opens; I/O latency on seek-heavy jobs | SSH key/FS plumbing, built for Jellyfin |
+- ffmpeg-over-ip used in: `immich` (noir's immich_server → cosmo NVENC)

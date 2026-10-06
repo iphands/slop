@@ -35,3 +35,13 @@ removeOnFail: false`. So REST alone cannot count throughput. Best you can do is 
 ## Tooling
 - `immich/` (slop) = `immich-jobrate` TUI: polls `:8082/metrics` (exact), falls back to REST drain; 10s/30s/1m/5m rates (1s default poll), graph, ETA.
 - Tuning knob: Admin → Jobs → concurrency per queue (system config `job.<queue>.concurrency`); the worker picks it up live (`QueueService` → `setConcurrency`).
+
+## Remote HW transcoding (no custom image) — ffmpeg-over-ip
+- Immich runs ffmpeg via `fluent-ffmpeg` (`media.repository.ts`, `ffmpeg(input,{niceness:10})`) → honors **`FFMPEG_PATH`**, else `ffmpeg` on PATH. ffprobe: `ffmpeg.ffprobe` + raw `spawn('ffprobe')` → PATH only.
+- Hook: bind-mount the static `ffmpeg-over-ip-client` at e.g. `/opt/ffoip/ffmpeg` + `FFMPEG_PATH=/opt/ffoip/ffmpeg`. Leave `/usr/bin/ffmpeg` alone so `fallbackToLocal` still finds the real one. ffprobe stays local.
+- Client mode comes from its own filename (contains `ffprobe` → ffprobe mode). Config env: `FFMPEG_OVER_IP_{CLIENT,SERVER}_{ADDRESS,AUTH_SECRET}` (both required for env config), `…_CLIENT_FALLBACK_TO_LOCAL`, `…_LOG`, `…_DEBUG`. Codec `rewrites` need a jsonc file.
+- Server always execs the ffmpeg **next to its own binary** (ignores PATH/cwd). Bundled build = 7.1.3-Jellyfin, has `scale_cuda`, `tonemap_cuda`, `hwupload_cuda`, `{h264,hevc,av1}_nvenc`; deps are glibc only → any glibc image (`debian:*-slim`).
+- Docker + nvidia: default `NVIDIA_DRIVER_CAPABILITIES` is `compute,utility` → no libnvidia-encode/nvcuvid → NVENC fails. Add `video` (env + `capabilities: [gpu, compute, video, utility]`).
+- Tuning: `FFOIP_READAHEAD_BYTES` (server, default 2 MiB, max 16 MiB per file), `FFOIP_RANGE_CACHE_BYTES` (default 256 MiB, backward seeks).
+- Immich side: Admin → Video Transcoding → HW accel `NVENC` + hardware decoding. No local GPU probe: device discovery is only `getVideoInterfaces()` (`/dev/dri` + mali, for VAAPI/QSV/RKMPP); NVENC just builds args. On a failed HW transcode `media.service.ts` retries with less HW accel (ends in software).
+- slop setup: `immich/docker-compose.yaml` service `ffmpeg-over-ip` (cosmo), `immich/ffmpeg-over-ip/{fetch.sh,noir-override.yaml}`.
