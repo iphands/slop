@@ -152,7 +152,7 @@ fn draw_stats(f: &mut Frame, app: &App, area: Rect) {
         ),
     ]));
 
-    if let Some(q) = app.queue {
+    if let Some(q) = app.view_queue() {
         let b = q.backlog;
         let mut spans = vec![
             label("queue"),
@@ -177,37 +177,44 @@ fn draw_stats(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_jobs(f: &mut Frame, app: &App, area: Rect) {
-    // Name order (BTreeMap), same as Tab order, so Tab walks down the table.
+    let drain = app.mode == Some(Mode::Drain);
+    // Name order (BTreeMap), same as cycle order, so `.` walks down the table.
     let rows: Vec<(&str, f64, u64)> = app
         .job_stats
         .iter()
-        .map(|(job, s)| (job.as_str(), s.rate(60.0).map_or(0.0, |r| r.per_sec), s.total_done()))
+        .map(|(name, s)| (name.as_str(), s.rate(60.0).map_or(0.0, |r| r.per_sec), s.total_done()))
         .collect();
 
-    let block = Block::bordered().title(" per job (1m) ");
+    let block = Block::bordered().title(if drain { " per queue (1m) " } else { " per job (1m) " });
     if rows.is_empty() {
-        let msg = match app.mode {
-            Some(Mode::Drain) => "per-job rates need the metrics source",
-            _ => "no jobs seen yet",
-        };
+        let msg = if drain { "no busy queues yet" } else { "no jobs seen yet" };
         f.render_widget(Paragraph::new(msg).fg(Color::DarkGray).block(block), area);
         return;
     }
 
-    let header = Row::new(["job", "jobs/s", "done"]).style(Style::default().fg(Color::Gray).bold());
-    let rows = rows.into_iter().map(|(job, rate, done)| {
-        let style = if app.selected.as_deref() == Some(job) {
+    let mut header = vec![if drain { "queue" } else { "job" }, "jobs/s", "done"];
+    let mut widths = vec![Constraint::Min(16), Constraint::Length(8), Constraint::Length(9)];
+    if drain {
+        header.push("pending");
+        widths.push(Constraint::Length(9));
+    }
+    let header = Row::new(header).style(Style::default().fg(Color::Gray).bold());
+    let rows = rows.into_iter().map(|(name, rate, done)| {
+        let style = if app.selected.as_deref() == Some(name) {
             Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::REVERSED)
         } else if rate > 0.0 {
             Style::default()
         } else {
             Style::default().fg(Color::DarkGray)
         };
-        Row::new([Cell::from(job.to_string()), Cell::from(fmt_rate(rate)), Cell::from(done.to_string())]).style(style)
+        let mut cells = vec![Cell::from(name.to_string()), Cell::from(fmt_rate(rate)), Cell::from(done.to_string())];
+        if drain {
+            let pending = app.queues.get(name).map_or(0, |q| q.backlog.pending());
+            cells.push(Cell::from(pending.to_string()));
+        }
+        Row::new(cells).style(style)
     });
-    let table = Table::new(rows, [Constraint::Min(16), Constraint::Length(8), Constraint::Length(9)])
-        .header(header)
-        .block(block);
+    let table = Table::new(rows, widths).header(header).block(block);
     f.render_widget(table, area);
 }
 
@@ -221,7 +228,11 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         ),
         Style::default().fg(Color::DarkGray),
     )];
-    if let Some(e) = app.errors.first() {
+    if let Some((at, msg)) = &app.flash
+        && at.elapsed().as_secs_f64() < 3.0
+    {
+        spans.push(Span::styled(format!(" {msg}"), Style::default().fg(Color::Yellow)));
+    } else if let Some(e) = app.errors.first() {
         spans.push(Span::styled(format!(" {e}"), Style::default().fg(Color::Red)));
     }
     f.render_widget(Paragraph::new(Line::from(spans)), area);

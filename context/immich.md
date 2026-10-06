@@ -17,7 +17,7 @@ Queue names are camelCase: `thumbnailGeneration`, `metadataExtraction`, `smartSe
 **`completed` is always 0**: `config.repository.ts` builds BullMQ opts with `removeOnComplete: true,
 removeOnFail: false`. So REST alone cannot count throughput. Best you can do is backlog drain:
 Δ(waiting+active+delayed) + Δfailed per poll, which reads low while jobs are still being enqueued.
-`failed` is monotonic (kept).
+`failed` is monotonic (kept). Track drain **per queue** and sum: downstream queues (metadata → thumbnails/OCR/faces/smartSearch) fill while upstream drains, so diffing the summed backlog cancels real work out.
 
 ## Telemetry (Prometheus via OTel) — exact per-job counters
 - Enable: `IMMICH_TELEMETRY_INCLUDE=all` or comma list `api,host,io,job,repo` (also `IMMICH_TELEMETRY_EXCLUDE`). Server container only.

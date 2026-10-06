@@ -41,7 +41,11 @@ export IMMICH_URL=http://nas:2283 IMMICH_API_KEY=...      # admin key with queue
 
 Keys: `.`/`,` (or `Tab`/`Shift-Tab`) cycle the view All → each job type → All · `a` back to All · `r` reset stats · `+`/`-` zoom graph window (30s … 30m) · `q`/Esc quit.
 
-The graph and stats panel follow the selected view (All = sum of every job type matching `--job`). The per-job table is in the same order as `.` and highlights the selection. Job types only appear in metrics mode. ETA divides the `--queue` backlog by the viewed rate, so pick the job that belongs to that queue.
+The graph and stats panel follow the selected view. What you cycle through depends on the source:
+- **metrics** mode: job types (All = sum of every job type matching `--job`). ETA divides the `--queue` backlog by the viewed rate, so pick the job that belongs to that queue.
+- **REST drain** mode: queues that have had work since start (All = sum of per-queue drains). The queue line and ETA follow the selected queue.
+
+The table on the right is in cycle order and highlights the selection.
 
 Graph: 5s avg (cyan) + 30s avg (yellow); min/max are over the 5s line. A rate prefixed `~` (greyed) means there isn't a full window of history yet.
 
@@ -50,7 +54,7 @@ Graph: 5s avg (cyan) + 30s avg (yellow); min/max are over the 5s line. A rate pr
 Without metrics, "done" = drop in waiting+active+delayed per poll, plus new failures. Anything
 enqueued at the same time hides that many completions. That's fine for draining a big backlog
 ("Missing"/"All" run with nothing else feeding it), wrong during an active upload/library scan.
-Per-job rates need metrics.
+Drain is tracked per queue and then summed, so one queue filling up (e.g. thumbnails fed by metadata extraction) doesn't cancel out another draining.
 
 ## Tuning loop
 

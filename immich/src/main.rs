@@ -115,7 +115,10 @@ pub struct App {
     pub job_stats: BTreeMap<String, Stats>,
     pub mode: Option<Mode>,
     pub queue: Option<QueueState>,
+    pub queues: BTreeMap<String, QueueState>,
     pub errors: Vec<String>,
+    /// Short-lived status message, e.g. after a key press that did nothing.
+    pub flash: Option<(Instant, String)>,
     pub last_poll: Option<Instant>,
     pub view: f64,
     failed: Failed,
@@ -145,7 +148,9 @@ impl App {
             job_stats: BTreeMap::new(),
             mode: None,
             queue: None,
+            queues: BTreeMap::new(),
             errors: Vec::new(),
+            flash: None,
             last_poll: None,
             view,
             failed: Failed::default(),
@@ -174,6 +179,14 @@ impl App {
         }
     }
 
+    /// Backlog for the view: the selected queue in drain mode, else the sum over all queues.
+    pub fn view_queue(&self) -> Option<QueueState> {
+        match (&self.selected, self.mode) {
+            (Some(q), Some(Mode::Drain)) => self.queues.get(q).copied(),
+            _ => self.queue,
+        }
+    }
+
     /// `(name, 1-based position, slot count)` of the current selection, All being slot 1.
     pub fn selection(&self) -> (&str, usize, usize) {
         let slots = self.job_stats.len() + 1;
@@ -184,6 +197,10 @@ impl App {
     }
 
     fn cycle(&mut self, dir: i32) {
+        if self.job_stats.is_empty() {
+            self.flash = Some((Instant::now(), "nothing to cycle yet: no busy queues / job types seen".into()));
+            return;
+        }
         let jobs: Vec<&str> = self.job_stats.keys().map(String::as_str).collect();
         self.selected = cycle(&jobs, self.selected.as_deref(), dir);
     }
@@ -193,6 +210,7 @@ impl App {
         self.last_poll = Some(at);
         self.errors = s.errors;
         self.queue = s.queue;
+        self.queues = s.queues;
 
         let Some((mode, done)) = s.done else { return };
         if self.mode != Some(mode) {
@@ -201,8 +219,26 @@ impl App {
             self.mode = Some(mode);
         }
         self.stats.push(t, done);
-        for (job, count) in &s.per_job {
-            self.job_stats.entry(job.clone()).or_insert_with(|| Stats::new(self.history)).push(t, count.done());
+        let history = self.history;
+        match mode {
+            Mode::Metrics => {
+                for (job, count) in &s.per_job {
+                    self.job_stats.entry(job.clone()).or_insert_with(|| Stats::new(history)).push(t, count.done());
+                    self.job_failed.entry(job.clone()).or_default().update(count.failed);
+                }
+            }
+            Mode::Drain => {
+                // Cycle through queues instead of job types. Only queues that have had work show up,
+                // and once in they stay, so the order doesn't shift as they drain.
+                for (name, &queue_done) in &s.per_queue_done {
+                    let Some(q) = self.queues.get(name) else { continue };
+                    let busy = q.backlog.pending() > 0 || q.backlog.failed > 0;
+                    if busy || self.job_stats.contains_key(name) {
+                        self.job_stats.entry(name.clone()).or_insert_with(|| Stats::new(history)).push(t, queue_done);
+                        self.job_failed.entry(name.clone()).or_default().update(q.backlog.failed);
+                    }
+                }
+            }
         }
 
         let failed_now = match mode {
@@ -210,9 +246,6 @@ impl App {
             Mode::Drain => s.queue.map_or(0, |q| q.backlog.failed),
         };
         self.failed.update(failed_now);
-        for (job, count) in &s.per_job {
-            self.job_failed.entry(job.clone()).or_default().update(count.failed);
-        }
     }
 
     fn zoom(&mut self, dir: i32) {
@@ -325,6 +358,54 @@ mod tests {
         assert_eq!(cycle(&jobs, Some("gone"), 1).as_deref(), Some("a_job")); // unknown counts as All
         assert_eq!(cycle(&[], None, 1), None);
         assert_eq!(cycle(&[], None, -1), None);
+    }
+
+    fn test_app() -> App {
+        App::new(&Args::parse_from(["immich-jobrate", "--url", "http://x:2283", "--api-key", "k"]))
+    }
+
+    fn drain_sample(queues: &[(&str, u64)]) -> Sample {
+        use source::Backlog;
+        let queues: BTreeMap<String, QueueState> = queues
+            .iter()
+            .map(|&(n, waiting)| (n.to_string(), QueueState { backlog: Backlog { waiting, ..Default::default() }, is_paused: false }))
+            .collect();
+        let per_queue_done = queues.keys().map(|n| (n.clone(), 0)).collect();
+        Sample {
+            done: Some((Mode::Drain, 0)),
+            queue: Some(source::aggregate(&queues)),
+            queues,
+            per_queue_done,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn drain_mode_cycles_busy_queues() {
+        let mut app = test_app();
+        app.ingest(Instant::now(), drain_sample(&[("ocr", 50), ("library", 0), ("sidecar", 9)]));
+        assert_eq!(app.job_stats.keys().collect::<Vec<_>>(), ["ocr", "sidecar"]);
+
+        assert_eq!(app.view_queue().unwrap().backlog.pending(), 59);
+        app.cycle(1);
+        assert_eq!(app.selected.as_deref(), Some("ocr"));
+        assert_eq!(app.view_queue().unwrap().backlog.pending(), 50);
+        app.cycle(1);
+        assert_eq!(app.selected.as_deref(), Some("sidecar"));
+        app.cycle(1);
+        assert_eq!(app.selected, None);
+
+        // A queue that drains to 0 stays in the cycle.
+        app.ingest(Instant::now(), drain_sample(&[("ocr", 0), ("library", 0), ("sidecar", 9)]));
+        assert!(app.job_stats.contains_key("ocr"));
+    }
+
+    #[test]
+    fn cycle_with_nothing_flashes() {
+        let mut app = test_app();
+        app.cycle(1);
+        assert_eq!(app.selected, None);
+        assert!(app.flash.is_some());
     }
 
     #[test]

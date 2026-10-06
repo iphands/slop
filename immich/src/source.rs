@@ -61,7 +61,12 @@ pub struct Sample {
     /// Monotonic "jobs done" counter, when any source produced one.
     pub done: Option<(Mode, u64)>,
     pub per_job: BTreeMap<String, prom::JobCount>,
+    /// Sum over `queues`.
     pub queue: Option<QueueState>,
+    /// Every queue REST reported (just `--queue` when set).
+    pub queues: BTreeMap<String, QueueState>,
+    /// Per-queue drain counters (see [`Drain`]).
+    pub per_queue_done: BTreeMap<String, u64>,
     pub errors: Vec<String>,
 }
 
@@ -94,6 +99,22 @@ impl Drain {
     }
 }
 
+/// Sum of all queue states; paused only if every queue is.
+pub fn aggregate(queues: &BTreeMap<String, QueueState>) -> QueueState {
+    let mut backlog = Backlog::default();
+    queues.values().for_each(|q| backlog.add(&q.backlog));
+    QueueState { backlog, is_paused: !queues.is_empty() && queues.values().all(|q| q.is_paused) }
+}
+
+/// Keep only `want` (all when `None`), erroring with the known names on a miss.
+fn select(mut all: BTreeMap<String, QueueState>, want: Option<&str>) -> Result<BTreeMap<String, QueueState>> {
+    let Some(name) = want else { return Ok(all) };
+    match all.remove(name) {
+        Some(q) => Ok(BTreeMap::from([(name.to_string(), q)])),
+        None => bail!("queue '{name}' not found; known: {}", all.keys().cloned().collect::<Vec<_>>().join(", ")),
+    }
+}
+
 /// After this many consecutive metrics failures in auto mode, stop trying metrics.
 const METRICS_GIVE_UP: u32 = 3;
 
@@ -101,13 +122,14 @@ pub struct Poller {
     cfg: Config,
     client: Client,
     metrics_failures: u32,
-    drain: Drain,
+    drains: BTreeMap<String, Drain>,
     /// Whether the new `/api/queues` endpoint exists (None until probed).
     new_api: Option<bool>,
 }
 
 #[derive(Deserialize)]
 struct QueueResponse {
+    name: String,
     #[serde(rename = "isPaused")]
     is_paused: bool,
     statistics: Backlog,
@@ -130,7 +152,7 @@ struct LegacyStatus {
 impl Poller {
     pub fn new(cfg: Config, timeout: Duration) -> Result<Self> {
         let client = Client::builder().timeout(timeout).build()?;
-        Ok(Self { cfg, client, metrics_failures: 0, drain: Drain::default(), new_api: None })
+        Ok(Self { cfg, client, metrics_failures: 0, drains: BTreeMap::new(), new_api: None })
     }
 
     fn metrics_enabled(&self) -> bool {
@@ -165,13 +187,21 @@ impl Poller {
         }
 
         if self.cfg.api_key.is_some() && self.cfg.url.is_some() {
-            match self.poll_queue() {
-                Ok(q) => {
-                    let drained = self.drain.update(q.backlog);
+            match self.poll_queues().and_then(|all| select(all, self.cfg.queue.as_deref())) {
+                Ok(queues) => {
+                    // Summing per-queue drains keeps one queue filling up (e.g. thumbnails fed by
+                    // metadata extraction) from cancelling out another one draining.
+                    let mut drained = 0;
+                    for (name, q) in &queues {
+                        let done = self.drains.entry(name.clone()).or_default().update(q.backlog);
+                        sample.per_queue_done.insert(name.clone(), done);
+                        drained += done;
+                    }
                     if sample.done.is_none() && self.cfg.kind != SourceKind::Metrics {
                         sample.done = Some((Mode::Drain, drained));
                     }
-                    sample.queue = Some(q);
+                    sample.queue = Some(aggregate(&queues));
+                    sample.queues = queues;
                 }
                 Err(e) => sample.errors.push(format!("rest: {e:#}")),
             }
@@ -199,56 +229,30 @@ impl Poller {
         Ok(self.client.get(format!("{base}{path}")).header("x-api-key", key).send()?)
     }
 
-    fn poll_queue(&mut self) -> Result<QueueState> {
+    /// Every queue's state, via `/api/queues` or (older servers) the legacy `/api/jobs`.
+    fn poll_queues(&mut self) -> Result<BTreeMap<String, QueueState>> {
         if self.new_api != Some(false) {
-            let path = match &self.cfg.queue {
-                Some(q) => format!("/api/queues/{q}"),
-                None => "/api/queues".to_string(),
-            };
-            let resp = self.get(&path)?;
-            // 404 on the list endpoint means an older server; on /queues/:name it may just be a bad name.
+            let resp = self.get("/api/queues")?;
             if resp.status() == StatusCode::NOT_FOUND && self.new_api.is_none() && self.probe_legacy()? {
                 self.new_api = Some(false);
             } else {
-                let resp = resp.error_for_status()?;
                 self.new_api = Some(true);
-                return Ok(match &self.cfg.queue {
-                    Some(_) => {
-                        let q: QueueResponse = resp.json()?;
-                        QueueState { backlog: q.statistics, is_paused: q.is_paused }
-                    }
-                    None => {
-                        let qs: Vec<QueueResponse> = resp.json()?;
-                        let mut backlog = Backlog::default();
-                        qs.iter().for_each(|q| backlog.add(&q.statistics));
-                        QueueState { backlog, is_paused: !qs.is_empty() && qs.iter().all(|q| q.is_paused) }
-                    }
-                });
+                let qs: Vec<QueueResponse> = resp.error_for_status()?.json()?;
+                return Ok(qs
+                    .into_iter()
+                    .map(|q| (q.name, QueueState { backlog: q.statistics, is_paused: q.is_paused }))
+                    .collect());
             }
         }
-        self.poll_legacy()
+        let all: BTreeMap<String, LegacyQueue> = self.get("/api/jobs")?.error_for_status()?.json()?;
+        Ok(all
+            .into_iter()
+            .map(|(name, q)| (name, QueueState { backlog: q.job_counts, is_paused: q.queue_status.is_paused }))
+            .collect())
     }
 
     fn probe_legacy(&self) -> Result<bool> {
         Ok(self.get("/api/jobs")?.status().is_success())
-    }
-
-    fn poll_legacy(&self) -> Result<QueueState> {
-        let all: BTreeMap<String, LegacyQueue> = self.get("/api/jobs")?.error_for_status()?.json()?;
-        match &self.cfg.queue {
-            Some(name) => {
-                let q = all.get(name).with_context(|| {
-                    format!("queue '{name}' not found; known: {}", all.keys().cloned().collect::<Vec<_>>().join(", "))
-                })?;
-                Ok(QueueState { backlog: q.job_counts, is_paused: q.queue_status.is_paused })
-            }
-            None => {
-                let mut backlog = Backlog::default();
-                all.values().for_each(|q| backlog.add(&q.job_counts));
-                let is_paused = !all.is_empty() && all.values().all(|q| q.queue_status.is_paused);
-                Ok(QueueState { backlog, is_paused })
-            }
-        }
     }
 }
 
@@ -269,6 +273,32 @@ mod tests {
         // Enqueue burst: backlog grows, counter holds (under-counts, never negative).
         assert_eq!(d.update(b(500, 4, 2)), 17);
         assert_eq!(d.update(b(495, 4, 2)), 22);
+    }
+
+    fn qs(entries: &[(&str, u64)]) -> BTreeMap<String, QueueState> {
+        entries.iter().map(|&(n, w)| (n.to_string(), QueueState { backlog: b(w, 0, 0), is_paused: false })).collect()
+    }
+
+    #[test]
+    fn per_queue_drains_dont_cancel() {
+        // metadata drains 10 while thumbnails grows 10: summed backlog is flat, real work is 10.
+        let mut drains: BTreeMap<String, Drain> = BTreeMap::new();
+        let mut total = |all: BTreeMap<String, QueueState>| -> u64 {
+            all.iter().map(|(n, q)| drains.entry(n.clone()).or_default().update(q.backlog)).sum()
+        };
+        assert_eq!(total(qs(&[("metadataExtraction", 100), ("thumbnailGeneration", 0)])), 0);
+        assert_eq!(total(qs(&[("metadataExtraction", 90), ("thumbnailGeneration", 10)])), 10);
+        assert_eq!(aggregate(&qs(&[("a", 90), ("b", 10)])).backlog.pending(), 100);
+    }
+
+    #[test]
+    fn select_filters_queue() {
+        let all = qs(&[("ocr", 5), ("sidecar", 7)]);
+        assert_eq!(select(all.clone(), None).unwrap().len(), 2);
+        let one = select(all.clone(), Some("ocr")).unwrap();
+        assert_eq!(one.keys().collect::<Vec<_>>(), ["ocr"]);
+        let err = select(all, Some("nope")).unwrap_err().to_string();
+        assert!(err.contains("ocr, sidecar"), "{err}");
     }
 
     #[test]
