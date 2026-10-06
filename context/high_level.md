@@ -39,6 +39,13 @@
   - Pros: Pure Rust, works on Windows/Unix/macOS, async support, feature-rich
   - Alternatives: `termion` (Unix-only), `console` (similar features)
 
+### TUI Widgets
+- **ratatui** - Immediate-mode TUI widgets (Chart, Table, Layout) on top of crossterm
+  - Used in: `immich` (jobrate)
+  - Pros: `ratatui::init()/restore()` handle raw mode + panic hook; re-exports crossterm (`ratatui::crossterm`) so no version skew; Braille `Chart` gives smooth line graphs
+  - Cons: Immediate mode = you redraw everything each frame (cheap in practice)
+  - Alternatives: `cursive` (retained mode, callback style), raw crossterm (DIY)
+
 ## Memory & Performance
 
 ### GPU Memory Management

@@ -1087,3 +1087,24 @@ leftover found at close can simply be reworded in the close commit.
 ## Sources
 - skills/hands-plan: `bin/hp-scan` (`LEFT_RE`)
 - qctrl: `context/plans/completed/14_hands_plan_v1_migration*.md`
+
+# Immich REST `completed` job count is always 0 — can't derive throughput from it
+
+[OBSERVED 2026-10-05] `GET /api/queues` (and legacy `/api/jobs`) return BullMQ counts
+`{active, completed, failed, delayed, waiting, paused}`. It looks like `completed` should be a
+monotonic counter you can diff for jobs/sec. It isn't: Immich's `config.repository.ts` sets BullMQ
+`defaultJobOptions.removeOnComplete: true`, so finished jobs are deleted and `completed` stays at
+0. `failed` *is* kept (`removeOnFail: false`) and is monotonic until someone clears failed jobs.
+Diffing waiting+active+delayed ("drain") works only while nothing new is enqueued. Uploads,
+library scans and chained jobs (e.g. thumbnails → smart search) hide completions.
+
+How to avoid: for real throughput, scrape Immich's Prometheus endpoint. Set
+`IMMICH_TELEMETRY_INCLUDE=job` (or `all`) and scrape the **microservices** worker on `:8082/metrics`.
+That's where jobs run; `:8081` is the API worker and has no job counters. Read
+`immich_jobs_<job>_{success,skipped,failed}_total`. Counters are per *job name*, not per queue,
+appear only after the first job of that kind runs, and reset when the worker restarts, so rebase
+on decreases. Use REST only for queue depth / pause state, and label any drain-based rate as a
+lower bound.
+
+## Sources
+- immich: `src/source.rs` (`Drain`, `Poller::poll_metrics`), `src/stats.rs` (`Stats::push` reset rebase)
