@@ -41,6 +41,12 @@ impl Backlog {
         self.active + self.waiting + self.delayed
     }
 
+    /// Everything not yet finished, paused included. Drain counts drops in this, because pausing
+    /// a queue moves its waiting jobs into `paused`, which would look like a huge drain in `pending()`.
+    pub fn outstanding(&self) -> u64 {
+        self.pending() + self.paused
+    }
+
     fn add(&mut self, o: &Backlog) {
         self.active += o.active;
         self.waiting += o.waiting;
@@ -81,20 +87,24 @@ pub struct Config {
 
 /// Synthesizes a "done" counter from a draining backlog: each poll adds whatever the
 /// pending count dropped by, plus new failures. Over-counts nothing, but under-counts
-/// whenever jobs are being enqueued at the same time.
+/// whenever jobs are being enqueued at the same time. A pause/resume flip counts nothing
+/// for that poll, in case the API drops paused jobs from every count.
 #[derive(Debug, Default)]
 pub struct Drain {
-    prev: Option<Backlog>,
+    prev: Option<QueueState>,
     total: u64,
 }
 
 impl Drain {
-    pub fn update(&mut self, cur: Backlog) -> u64 {
-        if let Some(prev) = self.prev {
-            self.total += prev.pending().saturating_sub(cur.pending());
-            self.total += cur.failed.saturating_sub(prev.failed);
+    pub fn update(&mut self, cur: &QueueState) -> u64 {
+        if let Some(prev) = self.prev
+            && prev.is_paused == cur.is_paused
+        {
+            let (p, c) = (prev.backlog, cur.backlog);
+            self.total += p.outstanding().saturating_sub(c.outstanding());
+            self.total += c.failed.saturating_sub(p.failed);
         }
-        self.prev = Some(cur);
+        self.prev = Some(*cur);
         self.total
     }
 }
@@ -193,7 +203,7 @@ impl Poller {
                     // metadata extraction) from cancelling out another one draining.
                     let mut drained = 0;
                     for (name, q) in &queues {
-                        let done = self.drains.entry(name.clone()).or_default().update(q.backlog);
+                        let done = self.drains.entry(name.clone()).or_default().update(q);
                         sample.per_queue_done.insert(name.clone(), done);
                         drained += done;
                     }
@@ -264,15 +274,42 @@ mod tests {
         Backlog { waiting, active, failed, ..Default::default() }
     }
 
+    fn q(backlog: Backlog, is_paused: bool) -> QueueState {
+        QueueState { backlog, is_paused }
+    }
+
     #[test]
     fn drain_counts_backlog_drops_and_failures() {
         let mut d = Drain::default();
-        assert_eq!(d.update(b(100, 4, 0)), 0);
-        assert_eq!(d.update(b(90, 4, 0)), 10);
-        assert_eq!(d.update(b(85, 4, 2)), 17); // 5 drained + 2 newly failed
+        assert_eq!(d.update(&q(b(100, 4, 0), false)), 0);
+        assert_eq!(d.update(&q(b(90, 4, 0), false)), 10);
+        assert_eq!(d.update(&q(b(85, 4, 2), false)), 17); // 5 drained + 2 newly failed
         // Enqueue burst: backlog grows, counter holds (under-counts, never negative).
-        assert_eq!(d.update(b(500, 4, 2)), 17);
-        assert_eq!(d.update(b(495, 4, 2)), 22);
+        assert_eq!(d.update(&q(b(500, 4, 2), false)), 17);
+        assert_eq!(d.update(&q(b(495, 4, 2), false)), 22);
+    }
+
+    #[test]
+    fn pause_and_resume_count_nothing() {
+        let paused = |waiting, active, paused| Backlog { waiting, active, paused, ..Default::default() };
+        let mut d = Drain::default();
+        assert_eq!(d.update(&q(paused(100, 4, 0), false)), 0);
+        // Pause: waiting moves to paused. Not a drain.
+        assert_eq!(d.update(&q(paused(0, 4, 100), true)), 0);
+        // In-flight jobs finishing while paused do count.
+        assert_eq!(d.update(&q(paused(0, 0, 100), true)), 4);
+        // Resume, then real work.
+        assert_eq!(d.update(&q(paused(100, 0, 0), false)), 4);
+        assert_eq!(d.update(&q(paused(90, 0, 0), false)), 14);
+    }
+
+    #[test]
+    fn pause_flip_without_paused_count_is_ignored() {
+        let mut d = Drain::default();
+        assert_eq!(d.update(&q(b(100, 4, 0), false)), 0);
+        // An API that hides paused jobs entirely: the flip poll is re-based, not counted.
+        assert_eq!(d.update(&q(b(0, 4, 0), true)), 0);
+        assert_eq!(d.update(&q(b(0, 2, 0), true)), 2);
     }
 
     fn qs(entries: &[(&str, u64)]) -> BTreeMap<String, QueueState> {
@@ -284,7 +321,7 @@ mod tests {
         // metadata drains 10 while thumbnails grows 10: summed backlog is flat, real work is 10.
         let mut drains: BTreeMap<String, Drain> = BTreeMap::new();
         let mut total = |all: BTreeMap<String, QueueState>| -> u64 {
-            all.iter().map(|(n, q)| drains.entry(n.clone()).or_default().update(q.backlog)).sum()
+            all.iter().map(|(n, q)| drains.entry(n.clone()).or_default().update(q)).sum()
         };
         assert_eq!(total(qs(&[("metadataExtraction", 100), ("thumbnailGeneration", 0)])), 0);
         assert_eq!(total(qs(&[("metadataExtraction", 90), ("thumbnailGeneration", 10)])), 10);

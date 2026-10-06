@@ -57,6 +57,7 @@ enqueued at the same time hides that many completions. That's fine for draining 
 Drain is tracked per queue and then summed, so one queue filling up (e.g. thumbnails fed by metadata extraction) doesn't cancel out another draining.
 A queue with nothing pending reads 0/s at once (`—` in the stats panel) instead of tailing off over the window,
 and when it picks up again its rates start fresh (`~`) rather than averaging in the previous run. Same for All when every queue is empty.
+Pausing/resuming a queue isn't counted as work: BullMQ moves waiting jobs into `paused`, so drain counts drops in waiting+active+delayed+paused, and skips the poll where the pause state flips.
 
 ## Tuning loop
 
