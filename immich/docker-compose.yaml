@@ -1,0 +1,34 @@
+name: immich-ml
+
+services:
+  immich-machine-learning:
+    container_name: immich_machine_learning
+    # Keep this tag in sync with the Immich version running on your NAS
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}-cuda
+    ports:
+      - "192.168.2.2:3003:3003"
+    volumes:
+      - model-cache:/cache
+      # Patched ORT session: GPU arena shrinkage + cuDNN options (VRAM ratchet -> OOM fix).
+      # Pinned to this image's ort.py; re-diff against ml-patch/ort.py.orig when IMMICH_VERSION changes.
+      - ./ml-patch/ort.py:/usr/src/immich_ml/sessions/ort.py:ro
+    environment:
+      # Keep models loaded in VRAM longer (seconds); default is 300
+      MACHINE_LEARNING_MODEL_TTL: 600
+      ORT_ARENA_SHRINK: "1"
+      ORT_CUDA_CONV_ALGO: HEURISTIC
+      ORT_CUDA_CONV_MAX_WS: "0"
+      # ORT_CUDA_MEM_LIMIT_GB: "24"   # per-model cap; enable if VRAM still creeps
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      disable: false
+
+volumes:
+  model-cache:
