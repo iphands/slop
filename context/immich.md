@@ -32,5 +32,5 @@ removeOnFail: false`. So REST alone cannot count throughput. Best you can do is 
 - Job names are per job (`asset_generate_thumbnails`, `asset_extract_metadata`, …), not per queue. One queue can run several job names.
 
 ## Tooling
-- `immich/` (slop) = `immich-jobrate` TUI: polls `:8082/metrics` (exact), falls back to REST drain; 10s/30s/1m/5m rates (5s default poll), graph, ETA.
+- `immich/` (slop) = `immich-jobrate` TUI: polls `:8082/metrics` (exact), falls back to REST drain; 10s/30s/1m/5m rates (1s default poll), graph, ETA.
 - Tuning knob: Admin → Jobs → concurrency per queue (system config `job.<queue>.concurrency`); the worker picks it up live (`QueueService` → `setConcurrency`).

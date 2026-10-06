@@ -33,7 +33,7 @@ export IMMICH_URL=http://nas:2283 IMMICH_API_KEY=...      # admin key with queue
 | `--url` / `IMMICH_URL` | | base URL; the metrics URL defaults to `<host>:8082/metrics` |
 | `--api-key` / `IMMICH_API_KEY` | | enables queue depth, ETA, and REST drain fallback |
 | `--metrics-url` / `IMMICH_METRICS_URL` | `<host>:8082/metrics` | |
-| `--interval` | `5s` | poll period (`1s`, `2s`, …); shorter is jumpier |
+| `--interval` | `1s` | poll period (`500ms`, `5s`, …) |
 | `--job` | all | substring filter on metric job names (`asset_generate_thumbnails`, `asset_extract_metadata`, `smart_search`, …) |
 | `--queue` | all summed | REST queue (`thumbnailGeneration`, `metadataExtraction`, `smartSearch`, `faceDetection`, …) |
 | `--source` | `auto` | `auto` (metrics, else REST drain after 3 failures), `metrics`, `rest` |
