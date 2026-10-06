@@ -1108,3 +1108,24 @@ lower bound.
 
 ## Sources
 - immich: `src/source.rs` (`Drain`, `Poller::poll_metrics`), `src/stats.rs` (`Stats::push` reset rebase)
+
+# Podman's default `podman` network has DNS disabled — compose service names don't resolve
+
+[OBSERVED 2026-10-06] Recreating the Immich stack under podman-compose 1.3.0 crashed the server on
+boot with `Error: getaddrinfo ENOTFOUND immich-database`. Postgres was up and listening, so it
+looked like a startup race. It wasn't. `podman inspect <ctr> --format '{{range $k,$v :=
+.NetworkSettings.Networks}}{{$k}} {{$v.Aliases}}{{end}}'` showed every container on the built-in
+`podman` network with the right aliases. `podman network inspect podman --format '{{.DNSEnabled}}'`
+→ `false`. Aliases are useless without aardvark-dns, and the default network never runs it. The
+`no container with name or ID ... found` lines podman-compose prints first are noise from its
+pre-`up` teardown, not the error.
+
+How to avoid: put services that talk to each other by name on a *user-defined* network: top-level
+`networks: { app: {} }` plus `networks: [app]` per service. podman-compose creates it as
+`<project>_app` with `dns_enabled=true`. Look for whatever pins services to `podman`
+(`network_mode: bridge`, or an external `default` network) and remove it. Debug order: the
+container's networks → that network's `DNSEnabled` → aliases. Don't touch DB settings or retry
+timing first.
+
+## Sources
+- immich (deployment on noir, not code): compose `immich` / `immich-database` services
