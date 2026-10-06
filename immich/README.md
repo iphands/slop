@@ -39,7 +39,9 @@ export IMMICH_URL=http://nas:2283 IMMICH_API_KEY=...      # admin key with queue
 | `--source` | `auto` | `auto` (metrics, else REST drain after 3 failures), `metrics`, `rest` |
 | `--history` | `10m` | samples kept |
 
-Keys: `q`/Esc quit · `r` reset stats · `+`/`-` zoom graph window (30s … 30m).
+Keys: `Tab`/`Shift-Tab` cycle the view All → each job type → All · `a` back to All · `r` reset stats · `+`/`-` zoom graph window (30s … 30m) · `q`/Esc quit.
+
+The graph and stats panel follow the selected view (All = sum of every job type matching `--job`). The per-job table is in the same order as Tab and highlights the selection. Job types only appear in metrics mode. ETA divides the `--queue` backlog by the viewed rate, so pick the job that belongs to that queue.
 
 Graph: 5s avg (cyan) + 30s avg (yellow); min/max are over the 5s line. A rate prefixed `~` (greyed) means there isn't a full window of history yet.
 

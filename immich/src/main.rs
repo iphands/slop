@@ -78,6 +78,32 @@ fn default_metrics_url(base: &str) -> Result<String> {
     Ok(url.to_string())
 }
 
+/// Failures since start/reset; re-bases if the underlying counter goes backwards.
+#[derive(Debug, Default)]
+struct Failed {
+    base: Option<u64>,
+    since: u64,
+}
+
+impl Failed {
+    fn update(&mut self, now: u64) {
+        let base = self.base.get_or_insert(now);
+        if now < *base {
+            *base = now;
+        }
+        self.since = now - *base;
+    }
+}
+
+/// Next selection when cycling All -> jobs (in the given order) -> All by `dir` steps.
+fn cycle(jobs: &[&str], cur: Option<&str>, dir: i32) -> Option<String> {
+    // Slot 0 is All, slot i+1 is jobs[i].
+    let slots = jobs.len() as i32 + 1;
+    let pos = cur.and_then(|c| jobs.iter().position(|j| *j == c)).map_or(0, |i| i as i32 + 1);
+    let next = (pos + dir).rem_euclid(slots);
+    (next > 0).then(|| jobs[next as usize - 1].to_string())
+}
+
 /// Graph zoom levels in seconds.
 const ZOOMS: [f64; 6] = [30.0, 60.0, 120.0, 300.0, 600.0, 1800.0];
 
@@ -92,9 +118,11 @@ pub struct App {
     pub errors: Vec<String>,
     pub last_poll: Option<Instant>,
     pub view: f64,
-    failed_base: Option<u64>,
-    pub failed: u64,
+    failed: Failed,
+    job_failed: BTreeMap<String, Failed>,
     pub target: String,
+    /// Job type the graph/stats follow; `None` = All.
+    pub selected: Option<String>,
 }
 
 impl App {
@@ -120,17 +148,44 @@ impl App {
             errors: Vec::new(),
             last_poll: None,
             view,
-            failed_base: None,
-            failed: 0,
+            failed: Failed::default(),
+            job_failed: BTreeMap::new(),
             target,
+            selected: None,
         }
     }
 
     fn reset(&mut self) {
         self.stats = Stats::new(self.history);
         self.job_stats.clear();
-        self.failed_base = None;
-        self.failed = 0;
+        self.failed = Failed::default();
+        self.job_failed.clear();
+    }
+
+    /// Stats for the selected job, or the total for All (or a job that has vanished after reset).
+    pub fn view_stats(&self) -> &Stats {
+        self.selected.as_ref().and_then(|j| self.job_stats.get(j)).unwrap_or(&self.stats)
+    }
+
+    pub fn view_failed(&self) -> u64 {
+        match &self.selected {
+            Some(j) => self.job_failed.get(j).map_or(0, |f| f.since),
+            None => self.failed.since,
+        }
+    }
+
+    /// `(name, 1-based position, slot count)` of the current selection, All being slot 1.
+    pub fn selection(&self) -> (&str, usize, usize) {
+        let slots = self.job_stats.len() + 1;
+        match &self.selected {
+            Some(j) => (j, self.job_stats.keys().position(|k| k == j).map_or(0, |i| i + 2), slots),
+            None => ("All", 1, slots),
+        }
+    }
+
+    fn cycle(&mut self, dir: i32) {
+        let jobs: Vec<&str> = self.job_stats.keys().map(String::as_str).collect();
+        self.selected = cycle(&jobs, self.selected.as_deref(), dir);
     }
 
     fn ingest(&mut self, at: Instant, s: Sample) {
@@ -154,11 +209,10 @@ impl App {
             Mode::Metrics => s.per_job.values().map(|c| c.failed).sum(),
             Mode::Drain => s.queue.map_or(0, |q| q.backlog.failed),
         };
-        let base = *self.failed_base.get_or_insert(failed_now);
-        if failed_now < base {
-            self.failed_base = Some(failed_now);
+        self.failed.update(failed_now);
+        for (job, count) in &s.per_job {
+            self.job_failed.entry(job.clone()).or_default().update(count.failed);
         }
-        self.failed = failed_now.saturating_sub(self.failed_base.unwrap_or(base));
     }
 
     fn zoom(&mut self, dir: i32) {
@@ -234,6 +288,9 @@ fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App, rx: &mpsc::Receiv
                 KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
                 KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => return Ok(()),
                 KeyCode::Char('r') => app.reset(),
+                KeyCode::Tab => app.cycle(1),
+                KeyCode::BackTab => app.cycle(-1),
+                KeyCode::Char('a') => app.selected = None,
                 KeyCode::Char('+') | KeyCode::Char('=') => app.zoom(-1),
                 KeyCode::Char('-') | KeyCode::Char('_') => app.zoom(1),
                 _ => {}
@@ -255,6 +312,31 @@ mod tests {
         assert_eq!(parse_duration("1.5s").unwrap(), Duration::from_millis(1500));
         assert!(parse_duration("0s").is_err());
         assert!(parse_duration("5d").is_err());
+    }
+
+    #[test]
+    fn cycles_through_all_and_jobs() {
+        let jobs = ["a_job", "b_job", "c_job"];
+        assert_eq!(cycle(&jobs, None, 1).as_deref(), Some("a_job"));
+        assert_eq!(cycle(&jobs, Some("a_job"), 1).as_deref(), Some("b_job"));
+        assert_eq!(cycle(&jobs, Some("c_job"), 1), None); // wraps to All
+        assert_eq!(cycle(&jobs, None, -1).as_deref(), Some("c_job"));
+        assert_eq!(cycle(&jobs, Some("a_job"), -1), None);
+        assert_eq!(cycle(&jobs, Some("gone"), 1).as_deref(), Some("a_job")); // unknown counts as All
+        assert_eq!(cycle(&[], None, 1), None);
+        assert_eq!(cycle(&[], None, -1), None);
+    }
+
+    #[test]
+    fn failed_rebases_on_reset() {
+        let mut f = Failed::default();
+        f.update(10);
+        f.update(13);
+        assert_eq!(f.since, 3);
+        f.update(2); // worker restart
+        assert_eq!(f.since, 0);
+        f.update(4);
+        assert_eq!(f.since, 2);
     }
 
     #[test]

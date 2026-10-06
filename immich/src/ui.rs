@@ -43,12 +43,13 @@ fn fmt_eta(secs: f64) -> String {
 }
 
 fn draw_chart(f: &mut Frame, app: &App, area: Rect) {
-    let now = app.stats.now().unwrap_or(0.0);
+    let stats = app.view_stats();
+    let now = stats.now().unwrap_or(0.0);
     let visible = |series: Vec<(f64, f64)>| -> Vec<(f64, f64)> {
         series.into_iter().filter(|&(t, _)| t >= now - app.view).map(|(t, r)| (t - now, r)).collect()
     };
-    let line = visible(app.stats.avg_series(LINE_WINDOW));
-    let avg = visible(app.stats.avg_series(AVG_WINDOW));
+    let line = visible(stats.avg_series(LINE_WINDOW));
+    let avg = visible(stats.avg_series(AVG_WINDOW));
 
     let peak = line.iter().chain(&avg).map(|&(_, r)| r).fold(0.0, f64::max);
     let y_max = (peak * 1.15).max(1.0);
@@ -69,9 +70,13 @@ fn draw_chart(f: &mut Frame, app: &App, area: Rect) {
     ];
 
     let v = app.view;
+    let (name, pos, slots) = app.selection();
     let title = Line::from(vec![
         " immich jobs/s ".bold(),
-        Span::raw(format!("— {} ", app.target)),
+        Span::raw("— "),
+        Span::styled(name.to_string(), Style::default().fg(Color::Cyan).bold()),
+        Span::styled(format!(" ({pos}/{slots}) "), Style::default().fg(Color::DarkGray)),
+        Span::raw(format!("· {} ", app.target)),
         Span::styled(format!("[{}s window] ", v as u64), Style::default().fg(Color::DarkGray)),
     ]);
     let chart = Chart::new(datasets)
@@ -102,6 +107,7 @@ fn rate_span(r: Option<Rate>) -> Span<'static> {
 }
 
 fn draw_stats(f: &mut Frame, app: &App, area: Rect) {
+    let stats = app.view_stats();
     let label = |s: &str| Span::styled(format!("{s:<9}"), Style::default().fg(Color::Gray));
     let mut lines = Vec::new();
 
@@ -116,7 +122,7 @@ fn draw_stats(f: &mut Frame, app: &App, area: Rect) {
         let mut spans = Vec::new();
         for (name, w) in pair {
             spans.push(label(&format!("last {name}")));
-            let s = rate_span(app.stats.rate(*w));
+            let s = rate_span(stats.rate(*w));
             let pad = 13usize.saturating_sub(s.width());
             spans.push(s);
             spans.push(Span::raw(" ".repeat(pad)));
@@ -124,9 +130,9 @@ fn draw_stats(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(spans));
     }
 
-    let now = app.stats.now().unwrap_or(0.0);
+    let now = stats.now().unwrap_or(0.0);
     let line_rates: Vec<f64> =
-        app.stats.avg_series(LINE_WINDOW).into_iter().filter(|&(t, _)| t >= now - app.view).map(|(_, r)| r).collect();
+        stats.avg_series(LINE_WINDOW).into_iter().filter(|&(t, _)| t >= now - app.view).map(|(_, r)| r).collect();
     if !line_rates.is_empty() {
         let max = line_rates.iter().copied().fold(0.0, f64::max);
         let min = line_rates.iter().copied().fold(f64::INFINITY, f64::min);
@@ -138,11 +144,11 @@ fn draw_stats(f: &mut Frame, app: &App, area: Rect) {
 
     lines.push(Line::from(vec![
         label("done"),
-        Span::raw(format!("{}", app.stats.total_done())),
+        Span::raw(format!("{}", stats.total_done())),
         Span::styled("  failed ", Style::default().fg(Color::Gray)),
         Span::styled(
-            format!("{}", app.failed),
-            if app.failed > 0 { Style::default().fg(Color::Red) } else { Style::default() },
+            format!("{}", app.view_failed()),
+            if app.view_failed() > 0 { Style::default().fg(Color::Red) } else { Style::default() },
         ),
     ]));
 
@@ -157,7 +163,8 @@ fn draw_stats(f: &mut Frame, app: &App, area: Rect) {
         }
         lines.push(Line::from(spans));
 
-        let rate = app.stats.rate(60.0).or_else(|| app.stats.rate(AVG_WINDOW));
+        // ETA uses the viewed rate: only meaningful when the selected job feeds --queue.
+        let rate = stats.rate(60.0).or_else(|| stats.rate(AVG_WINDOW));
         let eta = match rate {
             _ if b.pending() == 0 => "idle".to_string(),
             Some(r) if r.per_sec > 0.0 => fmt_eta(b.pending() as f64 / r.per_sec),
@@ -166,16 +173,16 @@ fn draw_stats(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(vec![label("ETA"), Span::raw(eta)]));
     }
 
-    f.render_widget(Paragraph::new(lines).block(Block::bordered().title(" stats ")), area);
+    f.render_widget(Paragraph::new(lines).block(Block::bordered().title(format!(" stats: {} ", app.selection().0))), area);
 }
 
 fn draw_jobs(f: &mut Frame, app: &App, area: Rect) {
-    let mut rows: Vec<(&str, f64, u64)> = app
+    // Name order (BTreeMap), same as Tab order, so Tab walks down the table.
+    let rows: Vec<(&str, f64, u64)> = app
         .job_stats
         .iter()
         .map(|(job, s)| (job.as_str(), s.rate(60.0).map_or(0.0, |r| r.per_sec), s.total_done()))
         .collect();
-    rows.sort_by(|a, b| b.1.total_cmp(&a.1).then(b.2.cmp(&a.2)));
 
     let block = Block::bordered().title(" per job (1m) ");
     if rows.is_empty() {
@@ -189,7 +196,13 @@ fn draw_jobs(f: &mut Frame, app: &App, area: Rect) {
 
     let header = Row::new(["job", "jobs/s", "done"]).style(Style::default().fg(Color::Gray).bold());
     let rows = rows.into_iter().map(|(job, rate, done)| {
-        let style = if rate > 0.0 { Style::default() } else { Style::default().fg(Color::DarkGray) };
+        let style = if app.selected.as_deref() == Some(job) {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::REVERSED)
+        } else if rate > 0.0 {
+            Style::default()
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
         Row::new([Cell::from(job.to_string()), Cell::from(fmt_rate(rate)), Cell::from(done.to_string())]).style(style)
     });
     let table = Table::new(rows, [Constraint::Min(16), Constraint::Length(8), Constraint::Length(9)])
@@ -202,7 +215,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     let age = app.last_poll.map_or("never".into(), |t| format!("{:.1}s ago", t.elapsed().as_secs_f64()));
     let mut spans = vec![Span::styled(
         format!(
-            " poll {} every {:.1}s · q quit · r reset · +/- zoom ",
+            " poll {} every {:.1}s · tab/S-tab job · a all · r reset · +/- zoom · q quit ",
             age,
             app.interval.as_secs_f64()
         ),
