@@ -215,7 +215,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     let age = app.last_poll.map_or("never".into(), |t| format!("{:.1}s ago", t.elapsed().as_secs_f64()));
     let mut spans = vec![Span::styled(
         format!(
-            " poll {} every {:.1}s · tab/S-tab job · a all · r reset · +/- zoom · q quit ",
+            " poll {} every {:.1}s · , . job · a all · r reset · +/- zoom · q quit ",
             age,
             app.interval.as_secs_f64()
         ),
