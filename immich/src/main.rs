@@ -31,8 +31,8 @@ struct Args {
     #[arg(long, env = "IMMICH_METRICS_URL")]
     metrics_url: Option<String>,
 
-    /// Poll interval, e.g. 1s, 500ms, 10s
-    #[arg(long, default_value = "1s", value_parser = parse_duration)]
+    /// Poll interval, e.g. 5s, 2s, 500ms
+    #[arg(long, default_value = "5s", value_parser = parse_duration)]
     interval: Duration,
 
     /// REST queue name, e.g. thumbnailGeneration (all queues summed when omitted)

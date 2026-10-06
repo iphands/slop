@@ -9,7 +9,7 @@ use crate::App;
 use crate::source::Mode;
 use crate::stats::Rate;
 
-const WINDOWS: [(&str, f64); 4] = [("5s", 5.0), ("30s", 30.0), ("1m", 60.0), ("5m", 300.0)];
+const WINDOWS: [(&str, f64); 4] = [("10s", 10.0), ("30s", 30.0), ("1m", 60.0), ("5m", 300.0)];
 const AVG_WINDOW: f64 = 30.0;
 
 pub fn draw(f: &mut Frame, app: &App) {
