@@ -247,9 +247,18 @@ impl App {
                     let Some(q) = self.queues.get(name) else { continue };
                     let busy = q.backlog.pending() > 0 || q.backlog.failed > 0;
                     if busy || self.job_stats.contains_key(name) {
-                        self.job_stats.entry(name.clone()).or_insert_with(|| Stats::new(history)).push(t, queue_done);
+                        let stats = self.job_stats.entry(name.clone()).or_insert_with(|| Stats::new(history));
+                        stats.push(t, queue_done);
+                        // A drained queue is doing 0/s, and when it picks up again its rate should
+                        // start fresh rather than average in the previous run.
+                        if q.backlog.pending() == 0 {
+                            stats.restart_window();
+                        }
                         self.job_failed.entry(name.clone()).or_default().update(q.backlog.failed);
                     }
+                }
+                if s.queue.is_some_and(|q| q.backlog.pending() == 0) {
+                    self.stats.restart_window();
                 }
             }
         }
@@ -408,9 +417,10 @@ mod tests {
         app.cycle(1);
         assert_eq!(app.selected, None);
 
-        // A queue that drains to 0 stays in the cycle.
+        // A queue that drains to 0 stays in the cycle, and reads 0/s straight away.
         app.ingest(Instant::now(), drain_sample(&[("ocr", 0), ("library", 0), ("sidecar", 9)]));
         assert!(app.job_stats.contains_key("ocr"));
+        assert!(app.job_stats["ocr"].rate(60.0).is_none());
     }
 
     #[test]

@@ -55,6 +55,8 @@ Without metrics, "done" = drop in waiting+active+delayed per poll, plus new fail
 enqueued at the same time hides that many completions. That's fine for draining a big backlog
 ("Missing"/"All" run with nothing else feeding it), wrong during an active upload/library scan.
 Drain is tracked per queue and then summed, so one queue filling up (e.g. thumbnails fed by metadata extraction) doesn't cancel out another draining.
+A queue with nothing pending reads 0/s at once (`—` in the stats panel) instead of tailing off over the window,
+and when it picks up again its rates start fresh (`~`) rather than averaging in the previous run. Same for All when every queue is empty.
 
 ## Tuning loop
 
