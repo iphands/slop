@@ -41,7 +41,7 @@ export IMMICH_URL=http://nas:2283 IMMICH_API_KEY=...      # admin key with queue
 
 Keys: `q`/Esc quit · `r` reset stats · `+`/`-` zoom graph window (30s … 30m).
 
-A rate prefixed `~` (greyed) means there isn't a full window of history yet.
+Graph: 5s avg (cyan) + 30s avg (yellow); min/max are over the 5s line. A rate prefixed `~` (greyed) means there isn't a full window of history yet.
 
 ## REST drain mode caveat
 

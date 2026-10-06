@@ -10,6 +10,8 @@ use crate::source::Mode;
 use crate::stats::Rate;
 
 const WINDOWS: [(&str, f64); 4] = [("10s", 10.0), ("30s", 30.0), ("1m", 60.0), ("5m", 300.0)];
+/// Graph lines: short smoothing (also drives min/max) and the slower trend line.
+const LINE_WINDOW: f64 = 5.0;
 const AVG_WINDOW: f64 = 30.0;
 
 pub fn draw(f: &mut Frame, app: &App) {
@@ -45,19 +47,19 @@ fn draw_chart(f: &mut Frame, app: &App, area: Rect) {
     let visible = |series: Vec<(f64, f64)>| -> Vec<(f64, f64)> {
         series.into_iter().filter(|&(t, _)| t >= now - app.view).map(|(t, r)| (t - now, r)).collect()
     };
-    let inst = visible(app.stats.instant_series());
+    let line = visible(app.stats.avg_series(LINE_WINDOW));
     let avg = visible(app.stats.avg_series(AVG_WINDOW));
 
-    let peak = inst.iter().chain(&avg).map(|&(_, r)| r).fold(0.0, f64::max);
+    let peak = line.iter().chain(&avg).map(|&(_, r)| r).fold(0.0, f64::max);
     let y_max = (peak * 1.15).max(1.0);
 
     let datasets = vec![
         Dataset::default()
-            .name("jobs/s")
+            .name(format!("{}s avg", LINE_WINDOW as u64))
             .marker(Marker::Braille)
             .graph_type(GraphType::Line)
             .style(Style::default().fg(Color::Cyan))
-            .data(&inst),
+            .data(&line),
         Dataset::default()
             .name(format!("{}s avg", AVG_WINDOW as u64))
             .marker(Marker::Braille)
@@ -123,14 +125,14 @@ fn draw_stats(f: &mut Frame, app: &App, area: Rect) {
     }
 
     let now = app.stats.now().unwrap_or(0.0);
-    let inst: Vec<f64> =
-        app.stats.instant_series().into_iter().filter(|&(t, _)| t >= now - app.view).map(|(_, r)| r).collect();
-    if !inst.is_empty() {
-        let max = inst.iter().copied().fold(0.0, f64::max);
-        let min = inst.iter().copied().fold(f64::INFINITY, f64::min);
+    let line_rates: Vec<f64> =
+        app.stats.avg_series(LINE_WINDOW).into_iter().filter(|&(t, _)| t >= now - app.view).map(|(_, r)| r).collect();
+    if !line_rates.is_empty() {
+        let max = line_rates.iter().copied().fold(0.0, f64::max);
+        let min = line_rates.iter().copied().fold(f64::INFINITY, f64::min);
         lines.push(Line::from(vec![
             label("min/max"),
-            Span::raw(format!("{} / {} /s (in view)", fmt_rate(min), fmt_rate(max))),
+            Span::raw(format!("{} / {} /s (5s avg, in view)", fmt_rate(min), fmt_rate(max))),
         ]));
     }
 

@@ -68,16 +68,6 @@ impl Stats {
         (0..=from).rev().find(|&i| self.samples[i].0 <= cutoff).map_or((0, true), |i| (i, false))
     }
 
-    /// Rate between each consecutive pair of samples: `(t, jobs/s)`.
-    pub fn instant_series(&self) -> Vec<(f64, f64)> {
-        self.samples
-            .iter()
-            .zip(self.samples.iter().skip(1))
-            .filter(|(a, b)| b.0 > a.0)
-            .map(|(a, b)| (b.0, (b.1 - a.1) as f64 / (b.0 - a.0)))
-            .collect()
-    }
-
     /// Trailing `window`-second average evaluated at every sample: `(t, jobs/s)`.
     pub fn avg_series(&self, window: f64) -> Vec<(f64, f64)> {
         let mut out = Vec::with_capacity(self.samples.len());
@@ -142,7 +132,7 @@ mod tests {
         s.push(1.0, 110);
         s.push(2.0, 5); // restart: 5 new jobs since reset
         s.push(3.0, 15);
-        let series = s.instant_series();
+        let series = s.avg_series(0.0);
         assert!(series.iter().all(|&(_, r)| r >= 0.0));
         assert_eq!(series.iter().map(|&(_, r)| r).collect::<Vec<_>>(), vec![10.0, 5.0, 10.0]);
         assert_eq!(s.total_done(), 25);
@@ -172,6 +162,6 @@ mod tests {
         let mut s = Stats::new(60.0);
         s.push(0.0, 5);
         assert!(s.rate(5.0).is_none());
-        assert!(s.instant_series().is_empty());
+        assert!(s.avg_series(0.0).is_empty());
     }
 }
