@@ -26,4 +26,15 @@ sleep 5   # let the battery reading settle after resume
 
 e1=$(cat $B/energy_now); t1=$(date +%s); h=$(echo "scale=3;($t1-$t0)/3600"|bc)
 echo "after:  $(cat $B/capacity)%  energy_now=$e1  elapsed=${h}h"
-echo "drain: $(echo "scale=2;($e0-$e1)/1000"|bc) mWh  =  $(echo "scale=1;($e0-$e1)/1000/$h"|bc) mW avg (incl. resume)"
+mw=$(echo "scale=1;($e0-$e1)/1000/$h"|bc)
+echo "drain: $(echo "scale=2;($e0-$e1)/1000"|bc) mWh  =  $mw mW avg (incl. resume)"
+
+# runtime estimate at this drain rate (energy_* are uWh, so /1000 -> mWh; mWh / mW = hours)
+if [ "$(echo "$mw > 0"|bc)" = 1 ]; then
+    full=$(cat $B/energy_full 2>/dev/null || echo "$e1")
+    hn=$(echo "scale=1;$e1/1000/$mw"|bc); hf=$(echo "scale=1;$full/1000/$mw"|bc)
+    echo "est. suspended runtime: ${hn}h ($(echo "scale=1;$hn/24"|bc) days) from now,  ${hf}h ($(echo "scale=1;$hf/24"|bc) days) from full"
+    echo "                        = $(echo "scale=2;100*$mw*1000/$full"|bc) %/hr"
+else
+    echo "est. suspended runtime: n/a (no measurable drain; run longer, and start below ~95%)"
+fi
