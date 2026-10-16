@@ -27,6 +27,8 @@ PCI_BT=0000:01:00.1
 # Side effect: plugging in a charger no longer wakes the machine.
 WAKE_OFF="/sys/class/power_supply/macsmc-battery /sys/class/power_supply/macsmc-ac /sys/class/power_supply/tps6598x-source-psy-*"
 WAKE_STATE=/run/s2idle-trim.wake        # paths we actually disarmed
+BAT=/sys/class/power_supply/macsmc-battery
+BAT_STATE=/run/s2idle-trim.battery      # "epoch energy_now(uWh) status" at pre
 
 log() { logger -t s2idle-trim -- "$*"; echo "s2idle-trim: $*" >&2; }
 loaded() { grep -q "^$1 " /proc/modules; }
@@ -68,7 +70,32 @@ wake_restore() {  # re-arm what we disarmed; with no record, re-arm the whole li
     rm -f "$WAKE_STATE"
 }
 
+bat_pre() {
+    local e st; e=$(cat $BAT/energy_now 2>/dev/null) || return; st=$(cat $BAT/status 2>/dev/null)
+    echo "$(date +%s) $e $st" > "$BAT_STATE"
+    log "battery pre: $(cat $BAT/capacity)% energy_now=${e}uWh status=$st"
+}
+
+bat_post() {  # log drain over the sleep: mWh, mW, %/hr, and est. suspended runtime
+    [ -r "$BAT_STATE" ] || { log "battery post: no pre record"; return; }
+    local t0 e0 st0 t1 e1 st1 full
+    read -r t0 e0 st0 < "$BAT_STATE"; rm -f "$BAT_STATE"
+    t1=$(date +%s); e1=$(cat $BAT/energy_now 2>/dev/null) || return
+    st1=$(cat $BAT/status 2>/dev/null); full=$(cat $BAT/energy_full 2>/dev/null || echo 0)
+    log "battery post: $(cat $BAT/capacity)% energy_now=${e1}uWh status=$st1 $(awk -v t0="$t0" -v t1="$t1" -v e0="$e0" -v e1="$e1" -v full="$full" -v st0="$st0" -v st1="$st1" 'BEGIN {
+        s = t1 - t0; mwh = (e0 - e1) / 1000
+        out = sprintf("slept=%.2fh drained=%.1fmWh", s/3600, mwh)
+        if (st0 != "Discharging" || st1 != "Discharging") out = out " (charger involved: not a drain figure)"
+        else if (s < 600) out = out " (under 10 min: too noisy for a rate)"
+        else if (mwh <= 0) out = out " (no measurable drain; gauge near full?)"
+        else { mw = mwh * 3600 / s
+               out = out sprintf(" avg=%.0fmW = %.2f%%/hr; est. suspended runtime %.0fh (%.1f days) from now, %.0fh from full",
+                                 mw, (full > 0 ? 100 * mw * 1000 / full : 0), e1/1000/mw, e1/1000/mw/24, full/1000/mw) }
+        print out }')"
+}
+
 pre() {
+    bat_pre
     save_state
     wake_off
     log "pre: saved $(tr '\n' ' ' < "$STATE")"
@@ -119,6 +146,7 @@ restore() {
     [ "$NM_WIFI" != disabled ] && t 5 nmcli radio wifi on 2>/dev/null
     [ "$BT_SVC" != inactive ] && t 10 systemctl start bluetooth.service 2>/dev/null
     rm -f "$STATE"
+    bat_post
     return $((1-ok))
 }
 
