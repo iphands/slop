@@ -22,6 +22,7 @@ fail=0
 echo "$out" | grep -q 'NOT loaded' && { echo "FAIL: module(s) not loaded"; fail=1; }
 echo "$out" | grep -q 'wifi netdev: yes' || { echo "FAIL: no wifi netdev"; fail=1; }
 echo "$out" | grep -q 'bt hci0: yes'     || { echo "FAIL: no hci0"; fail=1; }
+echo "$out" | grep -q 'wakeup .*: disabled' && { echo "FAIL: wakeup source(s) left disabled"; fail=1; }
 st=$(nmcli -t -f STATE general 2>/dev/null)
 echo "NetworkManager: ${st:-unknown}"
 [ "$st" = connected ] || { echo "WARN: NetworkManager not 'connected' yet (may still be reconnecting)"; }

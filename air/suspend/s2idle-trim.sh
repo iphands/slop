@@ -1,5 +1,6 @@
 #!/bin/bash
-# s2idle-trim: power down Wi-Fi + Bluetooth (BCM4387, PCIe 01:00.0/.1) around s2idle.
+# s2idle-trim: power down Wi-Fi + Bluetooth (BCM4387, PCIe 01:00.0/.1) around s2idle,
+# and disarm power-supply wakeup sources (battery/AC/USB-C) that may cause spurious wakes.
 #
 #   sudo ./s2idle-trim.sh install     copy self to the systemd-sleep dir
 #   sudo ./s2idle-trim.sh uninstall   remove it (and restore radios)
@@ -22,6 +23,10 @@ STATE=/run/s2idle-trim.state            # records PRE-sleep state of radios/serv
 LOCK=/run/s2idle-trim.lock
 PCI_WIFI=0000:01:00.0
 PCI_BT=0000:01:00.1
+# Wakeup sources to disarm while asleep. Lid/power button (macsmc-input) stays armed.
+# Side effect: plugging in a charger no longer wakes the machine.
+WAKE_OFF="/sys/class/power_supply/macsmc-battery /sys/class/power_supply/macsmc-ac /sys/class/power_supply/tps6598x-source-psy-*"
+WAKE_STATE=/run/s2idle-trim.wake        # paths we actually disarmed
 
 log() { logger -t s2idle-trim -- "$*"; echo "s2idle-trim: $*" >&2; }
 loaded() { grep -q "^$1 " /proc/modules; }
@@ -40,8 +45,32 @@ save_state() {
     } > "$STATE"
 }
 
+wake_off() {
+    local d f; : > "$WAKE_STATE"
+    for d in $WAKE_OFF; do
+        f=$d/power/wakeup; [ -w "$f" ] || continue
+        [ "$(cat "$f")" = enabled ] || continue
+        if echo disabled > "$f" 2>/dev/null; then echo "$f" >> "$WAKE_STATE"; log "pre: wakeup disabled ${d##*/}"
+        else log "pre: could not disable wakeup ${d##*/}"; fi
+    done
+}
+
+wake_restore() {  # re-arm what we disarmed; with no record, re-arm the whole list (boot default)
+    local f list
+    if [ -s "$WAKE_STATE" ]; then list=$(cat "$WAKE_STATE")
+    else list=$(for d in $WAKE_OFF; do echo "$d/power/wakeup"; done); fi
+    for f in $list; do
+        [ -w "$f" ] || continue
+        [ "$(cat "$f")" = enabled ] && continue
+        echo enabled > "$f" 2>/dev/null && log "restore: wakeup enabled $(basename "$(dirname "$(dirname "$f")")")" \
+            || log "restore: FAILED to re-enable wakeup $f"
+    done
+    rm -f "$WAKE_STATE"
+}
+
 pre() {
     save_state
+    wake_off
     log "pre: saved $(tr '\n' ' ' < "$STATE")"
     t 10 systemctl stop bluetooth.service 2>/dev/null
     t 5 nmcli radio wifi off 2>/dev/null
@@ -64,6 +93,7 @@ load_all() {  # idempotent: load anything in the lists that is missing
 
 restore() {
     local try ok=0
+    wake_restore    # first: cheap, and independent of the Wi-Fi retries below
     for try in 1 2 3; do
         load_all
         if wait_for wifi_up 15 && wait_for bt_up 15; then ok=1; break; fi
@@ -96,6 +126,7 @@ status() {
     echo "hook installed: $([ -x $HOOK ] && echo yes || echo no)"
     for m in $ALL_MODS; do echo "  $m: $(loaded $m && echo loaded || echo NOT loaded)"; done
     echo "wifi netdev: $(wifi_up && echo yes || echo NO)   bt hci0: $(bt_up && echo yes || echo NO)"
+    local d; for d in $WAKE_OFF; do [ -r "$d/power/wakeup" ] && echo "  wakeup ${d##*/}: $(cat "$d/power/wakeup")"; done
 }
 
 case "$1" in
