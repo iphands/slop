@@ -47,7 +47,7 @@ pre() {
     t 5 nmcli radio wifi off 2>/dev/null
     local m
     for m in $BT_MODS $EXTRA_MODS $WIFI_MODS; do
-        loaded "$m" || continue
+        loaded "$m" || { log "pre: $m already gone (removed as a dependency)"; continue; }
         if t 15 modprobe -r "$m" 2>/dev/null; then log "pre: unloaded $m"
         else log "pre: could not unload $m (leaving it; suspend continues)"; fi
     done
