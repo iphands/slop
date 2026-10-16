@@ -8,6 +8,9 @@ set -euo pipefail
 # Pushes the moving tag (iphands/pkgcache-fedora:latest) plus every other local
 # tag on that image -- the release tag (:44) and the per-commit tag (:<git-sha>).
 #
+# Arch-suffixed tags from ./build (:latest-arm64, :44-arm64, :<sha>-arm64) are
+# pushed alongside, and never collide with the unsuffixed x86_64 tags.
+#
 # Prereqs: ./build has been run, and you are logged in
 #   (`docker login`  or  `podman login docker.io`).
 #
@@ -27,7 +30,7 @@ command -v "$CE" >/dev/null 2>&1 || { echo "error: RUNTIME=$CE not found on PATH
 
 IMAGE="${IMAGE:-iphands/pkgcache-fedora}"
 
-if ! "$CE" image inspect "${IMAGE}:latest" >/dev/null 2>&1; then
+if [ -z "$("$CE" images -q "${IMAGE}" 2>/dev/null)" ]; then
     echo "nothing built to publish for ${IMAGE} -- run ./build first" >&2
     exit 1
 fi

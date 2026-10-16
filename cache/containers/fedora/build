@@ -11,6 +11,13 @@ set -euo pipefail
 # Tags the moving <image>:latest, the release <image>:<fedora-release>, and an
 # immutable per-commit <image>:<git-sha>. Then ./publish to push.
 #
+# ARCH TAGS: x86_64 keeps the original tag names (so existing pulls are unchanged).
+# Any other host arch gets a suffix on EVERY tag -- on aarch64: :latest-arm64,
+# :44-arm64, :<sha>-arm64 -- so a laptop build can never overwrite the x86_64
+# image locally or on the registry. Override with  ARCH_SUFFIX=-foo ./build
+# (ARCH_SUFFIX= forces the unsuffixed names). The image content is identical in
+# shape: dnf expands $basearch itself, so nothing else is arch-specific.
+#
 # Auto-detects the container engine and PREFERS podman when both are present.
 # Force one with  RUNTIME=docker ./build  (or RUNTIME=podman).
 # Override the image name with  IMAGE=you/name ./build .
@@ -30,19 +37,25 @@ IMAGE="${IMAGE:-iphands/pkgcache-fedora}"
 CACHE="${CACHE:-http://noir.lan:3129}"        # baked into the image's dnf repos
 FEDORA_RELEASE="${FEDORA_RELEASE:-44}"
 REF="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"
+case "$(uname -m)" in
+    x86_64)        ARCH=x86_64;  DEFAULT_SUFFIX="" ;;
+    aarch64|arm64) ARCH=aarch64; DEFAULT_SUFFIX="-arm64" ;;
+    *)             ARCH="$(uname -m)"; DEFAULT_SUFFIX="-$(uname -m)" ;;
+esac
+SFX="${ARCH_SUFFIX-$DEFAULT_SUFFIX}"
 export DOCKER_BUILDKIT=1   # no-op under podman/buildah, enables it under docker
 
-echo ">> [$CE] building ${IMAGE}:{latest,${FEDORA_RELEASE},${REF}} against CACHE=${CACHE}"
+echo ">> [$CE] building ${IMAGE}:{latest,${FEDORA_RELEASE},${REF}}${SFX} against CACHE=${CACHE}"
 "$CE" build \
     --build-arg "FEDORA_RELEASE=${FEDORA_RELEASE}" \
     --build-arg "CACHE=${CACHE}" \
-    -t "${IMAGE}:latest" \
-    -t "${IMAGE}:${FEDORA_RELEASE}" \
-    -t "${IMAGE}:${REF}" \
+    -t "${IMAGE}:latest${SFX}" \
+    -t "${IMAGE}:${FEDORA_RELEASE}${SFX}" \
+    -t "${IMAGE}:${REF}${SFX}" \
     .
 
 cat <<EOF
 >> verify it (Rule A -- a real fetch, not a config read):
-   $CE run --rm ${IMAGE}:latest dnf -y install cowsay
-   curl -sI ${CACHE}/fedora/linux/releases/${FEDORA_RELEASE}/Everything/x86_64/os/repodata/repomd.xml | grep -i x-cache-status
+   $CE run --rm ${IMAGE}:latest${SFX} dnf -y install cowsay
+   curl -sI ${CACHE}/fedora/linux/releases/${FEDORA_RELEASE}/Everything/${ARCH}/os/repodata/repomd.xml | grep -i x-cache-status
 EOF

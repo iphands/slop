@@ -188,6 +188,8 @@ routes.
 ```bash
 cd containers/fedora
 ./build                                # -> iphands/pkgcache-fedora:latest + :44 + :<git-sha>
+                                       # (on aarch64: :latest-arm64 + :44-arm64 + :<git-sha>-arm64;
+                                       #  x86_64 tags are never overwritten)
 CACHE=http://localhost:8080 ./build    # bake a different endpoint (default: noir.lan:3129)
 FEDORA_RELEASE=45 ./build              # rebase onto another release
 ./publish                              # push to Docker Hub
