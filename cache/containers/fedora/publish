@@ -36,11 +36,12 @@ if [ -z "$("$CE" images -q "${IMAGE}" 2>/dev/null)" ]; then
 fi
 
 echo ">> [$CE] pushing ${IMAGE}:latest and any other ${IMAGE}:<tag>"
-"$CE" images --format '{{.Repository}}:{{.Tag}}' "${IMAGE}" \
-    | grep -E "^${IMAGE}:" \
-    | grep -v ':<none>$' \
+# podman reports local images as localhost/<name> (and docker.io/<name> for pulled
+# ones); docker reports bare <name>. Match all three, then push by the short name.
+"$CE" images --format '{{.Repository}} {{.Tag}}' \
+    | awk -v img="$IMAGE" '($1==img || $1=="localhost/"img || $1=="docker.io/"img) && $2!="<none>" {print $2}' \
     | sort -u \
-    | while read -r t; do
-        echo "   push ${t}"
-        "$CE" push "${t}"
+    | while read -r tag; do
+        echo "   push ${IMAGE}:${tag}"
+        "$CE" push "${IMAGE}:${tag}"
     done
