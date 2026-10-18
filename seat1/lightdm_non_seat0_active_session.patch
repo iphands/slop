@@ -1,0 +1,17 @@
+diff --git a/src/seat-local.c b/src/seat-local.c
+--- a/src/seat-local.c
++++ b/src/seat-local.c
+@@ -263,6 +263,13 @@
+ static Session *
+ seat_local_get_active_session (Seat *seat)
+ {
++    /* vt_get_active() is the console VT, which only seat0 owns. Matching it
++       against another seat's sessions finds nothing, so lightdm thought a
++       Wayland session on seat1 was not active and started a new greeter on
++       top of it as soon as the old greeter's X server stopped. */
++    if (strcmp (seat_get_name (seat), "seat0") != 0)
++        return seat_get_expected_active_session (seat);
++
+     gint vt = vt_get_active ();
+     if (vt < 0)
+         return NULL;
