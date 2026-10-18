@@ -118,7 +118,7 @@ CMD=apply
 
 # GAME seeds. Matched on comm or full cmdline; each match is expanded to its
 # entire descendant tree.
-SEED_COMM_RE='^(steam|steam\.sh|steamwebhelper|steamerrorrepor|steamservice|reaper|srt-bwrap|pv-bwrap|pressure-vessel.*|proton.*|wine.*|wineserver|winedevice\.exe|explorer\.exe|services\.exe|Palworld.*|PalServer.*|gamescope.*|gamemoded|gamemoderun|mangohud)$'
+SEED_COMM_RE='^(steam|steam\.sh|steamwebhelper|steamerrorrepor|steamservice|reaper|srt-bwrap|pv-bwrap|pressure-vessel.*|proton.*|wine.*|wineserver|winedevice\.exe|explorer\.exe|services\.exe|Palworld.*|PalServer.*|gamescope.*|gamemoded|gamemoderun|mangohud|benilla.*)$'
 SEED_CMD_RE='steamapps|SteamApps|[Pp]alworld|[Pp]alServer|[Pp]roton|pressure-vessel|wineserver|ubuntu12_32|ubuntu12_64|/steam(/|$| )|steam\.sh|SteamLinuxRuntime'
 EXTRA_MATCH=${AFFINITY_EXTRA_MATCH:-}
 
