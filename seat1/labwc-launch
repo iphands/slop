@@ -1,0 +1,78 @@
+#!/bin/bash
+# Install: sudo install -m755 labwc-launch /usr/local/bin/labwc-launch
+# GPU is chosen from the SEAT this session is on, not from the user name or a
+# hardcoded /dev/dri/cardN (cardN numbering is probe order and is not stable).
+source "${HOME}/${USER}/.bashrc"
+export WLR_RENDERER=vulkan
+export HWLOC_PLUGINS_BLACKLIST="gl,nvml"
+
+LOG=/tmp/labwc.${USER}.log
+echo >> "$LOG"
+echo "------- Start: $USER `date`" >> "$LOG"
+
+export ENABLE_DEVICE_CHOOSER_LAYER=1
+export GBM_BACKEND=nvidia
+export LANG="en_US.UTF-8"
+export LC_ALL="en_US.UTF-8"
+export LIBVA_DRIVER_NAME=nvidia
+export WLR_NO_HARDWARE_CURSORS=1
+export WLR_RENDERER_ALLOW_SOFTWARE=0
+export XDG_SESSION_TYPE=wayland
+export __GLX_VENDOR_LIBRARY_NAME=nvidia
+
+# Seat of this session: pam_systemd sets XDG_SEAT; fall back to logind.
+SEAT="${XDG_SEAT:-$(loginctl show-session "$XDG_SESSION_ID" -p Seat --value 2>/dev/null)}"
+SEAT="${SEAT:-seat0}"
+
+# The DRM card udev assigned to this seat. Devices on seat0 carry no ID_SEAT.
+CARD=""
+for c in /sys/class/drm/card[0-9]*; do
+  [[ "$c" == *-* ]] && continue   # skip connectors like card0-DP-1
+  s=$(udevadm info -q property -p "$c" | sed -n 's/^ID_SEAT=//p')
+  [[ "${s:-seat0}" == "$SEAT" ]] && { CARD="/dev/dri/${c##*/}"; break; }
+done
+echo "seat=$SEAT card=${CARD:-none}" >> "$LOG"
+[[ -n "$CARD" ]] && export WLR_DRM_DEVICES="$CARD"
+
+# vkdevicechooser (ENABLE_DEVICE_CHOOSER_LAYER) only reads VULKAN_DEVICE_INDEX,
+# the Vulkan enumeration index. The NVIDIA ICD enumerates in PCI address order,
+# so the index is this card's position among the nvidia-bound PCI devices.
+if [[ -n "$CARD" ]]; then
+  pci=$(basename "$(readlink -f "/sys/class/drm/${CARD##*/}/device")")
+  idx=0
+  for d in /sys/bus/pci/drivers/nvidia/0000:*; do   # glob expands sorted
+    [[ "${d##*/}" == "$pci" ]] && { export VULKAN_DEVICE_INDEX=$idx; break; }
+    idx=$((idx + 1))
+  done
+  echo "pci=$pci VULKAN_DEVICE_INDEX=${VULKAN_DEVICE_INDEX:-unset}" >> "$LOG"
+fi
+
+case "$SEAT" in
+  seat0) export DXVK_FILTER_DEVICE_NAME="6000" ;;
+  seat1) export DXVK_FILTER_DEVICE_NAME="4060" ;;
+esac
+
+# No `killall labwc` here: it matched this user's compositor on the OTHER seat
+# too, so starting seat1 as the same user killed the seat0 session.
+
+# lightdm starts this session BEFORE it stops the greeter, so for a few ms the
+# greeter's X server still holds DRM master on the card. seat0 dodges this
+# because its sessions get their own VT (the VT switch revokes X's master);
+# seat1 has no VTs, so labwc fails with "Device or resource busy" and the
+# session ends at once. Retry until the greeter's X is gone. A run that lasts
+# 5s+ was a real session, so its exit is final.
+for i in $(seq 1 40); do
+  start=$SECONDS
+  /usr/bin/labwc 2>&1 | tee -a "$LOG"
+  rc=${PIPESTATUS[0]}
+  (( SECONDS - start >= 5 )) && exit "$rc"
+  {
+    echo "labwc exited rc=$rc after <5s (attempt $i, t=$SECONDS), retrying"
+    echo "  session: $(loginctl show-session "$XDG_SESSION_ID" -p Type -p State -p Active -p Seat -p VTNr 2>&1 | tr '\n' ' ')"
+    echo "  seat sessions: $(loginctl show-seat "$SEAT" -p Sessions -p ActiveSession 2>&1 | tr '\n' ' ')"
+    echo "  display servers / greeters:"
+    ps -eo pid,user,etimes,args | grep -E '[/ ]X :|[g]reeter|[W]ayland' | sed 's/^/    /'
+  } >> "$LOG"
+  sleep 0.5
+done
+exit 1
