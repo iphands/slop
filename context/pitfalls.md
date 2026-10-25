@@ -1264,3 +1264,19 @@ symlink with an ordinary file unless you pass `--follow-symlinks`, so edit the t
 `cat >`, which writes through the link).
 ## Sources
 - ahands.org host: dotfiles host/ahands/fail2ban/filter/nginx-suspicious-paths.conf, jail/01-custom.conf
+
+# M2 Air (Asahi) has no CPU die temperature: detect throttling another way
+The fanless MacBook Air M2 under Asahi exposes only chassis-side hwmon temps (NAND, battery hotspot,
+charge regulator, WiFi/BT module, NVMe), no CPU/SoC sensor. Waiting for a "CPU temp" curve to show the
+throttle knee finds nothing, and the battery hotspot barely moves in a 3 minute run. `scaling_cur_freq`
+is readable, but `cpuinfo_cur_freq` is root only, and frequency alone can stay pinned while the SoC is
+power-capped.
+
+To avoid it, measure throttling by effect: run fixed-work chunks and log throughput every second
+(`sysbench cpu --report-interval=1`), and corroborate with P-cluster freq and the SMC `Heatpipe Power`
+rail (power3 in `macsmc_hwmon`, roughly SoC package watts; it sags under a cap). Resolve hwmon nodes by
+name/label, as the hwmon numbering changes between boots. Charging adds chassis heat, so record AC and
+battery status with every run, and gate each phase on a cooldown.
+## Sources
+- air/bench: `bench.sh` (sampler), `compare.py` (`onset`)
+
