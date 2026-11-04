@@ -1165,3 +1165,29 @@ paused jobs from every count. More generally, a state move is not a completion: 
 a counter drop as work, check every bucket the job could have moved into.
 ## Sources
 - immich: `src/source.rs` (`Drain::update`, `Backlog::outstanding`)
+
+# btrfs + HW RAID: "slow cold reads" was extent scatter, not readahead
+noir40 `/main` (btrfs on one PERC H710P RAID-6 VD, 64MB bdi readahead) reads contiguous files cold at
+800-880 MB/s, but one model dir read at 164-226 MB/s. The cause was not tuning drift. Each 5GB shard
+was ~11k extents averaging 0.4MiB, and nearly every jump between logically adjacent extents was more
+than 64MiB (median 20-55GiB, spanning the whole 14TB). That makes every 0.4MiB a full random seek.
+Fragment count alone doesn't predict this. Files with 0.12MiB compressed extents still read at 650 MB/s
+because their median jump was 0 (the extents are physically adjacent). Likely mechanism (inferred, not
+proven): with `compress=zstd`, writeback goes through the async compression path. That path splits data
+into ~512KiB chunks and allocates an extent for each one independently. Incompressible chunks then go
+out uncompressed, but still one small allocation per chunk. At 73% full, with about 330GB of holes inside
+the allocated data chunks, each piece lands in some hole anywhere on the disk. Evidence: a plain `btrfs fi
+defrag -t 1G` gave 75-600MiB extents (the inode already had NOCOMPRESS, lsattr `m`) and 730-1000 MB/s.
+Re-running it with `-czstd` forced the compression path back on, gave 0.5-0.8MiB scattered pieces again,
+and dropped reads to 324-595 MB/s. A dd copy into `chattr +m` files gave 1-18 extents per 5GB shard, with all 21 shards (97GB) read cold at 937 MB/s average.
+
+To avoid it: measure before tuning. FIEMAP (`filefrag -v`, or the 40-line python ioctl at fiemap.py) gives
+extents, and the key metric is *physical jump distance* between consecutive extents, not the extent
+count. Confirm with dd plus the /proc/diskstats sector delta, which separates real disk reads from cache
+hits. As an unprivileged user, `fincore` is a lie: cachestat gives EPERM, and mincore reports every page
+as resident for files you can't write. Fix by rewriting the files sequentially WITHOUT compression: plain defrag with
+no `-c`, or a single-stream copy into a file pre-flagged `chattr +m`, then mv. Either one unshares any
+reflinks or snapshots. NEVER use `defrag -c` on incompressible data. Prevent it with `chattr +m` on model
+directories (new files inherit it), or by downloading elsewhere and then copying sequentially.
+## Sources
+- noir40 host: /main (Qwen3.8-Flash-Next-FP4-Local shards), `main-readahead.sh`

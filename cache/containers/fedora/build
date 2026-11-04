@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Build the Fedora client image -- fedora:44 with dnf already pointed at the
+# Build the Fedora client image -- fedora:45 with dnf already pointed at the
 # pkgcache proxy (see ./Dockerfile).
 #
 #     ./build                                  # against the default cache endpoint
@@ -13,7 +13,7 @@ set -euo pipefail
 #
 # ARCH TAGS: x86_64 keeps the original tag names (so existing pulls are unchanged).
 # Any other host arch gets a suffix on EVERY tag -- on aarch64: :latest-arm64,
-# :44-arm64, :<sha>-arm64 -- so a laptop build can never overwrite the x86_64
+# :45-arm64, :<sha>-arm64 -- so a laptop build can never overwrite the x86_64
 # image locally or on the registry. Override with  ARCH_SUFFIX=-foo ./build
 # (ARCH_SUFFIX= forces the unsuffixed names). The image content is identical in
 # shape: dnf expands $basearch itself, so nothing else is arch-specific.
@@ -35,7 +35,7 @@ command -v "$CE" >/dev/null 2>&1 || { echo "error: RUNTIME=$CE not found on PATH
 
 IMAGE="${IMAGE:-iphands/pkgcache-fedora}"
 CACHE="${CACHE:-http://noir.lan:3129}"        # baked into the image's dnf repos
-FEDORA_RELEASE="${FEDORA_RELEASE:-44}"
+FEDORA_RELEASE="${FEDORA_RELEASE:-45}"
 REF="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"
 case "$(uname -m)" in
     x86_64)        ARCH=x86_64;  DEFAULT_SUFFIX="" ;;

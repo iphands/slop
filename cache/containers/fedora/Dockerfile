@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 #
-# Fedora 44 with dnf already pointed at the pkgcache proxy.
+# Fedora 45 with dnf already pointed at the pkgcache proxy.
 #
 # Two uses:
 #   * a base image -- FROM it and every `dnf install` in the child build pulls
@@ -15,13 +15,13 @@
 #
 # No dnf metadata is baked in: pkgcache-setup runs with --no-makecache, so the
 # image builds with no network at all and never ships stale repodata.
-ARG FEDORA_RELEASE=44
+ARG FEDORA_RELEASE=45
 FROM docker.io/library/fedora:${FEDORA_RELEASE}
 
 ARG CACHE=http://noir.lan:3129
 
 LABEL org.opencontainers.image.title="pkgcache-fedora" \
-      org.opencontainers.image.description="Fedora 44 with dnf pre-configured against the pkgcache LAN proxy" \
+      org.opencontainers.image.description="Fedora 45 with dnf pre-configured against the pkgcache LAN proxy" \
       org.opencontainers.image.source="https://github.com/iphands/slop"
 
 COPY pkgcache-setup /usr/local/bin/pkgcache-setup
