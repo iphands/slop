@@ -40,8 +40,9 @@ package pulls it from the internet; every machine after gets it from the local c
 - Cache lives on a **bind-mounted volume** (`/srv/pkgcache/data` by default).
 - Runs **rootless** as `APP_UID:APP_GID` (default `1000:1000`).
 - `build` / `publish` / `run` **auto-detect podman/docker and prefer podman**.
-- `containers/fedora/` builds a client image with dnf pre-wired to the cache (`FEDORA_RELEASE`
-  defaults to 45), alongside a `pkgcache-setup` re-pointing script.
+- `containers/fedora/` builds a client image with dnf pre-wired to the cache (release pinned by
+  `FEDORA_RELEASE` in `cache/containers/fedora/Dockerfile`), alongside a `pkgcache-setup`
+  re-pointing script.
 - The optional stats dashboard (per-client hit ratios, bytes saved, top packages) is an in-tree
   **Rust workspace** at `stats/` — `crates/ingest` and `crates/stats`.
 

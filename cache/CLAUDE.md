@@ -1,7 +1,7 @@
 # pkgcache — LAN Package Caching Proxy (Debian + Fedora)
 
 A single **nginx reverse caching proxy**, containerized, that caches OS package
-downloads for a homelab fleet of **Debian 13 (Trixie)** and **Fedora 44** machines.
+downloads for a homelab fleet of **Debian** and **Fedora** machines.
 First machine to download a package pulls it from the internet; every machine after
 that is served from the LAN cache.
 
@@ -199,10 +199,10 @@ cache/
 │       ├── create.sh    #   proxy container  (cacher)
 │       └── create-stats.sh  # stats container (cacher-stats)
 ├── containers/          # client/base images that come pre-pointed at the cache
-│   ├── fedora/          #   fedora:45 + dnf wired to the cache; FROM it in child builds
+│   ├── fedora/          #   base pinned by FEDORA_RELEASE; dnf wired to cache; FROM it in builds
 │   │   ├── Dockerfile   #   ARG CACHE baked in, recorded as ENV PKGCACHE_URL
 │   │   ├── pkgcache-setup   # in-image repo surgery (+ --revert); NOT config-manager
-│   │   ├── build        #   -> iphands/pkgcache-fedora:{latest,45,<sha>}
+│   │   ├── build        #   -> iphands/pkgcache-fedora:{latest,<release>,<sha>}
 │   │   └── publish
 │   └── ubuntu/          #   ubuntu:22.04 + apt wired to the cache (same shape)
 │       ├── Dockerfile   #   ARG UBUNTU_RELEASE; 24.04/deb822 also verified
@@ -293,14 +293,14 @@ docker logs pkgcache
 curl -f http://localhost:8080/healthz            # -> ok
 
 # metadata path (short TTL, revalidated):
-curl -sI http://localhost:8080/debian/dists/trixie/InRelease | grep -i x-cache-status
+curl -sI http://localhost:8080/debian/dists/$(. /etc/os-release; echo $VERSION_CODENAME)/InRelease | grep -i x-cache-status
 
 # package path (the regex sub-location — the part that breaks):
 curl -sI http://localhost:8080/debian/pool/main/c/cowsay/<file>.deb | grep -i x-cache-status
 
 # Fedora, both halves (metadata AND the rewrite-dependent .rpm path):
-curl -sI http://localhost:8080/fedora/linux/releases/45/Everything/x86_64/os/repodata/repomd.xml
-curl -sI http://localhost:8080/fedora/linux/releases/45/Everything/x86_64/os/Packages/c/<file>.rpm
+curl -sI http://localhost:8080/fedora/linux/releases/$(rpm -E %fedora)/Everything/x86_64/os/repodata/repomd.xml
+curl -sI http://localhost:8080/fedora/linux/releases/$(rpm -E %fedora)/Everything/x86_64/os/Packages/c/<file>.rpm
 ```
 **MISS then HIT on a second identical request** is the pass condition. A `404` on an
 `.rpm` that exists upstream ⇒ the `rewrite`/`proxy_pass` remap is wrong (Critical Fact #2).

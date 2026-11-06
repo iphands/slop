@@ -1,7 +1,7 @@
 # pkgcache — package caching proxy for Debian & Fedora
 
 A single, lightweight **nginx reverse caching proxy** that caches OS package
-downloads for a fleet of **Debian 13 (Trixie)** and **Fedora 44** machines.
+downloads for a fleet of **Debian** and **Fedora** machines.
 First machine to download a package pulls it from the internet; every machine
 after that gets it from the local cache over the LAN.
 
@@ -20,7 +20,7 @@ cache what's inside it. nginx is a **reverse cache** — the client speaks HTTP 
 nginx, and nginx originates the upstream TLS itself and stores the `.rpm`.
 Packages stay GPG-verified end-to-end, so plain HTTP from client→cache is safe.
 
-| Option | Debian 13 | Fedora | Notes |
+| Option | Debian | Fedora | Notes |
 |---|:---:|:---:|---|
 | **nginx `proxy_cache`** ✅ chosen | ✅ | ✅ | Reverse cache, originates upstream TLS. It's nginx — zero staleness risk. Con: you point client repo config at it (this repo does that for you). |
 | lancache | ✅ transparent | ❌ | DNS-spoof + HTTP-only cache. Great for Debian (Trixie sources are HTTP), but **cannot** cache Fedora's HTTPS+metalink. |
@@ -103,7 +103,7 @@ Check it's alive:
 
 ```bash
 curl -f http://<cache-host>:8080/healthz          # -> ok
-curl -sI http://<cache-host>:8080/debian/dists/trixie/InRelease | grep X-Cache-Status
+curl -sI http://<cache-host>:8080/debian/dists/$(. /etc/os-release; echo $VERSION_CODENAME)/InRelease | grep X-Cache-Status
 ```
 
 > **Rootless podman:** the host `APP_UID` is not the in-container uid unless you
@@ -117,7 +117,7 @@ curl -sI http://<cache-host>:8080/debian/dists/trixie/InRelease | grep X-Cache-S
 *host* deployment recipe and has no business on a client:
 
 ```bash
-sudo ./scripts/fix-debian      # Debian 13: rewrite apt sources -> cache, apt update
+sudo ./scripts/fix-debian      # Debian: rewrite apt sources -> cache, apt update
 sudo ./scripts/fix-fedora      # Fedora: add cache repos, disable metalink, makecache
 # undo either with:  sudo ./scripts/fix-debian --revert   /   fix-fedora --revert
 # different endpoint:  CACHE=http://noir.lan:3129 sudo -E ./scripts/fix-debian
@@ -130,7 +130,11 @@ third-party repos (PPAs, docker, …) untouched. `fix-fedora` writes
 The manual equivalents are below. Replace `CACHE:PORT` with your cache
 host/port. Packages stay GPG-verified, so HTTP to the cache is safe.
 
-### Debian 13 (Trixie) — `/etc/apt/sources.list.d/debian.sources`
+### Debian — `/etc/apt/sources.list.d/debian.sources`
+
+`Suites:` are codenames — apt has no `$releasever` equivalent. The `trixie`
+values below are an example, not a recommendation; substitute your own
+(`. /etc/os-release; echo $VERSION_CODENAME`).
 
 ```
 Types: deb
@@ -180,23 +184,24 @@ sudo dnf makecache
 
 ### Containers — `containers/fedora`
 
-A `fedora:45` image with dnf already pointed at the cache, for building container images
+A Fedora image — release pinned by `FEDORA_RELEASE` in `containers/fedora/Dockerfile` — with dnf
+already pointed at the cache, for building container images
 without hammering a Fedora mirror. `FROM` it and every `dnf install` in the child build
 pulls through the LAN cache; it is also the handiest client for testing the `/fedora/`
 routes.
 
 ```bash
 cd containers/fedora
-./build                                # -> iphands/pkgcache-fedora:latest + :45 + :<git-sha>
-                                       # (on aarch64: :latest-arm64 + :45-arm64 + :<git-sha>-arm64;
+./build                                # -> iphands/pkgcache-fedora:latest + :<release> + :<git-sha>
+                                       # (on aarch64: :latest-arm64 + :<release>-arm64 + :<git-sha>-arm64;
                                        #  x86_64 tags are never overwritten)
 CACHE=http://localhost:8080 ./build    # bake a different endpoint (default: noir.lan:3129)
-FEDORA_RELEASE=44 ./build              # pin an older release (default: 45)
+FEDORA_RELEASE=44 ./build              # pin an older release (default: the Dockerfile ARG)
 ./publish                              # push to Docker Hub
 ```
 
 ```dockerfile
-FROM iphands/pkgcache-fedora:45
+FROM iphands/pkgcache-fedora:latest    # or pin the release/per-commit tag — see ./build above
 RUN dnf -y install ripgrep && dnf clean all
 ```
 

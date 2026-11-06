@@ -6,7 +6,7 @@ set -euo pipefail
 #
 #     ./build                                  # against the default cache endpoint
 #     CACHE=http://localhost:8080 ./build      # against a local test proxy
-#     FEDORA_RELEASE=44 ./build                # pin an older release (default: 45)
+#     FEDORA_RELEASE=44 ./build                # pin an older release (default: the Dockerfile ARG)
 #
 # Tags the moving <image>:latest, the release <image>:<fedora-release>, and an
 # immutable per-commit <image>:<git-sha>. Then ./publish to push.
