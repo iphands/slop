@@ -4,7 +4,13 @@ A place to house random AI assisted experiments. Cool stuff may migrate away fro
 
 ## Sub-projects with their own plan system
 
-- `qctrl/` — has its own plan system: `qctrl/context/plans/`.
+- `cache/` — plan system at `cache/context/plans/`
+- `gpu/` — plan system at `gpu/context/plans/`
+- `qbots/` — plan system at `qbots/context/plans/`
+- `qctrl/` — plan system at `qctrl/context/plans/`
+
+Only `qctrl` is stamped `hands-plan:v1`; the other three run plan systems that
+predate `skills/hands-plan` and are not yet migrated.
 
 ## Git discipline
 
