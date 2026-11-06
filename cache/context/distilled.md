@@ -94,6 +94,34 @@ location blocks reproduced.
   MISS, 404, HEAD, the banner location, and a `%09%22` URI. Framing is robust *because*
   `$request_uri` keeps percent-encoding — a raw tab cannot appear in a valid request line.
 
+## `X-Cache-Status` presence is the routing discriminator [REPO][LIVE 2026-11-06]
+
+- **Read header presence, then the status code, then the cache word — in that order.** "No
+  header" means *not proxied*: no `location` matched, **or** a location answered by `return`
+  rather than `proxy_pass`. It is not by itself evidence of a misconfiguration.
+- **Measured:** proxied responses carry the header, including the nested `\.deb$` / `\.rpm$`
+  sub-locations (proven 2026-07-18, *Remaining Open Questions* item 2); the nginx-generated
+  responses probed (`/`, `/healthz`, unrouted paths) carry none.
+
+| path shape | status | `X-Cache-Status` |
+|---|---|---|
+| `/ubuntu/dists/<bogus-suite>/InRelease` | `404` | **present** (`MISS`) — routed, upstream said 404 |
+| `/definitely-not-a-route/x` | `404` | **absent** — never proxied |
+| `/`, `/healthz` | `200` | **absent** — only Server/Date/Content-Type/Content-Length/Connection |
+
+Measured 2026-11-06 against the running cache.
+
+- **Why:** `add_header X-Cache-Status $upstream_cache_status always` (`pkgcache.conf:36`) is the
+  file's only `add_header`, at `server` level `[REPO]`. `always` is what makes it appear on
+  non-2xx `[SOURCE]`. For a request never sent upstream `$upstream_cache_status` is empty, and
+  **an empty value suppresses the header entirely** — `ngx_http_add_header()` in
+  `ngx_http_headers_filter_module.c` pushes the field only inside `if (value->len)`
+  `[SOURCE]` (read 2026-11-06; note this is *not* stated on the `ngx_http_headers_module` docs
+  page, only in the source).
+- **A routed `404` is itself cached** (`proxy_cache_valid 404 1m`, one per top-level route
+  `[REPO]`), so a repeated typo reports `HIT` on a 404. Precedence rules:
+  *Cache key & TTL precedence*.
+
 ## The live deployment [REPO — operator-confirmed 2026-07-18]
 
 `noir:/main/docker/cache/`, launched by `spec` + `create*.sh` (mirrored in the repo's
@@ -114,6 +142,12 @@ location blocks reproduced.
   reads them; only `--user` has any effect. They *are* meaningful to the repo's `./run`,
   which uses them host-side to chown volumes.
 - Ports: proxy `3129→8080`, stats `3130→8081`.
+- All five routes answered on `noir.lan:3129` **[LIVE 2026-11-06]** — `/debian/`,
+  `/debian-security/`, `/ubuntu/`, `/ubuntu-security/`, `/fedora/`, each answered HTTP `200`
+  (the security dists are `<suite>-security`, *not* `<suite>/updates` — probing the wrong
+  shape yields a routed `404` that looks like a broken route). This supersedes *in the field*
+  `plans/completed/06_3_ubuntu_tracker.md:8-9` ("no Ubuntu routes until this is deployed there");
+  that line was true as written on 2026-07-25 and is left untouched as a dated record.
 - Both containers must use the **same uid:gid and the same launch flags**, or nginx writes
   logs stats cannot read — and the symptom is a dashboard of zeros with no error.
 
@@ -154,6 +188,14 @@ numbers the dashboard has to render well.
   **original, pre-`rewrite`** client URI — so the prefix location and its nested regex
   location produce the **same key** for the same client URL. That is what makes the
   split-by-extension design work.
+- **That key contains no request method** (`proxy_cache_key` is set nowhere in `proxy/`), so a
+  `HEAD` and a later `GET` of the same URL address **the same entry**: the `HEAD` warms it and the
+  `GET` reads `HIT` [LIVE 2026-11-06]. The stored content, not just the status line, was checked
+  — a cold `HEAD` then `GET` on a `Packages.xz` returned the full body, `xz -t` clean. **Why** a
+  bodyless `HEAD` lookup yields a complete body is not established and may be version-dependent;
+  do not treat HEAD-then-GET as a safe test shortcut. The durable reading: a `HIT` from
+  `curl -sI` says the entry exists and is fresh — the `HEAD` response itself carries no body, so
+  verify a payload with a real `GET`.
 - **TTL precedence, highest first:**
   1. `X-Accel-Expires` (upstream)
   2. `Cache-Control` / `Expires` (upstream)
@@ -320,3 +362,11 @@ prove a short metadata TTL is real without touching the cache file.
    **RESOLVED [LIVE 2026-07-18]: yes.** A real `.deb` and a real `.rpm` fetched through the
    cache both return `X-Cache-Status: HIT` — the server-level `add_header` is inherited
    because the sub-locations declare none of their own.
+   **Complement** [LIVE 2026-11-06]: a never-proxied response carries no such header at all.
+   Inheritance explains *where the header can appear*; absence explains *what no-header means* —
+   see *`X-Cache-Status` presence is the routing discriminator*. Do not reopen this item on the
+   strength of a headerless `/` or `/healthz` response.
+3. **Why does a `GET` that hits a `HEAD`-created entry return a complete body?** The key is
+   shared (see *Cache key & TTL precedence*) and the payload was verified intact, but no
+   mechanism is established and it may be version-dependent. Until it is understood, do not lean
+   on HEAD-then-GET as a shortcut for "is this really cached".
