@@ -10,27 +10,10 @@ of a socket. It sees only the protocol traffic, so it rebuilds the world itself:
 codec, the connection handshake, frame decoding, and — the genuinely novel part — a `.bsp`
 collision model + navigation graph parsed locally.
 
-> **Status: full pipeline works live against Yamagi Q2.** A bot connects, perceives,
-> navigates, fights, and respawns; an N-bot fleet fills a server. The world model (`.bsp`
-> parse + trace + PVS + nav graph + navmesh), the combat/navigation brain, and the fleet
-> supervisor are all complete and verified live. `spawn-to-spawn --count 24` on a parked
-> q2dm1 measured **effective 13–15/24** (0 deferred) on 2026-09-12 across six *independent*
-> full 24-bot batches — 13, 14, 15, 13 at 14:07–15:43 UTC, after the morning's cmd-window
-> and wire-velocity commits (`d72095ba5`, `a471a2450`) and before the evening's ack-path
-> and velocity-tracker commits, then 13, 14 on `8d8645f24` after those — so the band is
-> run-to-run variance, not an average.
-> Compare only under the same constants (q2dm1, default brain + `astar`, default spacing,
-> server parked with 0 other players); a q2dm3 or non-default-brain run is a different
-> measurement. Stated in the tool's own units so future runs compare without arithmetic.
-> An earlier **24/24** headline is retired: it predates this measurement *and* the
-> contamination guards described in `context/pitfalls.md`, without which a rotating or
-> frozen server was silently counted against movement. Combat perception got its first
-> real enemy velocity on 2026-09-12 (`cc7bf5663`): a player's wire `old_origin` always
-> equals its `origin` on Yamagi, so projectile lead against players had been computed
-> against zero since the start; a per-bot `MotionTracker` now measures it across frames
-> (verified live with `QBOTS_VEL_DEBUG`, 101/101 samples wire-zero vs. tracker ~300 u/s).
-> Current work: moving-platform ride behavior + q2dm3 reachability (Plan 43). Full
-> roadmap: `context/plans/SERIES.md` (Plans 01–43).
+**Does it work?** Yes — a bot connects, perceives, navigates, fights and respawns against a
+live Yamagi Q2 server, and an N-bot fleet fills a server. The regression band, the constants
+a run must match to be comparable, and the retired **24/24** headline live in `AGENTS.md`
+§Movement Testing. Plan state lives in `context/plans/SERIES.md`.
 
 ---
 

@@ -1582,6 +1582,8 @@ for some entity class, ask what VALUE is sent, not just that the bits are there.
 
 ## Sources
 - qbots: crates/brain/src/perception.rs (`MotionTracker`, `Worldview::from_frame_cached`)
+- qbots: commit `cc7bf5663` (2026-09-12) — combat perception's first real enemy velocity;
+  verified live with `QBOTS_VEL_DEBUG`, 101/101 samples wire-zero vs. tracker ~300 u/s
 - vendor: yquake2/src/server/sv_entities.c (`SV_EmitPacketEntities`, newentity for players)
 - vendor: yquake2/src/game/g_main.c (`G_RunFrame`, `old_origin = origin`)
 - vendor: yquake2/src/server/sv_main.c (`SV_Frame`: read → run → send)
