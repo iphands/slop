@@ -1,10 +1,8 @@
 # qbots — External Quake 2 Bot Clients
 
 **The binary:** Connects N bot clients to a real Quake 2 server over UDP and watches
-them frag each other in a deathmatch.
-
-> **Status:** Full pipeline works live against Yamagi Q2. A bot connects, perceives,
-> navigates, fights, and respawns. An N-bot fleet fills a server.
+them frag each other in a deathmatch. A bot connects, perceives, navigates, fights and
+respawns; an N-bot fleet fills a server.
 
 ---
 
@@ -261,7 +259,7 @@ qbots/
 ## Further Reading
 
 - **`AGENTS.md`** — Architecture, protocol, constraints.
-- **`context/plans/SERIES.md`** — Plan dependency chain (Plans 01–43).
+- **`context/plans/SERIES.md`** — Plan dependency chain and current plan status.
 - **`context/distilled.md`** — Protocol/format facts.
 - **`context/pitfalls.md`** — Bugs and gotchas.
 - **`docs/BRAINS.md`** — Brain plugin catalog.
