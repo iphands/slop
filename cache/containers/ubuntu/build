@@ -44,5 +44,5 @@ echo ">> [$CE] building ${IMAGE}:{latest,${UBUNTU_RELEASE},${REF}} against CACHE
 cat <<EOF
 >> verify it (Rule A -- a real fetch, not a config read):
    $CE run --rm ${IMAGE}:latest sh -c 'apt-get update && apt-get install -y cowsay'
-   curl -sI ${CACHE}/ubuntu/dists/jammy/InRelease | grep -i x-cache-status
+   curl -sI ${CACHE}/ubuntu/dists/\$(${CE} run --rm ${IMAGE}:latest sh -c '. /etc/os-release; echo \$VERSION_CODENAME')/InRelease | grep -i x-cache-status
 EOF
