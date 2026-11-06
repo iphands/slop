@@ -1191,3 +1191,22 @@ reflinks or snapshots. NEVER use `defrag -c` on incompressible data. Prevent it 
 directories (new files inherit it), or by downloading elsewhere and then copying sequentially.
 ## Sources
 - noir40 host: /main (Qwen3.8-Flash-Next-FP4-Local shards), `main-readahead.sh`
+
+# fail2ban `.local` files: inline `#` comments become part of the value
+In jail.local, `ignoreip = 127.0.0.1/8 ::1 192.168.0.0/16   # your LAN + home IP` did not strip the
+comment. `fail2ban-client get sshd ignoreip` listed `#`, `your`, `LAN`, `home`, ... as ignore entries.
+`findtime = 1d   # ...` and `bantime = 1d   # ...` lines had the same junk appended. `reload` still said
+`OK`, so nothing flagged it. A second trap in the same file: a per-jail `ignoreip` REPLACES the
+`[DEFAULT]` one instead of adding to it. The house IP was in `[DEFAULT]` but missing from `[sshd]`, so a
+honeypot jail that inherited DEFAULT would ignore the house while sshd would not. Related:
+`findtime = 1` (no unit) means 1 SECOND. fail2ban drops log lines older than `now - findtime`, so a tiny
+window can silently discard real failures. `fail2ban-regex` does not apply findtime and will still show
+matches.
+
+To avoid it: put comments only on their own line in fail2ban configs. After every reload, read the values
+back: `fail2ban-client get <jail> ignoreip|findtime|bantime`. Find stray trailing comments with
+`grep -nE '^\s*[a-z_]+\s*=.*#' jail.local jail.d/*.local`. Keep `ignoreip` in `[DEFAULT]` only. Always
+give findtime and bantime units (`1d`, `1w`).
+## Sources
+- ahands.org host: /etc/fail2ban/jail.local ([sshd], [DEFAULT])
+
