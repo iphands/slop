@@ -56,4 +56,4 @@ done
 echo ">> apt-get update"
 apt-get update
 echo ">> done. verify a cache hit with:"
-echo "   curl -sI ${CACHE}/debian/dists/trixie/InRelease | grep X-Cache-Status"
+echo "   curl -sI ${CACHE}/debian/dists/\$(. /etc/os-release; echo \$VERSION_CODENAME)/InRelease | grep X-Cache-Status"
