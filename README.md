@@ -34,7 +34,7 @@ history.
 ### cache — pkgcache: LAN package caching proxy (Debian + Fedora)
 
 A single lightweight **nginx reverse caching proxy** caching OS package downloads for a fleet of
-Debian and Fedora machines (pinned releases: `cache/README.md`). First machine to download a
+Debian and Fedora machines. First machine to download a
 package pulls it from the internet; every machine after gets it from the local cache over the LAN.
 
 - Cache lives on a **bind-mounted volume** (`/srv/pkgcache/data` by default).
