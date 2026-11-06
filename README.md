@@ -6,7 +6,7 @@ standalone projects.
 **Start here**
 
 - **`cache/`** — LAN package cache. Build/run/setup: [`cache/README.md`](cache/README.md)
-- **`qbots/`** — Quake 2 bots. Status + measurements: [`qbots/README.md`](qbots/README.md)
+- **`qbots/`** — Quake 2 bots. Build/run/setup: [`qbots/README.md`](qbots/README.md)
 - **`qctrl/`** — Quake 2 server controller: [`qctrl/AGENTS.md`](qctrl/AGENTS.md)
 - Everything else is one row each in [Smaller work](#smaller-work) or [Shared resources](#shared-resources).
 
@@ -61,11 +61,6 @@ Unlike classic Q2 bots (which run *inside* the server as gamecode), qbots is a s
 the far end of a socket. It sees only the protocol traffic, so it rebuilds the world itself: the
 wire codec, the connection handshake, frame decoding, and a `.bsp` collision model + navigation
 graph parsed locally. Six crates: `q2proto`, `world`, `client`, `brain`, `qbots`, `tools`.
-
-**The full pipeline works live against Yamagi Q2:** a bot connects, perceives, navigates, fights
-and respawns. `spawn-to-spawn --count 24` on a parked q2dm1 measures **effective 13–15/24**
-(2026-09-12; a regression gate, not a capability claim). An earlier **24/24** headline is retired —
-`qbots/README.md` says why, and lists the constants a run must match to be comparable.
 
 ### qctrl — Quake 2 server controller
 
