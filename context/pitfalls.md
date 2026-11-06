@@ -1228,3 +1228,21 @@ confirm with `ss -tlnp | grep :22`. For a fail2ban filter on a journal-backed se
 ## Sources
 - ahands.org host: endlessh.service override.conf, /etc/fail2ban/filter.d/endlessh.conf
 
+# nginx conf.d load order: `log_format` and `map_hash_bucket_size` must come before their first use
+Adding a shared `conf.d/php2shell.conf` (maps plus a log_format) broke `nginx -t` twice. First:
+`unknown log format "php2shell" in conf.d/air.conf:2`. `conf.d/*.conf` loads alphabetically, and a
+log_format is looked up the moment an `access_log` names it, so it must already be defined. (Variables
+from `map` are resolved after all files are read, so they can be defined in any order.) After renaming
+it to `00-php2shell.conf`: `"map_hash_bucket_size" directive is duplicate in home.ahands.org.conf:1`.
+The first `map` block locks in map_hash_bucket_size and map_hash_max_size with their defaults, and any
+later setting then reports as a duplicate, even though it appears only once. It used to work only
+because home.ahands.org.conf came before any file with a map.
+
+To avoid it: put http-level shared definitions (log_format, map_hash_*, the maps) in a `00-` file, with
+`map_hash_bucket_size` / `map_hash_max_size` at the very top. Keep them out of per-vhost files. Before
+adding a file, run `grep -n 'map_hash\|log_format' /etc/nginx/conf.d/*.conf` to see what it will now load
+in front of. Also: an `access_log` in a server{} block replaces every inherited access_log, so a
+"global" extra log has to be added to each vhost.
+## Sources
+- ahands.org host: /etc/nginx/conf.d/00-php2shell.conf, home.ahands.org.conf, air.conf
+
