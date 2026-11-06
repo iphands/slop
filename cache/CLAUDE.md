@@ -302,8 +302,16 @@ curl -sI http://localhost:8080/debian/pool/main/c/cowsay/<file>.deb | grep -i x-
 curl -sI http://localhost:8080/fedora/linux/releases/$(rpm -E %fedora)/Everything/x86_64/os/repodata/repomd.xml
 curl -sI http://localhost:8080/fedora/linux/releases/$(rpm -E %fedora)/Everything/x86_64/os/Packages/c/<file>.rpm
 ```
-**MISS then HIT on a second identical request** is the pass condition. A `404` on an
-`.rpm` that exists upstream ⇒ the `rewrite`/`proxy_pass` remap is wrong (Critical Fact #2).
+**MISS then HIT on a second identical request** is the pass condition. The config sets no
+`proxy_cache_key`, so the default cache key contains no request method: a `HEAD` warms the entry
+and a later `GET` reads `HIT`. A `404` **with** an `X-Cache-Status` header was routed and rejected
+upstream (wrong codename/path); a `404` **without** the header never entered a proxying
+`location` — unrouted, or one of the `return`-based `/` and `/healthz`. Only the first case means
+the `rewrite`/`proxy_pass` remap is wrong (Critical Fact #2), so read the route list off
+`curl -f http://localhost:8080/` before blaming the remap. A routed `404` is itself cached
+(`proxy_cache_valid 404 1m`), so a repeated typo reads `HIT` — the config, not a second bug.
+Probes are real traffic: they fetch upstream and land in the dashboard as this client's requests,
+contributing zero bytes (`HEAD` logs `body_bytes_sent=0` — see `context/distilled.md`).
 Also lint the shell: `shellcheck build publish run scripts/*`.
 
 ### 4. Never commit broken config

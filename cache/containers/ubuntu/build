@@ -43,6 +43,9 @@ echo ">> [$CE] building ${IMAGE}:{latest,${UBUNTU_RELEASE},${REF}} against CACHE
 
 cat <<EOF
 >> verify it (Rule A -- a real fetch, not a config read):
+   # apt end-to-end: the sources rewrite, signature checks, and the .deb sub-location
    $CE run --rm ${IMAGE}:latest sh -c 'apt-get update && apt-get install -y cowsay'
+   # metadata probe -- run it TWICE: MISS then HIT is the pass
+   # no output = that cache never proxied this path; a 404 WITH the header = wrong suite
    curl -sI ${CACHE}/ubuntu/dists/\$(${CE} run --rm ${IMAGE}:latest sh -c '. /etc/os-release; echo \$VERSION_CODENAME')/InRelease | grep -i x-cache-status
 EOF

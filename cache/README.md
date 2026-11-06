@@ -261,18 +261,50 @@ image builds on arm64 — which is why `containers/fedora` carries arch-suffixed
 
 ## Verifying the cache works
 
-On two different clients, install the same package and watch the second one
-hit the cache:
+Start by asking the cache what it actually proxies:
+
+```bash
+curl -f http://CACHE:PORT/            # -> the route banner
+curl -f http://CACHE:PORT/healthz     # -> ok
+```
+
+`PORT` is whatever the host published the proxy on: `./run` defaults to **8080** and takes
+`PORT=…` (a real published mapping: `scripts/noir/spec`).
+
+Then prove it **stores** rather than merely forwards — run the *same* request twice:
+
+```bash
+curl -sI http://CACHE:PORT/ubuntu/dists/<suite>/InRelease | grep -iE '^HTTP|^x-cache-status'
+# <suite> = an Ubuntu codename: VERSION_CODENAME in /etc/os-release
+# -> 200 OK, X-Cache-Status: MISS   (first call may go upstream)
+curl -sI http://CACHE:PORT/ubuntu/dists/<suite>/InRelease | grep -iE '^HTTP|^x-cache-status'
+# -> 200 OK, X-Cache-Status: HIT    <- MISS then HIT is the pass
+```
+
+A warm entry may answer `REVALIDATED` where you expected `MISS`. And a `HEAD` that misses warms
+the entry, so a later `GET` also reads `HIT`.
+
+> **Reading `X-Cache-Status`:** the header appears only on **proxied** responses, so its presence
+> tells you the request reached one of the cache's `location`s. Read it that way for any
+> `/debian/`, `/ubuntu/` or `/fedora/` URL: a `404` **with** the header was routed and upstream
+> really said `404` — wrong codename, wrong path. A `404` **without** it was never proxied: for
+> those paths, this instance does not route them. Confirm against the route banner above. Two
+> responses legitimately carry no header, because nginx answers them itself: `/` and `/healthz`.
+
+Finally, end-to-end through a package manager: on two different clients, install the same
+package and watch the second one hit the cache:
 
 ```bash
 # client A
 sudo apt install -d cowsay        # or: sudo dnf install cowsay
 # client B (same command) -> served from cache; on the cache host:
 curl -sI http://CACHE:PORT/debian/pool/main/c/cowsay/<file>.deb | grep X-Cache-Status
-# X-Cache-Status: HIT
+# -> HIT (client A already pulled it through)
 ```
 
-The cache directory (`/srv/pkgcache/data`) grows as packages are cached.
+The cache directory (`/srv/pkgcache/data`) grows as packages are cached. Every request above is
+also *real traffic*: it fetches from upstream and is counted in the dashboard as traffic from the
+machine that ran it.
 
 ## Stats dashboard
 
