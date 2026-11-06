@@ -208,7 +208,7 @@ cache/
 │       ├── Dockerfile   #   ARG UBUNTU_RELEASE; 24.04/deb822 also verified
 │       ├── pkgcache-setup   # sources.list + deb822 rewrite (+ --revert)
 │       ├── build        #   -> iphands/pkgcache-ubuntu:{latest,<release>,<sha>}
-│       └── publish      #   never run for this image
+│       └── publish      #   no published copy — see README "Containers"
 ├── context/             # knowledge base — READ BEFORE NEW WORK
 │   ├── plans/
 │   │   ├── RULES.md     # plan format + Rules A–D (authoritative; read in full)

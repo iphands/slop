@@ -182,13 +182,12 @@ sudo dnf makecache
 > `/etc/dnf/repos.override.d/99-config_manager.repo`, which outranks the repo file, so
 > restoring a backup of `fedora.repo` will not re-enable the repo.
 
-### Containers — `containers/fedora`
+### Containers
 
-A Fedora image — release pinned by `FEDORA_RELEASE` in `containers/fedora/Dockerfile` — with dnf
-already pointed at the cache, for building container images
-without hammering a Fedora mirror. `FROM` it and every `dnf install` in the child build
-pulls through the LAN cache; it is also the handiest client for testing the `/fedora/`
-routes.
+**`containers/fedora`.** Fedora image — release pinned by `FEDORA_RELEASE` in its `Dockerfile` —
+with dnf already pointed at the cache, for building container images without hammering a Fedora
+mirror. `FROM` it and every `dnf install` in the child build pulls through the LAN cache; it is
+also the handiest client for testing the `/fedora/` routes.
 
 ```bash
 cd containers/fedora
@@ -217,25 +216,25 @@ pkgcache-setup --revert                  # back to the stock metalink repos
 No dnf metadata is baked into the image, and third-party repos
 (`fedora-cisco-openh264`, …) are left alone.
 
-`containers/ubuntu` is the same shape as `containers/fedora`, for **Ubuntu** (local-only
-build; release pinned by `UBUNTU_RELEASE` in `containers/ubuntu/Dockerfile`):
+**`containers/ubuntu`.** The Ubuntu counterpart of `containers/fedora` — but **local-only**
+(release pinned by `UBUNTU_RELEASE` in its `Dockerfile`):
 
 ```bash
 cd containers/ubuntu
 ./build                                # -> iphands/pkgcache-ubuntu:latest + :<release> + :<git-sha>
-                                       #    (no -arm64 tags — see Known limitation below)
-CACHE=http://localhost:8080 ./build     # bake a different endpoint
-UBUNTU_RELEASE=24.04 ./build            # verified on 22.04 and 24.04 (deb822 sources)
-IMAGE=you/pkgcache-ubuntu ./build       # tag it under your own name
+                                       # (x86_64 only — an arm64 build cannot produce this image;
+                                       #  see Known limitation below)
+CACHE=http://localhost:8080 ./build    # bake a different endpoint (default: noir.lan:3129)
+UBUNTU_RELEASE=24.04 ./build           # verified on 22.04 and 24.04 (deb822 sources)
+IMAGE=you/pkgcache-ubuntu ./build      # tag it under your own name
 ```
 
 `./build` tags the image **locally** (`latest`, the release, the git sha). Nothing is pushed to a
-registry, so `FROM` resolves only on a machine that has run `./build`. Verification record:
-`context/plans/completed/06_3_ubuntu_tracker.md`.
+registry (`./publish` exists and has never been run — there is no registry copy to pull).
+Verification record: `context/plans/completed/06_3_ubuntu_tracker.md`.
 
 ```dockerfile
-FROM iphands/pkgcache-ubuntu:latest  # local only — ./build tags this; nothing is pushed
-                                     # arm64: apt bypasses the cache — see Known limitation
+FROM iphands/pkgcache-ubuntu:latest    # resolves only on a host that ran ./build
 RUN apt-get update && apt-get install -y jq && rm -rf /var/lib/apt/lists/*
 ```
 
@@ -249,7 +248,16 @@ runtime, no apt lists baked in).
 `ddebs.ubuntu.com` (debug symbols) have no route on the proxy, so lines pointing there are
 deliberately left going upstream rather than repointed at a route that does not exist. This is
 about the host **architecture**, not the release — it applies to 22.04 and 24.04 alike. On an
-arm64 client that means apt bypasses the cache entirely.
+arm64 client that means apt bypasses the cache entirely. The same gap stops the image **building**
+on arm64: the arm64 variant of its base ships `ports.ubuntu.com` sources, which `pkgcache-setup`
+deliberately never rewrites, so an arm64 build cannot produce the image at all — and the error
+names the apt sources, not the architecture.
+
+Fedora differs: a single hostname serves every architecture there (`/fedora/…` proxies
+`dl.fedoraproject.org` for all of them), so a hostname-anchored rewrite is arch-agnostic and the
+image builds on arm64 — which is why `containers/fedora` carries arch-suffixed tags and
+`containers/ubuntu` has no use for them. Ubuntu's arm64 archive is a different host *and* path
+(`ports.ubuntu.com/ubuntu-ports`); no `$basearch`-style variable can paper over that.
 
 ## Verifying the cache works
 
