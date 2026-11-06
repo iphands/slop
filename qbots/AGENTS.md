@@ -382,7 +382,10 @@ at all — fix the server conditions before believing any number.
 > measurement. The earlier **24/24** headline is retired: it predates this measurement *and*
 > the contamination guards in `context/pitfalls.md`, without which a rotating or frozen server
 > was silently counted against movement. This section is the band's only home — it is no
-> longer duplicated in the READMEs.
+> longer duplicated in the READMEs. The dated handoffs that still assert the retired `24/24`
+> gate — `context/nav_state_2026-06-18.md`, `context/navmesh_spike_2026-06-18.md` and
+> `context/map_errors.notes.log.md` — are left unedited on purpose: they record what was true
+> when written. Treat this section as what supersedes them.
 
 Do NOT compare against the Baseline table in
 `context/plans/completed/10_movement_test_harness_tracker.md`: it is two single-run
