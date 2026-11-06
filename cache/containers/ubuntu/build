@@ -6,7 +6,7 @@ set -euo pipefail
 #
 #     ./build                                  # against the default cache endpoint
 #     CACHE=http://localhost:8080 ./build      # against a local test proxy
-#     UBUNTU_RELEASE=24.04 ./build             # rebase onto another release (only 22.04 is verified)
+#     UBUNTU_RELEASE=24.04 ./build             # rebase onto another release (22.04 and 24.04 both verified)
 #
 # Tags the moving <image>:latest, the release <image>:<ubuntu-release>, and an
 # immutable per-commit <image>:<git-sha>. Then ./publish to push.
