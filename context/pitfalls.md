@@ -1210,3 +1210,21 @@ give findtime and bantime units (`1d`, `1w`).
 ## Sources
 - ahands.org host: /etc/fail2ban/jail.local ([sshd], [DEFAULT])
 
+# systemd `PrivateUsers=true` cancels `AmbientCapabilities=CAP_NET_BIND_SERVICE`
+endlessh (upstream unit: DynamicUser, PrivateUsers=true, RestartSec=30) failed to bind port 22 with
+`endlessh: fatal: Permission denied` and restarted every 30s. Adding the capability alone is not enough.
+Binding a port below 1024 checks CAP_NET_BIND_SERVICE in the user namespace that owns the network
+namespace, which is the host's. PrivateUsers=true puts the service in a child user namespace, so the
+capability it holds there doesn't count. Separately, `systemctl edit` printed "Found modifications outside
+of the staging area ... new contents are empty, not writing file". Anything typed below the `### Edits
+below this comment will be discarded` marker is thrown away.
+
+To avoid it: in the drop-in, set all of `AmbientCapabilities=CAP_NET_BIND_SERVICE`,
+`CapabilityBoundingSet=CAP_NET_BIND_SERVICE` and `PrivateUsers=false`. Writing
+`/etc/systemd/system/<unit>.service.d/override.conf` with a heredoc is less error-prone than
+`systemctl edit`. Then run `daemon-reload` and `reset-failed` (the StartLimitBurst may have tripped), and
+confirm with `ss -tlnp | grep :22`. For a fail2ban filter on a journal-backed service, fail2ban sees
+`host ident[pid]: MESSAGE`, so anchor with `^%(__prefix_line)s` from common.conf, not a bare `^`.
+## Sources
+- ahands.org host: endlessh.service override.conf, /etc/fail2ban/filter.d/endlessh.conf
+
