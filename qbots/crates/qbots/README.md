@@ -2,7 +2,9 @@
 
 **The binary:** Connects N bot clients to a real Quake 2 server over UDP and watches
 them frag each other in a deathmatch. A bot connects, perceives, navigates, fights and
-respawns; an N-bot fleet fills a server.
+respawns; an N-bot fleet fills a server. The band behind that claim, and the constants a
+comparable run must match, live in
+[`../../AGENTS.md` → Movement Testing (Plan 10)](../../AGENTS.md#movement-testing-plan-10).
 
 ---
 

@@ -12,8 +12,9 @@ collision model + navigation graph parsed locally.
 
 **Does it work?** Yes — a bot connects, perceives, navigates, fights and respawns against a
 live Yamagi Q2 server, and an N-bot fleet fills a server. The regression band, the constants
-a run must match to be comparable, and the retired **24/24** headline live in `AGENTS.md`
-§Movement Testing. Plan state lives in `context/plans/SERIES.md`.
+a run must match to be comparable, and the retired **24/24** headline have one home:
+[`AGENTS.md` → Movement Testing (Plan 10)](AGENTS.md#movement-testing-plan-10). Plan state
+lives in [`context/plans/SERIES.md`](context/plans/SERIES.md).
 
 ---
 
@@ -145,6 +146,10 @@ does the same for the `xon` brain (Plan 62).
 Two scenarios measure how well a bot *moves*: each connects one bot like `connect-one`,
 disables combat, pins the nav goal to a known target, samples every server frame, and dumps
 a structured log + a `# SUMMARY` line.
+
+The regression band and the constants a comparable run must match live in
+[`AGENTS.md` → Movement Testing (Plan 10)](AGENTS.md#movement-testing-plan-10); this section
+documents the CLI and the log format only.
 
 ```bash
 # Farthest DM spawn from where the bot spawns.
