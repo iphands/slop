@@ -367,12 +367,22 @@ cargo run -p qbots -- spawn-to-weapon railgun --instance 1 --map q2dm3
   — its "Recognising a voided run from the numbers alone" table is the fallback for
   pre-verdict archives and for when a tag itself looks wrong.
 
-The **baseline** for regression comparison is the README's dated headline band
-(`effective 13–15/24`, measured 2026-09-12), stated in the tool's own units — compare
-`effective R/C`, deferred runs excluded. Read it as a gate, not a vibe: **`effective <
-13/24` with 0 deferred is an investigation**; `effective >= 16/24` is an improvement; and
-if the effective denominator is itself below ~16 the batch is LOW POWER (the tool warns)
-and is not comparable at all — fix the server conditions before believing any number.
+The **baseline** for regression comparison is `effective 13–15/24` on a parked q2dm1
+(measured 2026-09-12 across six *independent* full 24-bot batches — 13, 14, 15, 13 at
+14:07–15:43 UTC after the cmd-window and wire-velocity commits `d72095ba5`/`a471a2450`, then
+13, 14 on `8d8645f24` after the ack-path and velocity-tracker commits — so the band is
+run-to-run variance, not an average), stated in the tool's own units: compare `effective
+R/C`, deferred runs excluded. Read it as a gate, not a vibe: **`effective < 13/24` with 0
+deferred is an investigation**; `effective >= 16/24` is an improvement; and if the effective
+denominator is itself below ~16 the batch is LOW POWER (the tool warns) and is not comparable
+at all — fix the server conditions before believing any number.
+
+> Compare only under the same constants (q2dm1, default brain + `astar`, default spacing,
+> server parked with 0 other players); a q2dm3 or non-default-brain run is a *different*
+> measurement. The earlier **24/24** headline is retired: it predates this measurement *and*
+> the contamination guards in `context/pitfalls.md`, without which a rotating or frozen server
+> was silently counted against movement. This section is the band's only home — it is no
+> longer duplicated in the READMEs.
 Do NOT compare against the Baseline table in
 `context/plans/completed/10_movement_test_harness_tracker.md`: it is two single-run
 `reached=false` rows from 2026-06-15, before Plans 11–46 changed the steering code, and
