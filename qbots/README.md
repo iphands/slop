@@ -256,9 +256,9 @@ qbots/
 ## Further reading
 
 - `AGENTS.md` — big-picture architecture and the key constraint (external ≠ gamecode).
-- `context/plans/SERIES.md` — plan dependency chain + milestones (Plans 01–43).
-- `context/plans/43_ride_behavior_and_ranking.md` — active plan: moving-platform ride behavior + q2dm3 reach proof.
-- `context/nav_state_2026-06-18.md` — navigation quality state, what works, and next steps.
+- `context/plans/SERIES.md` — the full numbered dependency chain and the current status of
+  every plan.
+- `context/nav_state_2026-06-18.md` — navigation-quality handoff (dated; newest available).
 - `context/distilled.md` (+ `context/distilled/`) — protocol/format facts and per-bot AI
   research (handshake, netchan, frames, `clc_move` checksum, BSP/pak layout, collision/PVS,
   Eraser/Quake 3 port notes).
