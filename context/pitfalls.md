@@ -1246,3 +1246,21 @@ in front of. Also: an `access_log` in a server{} block replaces every inherited 
 ## Sources
 - ahands.org host: /etc/nginx/conf.d/00-php2shell.conf, home.ahands.org.conf, air.conf
 
+# fail2ban failregex: an ungrouped `|` splits the regex, and the branch without <HOST> never bans
+`failregex = ^<HOST> .* "(HEAD|GET) /\.aws|(cgi-bin|\.env|...|\.php).* 404 ` looks like "GET/HEAD to any
+of these paths, with a 404". It's actually two separate patterns: `^<HOST> .* "(HEAD|GET) /\.aws` OR
+`(cgi-bin|...).* 404 `. The second branch matches every scanner line but captures no host, so fail2ban
+can't ban anything from it. The jail sat at 0 bans for months while only `/.aws` probes counted. POST was
+also excluded, and that's how most PHP scanners probe. The same jails also had `findtime = 1` (one
+second), which made it worse: fail2ban drops lines older than now-findtime, and nginx timestamps have
+whole-second precision. Their `logpath = *.access.log` also skipped the busiest log, plain `access.log`.
+
+To avoid it: wrap every alternation in `(?:...)` and anchor the whole request line, e.g.
+`^<HOST> \S+ \S+ \[\] "(?:GET|HEAD|POST) [^"]*(?:a|b|c)[^"]*" 404\s`. The `\[\]` is where the date was
+cut out. Write `\s` instead of a trailing space, which gets lost in copy-paste. Test with `fail2ban-regex
+<log> <filter>` against a real log before trusting the jail: a 0-match result on a busy log means the
+filter is broken. On ahands, these filters are symlinks into /root/prog/dotfiles. `sed -i` REPLACES a
+symlink with an ordinary file unless you pass `--follow-symlinks`, so edit the target path (or use
+`cat >`, which writes through the link).
+## Sources
+- ahands.org host: dotfiles host/ahands/fail2ban/filter/nginx-suspicious-paths.conf, jail/01-custom.conf
