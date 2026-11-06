@@ -199,10 +199,10 @@ cache/
 │       ├── create.sh    #   proxy container  (cacher)
 │       └── create-stats.sh  # stats container (cacher-stats)
 ├── containers/          # client/base images that come pre-pointed at the cache
-│   ├── fedora/          #   fedora:44 + dnf wired to the cache; FROM it in child builds
+│   ├── fedora/          #   fedora:45 + dnf wired to the cache; FROM it in child builds
 │   │   ├── Dockerfile   #   ARG CACHE baked in, recorded as ENV PKGCACHE_URL
 │   │   ├── pkgcache-setup   # in-image repo surgery (+ --revert); NOT config-manager
-│   │   ├── build        #   -> iphands/pkgcache-fedora:{latest,44,<sha>}
+│   │   ├── build        #   -> iphands/pkgcache-fedora:{latest,45,<sha>}
 │   │   └── publish
 │   └── ubuntu/          #   ubuntu:22.04 + apt wired to the cache (same shape)
 │       ├── Dockerfile   #   ARG UBUNTU_RELEASE; 24.04/deb822 also verified
@@ -299,8 +299,8 @@ curl -sI http://localhost:8080/debian/dists/trixie/InRelease | grep -i x-cache-s
 curl -sI http://localhost:8080/debian/pool/main/c/cowsay/<file>.deb | grep -i x-cache-status
 
 # Fedora, both halves (metadata AND the rewrite-dependent .rpm path):
-curl -sI http://localhost:8080/fedora/linux/releases/44/Everything/x86_64/os/repodata/repomd.xml
-curl -sI http://localhost:8080/fedora/linux/releases/44/Everything/x86_64/os/Packages/c/<file>.rpm
+curl -sI http://localhost:8080/fedora/linux/releases/45/Everything/x86_64/os/repodata/repomd.xml
+curl -sI http://localhost:8080/fedora/linux/releases/45/Everything/x86_64/os/Packages/c/<file>.rpm
 ```
 **MISS then HIT on a second identical request** is the pass condition. A `404` on an
 `.rpm` that exists upstream ⇒ the `rewrite`/`proxy_pass` remap is wrong (Critical Fact #2).

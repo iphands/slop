@@ -20,7 +20,7 @@ cache what's inside it. nginx is a **reverse cache** — the client speaks HTTP 
 nginx, and nginx originates the upstream TLS itself and stores the `.rpm`.
 Packages stay GPG-verified end-to-end, so plain HTTP from client→cache is safe.
 
-| Option | Debian 13 | Fedora 44 | Notes |
+| Option | Debian 13 | Fedora | Notes |
 |---|:---:|:---:|---|
 | **nginx `proxy_cache`** ✅ chosen | ✅ | ✅ | Reverse cache, originates upstream TLS. It's nginx — zero staleness risk. Con: you point client repo config at it (this repo does that for you). |
 | lancache | ✅ transparent | ❌ | DNS-spoof + HTTP-only cache. Great for Debian (Trixie sources are HTTP), but **cannot** cache Fedora's HTTPS+metalink. |
@@ -118,7 +118,7 @@ curl -sI http://<cache-host>:8080/debian/dists/trixie/InRelease | grep X-Cache-S
 
 ```bash
 sudo ./scripts/fix-debian      # Debian 13: rewrite apt sources -> cache, apt update
-sudo ./scripts/fix-fedora      # Fedora 44: add cache repos, disable metalink, makecache
+sudo ./scripts/fix-fedora      # Fedora: add cache repos, disable metalink, makecache
 # undo either with:  sudo ./scripts/fix-debian --revert   /   fix-fedora --revert
 # different endpoint:  CACHE=http://noir.lan:3129 sudo -E ./scripts/fix-debian
 ```
@@ -148,7 +148,7 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 
 Then `sudo apt update`.
 
-### Fedora 44 — `/etc/yum.repos.d/fedora-cache.repo`
+### Fedora — `/etc/yum.repos.d/fedora-cache.repo`
 
 ```ini
 [fedora-cache]
@@ -180,23 +180,23 @@ sudo dnf makecache
 
 ### Containers — `containers/fedora`
 
-A `fedora:44` image with dnf already pointed at the cache, for building container images
+A `fedora:45` image with dnf already pointed at the cache, for building container images
 without hammering a Fedora mirror. `FROM` it and every `dnf install` in the child build
 pulls through the LAN cache; it is also the handiest client for testing the `/fedora/`
 routes.
 
 ```bash
 cd containers/fedora
-./build                                # -> iphands/pkgcache-fedora:latest + :44 + :<git-sha>
-                                       # (on aarch64: :latest-arm64 + :44-arm64 + :<git-sha>-arm64;
+./build                                # -> iphands/pkgcache-fedora:latest + :45 + :<git-sha>
+                                       # (on aarch64: :latest-arm64 + :45-arm64 + :<git-sha>-arm64;
                                        #  x86_64 tags are never overwritten)
 CACHE=http://localhost:8080 ./build    # bake a different endpoint (default: noir.lan:3129)
-FEDORA_RELEASE=45 ./build              # rebase onto another release
+FEDORA_RELEASE=44 ./build              # pin an older release (default: 45)
 ./publish                              # push to Docker Hub
 ```
 
 ```dockerfile
-FROM iphands/pkgcache-fedora:44
+FROM iphands/pkgcache-fedora:45
 RUN dnf -y install ripgrep && dnf clean all
 ```
 
