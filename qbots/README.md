@@ -264,5 +264,3 @@ qbots/
   Eraser/Quake 3 port notes).
 - `context/pitfalls.md` — bugs and gotchas, especially multi-attempt fixes.
 - `context/brain_notes.md` — running log of brain plugin decisions (Plans 23–33, 36–38).
-</content>
-</invoke>
