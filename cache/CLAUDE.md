@@ -204,11 +204,11 @@ cache/
 │   │   ├── pkgcache-setup   # in-image repo surgery (+ --revert); NOT config-manager
 │   │   ├── build        #   -> iphands/pkgcache-fedora:{latest,<release>,<sha>}
 │   │   └── publish
-│   └── ubuntu/          #   ubuntu:22.04 + apt wired to the cache (same shape)
+│   └── ubuntu/          #   base pinned by UBUNTU_RELEASE; apt wired to cache; not published
 │       ├── Dockerfile   #   ARG UBUNTU_RELEASE; 24.04/deb822 also verified
 │       ├── pkgcache-setup   # sources.list + deb822 rewrite (+ --revert)
-│       ├── build        #   -> iphands/pkgcache-ubuntu:{latest,22.04,<sha>}
-│       └── publish
+│       ├── build        #   -> iphands/pkgcache-ubuntu:{latest,<release>,<sha>}
+│       └── publish      #   never run for this image
 ├── context/             # knowledge base — READ BEFORE NEW WORK
 │   ├── plans/
 │   │   ├── RULES.md     # plan format + Rules A–D (authoritative; read in full)

@@ -217,17 +217,25 @@ pkgcache-setup --revert                  # back to the stock metalink repos
 No dnf metadata is baked into the image, and third-party repos
 (`fedora-cisco-openh264`, …) are left alone.
 
-`containers/ubuntu` is the same thing for **Ubuntu 22.04 (jammy)**:
+`containers/ubuntu` is the same shape as `containers/fedora`, for **Ubuntu** (local-only
+build; release pinned by `UBUNTU_RELEASE` in `containers/ubuntu/Dockerfile`):
 
 ```bash
 cd containers/ubuntu
-./build                                # -> iphands/pkgcache-ubuntu:latest + :22.04 + :<git-sha>
+./build                                # -> iphands/pkgcache-ubuntu:latest + :<release> + :<git-sha>
+                                       #    (no -arm64 tags — see Known limitation below)
 CACHE=http://localhost:8080 ./build     # bake a different endpoint
-UBUNTU_RELEASE=24.04 ./build            # also works (deb822 sources)
+UBUNTU_RELEASE=24.04 ./build            # verified on 22.04 and 24.04 (deb822 sources)
+IMAGE=you/pkgcache-ubuntu ./build       # tag it under your own name
 ```
 
+`./build` tags the image **locally** (`latest`, the release, the git sha). Nothing is pushed to a
+registry, so `FROM` resolves only on a machine that has run `./build`. Verification record:
+`context/plans/completed/06_3_ubuntu_tracker.md`.
+
 ```dockerfile
-FROM iphands/pkgcache-ubuntu:22.04
+FROM iphands/pkgcache-ubuntu:latest  # local only — ./build tags this; nothing is pushed
+                                     # arm64: apt bypasses the cache — see Known limitation
 RUN apt-get update && apt-get install -y jq && rm -rf /var/lib/apt/lists/*
 ```
 
@@ -239,8 +247,9 @@ runtime, no apt lists baked in).
 
 **Known limitation:** `ports.ubuntu.com` (the arm64/ppc64el archive) and
 `ddebs.ubuntu.com` (debug symbols) have no route on the proxy, so lines pointing there are
-deliberately left going upstream rather than repointed at a route that does not exist. On
-an arm64 client that means apt bypasses the cache entirely.
+deliberately left going upstream rather than repointed at a route that does not exist. This is
+about the host **architecture**, not the release — it applies to 22.04 and 24.04 alike. On an
+arm64 client that means apt bypasses the cache entirely.
 
 ## Verifying the cache works
 
