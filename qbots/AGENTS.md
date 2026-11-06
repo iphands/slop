@@ -383,6 +383,7 @@ at all — fix the server conditions before believing any number.
 > the contamination guards in `context/pitfalls.md`, without which a rotating or frozen server
 > was silently counted against movement. This section is the band's only home — it is no
 > longer duplicated in the READMEs.
+
 Do NOT compare against the Baseline table in
 `context/plans/completed/10_movement_test_harness_tracker.md`: it is two single-run
 `reached=false` rows from 2026-06-15, before Plans 11–46 changed the steering code, and
