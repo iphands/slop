@@ -264,6 +264,9 @@ qbots/
 - `context/plans/SERIES.md` — the full numbered dependency chain and the current status of
   every plan.
 - `context/nav_state_2026-06-18.md` — navigation-quality handoff (dated; newest available).
+  Its "`24/24` hard regression gate" predates the retirement note and is kept as what was
+  true when written — read [`AGENTS.md` → Movement Testing (Plan 10)](AGENTS.md#movement-testing-plan-10)
+  for the live band.
 - `context/distilled.md` (+ `context/distilled/`) — protocol/format facts and per-bot AI
   research (handshake, netchan, frames, `clc_move` checksum, BSP/pak layout, collision/PVS,
   Eraser/Quake 3 port notes).
