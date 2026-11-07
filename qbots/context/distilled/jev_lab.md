@@ -140,3 +140,28 @@ both questions** (a request carries one state); posture `disengage / hold`; obje
   4. keep option descriptions short and literal — no consequences, no role play;
   5. never rename a field to "fix" a misreading without measuring it — the model reads short
      codes fine on real states.
+
+## Arena A0 — 2026-11-06, first live run (a smoke, **not pre-registered**)
+
+`competition --brains q3,jev_static,jev --navmodes as --count 3` on `noir.lan` q2dm1, ~4 min,
+posture live (threshold 0.30), production wording. Hub: 69 asked, 69 answered and applied,
+gate-reject 5.8 %, 0 transport/malformed, p ≈ 15 ms per answer, 107 asks paced out.
+
+| arm | kills | deaths | K/D | env deaths | weapons picked |
+|---|---|---|---|---|---|
+| q3 | 6 | 7 | 0.86 | 1 | 3 |
+| jev_static | 4 | 6 | 0.67 | 1 | 3 |
+| **jev** | 4 | 10 | **0.40** | **5** (4 drown, 1 fall) | 2 |
+
+Answers: **disengage 64 / 69** (31 on contact, 27 after a hit, 11 refresh); hold 5.
+
+- **A0-1 The live state mix is not the corpus's mix.** Bots respawn with a blaster, so the
+  common live state is "healthy, weak weapon, enemies close" — which the model, reasonably, reads
+  as "break off". Disengaging from nearly every fight means fewer fights, few weapon pickups and
+  more retreating. The corpus measured *whether answers are right per situation*; it never
+  measured *how often each situation occurs in play*. Next: the decision journal (Plan 73 T5) to
+  see the states behind the disengages and what happened after each.
+- **A0-2 q3's retreat is hazard-blind** (`retreat_goal`: "step directly away from the enemy",
+  256 u) — on q2dm1 that walks into water; jev, retreating far more often, drowned 4×. A q3
+  movement bug that `disengage` amplifies, not a wording problem — fix it in q3 (all arms gain).
+- One run of 9 bots for 4 minutes: the K/D gap is not evidence by itself (plan guard rail 5).

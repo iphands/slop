@@ -162,6 +162,7 @@ metric, the `EVT jev_fleet` line, `calibrate`.
 | _(pending live)_ | W2: T6 inertness — `competition --brains q3,jev_static` | | | `--brains q3,q3` is **not** the proof unless `matrix_specs` is shown to field distinguishable arms |
 | _(pending live)_ | W2: T8 smoke — `connect-one` with `jev:`, then with the box unreachable | | | expect: refuse to start under `require: true` |
 | _(pending live)_ | W2: T9 `bench` (config-derived rate) | | | p95 vs `deadline_ms = 350` |
+| 2026-11-06 | first live run with the model deciding: `competition --brains q3,jev_static,jev --navmodes as --count 3` (~4 min, scratch config) | 69 asked / 69 applied (applied/asked 1.00), gate-reject 5.8 %, admission drop 0; **disengage 64/69**; K/D q3 0.86, jev_static 0.67, jev 0.40; jev drowned 4× | 1 | smoke, not the W3 command (needs `--count 12`, ≥2 runs); findings in Plan 73 `jev_lab.md` A0 |
 | _(pending live)_ | W3 gate: `competition --brains q3,jev_static,jev --count 12 --map q2dm1` | | | three ratios per arm and per key |
 | _(pending live)_ | W4: posture flips/bot/min + `spawn-to-spawn --map q2dm1` on the jev build | | | composition check only |
 | _(pending live)_ | W5: region `flatness`/`calibrate` + 12-bot region histogram | | | |
