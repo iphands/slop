@@ -60,6 +60,7 @@ Every row is written **before** its run (prediction), then completed.
 | L12 | 2026-11-06 | lab (tuning half) | summary-graded ("badly hurt" only < 25 hp, "hurt" 25–49) | posture **leakA 29 % → ≤ 10 %** at a small RC cost (73 % → ≥ 60 %); objective ≈ unchanged | | posture RC 73→**82 %**, leakA 29→**0 %**, flatA 0; objective RC 100 % | **right on leakage, wrong on cost** — RC rose instead of falling |
 | L13 | 2026-11-06 | lab (tuning half) | summary-graded + items-renamed (combination of L11 + L12) | **best overall**: posture RC ≥ 60 %, leakA ≤ 10 %, flatA ≈ 0; objective RC ≥ 90 %, flatA < 0.40 | | posture RC 45 %; objective acc 83 % | **wrong** — the rename drags the combination below L12 alone |
 | L14 | 2026-11-06 | lab (tuning half) | summary-graded + add-threat (combination) | posture RC ≥ L12 and flatA 0 (threat removed flat disengages in round 1); objective leakA up (threat raised it in round 1) | | posture RC 82 %, mC 0.563, sep **0.355**, leakA 0, flatA 0; objective leakA 70 % | **right** — best posture wording so far; objective leak up as predicted |
+| L15 | 2026-11-06 | lab (tuning half) | objective only: summary-graded + a 4th option `carry_on` ("no particular objective, keep roaming"), the objective's harmless default (tests Plan 72's ≤3-options / no-none-of-the-above rule) | objective **flatA (acting) < 0.30** (blanks go to `carry_on`), **leakA ≤ 40 %** (from 60 %), RC ≥ 85 % (some `hold_position` mass moves to `carry_on`), CW 0; posture identical to summary-graded | | |
 
 ## Evidence
 
