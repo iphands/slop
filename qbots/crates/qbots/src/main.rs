@@ -1411,7 +1411,9 @@ pub(crate) async fn bot_task(
                     send_timing = client::SendTiming::new();
                     // Same semantics as the respawn teleport: clears enemy/goal/FSM state
                     // that would otherwise reference the old map. `set_map` below re-feeds
-                    // the graph/items when the new nav graph loads.
+                    // the graph/items when the new nav graph loads. Plan 73: tell the brain it is a
+                    // level change first, so it does not count this `on_death` as a death.
+                    brain.on_level_change();
                     brain.on_death();
                     // Plan 72: an answer about the old level must never be applied to the new
                     // one — bump this bot's hub generation (sync: two short locks, no I/O).

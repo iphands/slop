@@ -165,3 +165,24 @@ Answers: **disengage 64 / 69** (31 on contact, 27 after a hit, 11 refresh); hold
   256 u) — on q2dm1 that walks into water; jev, retreating far more often, drowned 4×. A q3
   movement bug that `disengage` amplifies, not a wording problem — fix it in q3 (all arms gain).
 - One run of 9 bots for 4 minutes: the K/D gap is not evidence by itself (plan guard rail 5).
+
+## Arena A1 — 2026-11-06, baseline, 3 × 10 min (3 q3 + 2 jev + 1 shadow `jev_static`)
+
+**Death outcomes invalid** (journal bug — `died` was never set; fixed, re-run as A1b). Answer mix,
+q3 agreement and hp/frag deltas are valid. 493 posture decisions journalled (326 jev, 167 shadow);
+0 transport errors, 0 admission drops, live gate-reject (`no_signal`) **31–47 %** per run.
+
+| run | jev K/D | q3 K/D | jev_static K/D |
+|---|---|---|---|
+| 1 | 1.18 | 0.59 | 0.67 |
+| 2 | 1.38 | 0.57 | 1.00 |
+| 3 | **0.18** | 0.69 | 1.29 |
+
+- **A1-1 The model mostly agrees with q3.** Of jev's `disengage` answers, q3's own heuristic wanted
+  to retreat in 162 of 232 — the respawn blaster gives q3 an aggression of ~0 too. jev's posture
+  changes behaviour only in the minority where q3 wanted to fight (70 cases).
+- **A1-2 "Weak weapon" carries the disengages**: 198 of 232 jev `disengage` answers have
+  `weak weapon` in the summary.
+- **A1-3 Live states are much less decisive than the corpus**: 31–47 % of live answers fall
+  under the 0.30 margin (the corpus's holdout: 0 % of obvious posture cases did).
+- **A1-4 Frags are noise at this size**: jev's K/D went 1.18 → 1.38 → 0.18 on identical code.

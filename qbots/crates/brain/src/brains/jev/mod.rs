@@ -87,6 +87,10 @@ impl Brain for JevBrain {
         self.inner.policy_mut().on_death();
     }
 
+    fn on_level_change(&mut self) {
+        self.inner.policy_mut().on_level_change();
+    }
+
     fn on_map_change(&mut self, map: &str) {
         // The wire's map name is matched against a closed table and not kept.
         self.inner.policy_mut().on_map_change(MapId::from_name(map));
@@ -494,15 +498,17 @@ mod tests {
         tick_view(&mut b, &fight_view());
         stub.set_latest(Some(posture_decision(1, 1))); // hold
         tick_view(&mut b, &fight_view());
-        tick_view(&mut b, &fight_view_hp(0));
+        // As live: `bot_task` calls on_death on the death frame BEFORE ticking it, so the policy
+        // never sees health 0 (A1 recorded died = 0 % for exactly this reason).
         b.on_death();
         let o = stub.outcomes();
         assert!(o[0].1.died && !o[0].1.biased, "died; a hold never biases");
-        // A level change also calls on_death — with health > 0 it is not a death.
+        // A level change: on_level_change, then the branch's on_death — not a death.
         let (mut b, stub) = fight_brain();
         tick_view(&mut b, &fight_view());
         stub.set_latest(Some(posture_decision(1, 0)));
         tick_view(&mut b, &fight_view());
+        b.on_level_change();
         b.on_death();
         b.on_map_change("q2dm2");
         let o = stub.outcomes();

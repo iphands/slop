@@ -118,6 +118,10 @@ pub trait Brain: Send {
     /// which fires on every respawn **and** on a level change — this fires only when a level's
     /// map is loaded, so strategy state can reset without treating every death as a new map.
     fn on_map_change(&mut self, _map: &str) {}
+    /// The server changed level (Plan 73): called in `bot_task`'s servercount branch **before**
+    /// the `on_death` that branch also issues, so a brain can tell a level change from a real
+    /// death (which calls `on_death` alone, on the frame health hits 0 — before that frame's tick).
+    fn on_level_change(&mut self) {}
     /// Danger/popularity heatmap cost weights `(w_danger, w_pop)` for the nav overlay feed.
     fn heatmap_weights(&self) -> (f32, f32) {
         (0.0, 0.0)

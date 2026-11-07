@@ -362,11 +362,18 @@ impl JevPolicy {
 
     /// The bot died: drop the current decision and ask again on respawn.
     pub fn on_death(&mut self) {
-        // `bot_task` also calls `on_death` on a level change; only a real death has health ≤ 0.
-        let died = self.vitals.0 <= 0;
-        self.close_window(died);
+        // A level change calls `on_level_change` first (which closes the window as a non-death);
+        // anything still open here is a real death. (The policy never sees health ≤ 0: `bot_task`
+        // calls `on_death` on the death frame before that frame's tick.)
+        self.close_window(true);
         self.current = None;
         self.pending_trigger = Some(Trigger::Respawn);
+    }
+
+    /// The server changed level: close the open window as a non-death (the `on_death` that
+    /// follows then finds nothing to close).
+    pub fn on_level_change(&mut self) {
+        self.close_window(false);
     }
 
     /// A level loaded: new map identity, forget every decision and ticket, ask again.

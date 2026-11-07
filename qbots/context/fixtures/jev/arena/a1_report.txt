@@ -1,0 +1,75 @@
+jev journal: 493 posture decisions with outcomes
+by arm × answer
+  jev disengage (apply)                        n=177  died=  0.0%  hp=  -2.7  frags=+0.06
+  jev disengage (no_signal)                    n=55   died=  0.0%  hp=  -5.7  frags=+0.11  LOW POWER
+  jev hold (apply)                             n=20   died=  0.0%  hp=  -3.5  frags=+0.00  LOW POWER
+  jev hold (no_signal)                         n=74   died=  0.0%  hp=  -4.2  frags=+0.07  LOW POWER
+  jev_static disengage (apply)                 n=99   died=  0.0%  hp=  -4.8  frags=+0.10  LOW POWER
+  jev_static disengage (no_signal)             n=27   died=  0.0%  hp=  -7.9  frags=+0.19  LOW POWER
+  jev_static hold (apply)                      n=9    died=  0.0%  hp=  -1.2  frags=+0.00  LOW POWER
+  jev_static hold (no_signal)                  n=32   died=  0.0%  hp=  -4.1  frags=+0.03  LOW POWER
+by arm × answer × q3's own wish (agree / disagree)
+  jev disengage | q3 fight                     n=70   died=  0.0%  hp=  -9.1  frags=+0.06  LOW POWER
+  jev disengage | q3 retreat                   n=162  died=  0.0%  hp=  -1.0  frags=+0.07
+  jev hold | q3 fight                          n=18   died=  0.0%  hp=  -1.2  frags=+0.06  LOW POWER
+  jev hold | q3 retreat                        n=76   died=  0.0%  hp=  -4.7  frags=+0.05  LOW POWER
+  jev_static disengage | q3 fight              n=53   died=  0.0%  hp=  -9.4  frags=+0.08  LOW POWER
+  jev_static disengage | q3 retreat            n=73   died=  0.0%  hp=  -2.6  frags=+0.15  LOW POWER
+  jev_static hold | q3 fight                   n=18   died=  0.0%  hp=  -7.6  frags=+0.00  LOW POWER
+  jev_static hold | q3 retreat                 n=23   died=  0.0%  hp=  -0.2  frags=+0.04  LOW POWER
+by arm × answer × margin band
+  jev disengage | margin 0.30–0.50             n=73   died=  0.0%  hp=  -4.9  frags=+0.05  LOW POWER
+  jev disengage | margin <0.30                 n=55   died=  0.0%  hp=  -5.7  frags=+0.11  LOW POWER
+  jev disengage | margin ≥0.50                 n=104  died=  0.0%  hp=  -1.2  frags=+0.06
+  jev hold | margin 0.30–0.50                  n=18   died=  0.0%  hp=  -2.3  frags=+0.00  LOW POWER
+  jev hold | margin <0.30                      n=74   died=  0.0%  hp=  -4.2  frags=+0.07  LOW POWER
+  jev hold | margin ≥0.50                      n=2    died=  0.0%  hp= -14.5  frags=+0.00  LOW POWER
+  jev_static disengage | margin 0.30–0.50      n=47   died=  0.0%  hp=  -8.8  frags=+0.09  LOW POWER
+  jev_static disengage | margin <0.30          n=27   died=  0.0%  hp=  -7.9  frags=+0.19  LOW POWER
+  jev_static disengage | margin ≥0.50          n=52   died=  0.0%  hp=  -1.2  frags=+0.12  LOW POWER
+  jev_static hold | margin 0.30–0.50           n=9    died=  0.0%  hp=  -1.2  frags=+0.00  LOW POWER
+  jev_static hold | margin <0.30               n=32   died=  0.0%  hp=  -4.1  frags=+0.03  LOW POWER
+by arm × trigger
+  jev contact                                  n=204  died=  0.0%  hp=  -2.1  frags=+0.02
+  jev damage                                   n=77   died=  0.0%  hp=  -4.8  frags=+0.13  LOW POWER
+  jev refresh                                  n=45   died=  0.0%  hp=  -8.3  frags=+0.16  LOW POWER
+  jev_static contact                           n=110  died=  0.0%  hp=  -3.9  frags=+0.07
+  jev_static damage                            n=35   died=  0.0%  hp=  -7.2  frags=+0.23  LOW POWER
+  jev_static refresh                           n=22   died=  0.0%  hp=  -6.9  frags=+0.00  LOW POWER
+by arm × answer × state word
+  jev disengage | badly hurt                   n=49   died=  0.0%  hp= +16.6  frags=+0.00  LOW POWER
+  jev disengage | enemies at a distance        n=163  died=  0.0%  hp=  -4.3  frags=+0.04
+  jev disengage | enemies close                n=69   died=  0.0%  hp=  -1.3  frags=+0.13  LOW POWER
+  jev disengage | healthy                      n=141  died=  0.0%  hp=  -9.5  frags=+0.08
+  jev disengage | hurt                         n=42   died=  0.0%  hp=  -6.5  frags=+0.12  LOW POWER
+  jev disengage | strong weapon                n=34   died=  0.0%  hp= +21.9  frags=+0.06  LOW POWER
+  jev disengage | threat high                  n=52   died=  0.0%  hp=  +1.0  frags=+0.08  LOW POWER
+  jev disengage | threat low                   n=10   died=  0.0%  hp=  -0.4  frags=+0.00  LOW POWER
+  jev disengage | threat medium                n=170  died=  0.0%  hp=  -5.0  frags=+0.07
+  jev disengage | weak weapon                  n=198  died=  0.0%  hp=  -7.8  frags=+0.07
+  jev hold | enemies at a distance             n=90   died=  0.0%  hp=  -3.1  frags=+0.03  LOW POWER
+  jev hold | enemies close                     n=4    died=  0.0%  hp= -26.2  frags=+0.50  LOW POWER
+  jev hold | healthy                           n=93   died=  0.0%  hp=  -3.8  frags=+0.05  LOW POWER
+  jev hold | hurt                              n=1    died=  0.0%  hp= -24.0  frags=+0.00  LOW POWER
+  jev hold | strong weapon                     n=36   died=  0.0%  hp=  -9.7  frags=+0.08  LOW POWER
+  jev hold | threat low                        n=29   died=  0.0%  hp=  -2.2  frags=+0.00  LOW POWER
+  jev hold | threat medium                     n=65   died=  0.0%  hp=  -4.9  frags=+0.08  LOW POWER
+  jev hold | weak weapon                       n=58   died=  0.0%  hp=  -0.6  frags=+0.03  LOW POWER
+  jev_static disengage | badly hurt            n=18   died=  0.0%  hp= +30.6  frags=+0.11  LOW POWER
+  jev_static disengage | enemies at a distance n=76   died=  0.0%  hp=  -4.1  frags=+0.08  LOW POWER
+  jev_static disengage | enemies close         n=50   died=  0.0%  hp=  -7.6  frags=+0.18  LOW POWER
+  jev_static disengage | healthy               n=91   died=  0.0%  hp= -11.5  frags=+0.12  LOW POWER
+  jev_static disengage | hurt                  n=17   died=  0.0%  hp= -11.2  frags=+0.12  LOW POWER
+  jev_static disengage | strong weapon         n=15   died=  0.0%  hp= +31.7  frags=+0.33  LOW POWER
+  jev_static disengage | threat high           n=30   died=  0.0%  hp=  +1.1  frags=+0.17  LOW POWER
+  jev_static disengage | threat low            n=4    died=  0.0%  hp=  +0.0  frags=+0.00  LOW POWER
+  jev_static disengage | threat medium         n=92   died=  0.0%  hp=  -7.8  frags=+0.11  LOW POWER
+  jev_static disengage | weak weapon           n=111  died=  0.0%  hp= -10.5  frags=+0.09
+  jev_static hold | enemies at a distance      n=38   died=  0.0%  hp=  -2.9  frags=+0.03  LOW POWER
+  jev_static hold | enemies close              n=3    died=  0.0%  hp= -10.0  frags=+0.00  LOW POWER
+  jev_static hold | healthy                    n=41   died=  0.0%  hp=  -3.5  frags=+0.02  LOW POWER
+  jev_static hold | strong weapon              n=18   died=  0.0%  hp=  -3.2  frags=+0.06  LOW POWER
+  jev_static hold | threat low                 n=11   died=  0.0%  hp=  +0.5  frags=+0.00  LOW POWER
+  jev_static hold | threat medium              n=30   died=  0.0%  hp=  -4.9  frags=+0.03  LOW POWER
+  jev_static hold | weak weapon                n=23   died=  0.0%  hp=  -3.7  frags=+0.00  LOW POWER
+0 candidate scenarios written to /tmp/claude-1000/-home-iphands-prog-slop-qbots/84dc4b78-6a57-4685-b0d6-66c96c2d8f3b/scratchpad/a1_candidates — label them before use
