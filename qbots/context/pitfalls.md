@@ -1645,3 +1645,51 @@ than settle.
 - qbots: crates/brain/src/brains/q3/mod.rs (`run_fsm`, the posture merge in `tick`)
 - qbots: crates/brain/src/brains/q3/policy.rs (`Posture::disengage`)
 - qbots: context/plans/72_jev_decision_brain.md (T6; test `disengage_on_a_chase_state_retreats_instead_of_looping_into_chase`)
+
+---
+
+# Decision-model integration (Plan 72/73 `jev`): eleven traps, one entry
+
+## Problem
+
+Wiring a hosted decision model into a 10 Hz bot loop has a family of traps that each looked
+harmless on paper:
+1. **Per-brain ids restart on reconnect.** `build_brain` runs once per *session*, so a ticket or
+   generation counter owned by the brain restarts at 0 and an old answer matches a new ask.
+2. **Two clocks.** The brain's time is `Σ dt` from server frames (reproducible tests); deadlines,
+   TTLs and buckets need `Instant`. Mixing them makes tests flaky or deadlines lie.
+3. **Determinism ⇒ herding.** Identical states get byte-identical answers — N similar bots make
+   the same decision at once. There is no sampling to break it.
+4. **Flat answers are a property of the question.** 24 meaningless options → top p 0.051; the
+   fix is fewer, self-describing options, not a different model.
+5. **Permit waits age the snapshot.** A request that waits on a semaphore before its deadline
+   starts gets a valid, on-time answer about a dead world.
+6. **A hostname that resolves on the dev box is not a contract.** `cosmo.lan` was an
+   `/etc/hosts` loopback line; `.lan` is not mDNS (`.local` is).
+7. **Symmetric jitter breaks the *provable* budget** (the floor drops to base × 0.7) even though
+   the mean is unchanged — use one-sided `× [1, 1.3]`.
+8. **`n_eff ≤ 1.5` demands p1 ≥ 0.86 for every n ≤ 3 question** — it rejected an obviously-right
+   0.80 binary answer. Gate on the margin p1 − p2.
+9. **A parity test that compares a refactor with its own delegate proves nothing**
+   (`new()` → `new_with_policy(NullPolicy)`): record a golden from the *pre-refactor* code first.
+10. **`serde_json` without `preserve_order` sorts object keys** — serialising the request through
+    a `Map` silently reorders the offered options, which changes a deterministic model's answer.
+11. **The live state mix is not the test corpus's mix.** A balanced corpus said the posture
+    question was 100 % accurate; live, bots respawn with a blaster, "weak weapon, enemies close"
+    dominates, and the model said `disengage` 64/69 times.
+
+## Fix
+
+Hub-owned `AtomicU64` tickets/generation (1); deadlines on `tokio::time::Instant` in the hub,
+brain time for brain lifetimes (2); per-bot input differences + capped, code-side assignment (3);
+≤ 3 labelled moves with a no-op option (4); a pull-model worker pool that checks age at pick time
+(5); record the resolver path, refuse to start on failure (6); one-sided jitter (7); margin gate
+calibrated on a holdout (8); commit the golden before the seam (9); write the JSON body by hand
+in declared order (10); measure the live distribution (decision journal) before trusting corpus
+accuracy (11). And always chain `gate && commit` — Plan 73 T5 committed "gate green" over a
+failed clippy run because the two were not chained.
+
+## Sources
+- qbots: crates/qbots/src/jev/{hub,render,wire,net}.rs, crates/brain/src/jev/{gate,source,state}.rs
+- qbots: crates/brain/src/brains/q3/{mod,policy}.rs (golden `testdata/parity_200.txt`)
+- qbots: context/plans/72_jev_decision_brain*.md, 73_jev_lab_and_arena*.md, context/distilled/jev_lab.md
