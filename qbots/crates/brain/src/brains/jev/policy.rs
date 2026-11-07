@@ -30,8 +30,8 @@ use crate::brains::core::MapItem;
 use crate::brains::q3::{GoalPolicy, GoalQuery, Posture, PostureQuery};
 use crate::jev::question::posture_question;
 use crate::jev::source::{
-    AppliedDecision, ApplyOutcome, Ask, BrainReject, DecisionSource, PostureChoice, TicketId,
-    Trigger,
+    AppliedDecision, ApplyOutcome, Ask, BrainReject, DecisionSource, Outcome, PostureChoice,
+    TicketId, Trigger, OUTCOME_WINDOW_S,
 };
 use crate::jev::state::{DecisionState, MapContext, MapId, SelfSummary};
 use crate::nav::NavGoal;
@@ -85,6 +85,20 @@ pub struct JevPolicy {
     /// `(time, amount)` of recent hits.
     damage: VecDeque<(f32, u32)>,
     saw_enemy: bool,
+    /// Latest (health, armor, frags) seen — the outcome window's readings.
+    vitals: (i32, i32, i32),
+    /// The open outcome window, if a decision is being followed (Plan 73 journal).
+    window: Option<Window>,
+}
+
+/// An open outcome window: the readings when it opened, and what has happened since.
+struct Window {
+    ticket: TicketId,
+    opened: f32,
+    vitals: (i32, i32, i32),
+    damage: u32,
+    q3_retreat: Option<bool>,
+    biased: bool,
 }
 
 impl JevPolicy {
@@ -106,7 +120,30 @@ impl JevPolicy {
             last_health: None,
             damage: VecDeque::new(),
             saw_enemy: false,
+            vitals: (0, 0, 0),
+            window: None,
         }
+    }
+
+    /// Close the open outcome window (if any) and report it.
+    fn close_window(&mut self, died: bool) {
+        let Some(w) = self.window.take() else {
+            return;
+        };
+        let (hp, ar, fr) = self.vitals;
+        self.source.outcome(
+            w.ticket,
+            Outcome {
+                secs: self.time - w.opened,
+                died,
+                hp_delta: hp - w.vitals.0,
+                armor_delta: ar - w.vitals.1,
+                frags_delta: fr - w.vitals.2,
+                damage_taken: w.damage,
+                q3_retreat: w.q3_retreat,
+                biased: w.biased,
+            },
+        );
     }
 
     /// Once per tick, before `poll` and before q3 runs: advance brain time, track damage, and
@@ -116,8 +153,16 @@ impl JevPolicy {
         let hp = view.self_state().health;
         let hit = self.last_health.map_or(0, |prev| (prev - hp).max(0) as u32);
         self.last_health = Some(hp);
+        let s = view.self_state();
+        self.vitals = (hp, s.armor, s.frags);
         if hit > 0 {
             self.damage.push_back((self.time, hit));
+        }
+        if let Some(w) = &mut self.window {
+            w.damage += hit;
+            if self.time - w.opened >= OUTCOME_WINDOW_S {
+                self.close_window(false);
+            }
         }
         while self
             .damage
@@ -281,17 +326,31 @@ impl JevPolicy {
             posture,
         });
         self.applied_at = self.time;
+        // A newer decision supersedes the one being followed.
+        self.close_window(false);
+        self.window = Some(Window {
+            ticket: d.ticket,
+            opened: self.time,
+            vitals: self.vitals,
+            damage: 0,
+            q3_retreat: None,
+            biased: false,
+        });
         Applied
     }
 
     /// The bot died: drop the current decision and ask again on respawn.
     pub fn on_death(&mut self) {
+        // `bot_task` also calls `on_death` on a level change; only a real death has health ≤ 0.
+        let died = self.vitals.0 <= 0;
+        self.close_window(died);
         self.current = None;
         self.pending_trigger = Some(Trigger::Respawn);
     }
 
     /// A level loaded: new map identity, forget every decision and ticket, ask again.
     pub fn on_map_change(&mut self, map: MapId) {
+        self.close_window(false);
         self.map = map;
         self.current = None;
         self.ring.clear();
@@ -305,13 +364,22 @@ impl GoalPolicy for JevPolicy {
         None
     }
 
-    fn posture(&mut self, _q: &PostureQuery) -> Posture {
+    fn posture(&mut self, q: &PostureQuery) -> Posture {
+        if let Some(w) = self.window.as_mut().filter(|w| w.q3_retreat.is_none()) {
+            // What q3 alone would have done on the window's first tick (height delta unknown here).
+            w.q3_retreat = Some(crate::q3char::wants_to_retreat(q.view, q.ch, None));
+        }
         let disengage = !self.inert
             && self.time - self.applied_at < POSTURE_MAX_AGE_S
             && self
                 .current
                 .as_ref()
                 .is_some_and(|c| c.posture == Some(PostureChoice::Disengage));
+        if disengage {
+            if let Some(w) = &mut self.window {
+                w.biased = true;
+            }
+        }
         Posture { disengage }
     }
 }

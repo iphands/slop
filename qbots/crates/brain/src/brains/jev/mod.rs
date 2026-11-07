@@ -320,10 +320,14 @@ mod tests {
 
     /// Our bot holds a railgun at full health (sarge ⇒ q3 wants to CHASE), one enemy at 200 u.
     fn fight_view() -> Worldview {
+        fight_view_hp(100)
+    }
+
+    fn fight_view_hp(hp: i16) -> Worldview {
         use q2proto::EntityState;
         let mut frame = Frame::default();
         frame.playerstate.gunindex = 1;
-        frame.playerstate.stats[1] = 100;
+        frame.playerstate.stats[1] = hp;
         frame.playerstate.stats[3] = 8;
         frame.playerstate.stats[5] = 100;
         frame.entities = vec![EntityState {
@@ -449,6 +453,53 @@ mod tests {
             stub.submitted().is_empty(),
             "the harnesses never ask the model"
         );
+    }
+
+    #[test]
+    fn jev_outcome_window_reports_what_happened_after_a_disengage() {
+        let (mut b, stub) = fight_brain();
+        tick_view(&mut b, &fight_view()); // contact → ticket 1
+        stub.set_latest(Some(posture_decision(1, 0))); // disengage
+        tick_view(&mut b, &fight_view()); // resolved: window opens at 100 hp
+        tick_view(&mut b, &fight_view_hp(80)); // a 20-point hit inside the window
+        for _ in 0..100 {
+            tick_view(&mut b, &fight_view_hp(80));
+        }
+        let o = stub.outcomes();
+        assert_eq!(o.len(), 1, "one window, closed at OUTCOME_WINDOW_S");
+        let (t, out) = o[0];
+        assert_eq!(t, TicketId(1));
+        assert!(!out.died);
+        assert_eq!((out.hp_delta, out.damage_taken), (-20, 20));
+        assert!(out.biased, "the disengage was in force");
+        assert_eq!(
+            out.q3_retreat,
+            Some(false),
+            "q3 alone (sarge, railgun) would not retreat"
+        );
+        assert!((out.secs - 10.0).abs() < 0.11);
+    }
+
+    #[test]
+    fn jev_outcome_death_and_level_change_close_the_window() {
+        let (mut b, stub) = fight_brain();
+        tick_view(&mut b, &fight_view());
+        stub.set_latest(Some(posture_decision(1, 1))); // hold
+        tick_view(&mut b, &fight_view());
+        tick_view(&mut b, &fight_view_hp(0));
+        b.on_death();
+        let o = stub.outcomes();
+        assert!(o[0].1.died && !o[0].1.biased, "died; a hold never biases");
+        // A level change also calls on_death — with health > 0 it is not a death.
+        let (mut b, stub) = fight_brain();
+        tick_view(&mut b, &fight_view());
+        stub.set_latest(Some(posture_decision(1, 0)));
+        tick_view(&mut b, &fight_view());
+        b.on_death();
+        b.on_map_change("q2dm2");
+        let o = stub.outcomes();
+        assert_eq!(o.len(), 1);
+        assert!(!o[0].1.died, "a level change is not a death");
     }
 
     #[test]

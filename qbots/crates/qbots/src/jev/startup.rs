@@ -129,6 +129,10 @@ pub fn hub_config(cfg: &JevCfg) -> HubConfig {
             margin_multi: cfg.gate_margin_multi,
             ..GateThresholds::default()
         },
+        journal: cfg.journal.then(|| {
+            let ts = time::OffsetDateTime::now_utc().unix_timestamp();
+            std::path::PathBuf::from(format!("logs/jev/journal-{ts}.jsonl"))
+        }),
         ..HubConfig::default()
     }
 }

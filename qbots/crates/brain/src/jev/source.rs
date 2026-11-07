@@ -138,6 +138,32 @@ pub enum ApplyOutcome {
     Rejected(BrainReject),
 }
 
+/// What happened after a decision (Plan 73 T5), measured by the brain over a window that opens
+/// when the decision is resolved and closes after [`OUTCOME_WINDOW_S`] of brain time, on death,
+/// on a level change, or when a newer decision supersedes it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Outcome {
+    /// Brain seconds actually observed.
+    pub secs: f32,
+    /// The bot died inside the window.
+    pub died: bool,
+    /// Health at close − health at open.
+    pub hp_delta: i32,
+    /// Armor at close − armor at open.
+    pub armor_delta: i32,
+    /// Frags at close − frags at open.
+    pub frags_delta: i32,
+    /// Health lost to hits inside the window (sum of drops).
+    pub damage_taken: u32,
+    /// q3's own `wants_to_retreat` on the first tick of the window — what q3 would have done.
+    pub q3_retreat: Option<bool>,
+    /// The decision actually changed q3's inputs (a `disengage` was in force, not in shadow).
+    pub biased: bool,
+}
+
+/// How long an outcome window stays open (brain time, seconds).
+pub const OUTCOME_WINDOW_S: f32 = 10.0;
+
 /// A bot's handle on the decision hub. Implemented by the hub in `crates/qbots` and by the two
 /// test doubles below.
 pub trait DecisionSource: Send + Sync {
@@ -152,6 +178,8 @@ pub trait DecisionSource: Send + Sync {
     fn refresh_due(&self) -> bool;
     /// The brain's verdict on a decision `latest()` returned.
     fn ack(&self, ticket: TicketId, outcome: ApplyOutcome);
+    /// What happened after an applied decision (Plan 73 journal). Best effort, never blocks.
+    fn outcome(&self, ticket: TicketId, outcome: Outcome);
 }
 
 /// Never decides. `JevStatic` (the primary A/B control) and offline tests use it.
@@ -172,6 +200,7 @@ impl DecisionSource for NullDecider {
         false
     }
     fn ack(&self, _ticket: TicketId, _outcome: ApplyOutcome) {}
+    fn outcome(&self, _ticket: TicketId, _outcome: Outcome) {}
 }
 
 /// A scripted decider for brain tests: set what `latest()` and `refresh_due()` return and
@@ -182,6 +211,7 @@ pub struct StubDecider {
     latest: Mutex<Option<AppliedDecision>>,
     submitted: Mutex<Vec<(TicketId, Ask)>>,
     acks: Mutex<Vec<(TicketId, ApplyOutcome)>>,
+    outcomes: Mutex<Vec<(TicketId, Outcome)>>,
     refuse: AtomicBool,
     refresh_due: AtomicBool,
 }
@@ -195,6 +225,11 @@ impl StubDecider {
     /// Every accepted `submit` so far, oldest first.
     pub fn submitted(&self) -> Vec<(TicketId, Ask)> {
         lock(&self.submitted).clone()
+    }
+
+    /// Every `outcome` so far, oldest first.
+    pub fn outcomes(&self) -> Vec<(TicketId, Outcome)> {
+        lock(&self.outcomes).clone()
     }
 
     /// Make `submit` refuse (as the hub's pacing would) from now on.
@@ -230,6 +265,9 @@ impl DecisionSource for StubDecider {
     }
     fn ack(&self, ticket: TicketId, outcome: ApplyOutcome) {
         lock(&self.acks).push((ticket, outcome));
+    }
+    fn outcome(&self, ticket: TicketId, outcome: Outcome) {
+        lock(&self.outcomes).push((ticket, outcome));
     }
 }
 

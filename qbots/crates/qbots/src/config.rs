@@ -105,6 +105,9 @@ pub struct JevCfg {
     pub gate_margin_binary: f32,
     /// Gate: minimum `p1 − p2` for three or more options (calibrated at W2).
     pub gate_margin_multi: f32,
+    /// Plan 73: write the decision journal (one JSON line per decision with its outcome) to
+    /// `logs/jev/journal-<unix>.jsonl`.
+    pub journal: bool,
 }
 
 impl Default for JevCfg {
@@ -128,6 +131,7 @@ impl Default for JevCfg {
             // failed calibration and is not asked (Plan 72 tracker).
             gate_margin_binary: 0.30,
             gate_margin_multi: 0.30,
+            journal: false,
         }
     }
 }

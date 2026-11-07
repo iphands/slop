@@ -75,6 +75,8 @@ pub struct HubConfig {
     pub breaker_open: Duration,
     /// The gate.
     pub gate: GateThresholds,
+    /// Plan 73 decision journal: append one JSON line per decision, with its outcome, here.
+    pub journal: Option<std::path::PathBuf>,
 }
 
 impl Default for HubConfig {
@@ -94,6 +96,7 @@ impl Default for HubConfig {
             breaker_timeouts: 8,
             breaker_open: Duration::from_secs(5),
             gate: GateThresholds::default(),
+            journal: None,
         }
     }
 }
@@ -178,6 +181,8 @@ struct BotSlot {
     pacing: Mutex<Pacing>,
     /// Only changed under the `decision` lock, so store-vs-bump cannot race.
     generation: AtomicU64,
+    /// The arm this bot plays (`jev`, `jev_static`) — journal label, set once by `JevLink`.
+    arm: std::sync::OnceLock<&'static str>,
 }
 
 #[derive(Default)]
@@ -202,6 +207,10 @@ struct Inner {
     notify: Notify,
     shared: Mutex<Shared>,
     stop: AtomicBool,
+    /// The journal writer's channel (a dedicated thread — never the tick path).
+    journal: Option<std::sync::mpsc::Sender<String>>,
+    /// Journal lines waiting for their outcome, by ticket.
+    journal_open: Mutex<std::collections::HashMap<u64, serde_json::Value>>,
 }
 
 /// One picked, admitted ask.
@@ -232,6 +241,7 @@ impl Hub {
     pub fn start(cfg: HubConfig, n_bots: usize, transport: Arc<dyn DecisionTransport>) -> Self {
         let now = Instant::now();
         let rate = cfg.max_input_tokens_per_s;
+        let journal_tx = cfg.journal.clone().map(spawn_journal_writer);
         let inner = Arc::new(Inner {
             bots: (0..n_bots)
                 .map(|_| BotSlot {
@@ -239,6 +249,7 @@ impl Hub {
                     decision: Mutex::new(None),
                     pacing: Mutex::new(Pacing::default()),
                     generation: AtomicU64::new(0),
+                    arm: std::sync::OnceLock::new(),
                 })
                 .collect(),
             shared: Mutex::new(Shared {
@@ -252,12 +263,19 @@ impl Hub {
             next_ticket: AtomicU64::new(0),
             notify: Notify::new(),
             stop: AtomicBool::new(false),
+            journal: journal_tx,
+            journal_open: Mutex::new(std::collections::HashMap::new()),
         });
         let mut workers: Vec<JoinHandle<()>> = (0..inner.cfg.max_concurrent)
             .map(|_| tokio::spawn(worker(inner.clone())))
             .collect();
         workers.push(tokio::spawn(fleet_line(inner.clone())));
         Hub { inner, workers }
+    }
+
+    /// Label bot `bot`'s arm for the journal (first label wins).
+    pub fn set_arm(&self, bot: usize, arm: &'static str) {
+        let _ = self.inner.bots[bot].arm.set(arm);
     }
 
     /// The `DecisionSource` handle for bot `bot` (an index below `n_bots`).
@@ -314,6 +332,7 @@ impl JevLink {
     /// The link for bot index `bot`, if the hub is running and the bot runs the `jev` brain.
     pub fn for_bot(hub: &Option<Arc<Hub>>, brain: brain::BrainKind, bot: usize) -> Option<Self> {
         let hub = hub.as_ref().filter(|_| brain == brain::BrainKind::Jev)?;
+        hub.set_arm(bot, brain::brain_tag(brain));
         Some(Self {
             hub: hub.clone(),
             bot,
@@ -350,6 +369,21 @@ impl DecisionSource for BotHandle {
     fn refresh_due(&self) -> bool {
         let p = lock(&self.inner.bots[self.bot].pacing);
         p.last_ask.is_none_or(|t| t.elapsed() >= p.dwell)
+    }
+
+    fn outcome(&self, ticket: TicketId, o: brain::jev::source::Outcome) {
+        let Some(tx) = &self.inner.journal else {
+            return;
+        };
+        let Some(mut line) = lock(&self.inner.journal_open).remove(&ticket.0) else {
+            return;
+        };
+        line["outcome"] = serde_json::json!({
+            "secs": (o.secs * 10.0).round() / 10.0, "died": o.died, "hp_delta": o.hp_delta,
+            "armor_delta": o.armor_delta, "frags_delta": o.frags_delta,
+            "damage_taken": o.damage_taken, "q3_retreat": o.q3_retreat, "biased": o.biased,
+        });
+        let _ = tx.send(line.to_string());
     }
 
     fn ack(&self, ticket: TicketId, outcome: ApplyOutcome) {
@@ -594,7 +628,76 @@ impl Inner {
             }
         }
         log_decision(bot, pending, v, lat_ms);
+        if self.journal.is_some() {
+            let arm = slot.arm.get().copied().unwrap_or("?");
+            let state = render_state(&pending.ask.state, self.cfg.max_state_tokens).text;
+            let line = journal_entry(bot, arm, pending, v, &state, lat_ms);
+            lock(&self.journal_open).insert(pending.ticket.0, line);
+        }
     }
+}
+
+/// The journal writer: a dedicated thread appending lines to `path` (created with its parent).
+fn spawn_journal_writer(path: std::path::PathBuf) -> std::sync::mpsc::Sender<String> {
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        use std::io::Write as _;
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        else {
+            tracing::error!(path = %path.display(), "jev journal: cannot open; journal disabled");
+            return;
+        };
+        tracing::info!(path = %path.display(), "jev journal open");
+        for line in rx {
+            let _ = writeln!(f, "{line}");
+        }
+    });
+    tx
+}
+
+/// A journal line, waiting for its outcome: who asked what about which state, and the answer.
+fn journal_entry(
+    bot: usize,
+    arm: &str,
+    pending: &Pending,
+    v: &Validated,
+    state: &str,
+    lat_ms: u128,
+) -> serde_json::Value {
+    let questions: Vec<serde_json::Value> = v
+        .results
+        .iter()
+        .zip(&v.stats)
+        .map(|((key, r), st)| {
+            let spec = pending.ask.questions.iter().find(|q| q.key == *key);
+            let top = st.and_then(|st| match spec.map(|q| &q.kind) {
+                Some(QuestionKind::Choice(opts)) => opts.get(st.top).map(|o| o.label),
+                _ => None,
+            });
+            serde_json::json!({
+                "q": key.wire_key(), "top": top,
+                "margin": st.map(|s| (s.margin * 1000.0).round() / 1000.0),
+                "n_eff": st.map(|s| (s.n_eff * 100.0).round() / 100.0),
+                "gate": if matches!(r, QuestionResult::Choice(Decision::Apply(_))) { "apply" } else { "no_signal" },
+            })
+        })
+        .collect();
+    let map = match pending.ask.state.get(FieldKey::Map) {
+        Some(Field::Map(m)) => m.map.slug(),
+        _ => "other",
+    };
+    serde_json::json!({
+        "ts": time::OffsetDateTime::now_utc().unix_timestamp(),
+        "bot": bot, "arm": arm, "ticket": pending.ticket.0, "trig": pending.ask.trig.slug(),
+        "map": map, "schema": brain::jev::state::STATE_SCHEMA_VERSION,
+        "state": state, "answers": questions, "tok": v.input_tokens, "lat_ms": lat_ms,
+    })
 }
 
 /// One `EVT jev_decision` line per question of a stored answer.

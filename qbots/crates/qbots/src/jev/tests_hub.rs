@@ -494,3 +494,54 @@ async fn jev_telemetry_counts_decisive_no_signal_and_the_three_ratios() {
     );
     assert_eq!(c.admission_drop_rate(), 0.0);
 }
+
+#[tokio::test(start_paused = true)]
+async fn jev_journal_writes_one_line_per_decision_with_its_outcome() {
+    use brain::jev::source::Outcome;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("logs/journal.jsonl");
+    let t = Scripted::default();
+    let c = HubConfig {
+        journal: Some(path.clone()),
+        ..cfg()
+    };
+    let (hub, h) = start(c, 1, &t);
+    hub.set_arm(0, "jev");
+    let tk = h[0].submit(ask(42, Trigger::Contact)).expect("accepted");
+    settle(50).await;
+    h[0].outcome(
+        tk,
+        Outcome {
+            secs: 10.0,
+            died: true,
+            hp_delta: -42,
+            damage_taken: 50,
+            q3_retreat: Some(false),
+            biased: true,
+            ..Default::default()
+        },
+    );
+    h[0].outcome(tk, Outcome::default()); // a second outcome for the same ticket is ignored
+                                          // The writer is a real thread: wait (real time) for its line.
+    let mut text = String::new();
+    for _ in 0..100 {
+        text = std::fs::read_to_string(&path).unwrap_or_default();
+        if !text.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 1);
+    let v: serde_json::Value = serde_json::from_str(lines[0]).expect("json");
+    assert_eq!(
+        (v["arm"].as_str(), v["trig"].as_str()),
+        (Some("jev"), Some("contact"))
+    );
+    assert!(v["state"].as_str().is_some_and(|s| s.contains("hp:42(")));
+    assert_eq!(v["answers"][0]["top"], "a");
+    assert_eq!(v["answers"][0]["gate"], "apply");
+    assert_eq!(v["outcome"]["died"], true);
+    assert_eq!(v["outcome"]["hp_delta"], -42);
+    assert_eq!(v["schema"], 2);
+}
