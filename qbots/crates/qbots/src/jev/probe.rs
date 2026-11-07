@@ -112,6 +112,10 @@ pub enum ProbeCmd {
         /// Only print the tuning/holdout counts (no model calls).
         #[arg(long)]
         split_report: bool,
+        /// Also write one JSON line per scored case (name, kind, expected, top, margin,
+        /// probabilities) to this file.
+        #[arg(long)]
+        detail: Option<PathBuf>,
     },
 }
 
@@ -126,6 +130,14 @@ pub enum ProbeQuestion {
 }
 
 impl ProbeQuestion {
+    /// The do-nothing option, if the question has one (posture's `hold` = "leave it to q3").
+    pub(crate) fn noop_label(self) -> Option<&'static str> {
+        match self {
+            ProbeQuestion::Posture => Some("hold"),
+            ProbeQuestion::Objective => None,
+        }
+    }
+
     /// The corpus sub-directory name (`posture`, `objective`).
     pub(crate) fn dir_name(self) -> &'static str {
         match self {
@@ -254,6 +266,7 @@ pub async fn run(cfg: &Config, cmd: ProbeCmd, json: bool) -> Result<bool, String
             half,
             confirm_holdout,
             split_report,
+            detail,
         } => {
             let qs = question.map_or_else(
                 || vec![ProbeQuestion::Posture, ProbeQuestion::Objective],
@@ -264,7 +277,7 @@ pub async fn run(cfg: &Config, cmd: ProbeCmd, json: bool) -> Result<bool, String
             }
             super::lab::guard_half(half, confirm_holdout)?;
             let vs = variant.map_or_else(|| super::lab::Variant::ALL.to_vec(), |v| vec![v]);
-            p.lab(&dir, &qs, &vs, half).await
+            p.lab(&dir, &qs, &vs, half, detail.as_deref()).await
         }
     }
 }
@@ -661,8 +674,10 @@ impl Probe {
         qs: &[ProbeQuestion],
         vs: &[super::lab::Variant],
         half: super::lab::Half,
+        detail: Option<&Path>,
     ) -> Result<bool, String> {
         use super::lab::{half_of, load_corpus, score, CaseKind};
+        let mut detail_lines = Vec::new();
         for &q in qs {
             let base = q.spec();
             let cases: Vec<_> = load_corpus(&dir.join(q.dir_name()), &base)?
@@ -689,16 +704,32 @@ impl Probe {
                     match self.ask("lab", &raw_state(&text), &spec).await {
                         Ok(a) => {
                             let st = stats(&a.probs);
+                            let top = st.and_then(|st| option_label(&spec, st.top)).unwrap_or("?");
+                            let margin = st.map_or(0.0, |st| st.margin);
+                            let (kind, expected) = match c.kind {
+                                CaseKind::Obvious(l) => ("obvious", Some(l)),
+                                CaseKind::Ambiguous => ("ambiguous", None),
+                                CaseKind::Flat => ("flat", None),
+                            };
+                            detail_lines.push(
+                                serde_json::json!({
+                                    "question": q.dir_name(), "variant": format!("{v:?}"),
+                                    "half": format!("{half:?}"), "case": c.name, "kind": kind,
+                                    "expected": expected, "top": top, "margin": margin,
+                                    "probabilities": a.probs,
+                                })
+                                .to_string(),
+                            );
                             scored.push(super::lab::Scored {
                                 kind: c.kind.clone(),
-                                top: st.and_then(|st| option_label(&spec, st.top)).unwrap_or("?"),
-                                margin: st.map_or(0.0, |st| st.margin),
+                                top,
+                                margin,
                             });
                         }
                         Err(_) => errors += 1,
                     }
                 }
-                let m = score(&scored, t);
+                let m = score(&scored, t, q.noop_label());
                 let obvious = cases
                     .iter()
                     .filter(|c| matches!(c.kind, CaseKind::Obvious(_)))
@@ -717,11 +748,17 @@ impl Probe {
                         ("accuracy", pct(m.accuracy)),
                         ("margin_correct", format!("{:.3}", m.margin_correct)),
                         ("ambiguous_leak", pct(m.ambiguous_leak)),
+                        ("ambiguous_leak_acting", pct(m.ambiguous_leak_acting)),
                         ("flat_max", format!("{:.3}", m.flat_max)),
+                        ("flat_max_acting", format!("{:.3}", m.flat_max_acting)),
                         ("separation", format!("{:.3}", m.separation)),
                     ],
                 );
             }
+        }
+        if let Some(path) = detail {
+            std::fs::write(path, detail_lines.join("\n") + "\n")
+                .map_err(|e| format!("{}: {e}", path.display()))?;
         }
         Ok(true)
     }

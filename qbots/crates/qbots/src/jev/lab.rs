@@ -413,10 +413,18 @@ pub struct Metrics {
     pub flat_max: f32,
     /// `margin_correct` − mean ambiguous margin.
     pub separation: f32,
+    /// Share of ambiguous cases above the threshold **with an acting answer** (not the
+    /// question's no-op label) — the leakage that would change play.
+    pub ambiguous_leak_acting: f32,
+    /// The most confident **acting** answer to a flat case — the costly kind of flat answer.
+    pub flat_max_acting: f32,
 }
 
-/// Compute [`Metrics`] at threshold `t`.
-pub fn score(answers: &[Scored], t: f32) -> Metrics {
+/// Compute [`Metrics`] at threshold `t`. `noop` is the question's do-nothing label (posture's
+/// `hold` — "leave it to q3"): a confident no-op answer on an ambiguous or flat case changes
+/// nothing, so the `_acting` metrics exclude it.
+pub fn score(answers: &[Scored], t: f32, noop: Option<&str>) -> Metrics {
+    let acting = |a: &Scored| noop != Some(a.top);
     let share = |n: usize, of: usize| if of == 0 { 0.0 } else { n as f32 / of as f32 };
     let mean = |v: &[f32]| {
         if v.is_empty() {
@@ -439,6 +447,15 @@ pub fn score(answers: &[Scored], t: f32) -> Metrics {
         .collect();
     let correct: Vec<f32> = obvious.iter().filter(|o| o.0).map(|o| o.1).collect();
     let n = obvious.len();
+    let amb_acting = answers
+        .iter()
+        .filter(|a| a.kind == CaseKind::Ambiguous && a.margin >= t && acting(a))
+        .count();
+    let flat_max_acting = answers
+        .iter()
+        .filter(|a| a.kind == CaseKind::Flat && acting(a))
+        .map(|a| a.margin)
+        .fold(0.0, f32::max);
     let margin_correct = mean(&correct);
     Metrics {
         obvious: n,
@@ -453,6 +470,8 @@ pub fn score(answers: &[Scored], t: f32) -> Metrics {
             .map(|a| a.margin)
             .fold(0.0, f32::max),
         separation: margin_correct - mean(&amb),
+        ambiguous_leak_acting: share(amb_acting, amb.len()),
+        flat_max_acting,
     }
 }
 
@@ -579,7 +598,7 @@ mod tests {
             a(CaseKind::Ambiguous, "hold", 0.05),
             a(CaseKind::Flat, "hold", 0.2),
         ];
-        let m = score(&answers, 0.5);
+        let m = score(&answers, 0.5, Some("hold"));
         assert_eq!(m.obvious, 4);
         assert_eq!(
             (m.accuracy, m.right_confident, m.confident_wrong),
@@ -589,6 +608,16 @@ mod tests {
         assert_eq!(m.ambiguous_leak, 0.5);
         assert_eq!(m.flat_max, 0.2);
         assert!((m.separation - (0.55 - 0.30)).abs() < 1e-6);
+        // The leaking ambiguous answer was a no-op `hold`; the flat one too.
+        assert_eq!((m.ambiguous_leak_acting, m.flat_max_acting), (0.0, 0.0));
+        let flat_disengage = [
+            a(CaseKind::Flat, "disengage", 0.6),
+            a(CaseKind::Ambiguous, "disengage", 0.7),
+        ];
+        let m = score(&flat_disengage, 0.5, Some("hold"));
+        assert_eq!((m.ambiguous_leak_acting, m.flat_max_acting), (1.0, 0.6));
+        // Without a no-op label every answer acts.
+        assert_eq!(score(&answers, 0.5, None).ambiguous_leak_acting, 0.5);
     }
 
     #[test]

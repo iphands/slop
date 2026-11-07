@@ -46,22 +46,24 @@ Every row is written **before** its run (prediction), then completed.
 
 | # | Date | Loop | Change (one) | Prediction | Result | Conclusion |
 |---|------|------|--------------|------------|--------|------------|
-| L1 | 2026-11-06 | lab (tuning half) | baseline | posture right-and-confident (RC) **≤ 40 %** at t = 0.50 — the 2026-11-07 probes put an obviously bad state at margin 0.33; objective RC ≤ 50 % at t = 0.30; confident-wrong ≈ 0 | | |
-| L2 | 2026-11-06 | lab (tuning half) | drop-dmg | posture RC **down** a little (recent damage is evidence of danger); objective unchanged | | |
-| L3 | 2026-11-06 | lab (tuning half) | drop-loc | **no change** on either question (exit counts barely bear on either decision) | | |
-| L4 | 2026-11-06 | lab (tuning half) | drop-map | objective RC **down** (the `wants:` line names the gap the objective answers); posture unchanged | | |
-| L5 | 2026-11-06 | lab (tuning half) | add-threat | posture RC **up** clearly (an explicit danger level); objective small change | | |
-| L6 | 2026-11-06 | lab (tuning half) | hp-band-only | **no change** (the band was already present next to the number) | | |
-| L7 | 2026-11-06 | lab (tuning half) | add-summary | **largest** posture gain of any variant (plain English, like the 0.880 "cannot win" probe); objective up | | |
-| L8 | 2026-11-06 | lab (tuning half) | options-consequence | posture RC **up** (options that say what happens are easier to weigh); objective up a little | | |
-| L9 | 2026-11-06 | lab (tuning half) | instruction-criterion | posture RC **up** and ambiguous leakage **up** too (a stated rule pushes borderline cases over) | | |
-| L10 | 2026-11-06 | lab (tuning half) | instruction-role | **no change** (role framing adds no facts) | | |
+| L1 | 2026-11-06 | lab (tuning half) | baseline | posture right-and-confident (RC) **≤ 40 %** at t = 0.50 — the 2026-11-07 probes put an obviously bad state at margin 0.33; objective RC ≤ 50 % at t = 0.30; confident-wrong ≈ 0 | | posture RC 0 %, acc 82 %, mC 0.229; objective RC 75 %, leakA 60 %, flatA 0.637 | **right** — and starker: posture never clears 0.50 |
+| L2 | 2026-11-06 | lab (tuning half) | drop-dmg | posture RC **down** a little (recent damage is evidence of danger); objective unchanged | | posture mC 0.229→0.253, RC 0 %; objective unchanged | **wrong** — the model is not reading `dmg` |
+| L3 | 2026-11-06 | lab (tuning half) | drop-loc | **no change** on either question (exit counts barely bear on either decision) | | no RC change on either | **right** |
+| L4 | 2026-11-06 | lab (tuning half) | drop-map | objective RC **down** (the `wants:` line names the gap the objective answers); posture unchanged | | objective acc 100→50 %, RC 75→8 %, CW 8 % | **right, far bigger than predicted** — `wants:` is load-bearing |
+| L5 | 2026-11-06 | lab (tuning half) | add-threat | posture RC **up** clearly (an explicit danger level); objective small change | | posture acc 100 %, flatA 0.507→0, but mC 0.300 (RC 0 %) | **wrong** — raised accuracy, not confidence |
+| L6 | 2026-11-06 | lab (tuning half) | hp-band-only | **no change** (the band was already present next to the number) | | no change | **right** |
+| L7 | 2026-11-06 | lab (tuning half) | add-summary | **largest** posture gain of any variant (plain English, like the 0.880 "cannot win" probe); objective up | | posture RC 0→73 %, acc 100 %, mC 0.545; objective RC 100 %; posture leakA 29 % (all `lo` states) | **right** — largest gain; its leak comes from calling 25–49 hp "badly hurt" |
+| L8 | 2026-11-06 | lab (tuning half) | options-consequence | posture RC **up** (options that say what happens are easier to weigh); objective up a little | | posture acc 82→64 %, mC 0.185 | **wrong** — consequence wording hurt |
+| L9 | 2026-11-06 | lab (tuning half) | instruction-criterion | posture RC **up** and ambiguous leakage **up** too (a stated rule pushes borderline cases over) | | posture unchanged; objective RC 83 %, flatA 0.756 | **wrong** on posture — a stated rule did nothing |
+| L10 | 2026-11-06 | lab (tuning half) | instruction-role | **no change** (role framing adds no facts) | | posture mC 0.229→0.133; objective RC 50 % | **wrong** — role framing hurt |
 
 ## Evidence
 
 | Date | What ran (command / build / input) | Result | Runs | Spread / notes |
 |------|------------------------------------|--------|------|----------------|
 | 2026-11-06 | `cargo run -p qbots -- jev-probe lab --split-report` (offline, corpus @ `34f28aefa`) | posture: tuning 6 obv / 5 amb / 3 flat, holdout 8 / 6 / 0; objective: tuning 9 / 5 / 3, holdout 5 / 6 / 0 | 1 | no model call; confirms T1 must grow the corpus |
+| 2026-11-06 | `jev-probe health` | PASS — slug matches, chat route answers 501 | 1 | endpoint permission granted by the user in-session 2026-11-06 |
+| 2026-11-06 | `jev-probe --json lab --half tuning --detail …` (round 1, 10 variants × 71 tuning states = 710 asks, 0 failed, ~10 s) | results + per-case detail in `context/fixtures/jev/lab/round1_tuning{,.detail}.jsonl`; summary in `context/distilled/jev_lab.md` | 1 | deterministic model — a re-run reproduces it |
 | 2026-11-06 | `jev-probe lab --split-report` on the locked corpus (138 states) | posture: tuning 11 obv / 14 amb / 12 flat, holdout 18 / 10 / 2; objective: tuning 12 / 10 / 12, holdout 15 / 20 / 2 | 1 | offline; T1's split requirement met |
 | 2026-11-07 | Plan 72 review probes (carried over as motivation) | same bad situation: disengage 0.441 (3-way) vs 0.663 (binary); explicit "cannot win" → 0.880 | 3 | framing moves the answer more than anything else we control |
 
@@ -74,6 +76,13 @@ Every row is written **before** its run (prediction), then completed.
 - The corpus drafted on 2026-11-06 was produced under Plan 72's calibration step; it moves under
   this plan's T1 because the lab is now its first consumer. Nobody has scored it against the model.
 
+- **T3 round 1 (2026-11-06):** the lab gained `--detail` (one line per case) and the
+  `ambiguous_leak_acting` / `flat_max_acting` metrics mid-round: for posture, `hold` is the no-op
+  ("leave it to q3"), so a confident `hold` on an ambiguous or blank state costs nothing — only an
+  acting answer there changes play. The round was re-run with them (identical answers; the model
+  is deterministic). `context/fixtures/jev/harvest.jsonl` (raw request/response pairs, ~0.6 MB per
+  full round) is **not committed**: the corpus + code reproduce every answer, and the per-case
+  detail files carry the probabilities.
 - **T1 (2026-11-06):** batch 2 (82 states) took three generator runs because the FNV-1a split is
   decided by file name, not chosen: the first top-up left posture-tuning at 9 obvious,
   objective-tuning at 9 ambiguous and every flat case in tuning, so two small self-contained
