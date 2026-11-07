@@ -452,6 +452,23 @@ impl JevPolicy {
         }
     }
 
+    /// Is `pos` at a deadly rim? The rim surcharge on the nearest graph node (`false` before
+    /// it is built). Linear nearest-node scan — called only when a disengage is in force.
+    fn at_rim(&self, pos: glam::Vec3) -> bool {
+        let Some(g) = &self.nav_graph else {
+            return false;
+        };
+        g.nearest(&pos.into())
+            .and_then(|n| self.rim.get(n))
+            .is_some_and(|c| *c > 0.0)
+    }
+
+    /// Install a rim overlay directly (tests; production builds it with [`Self::ensure_rim`]).
+    #[cfg(test)]
+    pub(crate) fn set_rim(&mut self, rim: Vec<f32>) {
+        self.rim = rim;
+    }
+
     /// The risk overlay pads are priced with (empty ⇒ plain travel cost).
     fn risk(&self) -> &[f32] {
         &self.rim
@@ -759,7 +776,11 @@ impl GoalPolicy for JevPolicy {
             && self
                 .current
                 .as_ref()
-                .is_some_and(|c| c.posture == Some(PostureChoice::Disengage));
+                .is_some_and(|c| c.posture == Some(PostureChoice::Disengage))
+            // Plan 74 B7: never ADD a retreat at a lava rim — on q2dm3 most lava deaths end in
+            // `retreat`. q3's own retreat logic is untouched (this is not more aggression than
+            // q3, only less of jev's extra caution where caution kills).
+            && !self.at_rim(q.view.self_state().origin);
         if disengage {
             if let Some(w) = &mut self.window {
                 w.biased = true;

@@ -527,6 +527,23 @@ mod tests {
     }
 
     #[test]
+    fn jev_posture_disengage_is_withheld_at_a_lava_rim() {
+        // The bot stands on node 0 (the origin). Rim there: the disengage is not applied and
+        // sarge keeps fighting; no rim: the same answer forces the retreat.
+        for (rim, want) in [(vec![256.0, 0.0], "fight"), (vec![0.0, 0.0], "retreat")] {
+            let (mut b, stub) = fight_brain();
+            b.set_map(map());
+            b.on_map_change("q2dm1");
+            b.policy_mut().set_rim(rim);
+            let view = fight_view();
+            tick_view(&mut b, &view);
+            stub.set_latest(Some(posture_decision(1, 0)));
+            tick_view(&mut b, &view);
+            assert_eq!(b.status(), want);
+        }
+    }
+
+    #[test]
     fn jev_posture_pinned_disengage_never_freezes_the_bot() {
         // Plan 72 W4 / T12: the enemy leaves the worldview while a disengage is in force — q3's
         // own exits (enemy_alive false) must still return the bot to roaming, with movement.
