@@ -1,0 +1,11 @@
+# Plan 74 model-free test bed: jvr (jev's core with the code-rule pickup picker — needs no decision
+# model; the model agreed with the rule on 95–100 % of pickups) vs q3, 3 + 3. Use with
+# `jev: {enabled: true, require: false}` while the decision endpoint is unavailable: the hub does
+# not start and jvr runs on the always-accepting null decider, applying its rule.
+groups:
+  - brain: q3
+    navmode: as
+    count: 3
+  - brain: jvr
+    navmode: as
+    count: 3
