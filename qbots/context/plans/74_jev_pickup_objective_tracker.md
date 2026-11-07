@@ -73,6 +73,11 @@
 
 ## Notes / Deviations
 
+- **Server parked 2026-11-07 (user's call: "park on a level with lava on purpose"):** `noir.lan`
+  `rcon set timelimit 0` on **q2dm3** (was `timelimit 900`, rotating). **Restore `timelimit 900`
+  when Plan 74's arena work ends.** From here on every round is on q2dm3 by design — lava
+  survival is part of what jev must be good at; B2–B6 were q2dm3 by accident.
+
 - **T3:** the plan's "skip visible pads within 128 u" rule was **not** built — q3's own nearby-item
   grab (`SeekNbg`, ≤ 150 u) still runs while an objective is applied (the objective replaces only
   the roam fallback), so a near visible pad needs no special case. "Objective-only" is by
