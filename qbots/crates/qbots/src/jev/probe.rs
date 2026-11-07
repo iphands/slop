@@ -119,8 +119,7 @@ pub enum ProbeCmd {
     },
 }
 
-/// The probe's question catalogue (the brain's real objective/posture questions arrive with
-/// T10/T12; the probe will ask those once they exist).
+/// The probe's questions — the production ones from `brain::jev::question`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum ProbeQuestion {
     /// Binary posture: disengage / hold.
@@ -138,31 +137,11 @@ impl ProbeQuestion {
         }
     }
 
-    /// The catalogue question spec (the lab's baseline).
+    /// The question spec — the production question (Plan 73 T4: one source for lab and bot).
     pub(crate) fn spec(self) -> QuestionSpec {
-        let opt = |label, desc| ChoiceOption {
-            label,
-            desc: Phrase::lit(desc),
-        };
         match self {
-            ProbeQuestion::Posture => QuestionSpec {
-                key: QuestionKey::Posture,
-                instructions: "Should this bot break off the current fight to survive, or leave \
-                               the fight to its own judgement?",
-                kind: QuestionKind::Choice(vec![
-                    opt("disengage", "retreat now and break line of sight"),
-                    opt("hold", "keep fighting as the bot sees fit"),
-                ]),
-            },
-            ProbeQuestion::Objective => QuestionSpec {
-                key: QuestionKey::Objective,
-                instructions: "Choose this bot's next objective.",
-                kind: QuestionKind::Choice(vec![
-                    opt("seek_health", "go to the nearest health pickup"),
-                    opt("seek_armor", "go to the nearest armor pickup"),
-                    opt("carry_on", "no particular objective: keep roaming as usual"),
-                ]),
-            },
+            ProbeQuestion::Posture => brain::jev::question::posture_question(),
+            ProbeQuestion::Objective => brain::jev::question::objective_question(),
         }
     }
 }
@@ -498,34 +477,48 @@ impl Probe {
             if !qdir.exists() {
                 continue;
             }
-            let spec = q.spec();
-            let ob = read_obvious(&qdir.join("obvious"), &spec)?;
-            let (am, fl) = (
-                read_states(&qdir.join("ambiguous"))?,
-                read_states(&qdir.join("flat"))?,
+            // Plan 73 T4: calibrate the PRODUCTION wording on the HOLDOUT half only (the lab chose
+            // the wording on the tuning half). Only acting answers count as ambiguous/flat leakage:
+            // a confident no-op ("hold" / "carry_on") on an unclear state changes nothing.
+            use super::lab::{half_of, load_corpus, noop_label, CaseKind, Half, PRODUCTION};
+            let base = q.spec();
+            let spec = PRODUCTION.apply("", &base).1;
+            let noop = noop_label(&spec);
+            let cases: Vec<_> = load_corpus(&qdir, &base)?
+                .into_iter()
+                .filter(|c| half_of(&c.name) == Half::Holdout)
+                .collect();
+            let count = |f: fn(&CaseKind) -> bool| cases.iter().filter(|c| f(&c.kind)).count();
+            let (n_ob, n_am) = (
+                count(|k| matches!(k, CaseKind::Obvious(_))),
+                count(|k| *k == CaseKind::Ambiguous),
             );
-            if ob.len() < 10 || am.len() < 10 {
+            if n_ob < 10 || n_am < 10 {
                 return Err(format!(
-                    "{}: need ≥10 obvious and ≥10 ambiguous pre-registered states (have {} / {})",
-                    qdir.display(),
-                    ob.len(),
-                    am.len()
+                    "{}: the holdout needs ≥10 obvious and ≥10 ambiguous (has {n_ob} / {n_am})",
+                    qdir.display()
                 ));
             }
             let mut obvious = Vec::new();
-            for (expected, s) in &ob {
-                let a = self.ask("calibrate", &raw_state(s), &spec).await?;
-                let st = stats(&a.probs);
-                obvious.push(ObviousAnswer {
-                    margin: st.map_or(0.0, |st| st.margin),
-                    correct: st.is_some_and(|st| option_label(&spec, st.top) == Some(*expected)),
-                });
-            }
             let mut margins = [Vec::new(), Vec::new()];
-            for (i, states) in [am, fl].iter().enumerate() {
-                for s in states {
-                    let a = self.ask("calibrate", &raw_state(s), &spec).await?;
-                    margins[i].push(stats(&a.probs).map_or(0.0, |st| st.margin));
+            for c in &cases {
+                let text = PRODUCTION.apply(&c.text, &base).0;
+                let a = self.ask("calibrate", &raw_state(&text), &spec).await?;
+                let st = stats(&a.probs);
+                let top = st.and_then(|st| option_label(&spec, st.top));
+                let margin = st.map_or(0.0, |st| st.margin);
+                let acting_margin = if top.is_some() && top == noop {
+                    0.0
+                } else {
+                    margin
+                };
+                match c.kind {
+                    CaseKind::Obvious(expected) => obvious.push(ObviousAnswer {
+                        margin,
+                        correct: top == Some(expected),
+                    }),
+                    CaseKind::Ambiguous => margins[0].push(acting_margin),
+                    CaseKind::Flat => margins[1].push(acting_margin),
                 }
             }
             let wrong = obvious.iter().filter(|o| !o.correct).count();
@@ -794,26 +787,6 @@ fn raw_state(text: &str) -> RenderedState {
     }
 }
 
-/// Every `*.txt` under `dir`, sorted by file name (missing dir = empty set).
-fn read_states(dir: &Path) -> Result<Vec<String>, String> {
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return Ok(Vec::new());
-    };
-    let mut paths: Vec<PathBuf> = rd
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "txt"))
-        .collect();
-    paths.sort();
-    paths
-        .iter()
-        .map(|p| {
-            std::fs::read_to_string(p)
-                .map(|s| s.trim_end().to_string())
-                .map_err(|e| format!("{}: {e}", p.display()))
-        })
-        .collect()
-}
-
 /// A `choice` question over `n` options that say nothing (the flatness probe).
 fn meaningless(n: usize) -> QuestionSpec {
     const LABELS: [&str; 24] = [
@@ -889,37 +862,6 @@ fn option_label(q: &QuestionSpec, i: usize) -> Option<&'static str> {
         QuestionKind::Choice(opts) => opts.get(i).map(|o| o.label),
         _ => None,
     }
-}
-
-/// `obvious/<label>/*.txt` → `(label, state)`; every sub-directory must name an option of `q`.
-fn read_obvious(dir: &Path, q: &QuestionSpec) -> Result<Vec<(&'static str, String)>, String> {
-    let QuestionKind::Choice(opts) = &q.kind else {
-        return Err("calibration needs a choice question".into());
-    };
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return Ok(Vec::new());
-    };
-    let mut subdirs: Vec<PathBuf> = rd
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.is_dir())
-        .collect();
-    subdirs.sort();
-    let mut out = Vec::new();
-    for sub in subdirs {
-        let name = sub.file_name().and_then(|n| n.to_str()).unwrap_or_default();
-        let label = opts
-            .iter()
-            .map(|o| o.label)
-            .find(|l| *l == name)
-            .ok_or_else(|| {
-                format!(
-                    "{}: '{name}' is not an option of this question",
-                    sub.display()
-                )
-            })?;
-        out.extend(read_states(&sub)?.into_iter().map(|s| (label, s)));
-    }
-    Ok(out)
 }
 
 /// The `p`th percentile (nearest rank) of `xs`; 0 when empty.
@@ -1060,21 +1002,6 @@ mod tests {
         assert_eq!(
             calibrate_threshold(&right(&[0.6; 10]), &[0.0; 10], &[0.9]),
             None
-        );
-    }
-
-    #[test]
-    fn jev_probe_obvious_dirs_must_name_an_option() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let q = ProbeQuestion::Posture.spec();
-        std::fs::create_dir_all(tmp.path().join("disengage")).expect("mkdir");
-        std::fs::write(tmp.path().join("disengage/a.txt"), "self  hp:5(crit)\n").expect("write");
-        let got = read_obvious(tmp.path(), &q).expect("reads");
-        assert_eq!(got, vec![("disengage", "self  hp:5(crit)".to_string())]);
-        std::fs::create_dir_all(tmp.path().join("charge")).expect("mkdir");
-        assert!(
-            read_obvious(tmp.path(), &q).is_err(),
-            "'charge' is not an option"
         );
     }
 

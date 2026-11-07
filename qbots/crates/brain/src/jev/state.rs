@@ -22,7 +22,9 @@ use crate::weapons::Weapon;
 
 /// Bump on **any** change to the fields, their order, or their rendering: a changed state
 /// string is a changed model input, and the live matrix must be re-run (plan *`state` shape*).
-pub const STATE_SCHEMA_VERSION: u32 = 1;
+/// v2 (Plan 73 T4): the rendered state ends with a derived `threat` line and a graded summary
+/// sentence — the wording the language lab measured best (`context/distilled/jev_lab.md`).
+pub const STATE_SCHEMA_VERSION: u32 = 2;
 
 /// The state's sections, **in render order**. Region keys (`Here`, `Alts`) arrive with T14.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -529,6 +531,83 @@ impl DecisionState {
                 .collect(),
         }
     }
+}
+
+// ── derived words (Plan 73 T4: the lab's round-4 winner) ──────────────────────────────────
+//
+// These must stay byte-for-byte equal to the lab's `summary-graded-threat` variant applied to the
+// field rendering (`crates/qbots/src/jev/lab.rs`); a parity test in the renderer enforces it.
+
+fn self_facts(s: &DecisionState) -> Option<&SelfFacts> {
+    match s.get(FieldKey::Self_) {
+        Some(Field::Self_(f)) => Some(f),
+        _ => None,
+    }
+}
+
+fn enemy_facts(s: &DecisionState) -> Option<&EnemyFacts> {
+    match s.get(FieldKey::Enemy) {
+        Some(Field::Enemy(f)) => Some(f),
+        _ => None,
+    }
+}
+
+/// Weak = blaster, shotgun or machinegun (an unrecognised weapon is not called weak).
+fn weak_weapon(f: Option<&SelfFacts>) -> bool {
+    matches!(
+        f.and_then(|f| f.held),
+        Some(Weapon::Blaster | Weapon::Shotgun | Weapon::Machinegun)
+    )
+}
+
+/// `none | low | medium | high`: visible enemies × how close × how frail we are.
+pub fn threat_word(s: &DecisionState) -> &'static str {
+    let me = self_facts(s);
+    let Some(e) = enemy_facts(s).filter(|e| e.count > 0) else {
+        return "none";
+    };
+    let close = match e.nearest {
+        Some(DistBand::Touch) => 3,
+        Some(DistBand::Near) => 2,
+        Some(DistBand::Mid) => 1,
+        _ => 0,
+    };
+    let frail = match me.map(|f| f.band) {
+        Some(HealthBand::Crit) => 3,
+        Some(HealthBand::Lo) => 2,
+        Some(HealthBand::Mid) => 1,
+        _ => 0,
+    } + u32::from(weak_weapon(me))
+        + u32::from(me.map_or(0, |f| f.armor) < 25);
+    match e.count.min(4) * 2 + close + frail {
+        0..=4 => "low",
+        5..=8 => "medium",
+        _ => "high",
+    }
+}
+
+/// `summary: <badly hurt|hurt|healthy>, <weak|strong> weapon, <no enemy in sight|enemies
+/// close|enemies at a distance>` — graded exactly like the health bands (lab finding R2-2).
+pub fn summary_sentence(s: &DecisionState) -> String {
+    let me = self_facts(s);
+    let hurt = match me.map(|f| f.band) {
+        Some(HealthBand::Crit) => "badly hurt",
+        Some(HealthBand::Lo) => "hurt",
+        _ => "healthy",
+    };
+    let weapon = if weak_weapon(me) {
+        "weak weapon"
+    } else {
+        "strong weapon"
+    };
+    let enemies = match enemy_facts(s) {
+        Some(e) if e.count > 0 && matches!(e.nearest, Some(DistBand::Touch | DistBand::Near)) => {
+            "enemies close"
+        }
+        Some(e) if e.count > 0 => "enemies at a distance",
+        _ => "no enemy in sight",
+    };
+    format!("summary: {hurt}, {weapon}, {enemies}")
 }
 
 /// Nearest visible item of `class`, banded.

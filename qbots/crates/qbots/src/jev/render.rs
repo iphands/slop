@@ -15,7 +15,9 @@
 use std::fmt::Write as _;
 
 use brain::jev::question::{Piece, QuestionKind, QuestionSpec};
-use brain::jev::state::{weapon_slug, DecisionState, DistBand, Field, FieldKey, MAX_COUNT};
+use brain::jev::state::{
+    summary_sentence, threat_word, weapon_slug, DecisionState, DistBand, Field, FieldKey, MAX_COUNT,
+};
 
 /// A rendered state, plus what was dropped to fit the budget.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -94,15 +96,13 @@ pub fn render_field(f: &Field) -> String {
 /// Render the whole state, dropping the lowest keep-priority fields (never `Self_`) until it
 /// fits `max_tokens`. Lines are joined with `\n`, no trailing newline.
 pub fn render_state(state: &DecisionState, max_tokens: usize) -> RenderedState {
+    // Schema v2: two derived lines close the state, computed from the FULL state so a budget
+    // drop of (say) `enemy` can never turn "enemies close" into "no enemy in sight".
+    let derived = format!("threat {}\n{}", threat_word(state), summary_sentence(state));
     let mut s = state.clone();
     let mut dropped = Vec::new();
     loop {
-        let text = s
-            .fields()
-            .iter()
-            .map(render_field)
-            .collect::<Vec<_>>()
-            .join("\n");
+        let text = format!("{}\n{derived}", render_fields(&s));
         let est = est_tokens(&text);
         let victim = s
             .fields()
@@ -124,6 +124,15 @@ pub fn render_state(state: &DecisionState, max_tokens: usize) -> RenderedState {
             }
         }
     }
+}
+
+/// The field lines only (schema v1's whole state; the lab's corpus is written in this form).
+pub fn render_fields(s: &DecisionState) -> String {
+    s.fields()
+        .iter()
+        .map(render_field)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The full `/v1/systemone` request body, written in declared order:
@@ -273,11 +282,13 @@ mod tests {
                                 enemy visible:2 nearest:near moving:yes\n\
                                 loc   exits:2 moving:no\n\
                                 items health:none armor:touch weapon:none powerup:mid\n\
-                                map   q2dm1 wants:health";
+                                map   q2dm1 wants:health\n\
+                                threat high\n\
+                                summary: hurt, strong weapon, enemies close";
 
     #[test]
     fn jev_render_golden_state_is_byte_exact() {
-        assert_eq!(STATE_SCHEMA_VERSION, 1, "{CHANGED}");
+        assert_eq!(STATE_SCHEMA_VERSION, 2, "{CHANGED}");
         let r = render_state(&golden_state(), 512);
         assert_eq!(r.text, GOLDEN_STATE, "{CHANGED}");
         assert!(r.dropped.is_empty());
@@ -314,7 +325,11 @@ mod tests {
             ]
         );
         assert!(r.text.starts_with("self "));
-        assert_eq!(r.text.lines().count(), 1);
+        assert_eq!(
+            r.text.lines().collect::<Vec<_>>()[1..],
+            ["threat high", "summary: hurt, strong weapon, enemies close"],
+            "the derived lines survive the budget and still describe the FULL state"
+        );
     }
 
     fn golden_questions() -> Vec<QuestionSpec> {
@@ -353,7 +368,8 @@ mod tests {
             "{\"state\":\"self  hp:38(lo) armor:12 held:railgun ammo:3 low_ammo:yes\\n",
             "dmg   recent:74 since:recent\\nenemy visible:2 nearest:near moving:yes\\n",
             "loc   exits:2 moving:no\\nitems health:none armor:touch weapon:none powerup:mid\\n",
-            "map   q2dm1 wants:health\",\"questions\":{",
+            "map   q2dm1 wants:health\\nthreat high\\nsummary: hurt, strong weapon, enemies close\",",
+            "\"questions\":{",
             "\"objective\":{\"type\":\"choice\",\"instructions\":\"Choose the bot's next objective.\",",
             "\"criteria\":{\"seek_armor\":\"take the body armor 1 step away\",",
             "\"avoid_fight\":\"break line of sight with the \\\"two\\\" enemies\"}},",
@@ -364,6 +380,51 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&body).expect("valid JSON");
         assert_eq!(v["questions"]["objective"]["type"], "choice");
         assert!(body.find("seek_armor") < body.find("avoid_fight"));
+    }
+
+    #[test]
+    fn jev_render_v2_equals_the_lab_tested_wording() {
+        // Plan 73 T4: production must say EXACTLY what the lab measured — the
+        // `summary-graded-threat` variant applied to the field rendering — on every state shape.
+        use crate::jev::lab::Variant;
+        let q = brain::jev::question::posture_question();
+        let mut states = vec![golden_state()];
+        for (hp, armor, held, count, nearest) in [
+            (5, 0, Some(Weapon::Blaster), 3, Some(DistBand::Touch)),
+            (100, 200, Some(Weapon::Railgun), 0, None),
+            (60, 30, Some(Weapon::Machinegun), 1, Some(DistBand::Far)),
+            (30, 0, None, 9, Some(DistBand::Mid)),
+            (80, 24, Some(Weapon::Shotgun), 2, Some(DistBand::Near)),
+        ] {
+            states.push(DecisionState::from_fields(vec![
+                Field::Self_(SelfFacts {
+                    hp,
+                    band: HealthBand::of(hp as i32),
+                    armor,
+                    held,
+                    ammo: 10,
+                    ammo_low: false,
+                }),
+                Field::Enemy(EnemyFacts {
+                    count,
+                    nearest,
+                    moving: true,
+                }),
+                Field::Map(MapFacts {
+                    map: MapId::Q2dm1,
+                    gap: LoadoutGap::None,
+                }),
+            ]));
+        }
+        // Shapes with a missing section must agree too.
+        states.push(DecisionState::from_fields(vec![Field::Map(MapFacts {
+            map: MapId::Q2dm1,
+            gap: LoadoutGap::None,
+        })]));
+        for s in &states {
+            let lab = Variant::SummaryGradedThreat.apply(&render_fields(s), &q).0;
+            assert_eq!(render_state(s, usize::MAX).text, lab);
+        }
     }
 
     #[test]

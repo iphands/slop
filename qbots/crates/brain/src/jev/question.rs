@@ -74,3 +74,56 @@ pub struct QuestionSpec {
     /// Its type and options.
     pub kind: QuestionKind,
 }
+
+/// The posture question as the language lab measured it (Plan 73, round 4). `hold` is the no-op.
+pub fn posture_question() -> QuestionSpec {
+    QuestionSpec {
+        key: QuestionKey::Posture,
+        instructions: "Should this bot break off the current fight to survive, or leave the fight \
+                       to its own judgement?",
+        kind: QuestionKind::Choice(vec![
+            ChoiceOption {
+                label: DISENGAGE,
+                desc: Phrase::lit("retreat now and break line of sight"),
+            },
+            ChoiceOption {
+                label: HOLD,
+                desc: Phrase::lit("keep fighting as the bot sees fit"),
+            },
+        ]),
+    }
+}
+
+/// The objective question as the language lab measured it (Plan 73, round 4). `carry_on` is
+/// the no-op ("keep roaming").
+pub fn objective_question() -> QuestionSpec {
+    QuestionSpec {
+        key: QuestionKey::Objective,
+        instructions: "Choose this bot's next objective.",
+        kind: QuestionKind::Choice(vec![
+            ChoiceOption {
+                label: SEEK_HEALTH,
+                desc: Phrase::lit("go to the nearest health pickup"),
+            },
+            ChoiceOption {
+                label: SEEK_ARMOR,
+                desc: Phrase::lit("go to the nearest armor pickup"),
+            },
+            ChoiceOption {
+                label: CARRY_ON,
+                desc: Phrase::lit("no particular objective: keep roaming as usual"),
+            },
+        ]),
+    }
+}
+
+/// Posture option: retreat and do not chase.
+pub const DISENGAGE: &str = "disengage";
+/// Posture option (no-op): leave the fight to q3.
+pub const HOLD: &str = "hold";
+/// Objective option: walk to the nearest health pickup.
+pub const SEEK_HEALTH: &str = "seek_health";
+/// Objective option: walk to the nearest armor pickup.
+pub const SEEK_ARMOR: &str = "seek_armor";
+/// Objective option (no-op): keep roaming.
+pub const CARRY_ON: &str = "carry_on";

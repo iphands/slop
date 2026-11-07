@@ -49,7 +49,7 @@ pub enum Half {
 }
 
 /// The objective's harmless default option (round 3): "no particular objective, keep roaming".
-pub const CARRY_ON: &str = "carry_on";
+pub use brain::jev::question::CARRY_ON;
 
 /// The do-nothing label of a question as offered: `carry_on` when present, else posture's `hold`
 /// ("leave it to q3"); the objective without `carry_on` has none.
@@ -62,6 +62,10 @@ pub fn noop_label(q: &QuestionSpec) -> Option<&'static str> {
     }
     (q.key == QuestionKey::Posture && opts.iter().any(|o| o.label == "hold")).then_some("hold")
 }
+
+/// The wording adopted for production (Plan 73 T3 round 4). `render_state` produces exactly this
+/// variant applied to the field rendering — `jev_render_v2_equals_the_lab_tested_wording` pins it.
+pub const PRODUCTION: Variant = Variant::SummaryGradedThreat;
 
 /// FNV-1a 64 — the split's hash (no dependency, stable across platforms and releases).
 pub fn fnv1a(bytes: &[u8]) -> u64 {
