@@ -105,6 +105,12 @@ Every row is written **before** its run (prediction), then completed.
   from the lab: many of those answers look defensible (low armor with armor near), so the arena
   will ask it in **shadow** (never applied) and let outcomes judge both the question and the
   labels (plan risk 2). The sensitivity pair for it must be redesigned (a bot that *wants* armor).
+- **Process failure, 2026-11-06 (T5):** commit `42bf607b5` says "Gate green" but `just all`
+  had **failed** (clippy `large_enum_variant` on `JevStartup::Ready`, which grew when
+  `HubConfig` gained the journal path). The bookkeeping script and the commit ran after the gate
+  without being chained on it with `&&` — exactly the incident the project CLAUDE.md warns
+  about. Fixed in the next commit (box the config); not amended. From here every task commit is
+  chained on a passing gate.
 - **T3 decisions (2026-11-06, delegated by the user — "you decide, best guess"):**
   (1) **adopt `carry_on`**: the objective options become `seek_health / seek_armor / carry_on`
   (still ≤ 3, so Plan 72's cap holds) and the 9 obvious `hold_position` cases are relabelled

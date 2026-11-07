@@ -34,8 +34,9 @@ pub enum JevStartup {
     Degraded,
     /// Healthy: start the hub with this config and transport (T8).
     Ready {
-        /// Hub tunables derived from the `jev:` block.
-        hub: HubConfig,
+        /// Hub tunables derived from the `jev:` block (boxed: the config is large next to the
+        /// data-less variants).
+        hub: Box<HubConfig>,
         /// The production transport.
         transport: Arc<dyn DecisionTransport>,
     },
@@ -46,7 +47,7 @@ impl JevStartup {
     pub fn start_hub(self, n_bots: usize) -> Option<Arc<super::hub::Hub>> {
         match self {
             JevStartup::Ready { hub, transport } => {
-                Some(Arc::new(super::hub::Hub::start(hub, n_bots, transport)))
+                Some(Arc::new(super::hub::Hub::start(*hub, n_bots, transport)))
             }
             JevStartup::Disabled | JevStartup::Degraded => None,
         }
@@ -71,7 +72,7 @@ pub async fn gate(cfg: &JevCfg, wanted: bool) -> Result<JevStartup, String> {
         Ok(()) => {
             tracing::info!(endpoint = %ep, model = %cfg.model, "jev endpoint healthy");
             Ok(JevStartup::Ready {
-                hub: hub_config(cfg),
+                hub: Box::new(hub_config(cfg)),
                 transport: Arc::new(HttpTransport {
                     endpoint: ep,
                     deadline: Duration::from_millis(cfg.deadline_ms),
