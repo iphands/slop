@@ -958,7 +958,11 @@ impl<P: GoalPolicy + Send> Brain for Q3Brain<P> {
                     }
                     Q3Node::BattleRetreat if enemy_visible => {
                         nav.update(pos, None);
-                        nav.set_goal(self.retreat_goal(view), pos);
+                        let g = self
+                            .policy
+                            .retreat_goal(&GoalQuery { view, ticks, pos })
+                            .unwrap_or_else(|| self.retreat_goal(view));
+                        nav.set_goal(g, pos);
                         weapon_request = self.combat_drive(view, cm, pos, dt, true, &mut mv);
                     }
                     other => {
@@ -970,7 +974,10 @@ impl<P: GoalPolicy + Send> Brain for Q3Brain<P> {
                             }
                             // Chase / lost-sight fight / retreat → path toward the goal.
                             Q3Node::BattleFight | Q3Node::BattleChase => self.battle_goal(view),
-                            Q3Node::BattleRetreat => self.retreat_goal(view),
+                            Q3Node::BattleRetreat => self
+                                .policy
+                                .retreat_goal(&GoalQuery { view, ticks, pos })
+                                .unwrap_or_else(|| self.retreat_goal(view)),
                             // Roam fallback: the one goal a policy may replace (Plan 72).
                             _ => match self.policy.objective(&GoalQuery { view, ticks, pos }) {
                                 Some(g) => g,

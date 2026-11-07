@@ -456,6 +456,73 @@ mod tests {
         );
     }
 
+    /// A corridor −512..+512 (x, 256 u apart): a health pad at −512 (behind us, away from the
+    /// enemy at +200) and one at +512 (past the enemy).
+    fn retreat_map(away_pad: bool) -> BrainMap {
+        let xs: Vec<f32> = (-2..=2).map(|i| i as f32 * 256.0).collect();
+        let nodes = xs.iter().map(|x| [*x, 0.0, 0.0]).collect();
+        let adj = (0..5usize)
+            .map(|i| {
+                [i.checked_sub(1), (i < 4).then_some(i + 1)]
+                    .into_iter()
+                    .flatten()
+                    .map(|j| (j, 256.0))
+                    .collect()
+            })
+            .collect();
+        let health = |node: usize| MapItem {
+            class: EntityClass::ItemHealth,
+            weapon: None,
+            origin: Vec3::new(xs[node], 0.0, 0.0),
+            nav_node: Some(node),
+        };
+        let mut items = vec![health(4)];
+        if away_pad {
+            items.push(health(0));
+        }
+        BrainMap {
+            roam_nodes: vec![2],
+            nav_graph: Arc::new(NavGraph::from_raw(nodes, adj)),
+            roam_as_position: false,
+            items,
+        }
+    }
+
+    /// Disengage a hurt sarge (enemy at +200) on `map`; the goal the navigator gets.
+    fn retreat_goal_on(map: BrainMap) -> Option<NavGoal> {
+        let (mut b, stub) = fight_brain();
+        b.set_map(map);
+        b.on_map_change("q2dm1");
+        let view = fight_view_hp(60);
+        tick_view(&mut b, &view);
+        stub.set_latest(Some(posture_decision(1, 0)));
+        let mut nav = StubNav::default();
+        b.tick(BrainContext {
+            view: &view,
+            nav: Some(&mut nav),
+            cm: None,
+            dt: 0.1,
+            ticks: 2,
+            goal_override: None,
+        });
+        assert_eq!(b.status(), "retreat");
+        nav.last_goal
+    }
+
+    #[test]
+    fn jev_retreat_heads_for_a_pad_away_from_the_enemy_never_past_it() {
+        assert_eq!(
+            retreat_goal_on(retreat_map(true)),
+            Some(NavGoal::Position(Vec3::new(-512.0, 0.0, 0.0))),
+            "the health pad behind us"
+        );
+        // Only a pad beyond the enemy: q3's own retreat (step 256 u straight back).
+        assert_eq!(
+            retreat_goal_on(retreat_map(false)),
+            Some(NavGoal::Position(Vec3::new(-256.0, 0.0, 0.0))),
+        );
+    }
+
     #[test]
     fn jev_posture_pinned_disengage_never_freezes_the_bot() {
         // Plan 72 W4 / T12: the enemy leaves the worldview while a disengage is in force — q3's

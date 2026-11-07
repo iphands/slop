@@ -134,6 +134,56 @@ fn slot<'a>(
     }
 }
 
+/// Where to retreat to (Plan 74 B2): the cheapest reachable, not-known-empty health pad — else
+/// armor pad — that lies **away** from `enemy` (farther from it than we are, by a margin), so
+/// the retreat ends on a pickup instead of q3's blind 256 u step back. `None` ⇒ q3's own.
+pub fn retreat_pad(
+    items: &[MapItem],
+    memory: &ItemMemory,
+    graph: &NavGraph,
+    view: &Worldview,
+    now: f32,
+    enemy: Vec3,
+) -> Option<Pad> {
+    let s = view.self_state();
+    let from = graph.nearest(&s.origin.into())?;
+    let costs = graph.flood_costs(from);
+    let mine = (s.origin - enemy).length();
+    let mut best: [Option<Pad>; 2] = [None, None];
+    for (i, item) in items.iter().enumerate() {
+        let slot = match item.class {
+            EntityClass::ItemHealth => 0,
+            EntityClass::ItemArmor => 1,
+            _ => continue,
+        };
+        if (item.origin - enemy).length() < mine + RETREAT_MARGIN
+            || !memory.available(i, item.class, now)
+        {
+            continue;
+        }
+        let Some(cost) = item
+            .nav_node
+            .and_then(|n| costs.get(n).copied())
+            .filter(|c| c.is_finite() && *c <= RETREAT_MAX_COST)
+        else {
+            continue;
+        };
+        if best[slot].is_none_or(|p| cost < p.cost) {
+            best[slot] = Some(Pad {
+                item: i,
+                origin: item.origin,
+                cost,
+            });
+        }
+    }
+    best[0].or(best[1])
+}
+
+/// A retreat pad must be this much farther from the enemy than we are.
+const RETREAT_MARGIN: f32 = 128.0;
+/// Retreat pads farther than this (travel cost) are not a retreat, they are a journey.
+const RETREAT_MAX_COST: f32 = 1536.0;
+
 /// The best pad per class for the bot in `view` (see the module doc). Empty before the bot can
 /// be placed on the graph.
 pub fn candidates(

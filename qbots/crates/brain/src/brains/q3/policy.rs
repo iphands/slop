@@ -67,6 +67,13 @@ pub trait GoalPolicy {
 
     /// Stuck recovery escalated (`BackOffThenRepath` / `BoxedIn`) — release any pinned goal.
     fn on_stall(&mut self) {}
+
+    /// A replacement goal while **retreating** (Plan 74 B2) — q3's own steps straight away from
+    /// the enemy, which is hazard-blind. `None` ⇒ q3's own `retreat_goal`. `q.pos` is our
+    /// position; the enemy is whatever `q.view` shows.
+    fn retreat_goal(&mut self, _q: &GoalQuery) -> Option<NavGoal> {
+        None
+    }
 }
 
 /// The default policy: no opinion on anything — today's q3 behaviour.

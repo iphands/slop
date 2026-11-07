@@ -64,6 +64,8 @@ pub const OBJECTIVE_MAX_S: f32 = 30.0;
 pub const ARRIVE_RADIUS: f32 = 64.0;
 /// No objective ask until the bot has been alive this long (brain time, seconds).
 pub const RESPAWN_SETTLE_S: f32 = 2.0;
+/// A cached retreat pad is recomputed after this long (brain time, seconds) — each is one flood.
+const RETREAT_REFRESH_S: f32 = 1.0;
 /// After an objective ask attempt (sent, paced, or nothing to offer), wait this long before the
 /// next — each attempt floods the nav graph once.
 const OBJECTIVE_RETRY_S: f32 = 1.0;
@@ -136,6 +138,10 @@ pub struct JevPolicy {
     obj_window: Option<ObjWindow>,
     /// The held weapon's power tier, last tick (0 when unrecognised).
     held_tier: u8,
+    /// Plan 74 B2: the cached retreat pad and when it was computed (one flood per second).
+    retreat: Option<(f32, Option<glam::Vec3>)>,
+    /// Retreat toward pads at all (off for the posture-only shadow).
+    pad_retreat: bool,
 }
 
 /// An open objective outcome window.
@@ -191,6 +197,8 @@ impl JevPolicy {
             window: None,
             obj_window: None,
             held_tier: 0,
+            retreat: None,
+            pad_retreat: true,
             shadow: false,
         }
     }
@@ -200,6 +208,7 @@ impl JevPolicy {
         Self {
             shadow: true,
             asks_objective: false,
+            pad_retreat: false,
             ..Self::new(source)
         }
     }
@@ -665,6 +674,33 @@ impl GoalPolicy for JevPolicy {
 
     fn on_stall(&mut self) {
         self.release_objective();
+        self.retreat = None;
+    }
+
+    fn retreat_goal(&mut self, q: &GoalQuery) -> Option<NavGoal> {
+        if self.inert || !self.pad_retreat {
+            return None;
+        }
+        if self
+            .retreat
+            .is_none_or(|(t, _)| self.time - t >= RETREAT_REFRESH_S)
+        {
+            let enemy = q
+                .view
+                .enemies()
+                .filter(|e| !e.is_stale)
+                .map(|e| e.origin)
+                .min_by(|a, b| (*a - q.pos).length().total_cmp(&(*b - q.pos).length()));
+            let pad = match (&self.nav_graph, enemy) {
+                (Some(g), Some(enemy)) => {
+                    pads::retreat_pad(&self.items, &self.memory, g, q.view, self.time, enemy)
+                        .map(|p| p.origin)
+                }
+                _ => None,
+            };
+            self.retreat = Some((self.time, pad));
+        }
+        self.retreat.and_then(|(_, p)| p).map(NavGoal::Position)
     }
 
     fn posture(&mut self, q: &PostureQuery) -> Posture {
