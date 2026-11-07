@@ -1,0 +1,1 @@
+{"accuracy":"75%","ambiguous_leak":"60%","ambiguous_leak_acting":"40%","cases":"34 (12 obvious), 0 failed","check":"lab objective SummaryGradedCarryOn (Tuning)","confident_wrong":"17%","flat_max":"0.271","flat_max_acting":"0.271","margin_correct":"0.768","ok":true,"right_confident":"75%","separation":"0.356","threshold":"0.30"}

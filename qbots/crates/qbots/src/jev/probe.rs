@@ -130,14 +130,6 @@ pub enum ProbeQuestion {
 }
 
 impl ProbeQuestion {
-    /// The do-nothing option, if the question has one (posture's `hold` = "leave it to q3").
-    pub(crate) fn noop_label(self) -> Option<&'static str> {
-        match self {
-            ProbeQuestion::Posture => Some("hold"),
-            ProbeQuestion::Objective => None,
-        }
-    }
-
     /// The corpus sub-directory name (`posture`, `objective`).
     pub(crate) fn dir_name(self) -> &'static str {
         match self {
@@ -729,7 +721,7 @@ impl Probe {
                         Err(_) => errors += 1,
                     }
                 }
-                let m = score(&scored, t, q.noop_label());
+                let m = score(&scored, t, super::lab::noop_label(&v.apply("", &base).1));
                 let obvious = cases
                     .iter()
                     .filter(|c| matches!(c.kind, CaseKind::Obvious(_)))

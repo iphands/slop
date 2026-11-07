@@ -48,6 +48,21 @@ pub enum Half {
     Holdout,
 }
 
+/// The objective's harmless default option (round 3): "no particular objective, keep roaming".
+pub const CARRY_ON: &str = "carry_on";
+
+/// The do-nothing label of a question as offered: `carry_on` when present, else posture's `hold`
+/// ("leave it to q3"); the objective without `carry_on` has none.
+pub fn noop_label(q: &QuestionSpec) -> Option<&'static str> {
+    let QuestionKind::Choice(opts) = &q.kind else {
+        return None;
+    };
+    if opts.iter().any(|o| o.label == CARRY_ON) {
+        return Some(CARRY_ON);
+    }
+    (q.key == QuestionKey::Posture && opts.iter().any(|o| o.label == "hold")).then_some("hold")
+}
+
 /// FNV-1a 64 — the split's hash (no dependency, stable across platforms and releases).
 pub fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| {
@@ -173,11 +188,14 @@ pub enum Variant {
     SummaryGradedItemsRenamed,
     /// round 2, combination: `summary-graded` + `add-threat`.
     SummaryGradedThreat,
+    /// round 3, objective only (posture = `summary-graded`): `summary-graded` + a 4th option
+    /// `carry_on` — the objective's harmless "keep roaming" default.
+    SummaryGradedCarryOn,
 }
 
 impl Variant {
     /// Every variant, baseline first.
-    pub const ALL: [Variant; 14] = [
+    pub const ALL: [Variant; 15] = [
         Variant::Baseline,
         Variant::DropDmg,
         Variant::DropLoc,
@@ -192,6 +210,7 @@ impl Variant {
         Variant::SummaryGraded,
         Variant::SummaryGradedItemsRenamed,
         Variant::SummaryGradedThreat,
+        Variant::SummaryGradedCarryOn,
     ];
 
     /// Apply to a state text and a question. Pure and deterministic.
@@ -223,6 +242,17 @@ impl Variant {
                 // Facts are read before the rename (the summary does not use pickups).
                 let line = summary_graded(&Facts::parse(text));
                 append(&items_renamed(text), &line)
+            }
+            Variant::SummaryGradedCarryOn => {
+                if q.key == QuestionKey::Objective {
+                    if let QuestionKind::Choice(opts) = &mut q.kind {
+                        opts.push(ChoiceOption {
+                            label: CARRY_ON,
+                            desc: Phrase::lit("no particular objective: keep roaming as usual"),
+                        });
+                    }
+                }
+                append(text, &summary_graded(&Facts::parse(text)))
             }
             Variant::SummaryGradedThreat => {
                 let f = Facts::parse(text);
@@ -628,6 +658,16 @@ mod tests {
         assert!(
             both.contains("pickups ")
                 && both.ends_with("summary: badly hurt, weak weapon, enemies close")
+        );
+        let obj = ProbeQuestion::Objective.spec();
+        let (_, carry) = Variant::SummaryGradedCarryOn.apply(CRIT, &obj);
+        assert_eq!(noop_label(&carry), Some(CARRY_ON));
+        assert_eq!(noop_label(&obj), None);
+        assert_eq!(noop_label(&q), Some("hold"));
+        assert_eq!(
+            Variant::SummaryGradedCarryOn.apply(CRIT, &q),
+            Variant::SummaryGraded.apply(CRIT, &q),
+            "posture is untouched by the objective-only option"
         );
         let st = Variant::SummaryGradedThreat.apply(CRIT, &q).0;
         assert!(st.contains("\nthreat high\nsummary: badly hurt"));

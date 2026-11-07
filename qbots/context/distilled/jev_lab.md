@@ -94,3 +94,27 @@ Findings:
   confident `seek_armor` on some *ambiguous* states (e.g. 70 hp, 0 armor, both pickups far → 0.78)
   may also mean those labels are too cautious — a question for the human, not something the lab
   flips (plan risk 2).
+
+## Round 3 — 2026-11-06, tuning half, objective only: a harmless default option
+
+| variant | objective RC / CW / acc / mC / leakA / flatA / sep |
+|---|---|
+| summary-graded (round 2, for comparison) | 100% / 0% / 100% / 0.664 / 60% / 0.527 / 0.233 |
+| summary-graded + `carry_on` 4th option | 75 / **17** / 75 / **0.768** / **40** / **0.271** / **0.356** |
+
+Answers by kind: obvious `seek_health` 5/5 and `seek_armor` 4/4 correct; **obvious `hold_position`
+3/3 → `carry_on`**; blank states 10/12 → `carry_on`; ambiguous states spread over all four.
+
+- **R3-1 A "keep roaming" option gives the objective the harmless default posture already has.**
+  Blank states stop drawing confident actions (flatA 0.527 → 0.271), acting leakage on ambiguous
+  states falls 60 → 40 %, and separation is the best of any objective wording (0.356).
+- **R3-2 Without a place-specific reason, `hold_position` and `carry_on` are the same answer to the
+  model.** Every "full health, nothing to pick up" case moved to `carry_on`; that is the whole RC
+  drop and the 17 % "confident-wrong" — answers that are arguably right and cost nothing. Holding
+  an area only means something once the state names an area worth holding (Plan 72's region
+  layer, T14).
+- **Implication for Plan 72 T10 (not yet adopted):** ask the objective as
+  `seek_health / seek_armor / carry_on` — three options, so Plan 72's ≤ 3 cap still holds, with
+  `carry_on` as the no-op that lets the gate's leakage stop mattering — and bring area control back
+  as its own question with region facts. Adopting it means relabelling the corpus's obvious
+  `hold_position` cases, which is the human's call (labels are never flipped by the lab).
