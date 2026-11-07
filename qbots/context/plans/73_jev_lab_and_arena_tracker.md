@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 67% complete (6/9 tasks)
+- Status: 78% complete (7/9 tasks)
 - Start date: 2026-11-06
 - Plan: `context/plans/73_jev_lab_and_arena.md`
 - Purpose: the learner is **us** — find which situations, facts and wording make the frozen
@@ -36,7 +36,7 @@
 | 4 | T4: Port winner, holdout once, calibrate | renderer, question specs, goldens | done | schema v2 (`5bbb4d754`); holdout accepted; posture threshold frozen **0.30**; objective **failed calibration** → parked, arena shadow judges it; Plan 72 W2 endpoint checks recorded |
 | 5 | T5: Decision journal + outcome windows | `brain::jev::source` (`Outcome`, `outcome()`), `brains/jev/policy.rs`, `qbots::jev::hub` (journal), config `jev.journal` | done | window opens on resolution, closes at 10 s / death (hp ≤ 0 — a level change is not a death) / level change / supersede; records hp/armor/frags deltas, damage, q3's own retreat wish, whether the bias was in force; hub joins it with state + answer and a dedicated thread appends `logs/jev/journal-<unix>.jsonl`. 3 tests |
 | 6 | T6: Shadow mode for `jev_static` | `brains/jev`, `brains/mod.rs`, `jev::hub`, config `jev.shadow`, supervisor | done | posture only (the objective is parked — asking it in shadow would need placeholder goals; follow-up); acks `Shadowed`, asks counted `shadow_asked`; parity test over 150 ticks |
-| 7 | T7: Arena roster + `jev-probe journal` | `arena.yaml`, `journal.rs`, `probe.rs` | pending | offline |
+| 7 | T7: Arena roster + `jev-probe journal` | `context/fixtures/jev/arena.yaml`, `qbots::jev::journal`, `probe.rs` | done | report by arm × answer / × q3's wish / × margin / × trigger / × state word; <100 decisions **flagged LOW POWER, not refused** (deviation: still useful as hypotheses); `--candidates` writes confident-then-died states for labelling |
 | 8 | T8: Arena rounds (live, repeating) | Rounds table, `jev_lab.md` | pending | **live** — needs Q2 server + permission |
 | 9 | T9: Hand evidence to Plan 72; close | Plan 72 tracker, pitfalls, brain_notes | pending | |
 

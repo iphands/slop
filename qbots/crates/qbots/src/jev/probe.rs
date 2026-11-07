@@ -92,6 +92,17 @@ pub enum ProbeCmd {
         #[arg(long, default_value = HARVEST)]
         file: PathBuf,
     },
+    /// Plan 73 arena: analyse decision journals (offline — no model calls).
+    Journal {
+        /// Journal files (`logs/jev/journal-*.jsonl`).
+        files: Vec<PathBuf>,
+        /// Also write the worst outcomes as candidate scenarios (state text) here.
+        #[arg(long)]
+        candidates: Option<PathBuf>,
+        /// How many candidates at most.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
     /// Plan 73 language lab: score closed wording/fact variants on the labelled corpus.
     Lab {
         /// Corpus root (`<dir>/<question>/{obvious/<label>,ambiguous,flat}/*.txt`).
@@ -230,6 +241,11 @@ pub async fn run(cfg: &Config, cmd: ProbeCmd, json: bool) -> Result<bool, String
         ProbeCmd::Anticorrelation => p.anticorrelation().await,
         ProbeCmd::Flatness => p.flatness().await,
         ProbeCmd::Replay { file } => p.replay(&file).await,
+        ProbeCmd::Journal {
+            files,
+            candidates,
+            limit,
+        } => journal_report(&files, candidates.as_deref(), limit),
         ProbeCmd::Lab {
             dir,
             question,
@@ -747,6 +763,36 @@ impl Probe {
         }
         Ok(true)
     }
+}
+
+/// `jev-probe journal`: print the arena report; optionally write candidate scenarios.
+fn journal_report(
+    files: &[PathBuf],
+    candidates: Option<&Path>,
+    limit: usize,
+) -> Result<bool, String> {
+    use super::journal::{candidates as worst, parse_line, report};
+    let mut entries = Vec::new();
+    for f in files {
+        let text = std::fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?;
+        entries.extend(text.lines().filter_map(parse_line));
+    }
+    print!("{}", report(&entries));
+    if let Some(dir) = candidates {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let c = worst(&entries, limit);
+        for (stem, state) in &c {
+            let path = dir.join(format!("{stem}.txt"));
+            std::fs::write(&path, format!("{state}\n"))
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+        }
+        println!(
+            "{} candidate scenarios written to {} — label them before use",
+            c.len(),
+            dir.display()
+        );
+    }
+    Ok(true)
 }
 
 fn pct(x: f32) -> String {

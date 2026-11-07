@@ -290,6 +290,22 @@ mod tests {
     }
 
     #[test]
+    fn jev_arena_roster_parses_and_fits_the_netname_budget() {
+        // Plan 73 T7: the committed arena roster.
+        let specs = specs_from(include_str!("../../../context/fixtures/jev/arena.yaml")).unwrap();
+        let shape: Vec<(brain::BrainKind, usize)> =
+            specs.iter().map(|s| (s.brain, s.count)).collect();
+        assert_eq!(
+            shape,
+            vec![
+                (brain::BrainKind::Quake3, 3),
+                (brain::BrainKind::Jev, 2),
+                (brain::BrainKind::JevStatic, 1)
+            ]
+        );
+    }
+
+    #[test]
     fn default_count_is_eight_when_unset() {
         let specs = specs_from("groups:\n  - brain: mai\n    navmode: as\n").unwrap();
         assert_eq!(specs[0].count, 8);

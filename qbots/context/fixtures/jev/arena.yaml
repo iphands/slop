@@ -1,0 +1,19 @@
+# Plan 73 arena roster: q3 vs jev, with a shadow jev_static control.
+#
+#   cargo run -p qbots -- --config <config with jev: {enabled: true, journal: true, shadow: true}> \
+#     competition --roster context/fixtures/jev/arena.yaml
+#
+# 2 jev bots (not 1): the unit of learning is the decision, and two jev bots double the decisions
+# per minute. The jev_static bot runs in shadow mode — it plays exactly like q3-with-plumbing but
+# asks and journals the posture question, so the journal shows what the model would have said
+# where q3 decided alone.
+groups:
+  - brain: q3
+    navmode: as
+    count: 3
+  - brain: jev
+    navmode: as
+    count: 2
+  - brain: jvs
+    navmode: as
+    count: 1
