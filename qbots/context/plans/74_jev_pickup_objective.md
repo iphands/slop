@@ -1,6 +1,6 @@
 # Plan 74 — Jev pickup objective: let the model choose which out-of-sight pickup to go for
 
-> **Status**: pending
+> **Status**: in-progress
 > **Created**: 2026-11-07
 > **Depends on**: Plan 72 (the `jev` brain, hub, `GoalPolicy::objective` seam), Plan 73 (the lab,
 > the journal, the arena), Plan 30 (`build_map_items`, `ItemMemory`)
@@ -119,9 +119,10 @@ line is rendered into objective requests only, and the posture goldens must stay
 | `ItemMemory { observe, available }` tracks pads seen empty, with Q2 respawn times (armor 20 s, powerup 60 s, else 30 s) | `items.rs:39-47`, `:76-125`; used by `main` and `xon` |
 | `NavGraph::path(start, goal)` + `path_len(&path)` give an A* distance | `crates/world/src/navgraph.rs:822`, `:1729` |
 | `MapItem { class, origin, nav_node }` — built in `items.rs:30`, plus test constructors in `items.rs:310`, `xon/goals.rs:414`, `jev/mod.rs:136` | grep |
-| The hub keeps a newest-wins **pending** ask per bot (`hub.rs:7`, `:456`) | read; **how a stored decision carries two questions' answers is unconfirmed — confirm in T1** |
-| Q2 DM auto-switch on weapon pickup (only from the blaster?) | **unconfirmed — confirm in T1** (`vendor/yquake2/src/game/g_items.c` / `p_weapon.c`, `Pickup_Weapon`) |
-| Pads per class on q2dm1 (is there always a weapon candidate?) | **unconfirmed — confirm in T1** |
+| The hub keeps **one** newest-wins pending ask per bot (any question), **one** pacing clock per bot, and one stored `AppliedDecision { objective, posture }` per bot; a posture-only answer stores `objective: None`, which supersedes | ~~unconfirmed~~ RESOLVED (T1): `hub.rs:176-197`, `:433-470`, `:613-650`; `jev/source.rs:85-99` |
+| DM auto-switches on pickup **only** from the blaster, and only on the first copy; otherwise the bot wields a better weapon only when combat asks for it (`select_best_weapon` → `use <name>`) | ~~unconfirmed~~ RESOLVED (T1): `vendor/yquake2/src/game/player/weapon.c:325-330`; `weapons.rs:363`, `qbots/src/main.rs:1815-1816` |
+| Arena server `dmflags 17424` = INSTANT_ITEMS + FORCE_RESPAWN + QUAD_DROP — **no** `DF_WEAPONS_STAY`, so a taken weapon pad is empty for 30 s | RESOLVED (T1): connectionless `status` to `noir.lan:27910`; bits from `shared.h:1152-1166`; respawn `weapon.c:310-316` |
+| Pads: q2dm1 11 weapon (7 strong), 18 health, 18 armor, **35 ammo**; q2dm3 8 weapon, 15 health, 8 armor, 19 ammo | ~~unconfirmed~~ RESOLVED (T1): BSP entity lumps from `vendor/baseq2/pak0.pak` |
 
 ### Rejected Claims
 
@@ -240,6 +241,12 @@ a new objective golden includes the `pads` line; the injection golden still byte
   applied goal; release on arrival (≤ 64 u horizontally), `on_stall`, death, level change, a
   newer answered ticket, the pad seen empty, or 30 s.
 - Gate: margin threshold `jev.gate_margin_multi` (provisional until W2).
+- *(added by T1)* **Pacing per question key** in the hub: objective asks get their own pacing
+  clock, so a roaming objective ask can never pace out the contact posture ask that follows it
+  (today one clock, `hub.rs:433-450`). The pending slot stays newest-wins — a clobbered objective
+  ask is simply re-asked at the next trigger.
+- *(added by T1)* The brain releases an applied objective only on a newer ticket that **asked**
+  the objective; a posture-only ticket's `objective: None` does not release it.
 
 **Verify**: `cargo test -p brain -- jev_objective` — a `StubDecider` naming `seek_weapon` drives
 the navigator to the rocket pad; an off-ticket label ⇒ `Rejected(OffTicketLabel)` and pure q3;
@@ -302,7 +309,9 @@ lab round; then `task(T6): objective v2 holdout + calibrate — <threshold|faile
 
 **What to do**: Objective windows (30 s, from apply): `arrived`, `secs_to_arrive`, `upgraded`
 (held weapon tier rose), hp/armor gained, died, frags. A per-life `EVT life` line from `bot_task`
-for **every** brain: `secs_to_strong` (spawn → first non-weak held weapon, or none), life length,
+for **every** brain: `secs_to_strong` (spawn → first non-weak held weapon, or none — *held*, not
+owned: past the blaster, DM does not auto-switch, so a bot wields a picked-up weapon only once
+combat asks for it; T1), life length,
 frags. `jev-probe journal` adds an objective section (by arm × answer × agrees-with-rule) and a
 per-arm `secs_to_strong` summary (median, share of lives that ever got a strong weapon).
 
@@ -415,7 +424,7 @@ paragraph with numbers; what wording/facts worked; follow-ups (re-engage timing,
 
 ## Verification Checklist
 
-- [ ] T1: hub question keying, DM auto-switch rule, q2dm1/q2dm3 pad counts recorded with sources
+- [x] T1: hub question keying, DM auto-switch rule, q2dm1/q2dm3 pad counts recorded with sources
 - [ ] T2: `weapon_*` → `Some(Weapon)`, `ammo_*` → `None`; `q3_parity_golden` unchanged
 - [ ] T3: out-of-sight pad becomes a candidate; empty pad skipped until respawn; posture goldens byte-identical; objective golden has `pads`
 - [ ] T4: stub `seek_weapon` drives to the pad; off-ticket rejected; held until each release condition; no ask with an enemy in view
