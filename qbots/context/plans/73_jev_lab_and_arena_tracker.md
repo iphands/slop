@@ -56,6 +56,10 @@ Every row is written **before** its run (prediction), then completed.
 | L8 | 2026-11-06 | lab (tuning half) | options-consequence | posture RC **up** (options that say what happens are easier to weigh); objective up a little | | posture acc 82→64 %, mC 0.185 | **wrong** — consequence wording hurt |
 | L9 | 2026-11-06 | lab (tuning half) | instruction-criterion | posture RC **up** and ambiguous leakage **up** too (a stated rule pushes borderline cases over) | | posture unchanged; objective RC 83 %, flatA 0.756 | **wrong** on posture — a stated rule did nothing |
 | L10 | 2026-11-06 | lab (tuning half) | instruction-role | **no change** (role framing adds no facts) | | posture mC 0.229→0.133; objective RC 50 % | **wrong** — role framing hurt |
+| L11 | 2026-11-06 | lab (tuning half) | items-renamed (`items health:none` → `pickups health_pack:not_seen` …) | both questions' **flatA drops** (objective 0.637 → < 0.40, posture 0.507 → < 0.30); obvious accuracy unchanged | | |
+| L12 | 2026-11-06 | lab (tuning half) | summary-graded ("badly hurt" only < 25 hp, "hurt" 25–49) | posture **leakA 29 % → ≤ 10 %** at a small RC cost (73 % → ≥ 60 %); objective ≈ unchanged | | |
+| L13 | 2026-11-06 | lab (tuning half) | summary-graded + items-renamed (combination of L11 + L12) | **best overall**: posture RC ≥ 60 %, leakA ≤ 10 %, flatA ≈ 0; objective RC ≥ 90 %, flatA < 0.40 | | |
+| L14 | 2026-11-06 | lab (tuning half) | summary-graded + add-threat (combination) | posture RC ≥ L12 and flatA 0 (threat removed flat disengages in round 1); objective leakA up (threat raised it in round 1) | | |
 
 ## Evidence
 
