@@ -258,17 +258,16 @@ impl TraversalExecutor {
         }
 
         // Vertical thrust: sustained (NEVER `mv.jump()` in water — that's a one-shot launch).
-        let pitch;
-        if self.exit_ticks > 0 {
+        let pitch = if self.exit_ticks > 0 {
             // Q2 water-jump climb-out: look up past -15°, hold up, press forward into the lip.
             self.exit_ticks -= 1;
             mv.up = 1.0;
-            pitch = EXIT_LOOKUP_PITCH;
+            EXIT_LOOKUP_PITCH
         } else {
             mv.up = (dz / SWIM_VERT_SCALE).clamp(-1.0, 1.0);
             // Pitch toward the 3-D target so `pml.forward` carries the vertical component too.
-            pitch = (-dz.atan2(hd.max(1.0)).to_degrees()).clamp(-89.0, 89.0);
-        }
+            (-dz.atan2(hd.max(1.0)).to_degrees()).clamp(-89.0, 89.0)
+        };
         // Forward toward the XY target (water is open volume — no narrow-ledge speed_scale).
         let swim_fwd = if steer_fwd != 0.0 || steer_side != 0.0 {
             steer_fwd.max(0.0)
