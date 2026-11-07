@@ -29,6 +29,9 @@ use crate::weapons::Weapon;
 pub struct MapItem {
     /// Resource category (health/armor/weapon/powerup), from `classify_item_classname`.
     pub class: EntityClass,
+    /// Which weapon a `weapon_*` pad holds; `None` for ammo (also [`EntityClass::ItemWeapon`])
+    /// and every non-weapon pad (Plan 74 T2 — q2dm1 has 11 weapon pads and 35 ammo pads).
+    pub weapon: Option<Weapon>,
     /// World origin of the item's spawn pad.
     pub origin: Vec3,
     /// Nearest nav-graph node, resolved at build time (`None` if none within range).

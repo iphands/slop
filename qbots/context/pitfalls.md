@@ -1693,3 +1693,26 @@ failed clippy run because the two were not chained.
 - qbots: crates/qbots/src/jev/{hub,render,wire,net}.rs, crates/brain/src/jev/{gate,source,state}.rs
 - qbots: crates/brain/src/brains/q3/{mod,policy}.rs (golden `testdata/parity_200.txt`)
 - qbots: context/plans/completed/72_jev_decision_brain*.md, context/plans/completed/73_jev_lab_and_arena*.md, context/distilled/jev_lab.md
+
+# `EntityClass::ItemWeapon` is mostly ammo — a "weapon pad" needs `MapItem::weapon`
+
+## Problem
+
+`classify_item_classname` puts `weapon_*` **and** `ammo_*` spawns in one class,
+`EntityClass::ItemWeapon` (`perception.rs:744`). On q2dm1 that class holds 11 weapon pads and
+**35** ammo pads (q2dm3: 8 / 19). Code that sends a blaster-holding bot to "the nearest
+`ItemWeapon`" sends it to an ammo box three times out of four — and ammo for a weapon it does
+not own is worthless. Two related traps: past the blaster, yquake2 DM does **not** auto-switch
+on pickup (`weapon.c:325-330`: only the first copy, only from the blaster), so the *held* weapon
+lags the *owned* one until combat sends `use <name>`; and with `DF_WEAPONS_STAY` off (the arena
+server runs `dmflags 17424`) a taken weapon pad is empty for 30 s.
+
+## Fix
+
+Use `MapItem::weapon: Option<Weapon>` (Plan 74 T2, from `Weapon::from_classname`): `Some` only
+for a `weapon_*` pad. Compare pads by `Weapon::power_tier` against the held weapon, track empty
+pads with `ItemMemory`, and treat "held" as a lower bound on what the bot owns.
+
+## Sources
+- qbots: crates/brain/src/{items.rs,weapons.rs,brains/core.rs}, crates/brain/tests/map_items_q2dm1.rs
+- qbots: context/plans/74_jev_pickup_objective_tracker.md (T1 Evidence)

@@ -413,6 +413,7 @@ mod tests {
     fn item(class: EntityClass, node: usize, graph: &NavGraph) -> MapItem {
         MapItem {
             class,
+            weapon: None,
             origin: Vec3::from(graph.node_pos(node)),
             nav_node: Some(node),
         }

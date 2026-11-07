@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 11% complete (1/9 tasks)
+- Status: 22% complete (2/9 tasks)
 - Start date: 2026-11-07
 - Plan: `context/plans/74_jev_pickup_objective.md`
 - Headline metric: per-life **`secs_to_strong`** (spawn → first non-weak held weapon) per arm;
@@ -31,7 +31,7 @@
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
 | 1 | T1: Confirm hub keying, DM autoswitch, pad counts | tracker Evidence | done | all three resolved (Evidence). Hub: one pending + **one pacing clock** per bot → T4 gains per-question pacing and an asked-objective-only release rule. DM switches only from the blaster. `dmflags 17424`, no weapons-stay. q2dm1: 11 weapon vs 35 ammo pads |
-| 2 | T2: `MapItem.weapon` — weapon vs ammo pads | `brains/core.rs`, `items.rs`, `weapons.rs` | pending | |
+| 2 | T2: `MapItem.weapon` — weapon vs ammo pads | `brains/core.rs`, `items.rs`, `weapons.rs` | done | `Weapon::from_classname` (yquake2 `g_items.c` classnames; ammo incl. `ammo_grenades` → `None`); 3 test constructors set `weapon: None`; new pak-gated `tests/map_items_q2dm1.rs` asserts 11 weapon / 35 ammo; parity golden unchanged; pitfalls entry |
 | 3 | T3: Pad candidates + objective-only `pads` line | `brains/jev/policy.rs`, `jev/state.rs`, `qbots::jev::render` | pending | |
 | 4 | T4: Objective question v2, roaming triggers, apply/release | `jev/question.rs`, `brains/jev/policy.rs`, `qbots::jev::hub` | pending | |
 | 5 | T5: `jvr` code-rule control arm | `brains/jev`, `brains/mod.rs`, hub | pending | |

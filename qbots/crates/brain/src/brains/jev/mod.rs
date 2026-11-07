@@ -135,6 +135,7 @@ mod tests {
             roam_as_position: false,
             items: vec![MapItem {
                 class: EntityClass::ItemArmor,
+                weapon: None,
                 origin: Vec3::new(512.0, 0.0, 0.0),
                 nav_node: Some(1),
             }],

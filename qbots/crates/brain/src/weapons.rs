@@ -153,6 +153,26 @@ impl Weapon {
         }
     }
 
+    /// Resolve a BSP spawn **classname** (`weapon_railgun`, …) to the weapon its pad holds —
+    /// the `classname` column of yquake2's item table (`vendor/yquake2/src/game/g_items.c:1813-2033`).
+    /// `None` for ammo (`ammo_*`, including `ammo_grenades`, an ammo/weapon hybrid we never wield)
+    /// and anything else. Case-insensitive, like `classify_item_classname`.
+    pub fn from_classname(classname: &str) -> Option<Self> {
+        Some(match classname.to_ascii_lowercase().as_str() {
+            "weapon_blaster" => Self::Blaster,
+            "weapon_shotgun" => Self::Shotgun,
+            "weapon_supershotgun" => Self::SuperShotgun,
+            "weapon_machinegun" => Self::Machinegun,
+            "weapon_chaingun" => Self::Chaingun,
+            "weapon_grenadelauncher" => Self::GrenadeLauncher,
+            "weapon_rocketlauncher" => Self::RocketLauncher,
+            "weapon_hyperblaster" => Self::Hyperblaster,
+            "weapon_railgun" => Self::Railgun,
+            "weapon_bfg" => Self::Bfg10k,
+            _ => return None,
+        })
+    }
+
     /// Resolve a Q2 **view-weapon model** path (e.g. `models/weapons/v_rail/tris.md2`,
     /// the `gunindex` configstring) to a [`Weapon`]. This is how an external client
     /// learns which weapon it is *holding* — the playerstate carries only `gunindex`
@@ -390,6 +410,30 @@ pub fn select_best_weapon(held: Weapon, distance: f32, held_ammo: i32) -> Weapon
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn from_classname_maps_weapon_pads_not_ammo() {
+        assert_eq!(
+            Weapon::from_classname("weapon_rocketlauncher"),
+            Some(Weapon::RocketLauncher)
+        );
+        assert_eq!(Weapon::from_classname("WEAPON_BFG"), Some(Weapon::Bfg10k));
+        assert_eq!(
+            Weapon::from_classname("weapon_supershotgun"),
+            Some(Weapon::SuperShotgun)
+        );
+        for w in ALL_WEAPONS {
+            let cls = match w {
+                Weapon::Bfg10k => "weapon_bfg".to_string(),
+                _ => format!("weapon_{}", w.name().replace(' ', "").to_ascii_lowercase()),
+            };
+            assert_eq!(Weapon::from_classname(&cls), Some(w), "{cls}");
+        }
+        assert_eq!(Weapon::from_classname("ammo_rockets"), None);
+        assert_eq!(Weapon::from_classname("ammo_grenades"), None);
+        assert_eq!(Weapon::from_classname("item_health"), None);
+        assert_eq!(Weapon::from_classname("weapon_nailgun"), None);
+    }
 
     #[test]
     fn blaster_always_usable() {

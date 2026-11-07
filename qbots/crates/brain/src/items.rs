@@ -29,6 +29,7 @@ pub fn build_map_items(bsp: &world::Bsp, graph: &world::NavGraph) -> Vec<MapItem
             let origin = e.origin()?;
             Some(MapItem {
                 class,
+                weapon: Weapon::from_classname(&e.classname),
                 origin: Vec3::from(origin),
                 nav_node: graph.nearest(&origin),
             })
@@ -309,6 +310,7 @@ mod tests {
     fn health_item(origin: [f32; 3]) -> MapItem {
         MapItem {
             class: EntityClass::ItemHealth,
+            weapon: None,
             origin: Vec3::from(origin),
             nav_node: None,
         }
