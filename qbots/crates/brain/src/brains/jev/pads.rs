@@ -3,9 +3,11 @@
 //! q3 only heads for pickups it can see (`Q3Brain::roam_goal` over `view.items()`) and drops the
 //! BSP item table. This module is what the jev policy offers the model instead: per class, the
 //! pad with the **lowest travel cost** from where the bot stands that is
-//! - **worth having** — a weapon stronger than the held one (`Weapon::power_tier`; an
-//!   unrecognised held weapon counts as tier 0), health below [`FULL_HEALTH`], armor below
-//!   [`FULL_ARMOR`];
+//! - **worth having** — a *strong* weapon (never blaster / shotgun / machinegun — Plan 74 B3)
+//!   stronger than the held one (`Weapon::power_tier`; an unrecognised held weapon counts as
+//!   tier 0), health below [`FULL_HEALTH`], armor below [`FULL_ARMOR`];
+//! - **ranked** by travel cost — for weapons scaled by `100 / power_tier`, so power is weighed
+//!   against distance;
 //! - **not known empty** — `ItemMemory::available` (Q2 respawn times; the arena server runs
 //!   without `DF_WEAPONS_STAY`, so a taken weapon pad is empty for 30 s);
 //! - **reachable** — finite cost in one `NavGraph::flood_costs` pass from the bot's nearest node
@@ -125,12 +127,32 @@ fn slot<'a>(
     armor: i32,
 ) -> Option<&'a mut Option<Pad>> {
     match item.class {
-        EntityClass::ItemWeapon if item.weapon.is_some_and(|w| w.power_tier() > held_tier) => {
+        EntityClass::ItemWeapon
+            if item
+                .weapon
+                .is_some_and(|w| !is_weak(w) && w.power_tier() > held_tier) =>
+        {
             Some(&mut out.weapon)
         }
         EntityClass::ItemHealth if hp < FULL_HEALTH => Some(&mut out.health),
         EntityClass::ItemArmor if armor < FULL_ARMOR => Some(&mut out.armor),
         _ => None,
+    }
+}
+
+/// Weak weapons — the decision state's own set. A weak pad is never a weapon objective
+/// (Plan 74 B3): walking to a shotgun leaves the bot as under-armed as the blaster did.
+fn is_weak(w: Weapon) -> bool {
+    matches!(w, Weapon::Blaster | Weapon::Shotgun | Weapon::Machinegun)
+}
+
+/// How a candidate is ranked within its class (lower is better): travel cost, and for weapons
+/// travel cost scaled by `100 / power_tier`, so a rocket launcher (90) a little farther beats a
+/// nearer super shotgun (50) — but not one twice as far.
+fn rank(item: &MapItem, cost: f32) -> f32 {
+    match item.weapon {
+        Some(w) => cost * 100.0 / f32::from(w.power_tier().max(1)),
+        None => cost,
     }
 }
 
@@ -214,7 +236,7 @@ pub fn candidates(
         let Some(best) = slot(&mut out, item, held_tier, s.health, s.armor) else {
             continue;
         };
-        if best.is_none_or(|p| cost < p.cost) {
+        if best.is_none_or(|p| rank(item, cost) < rank(&items[p.item], p.cost)) {
             *best = Some(Pad {
                 item: i,
                 origin: item.origin,
@@ -290,6 +312,40 @@ mod tests {
         assert_eq!((w.item, w.cost), (1, 768.0));
         assert_eq!(c.facts().weapon, Some(DistBand::Mid));
         assert_eq!((c.health, c.armor), (None, None));
+    }
+
+    #[test]
+    fn jev_pads_weapon_pads_skip_weak_guns_and_weigh_power_against_distance() {
+        let blaster = view(BLASTER, 100, 100, vec![]);
+        let g = graph();
+        let pick = |items: &[MapItem]| {
+            candidates(items, &ItemMemory::new(), &g, &blaster, 0.0)
+                .weapon
+                .map(|p| p.item)
+        };
+        // A shotgun next door is no objective; the rocket launcher three nodes away is.
+        let a = [
+            pad(EntityClass::ItemWeapon, Some(Weapon::Shotgun), 1),
+            pad(EntityClass::ItemWeapon, Some(Weapon::RocketLauncher), 3),
+        ];
+        assert_eq!(pick(&a), Some(1));
+        // A super shotgun at 256 (rank 512) beats a rocket launcher at 768 (rank 853)…
+        let b = [
+            pad(EntityClass::ItemWeapon, Some(Weapon::SuperShotgun), 1),
+            pad(EntityClass::ItemWeapon, Some(Weapon::RocketLauncher), 3),
+        ];
+        assert_eq!(pick(&b), Some(0));
+        // …but at 512 (rank 1024) the rocket launcher wins.
+        let c = [
+            pad(EntityClass::ItemWeapon, Some(Weapon::SuperShotgun), 2),
+            pad(EntityClass::ItemWeapon, Some(Weapon::RocketLauncher), 3),
+        ];
+        assert_eq!(pick(&c), Some(1));
+        assert_eq!(
+            pick(&a[..1]),
+            None,
+            "only a shotgun: no weapon objective at all"
+        );
     }
 
     #[test]
