@@ -164,11 +164,20 @@ pub enum Variant {
     InstructionCriterion,
     /// instructions: frame the model as a deathmatch coach.
     InstructionRole,
+    /// round 2, facts: the `items` line says what is **in sight**
+    /// (`pickups health_pack:not_seen …`) — round 1 showed `items health:none` read as "no health".
+    ItemsRenamed,
+    /// round 2, form: the summary sentence with graded hurt ("badly hurt" < 25 hp, "hurt" 25–49).
+    SummaryGraded,
+    /// round 2, combination: `summary-graded` + `items-renamed`.
+    SummaryGradedItemsRenamed,
+    /// round 2, combination: `summary-graded` + `add-threat`.
+    SummaryGradedThreat,
 }
 
 impl Variant {
     /// Every variant, baseline first.
-    pub const ALL: [Variant; 10] = [
+    pub const ALL: [Variant; 14] = [
         Variant::Baseline,
         Variant::DropDmg,
         Variant::DropLoc,
@@ -179,6 +188,10 @@ impl Variant {
         Variant::OptionsConsequence,
         Variant::InstructionCriterion,
         Variant::InstructionRole,
+        Variant::ItemsRenamed,
+        Variant::SummaryGraded,
+        Variant::SummaryGradedItemsRenamed,
+        Variant::SummaryGradedThreat,
     ];
 
     /// Apply to a state text and a question. Pure and deterministic.
@@ -203,6 +216,18 @@ impl Variant {
             Variant::InstructionRole => {
                 q.instructions = role_instruction(q.key);
                 text.to_string()
+            }
+            Variant::ItemsRenamed => items_renamed(text),
+            Variant::SummaryGraded => append(text, &summary_graded(&Facts::parse(text))),
+            Variant::SummaryGradedItemsRenamed => {
+                // Facts are read before the rename (the summary does not use pickups).
+                let line = summary_graded(&Facts::parse(text));
+                append(&items_renamed(text), &line)
+            }
+            Variant::SummaryGradedThreat => {
+                let f = Facts::parse(text);
+                let with_threat = append(text, &format!("threat {}", threat(&f)));
+                append(&with_threat, &summary_graded(&f))
             }
         };
         (text, q)
@@ -320,6 +345,57 @@ fn summary(f: &Facts) -> &'static str {
         (false, false, true, false) => "summary: healthy and well armed, enemies at a distance",
         (false, _, false, _) => "summary: healthy, no enemy in sight",
     }
+}
+
+/// `items health:<b> armor:<b> weapon:<b> powerup:<b>` →
+/// `pickups health_pack:<b> armor_pack:<b> weapon_pickup:<b> powerup_pickup:<b>`, `none` →
+/// `not_seen`. Every other line unchanged.
+fn items_renamed(text: &str) -> String {
+    text.lines()
+        .map(|l| {
+            let mut toks = l.split_whitespace();
+            if toks.next() != Some("items") {
+                return l.to_string();
+            }
+            let fields: Vec<String> = toks
+                .map(|tok| {
+                    let (k, v) = tok.split_once(':').unwrap_or((tok, ""));
+                    let k = match k {
+                        "health" => "health_pack",
+                        "armor" => "armor_pack",
+                        "weapon" => "weapon_pickup",
+                        "powerup" => "powerup_pickup",
+                        _ => "pickup",
+                    };
+                    let v = if v == "none" { "not_seen" } else { v };
+                    format!("{k}:{v}")
+                })
+                .collect();
+            format!("pickups {}", fields.join(" "))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The summary with **graded** hurt: "badly hurt" only for `crit` (< 25 hp), "hurt" for `lo`
+/// (25–49). Every word is a literal here; `format!` only joins literals.
+fn summary_graded(f: &Facts) -> String {
+    let hurt = match f.band.as_deref() {
+        Some("crit") => "badly hurt",
+        Some("lo") => "hurt",
+        _ => "healthy",
+    };
+    let weapon = if f.weak_weapon.unwrap_or(false) {
+        "weak weapon"
+    } else {
+        "strong weapon"
+    };
+    let enemies = match (f.enemies.unwrap_or(0), f.nearest.as_deref()) {
+        (0, _) => "no enemy in sight",
+        (_, Some("touch" | "near")) => "enemies close",
+        _ => "enemies at a distance",
+    };
+    format!("summary: {hurt}, {weapon}, {enemies}")
 }
 
 fn consequence_options(key: QuestionKey, kind: &QuestionKind) -> QuestionKind {
@@ -534,6 +610,27 @@ mod tests {
             .apply(CRIT, &q)
             .0
             .ends_with("summary: badly hurt, weak weapon, enemies close"));
+        // Round 2.
+        let renamed = Variant::ItemsRenamed.apply(CRIT, &q).0;
+        assert!(renamed.contains(
+            "pickups health_pack:mid armor_pack:not_seen weapon_pickup:not_seen powerup_pickup:not_seen"
+        ));
+        assert!(!renamed.contains("items "));
+        assert_eq!(renamed.lines().count(), 6, "a rename, not an addition");
+        let lo = CRIT
+            .replace("hp:15(crit)", "hp:40(lo)")
+            .replace("held:blaster", "held:railgun");
+        assert!(Variant::SummaryGraded
+            .apply(&lo, &q)
+            .0
+            .ends_with("summary: hurt, strong weapon, enemies close"));
+        let both = Variant::SummaryGradedItemsRenamed.apply(CRIT, &q).0;
+        assert!(
+            both.contains("pickups ")
+                && both.ends_with("summary: badly hurt, weak weapon, enemies close")
+        );
+        let st = Variant::SummaryGradedThreat.apply(CRIT, &q).0;
+        assert!(st.contains("\nthreat high\nsummary: badly hurt"));
         // Question-side variants leave the state alone and keep every label.
         for v in [
             Variant::OptionsConsequence,

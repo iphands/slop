@@ -43,8 +43,11 @@ Findings:
 3. **`wants:` carries the objective question.** Dropping the `map` line (which holds `wants:`)
    collapses objective accuracy 100 % → 50 % and produces the only confident-wrong answers in the
    round. The derived loadout-gap word is load-bearing; the raw numbers are not enough.
-4. **The model misreads `items health:none`** as "this bot has no health", not "no health pickup
-   in sight". The information-free state `items health:none armor:none weapon:none powerup:none`
+4. ~~**The model misreads `items health:none`** as "this bot has no health", not "no health pickup
+   in sight".~~ **Cause retracted by round 2** (finding R2-1): renaming the line did not remove the
+   pull. The observation stands — an items-only blank state draws confident acting answers — but
+   the mechanism is "health mentioned on an empty state ⇒ `seek_health`", not the key name.
+   Original text kept for the record: The information-free state `items health:none armor:none weapon:none powerup:none`
    draws the most confident acting answers of any blank state: objective `seek_health` at 0.637,
    posture `disengage` at 0.507; the other items-only blanks also pull `seek_health` (0.531,
    0.499). A key that names a thing the bot *has* must not be reused for a thing it *sees*.
@@ -63,3 +66,31 @@ Predictions vs results (tracker *Rounds* L1–L10): right on L1 (baseline weak),
 L4 (drop-map hurts objective — far more than expected), L6 (hp band no-op), L7 (summary largest
 gain). Wrong on L2 (dropping damage did not hurt), L5 (threat raised accuracy, not confidence),
 L8 (consequence options *hurt*), L9 (criterion did nothing on posture), L10 (role framing *hurt*).
+
+## Round 2 — 2026-11-06, tuning half, fixes for round 1's two problems + two combinations
+
+| variant | posture RC / CW / acc / mC / leakA / flatA / sep | objective RC / CW / acc / mC / leakA / flatA / sep |
+|---|---|---|
+| items-renamed | 0% / 0% / **64%** / 0.352 / 0% / 0.256 / 0.134 | 67 / 0 / **75** / 0.613 / 70 / **0.724** / 0.105 |
+| **summary-graded** | **82 / 0 / 100 / 0.519 / 0 / 0.000** / 0.287 | **100 / 0 / 100 / 0.664** / 60 / 0.527 / 0.233 |
+| summary-graded + items-renamed | 45 / 0 / 100 / 0.483 / 0 / 0.000 / 0.189 | 75 / 0 / 83 / 0.703 / 70 / 0.527 / 0.190 |
+| **summary-graded + threat** | **82 / 0 / 100 / 0.563 / 0 / 0.000 / 0.355** | 100 / 0 / 100 / 0.667 / 70 / 0.585 / 0.212 |
+
+Findings:
+
+- **R2-1 Renaming the items line is harmful, and finding 4's cause was wrong.**
+  `pickups health_pack:not_seen …` lowers accuracy on both questions (posture 82 → 64 %, objective
+  100 → 75 %) and *raises* the objective's most confident blank-state answer (0.637 → 0.724, still
+  `seek_health`). Keep the short `items` keys; the model reads them fine on real states.
+- **R2-2 Grading the hurt words fixes the summary's leak and makes it *more* accurate.**
+  "badly hurt" (< 25 hp) / "hurt" (25–49) instead of "badly hurt" for both: posture RC 73 → 82 %,
+  confident acting answers on ambiguous states 29 % → 0 %, none on blank states. Words have to be
+  as calibrated as the bands they stand for.
+- **R2-3 Threat + graded summary is the best posture wording so far**: RC 82 %, mean correct margin
+  0.563, separation 0.355 (baseline 0.130), zero acting leakage, zero acting blank answers.
+- **R2-4 The objective question has no harmless default.** Under every summary variant the blank
+  states now answer `hold_position` confidently (0.40–0.59). Posture's `hold` means "leave it to
+  q3" and costs nothing; the objective's `hold_position` is a real action (the bot camps). Its
+  confident `seek_armor` on some *ambiguous* states (e.g. 70 hp, 0 armor, both pickups far → 0.78)
+  may also mean those labels are too cautious — a question for the human, not something the lab
+  flips (plan risk 2).
