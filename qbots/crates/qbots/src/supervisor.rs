@@ -119,7 +119,12 @@ fn build_map_nav(cfg: &Config, map: &str) -> Option<MapNav> {
     let items = brain::items::build_map_items(&built.bsp, &built.graph);
     tracing::info!(map, item_spawns = items.len(), "map item table built");
     let t_rim = std::time::Instant::now();
-    let rim = brain::hazard::rim_node_costs(&built.graph, &built.cm);
+    // `QBOTS_NO_RIM_COST` turns the surcharge off for A/B measurement (Plan 74 X2).
+    let rim = if std::env::var_os("QBOTS_NO_RIM_COST").is_some() {
+        vec![0.0; built.graph.node_count()]
+    } else {
+        brain::hazard::rim_node_costs(&built.graph, &built.cm)
+    };
     tracing::info!(
         map,
         rim_nodes = rim.iter().filter(|c| **c > 0.0).count(),

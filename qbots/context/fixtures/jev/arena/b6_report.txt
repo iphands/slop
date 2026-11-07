@@ -1,0 +1,46 @@
+# Plan 74 arena round B6 — 3 x 10 min, all on q2dm3, binary @ 90748ec38
+# journals: logs/jev/journal-1794085219.jsonl logs/jev/journal-1794085834.jsonl logs/jev/journal-1794086449.jsonl
+objective decisions by arm × applied
+  jev@q2dm3 (nothing applied)        n=57   arrived=  0.0%  upgraded= 12.3%  died= 63.2%  hp= -36.9  armor=  -0.5  LOW POWER
+  jev@q2dm3 seek_armor               n=45   arrived= 46.7%  upgraded=  0.0%  died= 15.6%  hp= -17.0  armor=  +0.5  LOW POWER
+  jev@q2dm3 seek_health              n=1    arrived=  0.0%  upgraded=  0.0%  died=100.0%  hp=  -3.0  armor=  +0.0  LOW POWER
+  jev@q2dm3 seek_weapon              n=46   arrived= 34.8%  upgraded= 10.9%  died= 43.5%  hp= -42.9  armor=  -0.4  LOW POWER
+  jev_rule@q2dm3 seek_armor          n=21   arrived= 47.6%  upgraded=  0.0%  died= 23.8%  hp= -21.4  armor=  +2.3  LOW POWER
+  jev_rule@q2dm3 seek_health         n=2    arrived=  0.0%  upgraded=  0.0%  died= 50.0%  hp=  +0.0  armor=  +0.0  LOW POWER
+  jev_rule@q2dm3 seek_weapon         n=57   arrived= 17.5%  upgraded= 10.5%  died= 43.9%  hp= -34.4  armor=  -0.6  LOW POWER
+why objectives ended (applied seeks only)
+  jev@q2dm3 arrived                  18
+  jev@q2dm3 empty                    40
+  jev@q2dm3 held at close            34
+  jev_rule@q2dm3 arrived             5
+  jev_rule@q2dm3 empty               26
+  jev_rule@q2dm3 held at close       28
+  jev_rule@q2dm3 stall               1
+  jev_rule@q2dm3 timeout             20
+model/rule agreement (decisive model answers)
+  jev@q2dm3    n=92   agree= 97.8%  LOW POWER
+  jev_rule@q2dm3 n=50   agree=100.0%  LOW POWER
+lives by arm (secs_to_strong = spawn → first non-weak weapon)
+  jev@q2dm3    lives=75   got_strong= 25.3%  median_secs_to_strong=2.5s    life= 41.4s  frags/life=0.08  LOW POWER
+  jev_rule@q2dm3 lives=41   got_strong= 31.7%  median_secs_to_strong=1.8s    life= 59.6s  frags/life=0.29  LOW POWER
+  q3@q2dm3     lives=81   got_strong= 44.4%  median_secs_to_strong=2.0s    life= 34.9s  frags/life=0.17  LOW POWER
+P3 weak-weapon share of posture decisions:
+  jev        211/311 = 68%
+  jev_rule   152/258 = 59%
+run 1:
+  jvr_as   kills=  5 deaths= 15 kd=0.33 env=13 wp=8
+  q3_as    kills=  3 deaths= 26 kd=0.12 env=21 wp=17
+  jev_as   kills=  3 deaths= 27 kd=0.11 env=23 wp=11
+run 2:
+  jvr_as   kills=  3 deaths=  9 kd=0.33 env=6 wp=4
+  q3_as    kills=  9 deaths= 36 kd=0.25 env=30 wp=24
+  jev_as   kills=  1 deaths= 19 kd=0.05 env=15 wp=12
+run 3:
+  jvr_as   kills=  5 deaths= 17 kd=0.29 env=15 wp=11
+  q3_as    kills=  4 deaths= 19 kd=0.21 env=14 wp=21
+  jev_as   kills=  3 deaths= 29 kd=0.10 env=24 wp=16
+round total:
+  jvr_as   kills= 13 deaths= 41 kd=0.32 env=34 wp=23
+  q3_as    kills= 16 deaths= 81 kd=0.20 env=65 wp=62
+  jev_as   kills=  7 deaths= 75 kd=0.09 env=62 wp=39
+# env deaths (all arms): lava 127, squish 24, slime 10
