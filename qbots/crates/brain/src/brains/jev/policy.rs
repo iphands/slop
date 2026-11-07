@@ -64,9 +64,11 @@ pub const OBJECTIVE_MAX_S: f32 = 30.0;
 pub const ARRIVE_RADIUS: f32 = 64.0;
 /// No objective ask until the bot has been alive this long (brain time, seconds).
 pub const RESPAWN_SETTLE_S: f32 = 2.0;
-/// jev trusts a missing pad entity as "taken" only this close (Plan 74 B2) — the shared 500 u
-/// marked pads behind walls taken and released 0 % of B1's armor trips before arrival.
-const PAD_TRUST_RANGE: f32 = 192.0;
+/// jev trusts a missing pad entity as "taken" only this close. Plan 74 B2: the shared 500 u
+/// marked pads behind walls taken (0 % of B1's armor trips arrived); B3: at 192 u, 7 trips
+/// released `empty` still reached the pad and picked the weapon up (a pad on another floor
+/// level is outside PVS) — so only "standing next to it and it is not there" counts.
+const PAD_TRUST_RANGE: f32 = 128.0;
 /// A cached retreat pad is recomputed after this long (brain time, seconds) — each is one flood.
 const RETREAT_REFRESH_S: f32 = 1.0;
 /// After an objective ask attempt (sent, paced, or nothing to offer), wait this long before the
