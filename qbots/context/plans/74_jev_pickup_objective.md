@@ -426,7 +426,7 @@ paragraph with numbers; what wording/facts worked; follow-ups (re-engage timing,
 
 - [x] T1: hub question keying, DM auto-switch rule, q2dm1/q2dm3 pad counts recorded with sources
 - [x] T2: `weapon_*` → `Some(Weapon)`, `ammo_*` → `None`; `q3_parity_golden` unchanged
-- [ ] T3: out-of-sight pad becomes a candidate; empty pad skipped until respawn; posture goldens byte-identical; objective golden has `pads`
+- [x] T3: out-of-sight pad becomes a candidate; empty pad skipped until respawn; posture goldens byte-identical; objective golden has `pads`
 - [ ] T4: stub `seek_weapon` drives to the pad; off-ticket rejected; held until each release condition; no ask with an enemy in view
 - [ ] T5: `jvr` applies the rule, journals the model's answer as shadow, never applies it
 - [ ] W1: `just all` green; parity + posture goldens unchanged

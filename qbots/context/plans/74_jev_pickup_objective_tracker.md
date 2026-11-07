@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 22% complete (2/9 tasks)
+- Status: 33% complete (3/9 tasks)
 - Start date: 2026-11-07
 - Plan: `context/plans/74_jev_pickup_objective.md`
 - Headline metric: per-life **`secs_to_strong`** (spawn → first non-weak held weapon) per arm;
@@ -32,7 +32,7 @@
 |---|------|---------------|--------|-------|
 | 1 | T1: Confirm hub keying, DM autoswitch, pad counts | tracker Evidence | done | all three resolved (Evidence). Hub: one pending + **one pacing clock** per bot → T4 gains per-question pacing and an asked-objective-only release rule. DM switches only from the blaster. `dmflags 17424`, no weapons-stay. q2dm1: 11 weapon vs 35 ammo pads |
 | 2 | T2: `MapItem.weapon` — weapon vs ammo pads | `brains/core.rs`, `items.rs`, `weapons.rs` | done | `Weapon::from_classname` (yquake2 `g_items.c` classnames; ammo incl. `ammo_grenades` → `None`); 3 test constructors set `weapon: None`; new pak-gated `tests/map_items_q2dm1.rs` asserts 11 weapon / 35 ammo; parity golden unchanged; pitfalls entry |
-| 3 | T3: Pad candidates + objective-only `pads` line | `brains/jev/policy.rs`, `jev/state.rs`, `qbots::jev::render` | pending | |
+| 3 | T3: Pad candidates + objective-only `pads` line | `brains/jev/pads.rs` (new), `brains/jev/policy.rs`, `jev/state.rs`, `qbots::jev::render` | done | `pads::candidates` = one `flood_costs` per ask; relevance = stronger weapon / hp < 100 / armor < 100; `ItemMemory` observed per tick, reset on map change. `FieldKey::Pads` (keep-priority 5), schema **v3**; `pads` added only via `DecisionState::with` in objective asks → posture golden byte-identical; new objective golden. 6 tests (see Deviations) |
 | 4 | T4: Objective question v2, roaming triggers, apply/release | `jev/question.rs`, `brains/jev/policy.rs`, `qbots::jev::hub` | pending | |
 | 5 | T5: `jvr` code-rule control arm | `brains/jev`, `brains/mod.rs`, hub | pending | |
 | 6 | T6: Corpus, lab, holdout, calibrate (live) | `context/fixtures/jev/calibration/objective_v2/**`, `lab.rs`, `jev_lab.md` | pending | |
@@ -65,7 +65,17 @@
 
 ## Notes / Deviations
 
+- **T3:** the plan's "skip visible pads within 128 u" rule was **not** built — q3's own nearby-item
+  grab (`SeekNbg`, ≤ 150 u) still runs while an objective is applied (the objective replaces only
+  the roam fallback), so a near visible pad needs no special case. "Objective-only" is by
+  construction rather than a renderer branch: `DecisionState::build` never adds `Pads`; the
+  objective ask adds it with `with(Field::Pads(..))`.
+- **T3:** pad cost is the graph's edge-cost sum (world-unit scale, plus whatever penalties the
+  graph carries for swim/jump edges), banded with the same `DistBand` edges as straight-line
+  distances — "travel cost band", not a pure distance.
+
 ## Follow-ups
 
 | Follow-up | Why | Lands in |
 |-----------|-----|----------|
+| The visible `items weapon:` fact still counts ammo boxes (`EntityClass::ItemWeapon`) | it is a posture input; changing it would void posture's 0.30 calibration | a later plan (re-calibrate posture) |

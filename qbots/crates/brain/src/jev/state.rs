@@ -24,7 +24,9 @@ use crate::weapons::Weapon;
 /// string is a changed model input, and the live matrix must be re-run (plan *`state` shape*).
 /// v2 (Plan 73 T4): the rendered state ends with a derived `threat` line and a graded summary
 /// sentence — the wording the language lab measured best (`context/distilled/jev_lab.md`).
-pub const STATE_SCHEMA_VERSION: u32 = 2;
+/// v3 (Plan 74 T3): a `pads` field (out-of-sight pickups by travel cost). Only the objective
+/// ask adds it ([`DecisionState::with`]), so a posture state — and its render — is unchanged.
+pub const STATE_SCHEMA_VERSION: u32 = 3;
 
 /// The state's sections, **in render order**. Region keys (`Here`, `Alts`) arrive with T14.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -39,18 +41,22 @@ pub enum FieldKey {
     Loc,
     /// Nearest visible pickup per item class.
     Items,
+    /// Nearest reachable, not-known-empty, worth-having pad per class — seen or not (Plan 74).
+    /// Present only in objective asks.
+    Pads,
     /// Which map, and what our loadout most lacks.
     Map,
 }
 
 impl FieldKey {
     /// Every key, in render order.
-    pub const ALL: [FieldKey; 6] = [
+    pub const ALL: [FieldKey; 7] = [
         FieldKey::Self_,
         FieldKey::Dmg,
         FieldKey::Enemy,
         FieldKey::Loc,
         FieldKey::Items,
+        FieldKey::Pads,
         FieldKey::Map,
     ];
 
@@ -62,6 +68,7 @@ impl FieldKey {
             FieldKey::Enemy => "enemy",
             FieldKey::Loc => "loc",
             FieldKey::Items => "items",
+            FieldKey::Pads => "pads",
             FieldKey::Map => "map",
         }
     }
@@ -75,6 +82,8 @@ impl FieldKey {
             FieldKey::Items => 2,
             FieldKey::Dmg => 3,
             FieldKey::Enemy => 4,
+            // The objective's whole answer hinges on it; posture states never carry it.
+            FieldKey::Pads => 5,
             FieldKey::Self_ => u8::MAX,
         }
     }
@@ -368,6 +377,18 @@ pub struct ItemFacts {
     pub powerup: Option<DistBand>,
 }
 
+/// The pads an objective could send us to, per class: the travel-cost band (nav-graph cost,
+/// world-unit scale) to the best candidate, `None` when there is no candidate (Plan 74 T3).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PadFacts {
+    /// A weapon pad stronger than what we hold.
+    pub weapon: Option<DistBand>,
+    /// A health pad, while below full health.
+    pub health: Option<DistBand>,
+    /// An armor pad, while below full armor.
+    pub armor: Option<DistBand>,
+}
+
 /// Which map, and what we most need.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MapFacts {
@@ -390,6 +411,8 @@ pub enum Field {
     Loc(LocFacts),
     /// See [`ItemFacts`].
     Items(ItemFacts),
+    /// See [`PadFacts`].
+    Pads(PadFacts),
     /// See [`MapFacts`].
     Map(MapFacts),
 }
@@ -403,6 +426,7 @@ impl Field {
             Field::Enemy(_) => FieldKey::Enemy,
             Field::Loc(_) => FieldKey::Loc,
             Field::Items(_) => FieldKey::Items,
+            Field::Pads(_) => FieldKey::Pads,
             Field::Map(_) => FieldKey::Map,
         }
     }
@@ -518,6 +542,19 @@ impl DecisionState {
     /// The field for `key`, if present.
     pub fn get(&self, key: FieldKey) -> Option<&Field> {
         self.fields.iter().find(|f| f.key() == key)
+    }
+
+    /// This state with `field` added, or replacing the field of the same key, in [`FieldKey`]
+    /// order (the objective ask adds [`Field::Pads`] this way).
+    pub fn with(&self, field: Field) -> Self {
+        let mut fields = vec![field];
+        fields.extend(
+            self.fields
+                .iter()
+                .copied()
+                .filter(|f| f.key() != field.key()),
+        );
+        DecisionState::from_fields(fields)
     }
 
     /// This state without `key` (used when the rendered state is over budget).
@@ -688,7 +725,14 @@ mod tests {
         };
         let s = DecisionState::build(&v, &ctx, &me);
         let keys: Vec<FieldKey> = s.fields().iter().map(Field::key).collect();
-        assert_eq!(keys, FieldKey::ALL.to_vec());
+        let without_pads: Vec<FieldKey> = FieldKey::ALL
+            .into_iter()
+            .filter(|k| *k != FieldKey::Pads)
+            .collect();
+        assert_eq!(
+            keys, without_pads,
+            "build never adds pads (objective asks do)"
+        );
         let Some(Field::Self_(sf)) = s.get(FieldKey::Self_) else {
             panic!("self field")
         };
@@ -774,6 +818,36 @@ mod tests {
                 since: None
             }))
         );
+    }
+
+    #[test]
+    fn jev_pads_with_inserts_in_order_and_replaces() {
+        let base = DecisionState::from_fields(vec![
+            Field::Items(ItemFacts {
+                health: None,
+                armor: None,
+                weapon: None,
+                powerup: None,
+            }),
+            Field::Map(MapFacts {
+                map: MapId::Q2dm1,
+                gap: LoadoutGap::None,
+            }),
+        ]);
+        let mid = PadFacts {
+            weapon: Some(DistBand::Mid),
+            ..PadFacts::default()
+        };
+        let s = base.with(Field::Pads(mid));
+        let keys: Vec<FieldKey> = s.fields().iter().map(Field::key).collect();
+        assert_eq!(keys, vec![FieldKey::Items, FieldKey::Pads, FieldKey::Map]);
+        let s2 = s.with(Field::Pads(PadFacts::default()));
+        assert_eq!(s2.fields().len(), 3, "replaced, not duplicated");
+        assert_eq!(
+            s2.get(FieldKey::Pads),
+            Some(&Field::Pads(PadFacts::default()))
+        );
+        assert_eq!(s2.without(FieldKey::Pads), base);
     }
 
     #[test]

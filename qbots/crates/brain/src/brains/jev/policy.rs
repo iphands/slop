@@ -26,8 +26,10 @@ use std::sync::Arc;
 
 use world::NavGraph;
 
+use super::pads::{self, PadCandidates};
 use crate::brains::core::MapItem;
 use crate::brains::q3::{GoalPolicy, GoalQuery, Posture, PostureQuery};
+use crate::items::ItemMemory;
 use crate::jev::question::posture_question;
 use crate::jev::source::{
     AppliedDecision, ApplyOutcome, Ask, BrainReject, DecisionSource, Outcome, PostureChoice,
@@ -72,6 +74,8 @@ pub struct JevPolicy {
     roam_nodes: Vec<usize>,
     nav_graph: Option<Arc<NavGraph>>,
     items: Vec<MapItem>,
+    /// Pads seen empty (Plan 74 T3), observed every tick — keyed by index into `items`.
+    memory: ItemMemory,
     map: MapId,
     ring: VecDeque<(TicketId, TicketEntry)>,
     last_seen: Option<TicketId>,
@@ -112,6 +116,7 @@ impl JevPolicy {
             roam_nodes: Vec::new(),
             nav_graph: None,
             items: Vec::new(),
+            memory: ItemMemory::new(),
             map: MapId::Other,
             ring: VecDeque::with_capacity(RING),
             last_seen: None,
@@ -187,6 +192,7 @@ impl JevPolicy {
         {
             self.damage.pop_front();
         }
+        self.memory.observe(&self.items, view, self.time);
         let enemy = view.enemies().any(|e| !e.is_stale);
         let contact = enemy && !self.saw_enemy;
         self.saw_enemy = enemy;
@@ -253,6 +259,17 @@ impl JevPolicy {
         self.roam_nodes = roam_nodes;
         self.nav_graph = Some(nav_graph);
         self.items = items;
+        // Indices are into the old map's table.
+        self.memory = ItemMemory::new();
+    }
+
+    /// The best pad per class for this bot now (Plan 74 T3) — one graph flood, so call it per
+    /// ask, never per tick. Empty before the map loads.
+    pub fn pad_candidates(&self, view: &Worldview) -> PadCandidates {
+        match &self.nav_graph {
+            Some(g) => pads::candidates(&self.items, &self.memory, g, view, self.time),
+            None => PadCandidates::default(),
+        }
     }
 
     /// Static item spawns of the current map (q3 itself discards these).

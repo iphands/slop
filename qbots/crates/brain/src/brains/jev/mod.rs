@@ -14,6 +14,7 @@
 //!
 //! `JevStatic` (the primary A/B control) is this same brain with a `NullDecider`.
 
+pub mod pads;
 mod policy;
 
 pub use policy::{JevPolicy, Resolved, TicketEntry, RING};

@@ -86,6 +86,15 @@ pub fn render_field(f: &Field) -> String {
                 band(x.powerup)
             );
         }
+        Field::Pads(x) => {
+            let _ = write!(
+                s,
+                "weapon:{} health:{} armor:{}",
+                band(x.weapon),
+                band(x.health),
+                band(x.armor)
+            );
+        }
         Field::Map(x) => {
             let _ = write!(s, "{} wants:{}", x.map.slug(), x.gap.slug());
         }
@@ -233,7 +242,7 @@ mod tests {
     use brain::jev::question::{ChoiceOption, Phrase, QuestionKey};
     use brain::jev::state::{
         DmgFacts, EnemyFacts, HealthBand, ItemFacts, LoadoutGap, LocFacts, MapFacts, MapId,
-        SelfFacts, SinceBand, STATE_SCHEMA_VERSION,
+        PadFacts, SelfFacts, SinceBand, STATE_SCHEMA_VERSION,
     };
     use brain::weapons::Weapon;
 
@@ -288,11 +297,40 @@ mod tests {
 
     #[test]
     fn jev_render_golden_state_is_byte_exact() {
-        assert_eq!(STATE_SCHEMA_VERSION, 2, "{CHANGED}");
+        // v3 added `pads`, which only objective asks carry: this posture golden is unchanged
+        // byte-for-byte since v2 (Plan 74 W1).
+        assert_eq!(STATE_SCHEMA_VERSION, 3, "{CHANGED}");
         let r = render_state(&golden_state(), 512);
         assert_eq!(r.text, GOLDEN_STATE, "{CHANGED}");
         assert!(r.dropped.is_empty());
         assert_eq!(r.est_tokens, est_tokens(GOLDEN_STATE));
+    }
+
+    /// The objective golden (Plan 74 T3): the posture golden plus the `pads` line an objective
+    /// ask adds — it renders between `items` and `map`, every other line identical.
+    const GOLDEN_OBJECTIVE_STATE: &str =
+        "self  hp:38(lo) armor:12 held:railgun ammo:3 low_ammo:yes\n\
+         dmg   recent:74 since:recent\n\
+         enemy visible:2 nearest:near moving:yes\n\
+         loc   exits:2 moving:no\n\
+         items health:none armor:touch weapon:none powerup:mid\n\
+         pads  weapon:none health:far armor:near\n\
+         map   q2dm1 wants:health\n\
+         threat high\n\
+         summary: hurt, strong weapon, enemies close";
+
+    #[test]
+    fn jev_render_objective_golden_adds_only_the_pads_line() {
+        let s = golden_state().with(Field::Pads(PadFacts {
+            weapon: None,
+            health: Some(DistBand::Far),
+            armor: Some(DistBand::Near),
+        }));
+        let r = render_state(&s, 512);
+        assert_eq!(r.text, GOLDEN_OBJECTIVE_STATE, "{CHANGED}");
+        let posture: Vec<&str> = GOLDEN_STATE.lines().collect();
+        let objective: Vec<&str> = r.text.lines().filter(|l| !l.starts_with("pads ")).collect();
+        assert_eq!(objective, posture, "pads is the only difference");
     }
 
     #[test]

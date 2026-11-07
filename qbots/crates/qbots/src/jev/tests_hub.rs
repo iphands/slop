@@ -543,7 +543,7 @@ async fn jev_journal_writes_one_line_per_decision_with_its_outcome() {
     assert_eq!(v["answers"][0]["gate"], "apply");
     assert_eq!(v["outcome"]["died"], true);
     assert_eq!(v["outcome"]["hp_delta"], -42);
-    assert_eq!(v["schema"], 2);
+    assert_eq!(v["schema"], 3, "Plan 74 T3: schema v3 (pads)");
 }
 
 /// A posture ask from a bot at `hp`, and the model's "disengage" answer to it.
