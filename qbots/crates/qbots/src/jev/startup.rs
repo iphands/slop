@@ -131,6 +131,7 @@ pub fn hub_config(cfg: &JevCfg) -> HubConfig {
             ..GateThresholds::default()
         },
         shadow: cfg.shadow,
+        disengage_needs_hurt: cfg.disengage_needs_hurt,
         journal: cfg.journal.then(|| {
             let ts = time::OffsetDateTime::now_utc().unix_timestamp();
             std::path::PathBuf::from(format!("logs/jev/journal-{ts}.jsonl"))

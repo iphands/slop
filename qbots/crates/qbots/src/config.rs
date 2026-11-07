@@ -111,6 +111,8 @@ pub struct JevCfg {
     /// Plan 73: `jev_static` bots ask and journal the posture question too, never acting on it
     /// (the arena's "what would the model have said where q3 decided alone").
     pub shadow: bool,
+    /// Plan 73 arena round A2: a `disengage` only applies to a hurt bot (health < 50).
+    pub disengage_needs_hurt: bool,
 }
 
 impl Default for JevCfg {
@@ -136,6 +138,7 @@ impl Default for JevCfg {
             gate_margin_multi: 0.30,
             journal: false,
             shadow: false,
+            disengage_needs_hurt: false,
         }
     }
 }

@@ -186,3 +186,24 @@ q3 agreement and hp/frag deltas are valid. 493 posture decisions journalled (326
 - **A1-3 Live states are much less decisive than the corpus**: 31–47 % of live answers fall
   under the 0.30 margin (the corpus's holdout: 0 % of obvious posture cases did).
 - **A1-4 Frags are noise at this size**: jev's K/D went 1.18 → 1.38 → 0.18 on identical code.
+
+## Arena A1b — 2026-11-06, baseline re-run with deaths recorded, 3 × 10 min
+
+502 posture decisions (338 jev, 164 shadow). K/D per run: jev 1.11 / 0.88 / 0.77, q3 0.68 /
+0.85 / 0.67, jev_static 0.60 / 0.25 / 0.67. Live gate-reject 24–35 %. Report:
+`context/fixtures/jev/arena/a1b_report.txt`.
+
+| cell | n | died in window | hp Δ |
+|---|---|---|---|
+| jev disengage, applied (all) | 204 | 14.2 % | −4.0 |
+| jev disengage \| q3 wanted **fight** (jev overrode q3 and retreated) | 83 | 3.6 % | −9.0 |
+| shadow disengage \| q3 wanted **fight** (q3 fought; model ignored) | 42 | 0.0 % | −5.6 |
+| jev disengage \| q3 wanted retreat (they agreed) | 171 | 15.8 % | −0.9 |
+
+- **A1b-1 jev's only real effect is pulling healthy bots with a weak weapon out of fights.** All
+  71 applied overrides are "healthy, weak weapon, enemies close / at a distance". Against the
+  shadow's same cell they lost more health and died no less — the override does not pay
+  (low power: a hypothesis, tested in A2).
+- **A1b-2 Deaths follow the state, not the answer**: the hopeless states (badly hurt, threat high)
+  carry the deaths whatever the model said; confident disengages die more (17 % at margin ≥ 0.50)
+  because they are those states.

@@ -79,6 +79,10 @@ pub struct HubConfig {
     pub journal: Option<std::path::PathBuf>,
     /// Plan 73 shadow mode: `jev_static` bots ask and journal too, never steering.
     pub shadow: bool,
+    /// Plan 73 arena round A2: a `disengage` only counts when the asking bot is hurt (health band
+    /// `crit`/`lo`); on a healthy bot it is suppressed (stored as no posture, journalled
+    /// `suppressed`).
+    pub disengage_needs_hurt: bool,
 }
 
 impl Default for HubConfig {
@@ -100,6 +104,7 @@ impl Default for HubConfig {
             gate: GateThresholds::default(),
             journal: None,
             shadow: false,
+            disengage_needs_hurt: false,
         }
     }
 }
@@ -622,6 +627,10 @@ impl Inner {
                     _ => None,
                 })
         };
+        let suppressed = self.cfg.disengage_needs_hurt
+            && posture_label(pending, choice(QuestionKey::Posture))
+                == Some(brain::jev::question::DISENGAGE)
+            && !bot_is_hurt(pending);
         let map = match pending.ask.state.get(FieldKey::Map) {
             Some(Field::Map(m)) => m.map,
             _ => MapId::Other,
@@ -632,7 +641,7 @@ impl Inner {
                 generation: pending.generation,
                 map,
                 objective: choice(QuestionKey::Objective),
-                posture: choice(QuestionKey::Posture),
+                posture: choice(QuestionKey::Posture).filter(|_| !suppressed),
             },
             Instant::now(),
         ));
@@ -654,10 +663,35 @@ impl Inner {
         if self.journal.is_some() {
             let arm = slot.arm.get().copied().unwrap_or("?");
             let state = render_state(&pending.ask.state, self.cfg.max_state_tokens).text;
-            let line = journal_entry(bot, arm, pending, v, &state, lat_ms);
+            let mut line = journal_entry(bot, arm, pending, v, &state, lat_ms);
+            if suppressed {
+                line["answers"][0]["gate"] = "suppressed".into();
+            }
             lock(&self.journal_open).insert(pending.ticket.0, line);
         }
     }
+}
+
+/// The posture label an answer's option index stands for.
+fn posture_label(pending: &Pending, idx: Option<u8>) -> Option<&'static str> {
+    let spec = pending
+        .ask
+        .questions
+        .iter()
+        .find(|q| q.key == QuestionKey::Posture)?;
+    match &spec.kind {
+        QuestionKind::Choice(opts) => opts.get(usize::from(idx?)).map(|o| o.label),
+        _ => None,
+    }
+}
+
+/// Is the asking bot hurt (health band `crit` or `lo`) in the state it asked about?
+fn bot_is_hurt(pending: &Pending) -> bool {
+    use brain::jev::state::HealthBand;
+    matches!(
+        pending.ask.state.get(FieldKey::Self_),
+        Some(Field::Self_(s)) if matches!(s.band, HealthBand::Crit | HealthBand::Lo)
+    )
 }
 
 /// The journal writer: a dedicated thread appending lines to `path` (created with its parent).

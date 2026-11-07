@@ -545,3 +545,51 @@ async fn jev_journal_writes_one_line_per_decision_with_its_outcome() {
     assert_eq!(v["outcome"]["hp_delta"], -42);
     assert_eq!(v["schema"], 2);
 }
+
+/// A posture ask from a bot at `hp`, and the model's "disengage" answer to it.
+fn posture_ask(hp: u32) -> Ask {
+    let mut a = ask(hp, Trigger::Contact);
+    a.questions = vec![brain::jev::question::posture_question()];
+    a
+}
+
+fn disengage_answer() -> String {
+    format!(
+        r#"{{"model":"{MODEL}","answers":{{"posture":{{"type":"choice","choice":"disengage","probabilities":{{"disengage":0.8,"hold":0.2}}}}}},"usage":{{"input_tokens":100}}}}"#
+    )
+}
+
+#[tokio::test(start_paused = true)]
+async fn jev_a2_disengage_needs_hurt_suppresses_it_on_a_healthy_bot() {
+    let t = Scripted::default();
+    t.push(10, Ok(&disengage_answer()));
+    t.push(10, Ok(&disengage_answer()));
+    let c = HubConfig {
+        disengage_needs_hurt: true,
+        ..cfg()
+    };
+    let (_hub, h) = start(c, 2, &t);
+    h[0].submit(posture_ask(100)).expect("accepted"); // healthy
+    h[1].submit(posture_ask(20)).expect("accepted"); // crit
+    settle(50).await;
+    assert_eq!(
+        h[0].latest().map(|d| d.posture),
+        Some(None),
+        "suppressed on a healthy bot"
+    );
+    assert_eq!(
+        h[1].latest().map(|d| d.posture),
+        Some(Some(0)),
+        "kept on a hurt bot"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn jev_a2_off_by_default_keeps_the_healthy_disengage() {
+    let t = Scripted::default();
+    t.push(10, Ok(&disengage_answer()));
+    let (_hub, h) = start(cfg(), 1, &t);
+    h[0].submit(posture_ask(100)).expect("accepted");
+    settle(50).await;
+    assert_eq!(h[0].latest().map(|d| d.posture), Some(Some(0)));
+}
