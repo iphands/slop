@@ -1,0 +1,2 @@
+pads  weapon:near health:none armor:none
+map   other wants:none

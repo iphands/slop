@@ -1,0 +1,3 @@
+loc   exits:unknown moving:no
+pads  weapon:far health:far armor:far
+map   other wants:none

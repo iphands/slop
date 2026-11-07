@@ -1,0 +1,3 @@
+loc   exits:3 moving:yes
+pads  weapon:none health:far armor:none
+map   q2dm1 wants:none

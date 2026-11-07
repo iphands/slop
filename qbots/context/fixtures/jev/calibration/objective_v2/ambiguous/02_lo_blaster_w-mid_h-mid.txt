@@ -1,0 +1,7 @@
+self  hp:45(lo) armor:25 held:blaster ammo:0 low_ammo:yes
+dmg   recent:55 since:long
+enemy visible:0 nearest:none moving:no
+loc   exits:3 moving:yes
+items health:none armor:none weapon:none powerup:none
+pads  weapon:mid health:mid armor:mid
+map   q2dm1 wants:health

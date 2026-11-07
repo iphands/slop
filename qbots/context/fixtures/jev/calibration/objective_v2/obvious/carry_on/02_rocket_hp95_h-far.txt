@@ -1,0 +1,7 @@
+self  hp:95(hi) armor:100 held:rocket_launcher ammo:25 low_ammo:no
+dmg   recent:0 since:never
+enemy visible:0 nearest:none moving:no
+loc   exits:3 moving:yes
+items health:none armor:none weapon:none powerup:none
+pads  weapon:none health:far armor:none
+map   q2dm1 wants:none

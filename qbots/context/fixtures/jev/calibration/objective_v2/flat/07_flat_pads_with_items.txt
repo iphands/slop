@@ -1,0 +1,3 @@
+items health:none armor:none weapon:none powerup:none
+pads  weapon:mid health:none armor:mid
+map   q2dm1 wants:none

@@ -1,0 +1,2 @@
+pads  weapon:near health:near armor:none
+map   q2dm1 wants:none

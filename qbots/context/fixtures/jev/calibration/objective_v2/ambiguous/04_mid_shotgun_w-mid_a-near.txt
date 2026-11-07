@@ -1,0 +1,7 @@
+self  hp:70(mid) armor:0 held:shotgun ammo:8 low_ammo:no
+dmg   recent:0 since:never
+enemy visible:0 nearest:none moving:no
+loc   exits:3 moving:yes
+items health:none armor:none weapon:none powerup:none
+pads  weapon:mid health:mid armor:near
+map   q2dm1 wants:heavy_damage

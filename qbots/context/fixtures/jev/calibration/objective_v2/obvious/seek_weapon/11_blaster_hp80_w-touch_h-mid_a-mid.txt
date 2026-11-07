@@ -1,0 +1,7 @@
+self  hp:80(hi) armor:30 held:blaster ammo:0 low_ammo:yes
+dmg   recent:0 since:never
+enemy visible:0 nearest:none moving:no
+loc   exits:3 moving:yes
+items health:none armor:none weapon:none powerup:none
+pads  weapon:touch health:mid armor:mid
+map   q2dm1 wants:heavy_damage

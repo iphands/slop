@@ -1,0 +1,7 @@
+self  hp:12(crit) armor:0 held:blaster ammo:0 low_ammo:yes
+dmg   recent:88 since:recent
+enemy visible:0 nearest:none moving:no
+loc   exits:3 moving:yes
+items health:none armor:none weapon:none powerup:none
+pads  weapon:mid health:near armor:far
+map   q2dm1 wants:health

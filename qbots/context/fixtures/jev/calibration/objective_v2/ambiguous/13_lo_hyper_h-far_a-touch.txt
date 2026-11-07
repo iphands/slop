@@ -1,0 +1,7 @@
+self  hp:48(lo) armor:0 held:hyperblaster ammo:25 low_ammo:no
+dmg   recent:52 since:long
+enemy visible:0 nearest:none moving:no
+loc   exits:3 moving:yes
+items health:none armor:none weapon:none powerup:none
+pads  weapon:none health:far armor:touch
+map   q2dm1 wants:health

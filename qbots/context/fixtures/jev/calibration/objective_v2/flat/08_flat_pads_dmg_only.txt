@@ -1,0 +1,3 @@
+dmg   recent:0 since:never
+pads  weapon:none health:mid armor:near
+map   other wants:none

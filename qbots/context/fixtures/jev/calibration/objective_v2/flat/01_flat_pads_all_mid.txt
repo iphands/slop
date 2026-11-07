@@ -1,0 +1,2 @@
+pads  weapon:mid health:mid armor:mid
+map   q2dm1 wants:none
