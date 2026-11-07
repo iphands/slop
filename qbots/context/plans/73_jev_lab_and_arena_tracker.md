@@ -46,6 +46,16 @@ Every row is written **before** its run (prediction), then completed.
 
 | # | Date | Loop | Change (one) | Prediction | Result | Conclusion |
 |---|------|------|--------------|------------|--------|------------|
+| L1 | 2026-11-06 | lab (tuning half) | baseline | posture right-and-confident (RC) **≤ 40 %** at t = 0.50 — the 2026-11-07 probes put an obviously bad state at margin 0.33; objective RC ≤ 50 % at t = 0.30; confident-wrong ≈ 0 | | |
+| L2 | 2026-11-06 | lab (tuning half) | drop-dmg | posture RC **down** a little (recent damage is evidence of danger); objective unchanged | | |
+| L3 | 2026-11-06 | lab (tuning half) | drop-loc | **no change** on either question (exit counts barely bear on either decision) | | |
+| L4 | 2026-11-06 | lab (tuning half) | drop-map | objective RC **down** (the `wants:` line names the gap the objective answers); posture unchanged | | |
+| L5 | 2026-11-06 | lab (tuning half) | add-threat | posture RC **up** clearly (an explicit danger level); objective small change | | |
+| L6 | 2026-11-06 | lab (tuning half) | hp-band-only | **no change** (the band was already present next to the number) | | |
+| L7 | 2026-11-06 | lab (tuning half) | add-summary | **largest** posture gain of any variant (plain English, like the 0.880 "cannot win" probe); objective up | | |
+| L8 | 2026-11-06 | lab (tuning half) | options-consequence | posture RC **up** (options that say what happens are easier to weigh); objective up a little | | |
+| L9 | 2026-11-06 | lab (tuning half) | instruction-criterion | posture RC **up** and ambiguous leakage **up** too (a stated rule pushes borderline cases over) | | |
+| L10 | 2026-11-06 | lab (tuning half) | instruction-role | **no change** (role framing adds no facts) | | |
 
 ## Evidence
 
