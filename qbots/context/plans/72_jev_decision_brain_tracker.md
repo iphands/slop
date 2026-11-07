@@ -121,7 +121,7 @@ Recorded here (not just in prose) before the gated work may start.
 | Gate | Before | Requires | Result |
 |---|---|---|---|
 | W1 | T7 | build/clippy/test green offline; **no new packages in `Cargo.lock`**; `crates/brain/Cargo.toml` byte-unchanged (T6 may land before or after — it does not wait on W1) | **PASSED 2026-11-06** at the T5 commit: `just all` green (fmt-check, clippy `-D warnings`, 640 tests, build); `git diff` of `Cargo.lock` across T6–T5 **empty** (byte-identical — tokio `test-util` added no package); `crates/brain/Cargo.toml` unchanged. Network: tests touch only `127.0.0.1` sockets and one `*.invalid` lookup answered by the local resolver — no external host. |
-| W2 | T10 | live `jev-probe`: slug + 501 fingerprint; **`calibrate` thresholds recorded and frozen** (or the question deleted); **both** sensitivity pairs move; anti-correlation; flatness rejected; bench p50/p95/p99 + tok/s vs both figures + p95-vs-`deadline_ms` verdict; T6's `q3,jev_static` no-op control; T8's `connect-one` smoke + refuse-to-start; with **`require: false`** and the endpoint unreachable, jev ≡ jev_static | — |
+| W2 | T10 | **evidence from Plan 73 T1–T4** plus live `jev-probe`: slug + 501 fingerprint; **`calibrate` thresholds recorded and frozen** (or the question deleted); **both** sensitivity pairs move; anti-correlation; flatness rejected; bench p50/p95/p99 + tok/s vs both figures + p95-vs-`deadline_ms` verdict; T6's `q3,jev_static` no-op control; T8's `connect-one` smoke + refuse-to-start; with **`require: false`** and the endpoint unreachable, jev ≡ jev_static | — |
 | W3 | T12, T14 | run `cargo run -p qbots -- competition --brains q3,jev_static,jev --count 12 --map q2dm1` **≥ 2×** on a parked q2dm1 (at 12 bots even the event worst case, 12/5 s = 2.4 req/s ⇒ 840 tok/s, is under the 1 000 knob, so the bucket is provably not the limiter). Publish per arm **and per question key**: `asked`, `admitted`, `applied`, `applied/asked`, `gate_reject_rate`, `admission_drop_rate`, the herd line. Decision rule: **`gate_reject_rate ≥ 85 %` on event-triggered asks ⇒ the state does not discriminate — fix the state or delete the question.** Non-trivial `admission_drop_rate` is **not** part of the judgement: raise `min_dwell_s` / `event_floor_s` and re-run. Never loosen the thresholds to move a number. | — |
 | W4 | T16 | no frozen-bot scenario; `decisions_that_changed_per_bot_per_min` published (**> 2/bot/min = investigation**); composition check ≥ 13/24 labelled as a composition check | — |
 | W5 | T16 | T13 human-approved; region `flatness` + `calibrate` pass; live 12-bot region histogram non-degenerate; re-priced budget asserted (T14) — or the region track recorded as cut because T13 was declined | — |
@@ -344,6 +344,12 @@ metric, the `EVT jev_fleet` line, `calibrate`.
   (`obvious/<label>/*.txt`, the label must be one of the question's options) and a threshold
   must act on ≥80 % of them **correctly** and on **≤5 % wrongly**, besides ≤10 % ambiguous and
   0 % flat.
+- **2026-11-06 — Plan 73 becomes this plan's testing ground.** The user's goal is to *learn*
+  which situations, facts and wording make the model decide well. Plan 73 (lab + arena) produces
+  this plan's W2 evidence (Wave A: lab sweeps, the winning wording ported here with a schema bump,
+  `calibrate` on a holdout half) and its W3/T16 evidence (Wave B: decision journal with outcomes,
+  shadow-mode control, arena rounds). This plan is **blocked** in `SERIES.md` until 73 T4 records
+  W2, then resumes at T10 — and T10/T12 take their question wording from 73 T4, not from a guess.
 - **T6 harvest:** the FSM-loop pitfall (one of T16's ten named entries) is already in
   `context/pitfalls.md` — confirmed by mutation in T6, so it was written then rather than at T16.
 - `--brains` and `BrainKind` exist (`main.rs:249`, `:2634-2646`, `brains/mod.rs:35`). Any Verify
