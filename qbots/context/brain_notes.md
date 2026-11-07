@@ -838,3 +838,32 @@ that is mostly lava. Options if "near zero" stands: engagement-denial near rims 
 rim duels — real behavior distortion), heatmap risk overlay for the navmesh backend
 (`set_risk_overlay` is a no-op there), or accept the floor. Plan 63 T6 left in-progress
 pending that decision.
+
+## 2026-11-07 — Plans 72–73: `jev` (q3 + a hosted decision model), its language lab and arena
+
+`jev` = `Q3Brain<JevPolicy>`: q3 made generic over a `GoalPolicy` (behaviour pinned by a 200-tick
+golden recorded *before* the seam), with one high-level choice — engage / disengage — taken from
+the `/v1/systemone` decision model through one process-wide hub (pull workers, token bucket,
+tickets, breaker; a bot never waits). `jev_static` = the same plumbing with a never-deciding
+source (the A/B control; with `jev.shadow` it asks and journals but never acts).
+
+- **Wording was measured, not chosen** (Plan 73 lab, 138 human-locked states, tuning/holdout
+  split, 16 pre-registered predictions — 9 right): a graded plain-English summary sentence +
+  a `threat` word + a harmless "leave it to q3" option took posture from 0 % to 82 %
+  right-and-confident (holdout 78 %); role framing and consequence-stating options *hurt*.
+  Rules + numbers: `context/distilled/jev_lab.md`.
+- **Gate**: margin p1 − p2, calibrated on the holdout → **0.30** for posture. The objective
+  question (health / armor / carry on) **failed** calibration and is not asked.
+- **Arena** (3 q3 + 2 jev + 1 shadow `jev_static`, 9 × 10 min, 1 510 journalled decisions with
+  10 s outcome windows): the model **mostly agrees with q3** (q3 wanted to retreat on ~67 % of
+  its disengages); its one systematic disagreement — pull healthy bots holding the respawn
+  weapon out of fights — is roughly neutral (retreat: 3.6 % died, −9 hp; fight: 0 %, −13 hp).
+  K/D over the six baseline runs: jev 0.88, q3 0.66, jev_static 0.79; jev beat jev_static in
+  5/6 paired runs (sign test p ≈ 0.22, single-bot control) — not evidence.
+- **Live is not the corpus**: 24–47 % of live answers fall under the margin; the respawn blaster
+  makes "healthy, weak weapon, enemies close" the commonest state.
+- **Bugs found by the arena itself**: the journal never recorded deaths (`bot_task` calls
+  `on_death` before the death frame's tick → new `Brain::on_level_change` hook); q3's
+  `retreat_goal` is hazard-blind (drowning) — follow-up.
+- **Not built**: objective (failed W2), region / fleet-coach layer (needs the `AGENTS.md`
+  carve-out + its own lab work) — Plan 72 T10, T13–T15 skipped with reasons.

@@ -167,7 +167,7 @@ metric, the `EVT jev_fleet` line, `calibrate`.
 | 2026-11-06 | W4 posture flips, from Plan 73 A1 + A1b journals (12 jev-bot × 10 min) | applied posture changes 0–4 per run: **≤ 0.40 per bot per minute** (line: 2) | 12 | new test `jev_posture_pinned_disengage_never_freezes_the_bot` covers the frozen-bot scenario |
 | 2026-11-07 | W4 composition check: `spawn-to-spawn --count 24` on parked q2dm1 (this session's build) | **effective 14/24** (band 13–15) — 14 reached, 10 failed, 0 deferred | 24 | grounded frames > 320 u/s: 30 single-frame spikes, longest run 2 (an older 24-run batch: 20) — the pre-existing pattern, never sustained. `spawn-to-spawn` drives `runtester`, so this proves the shared code (incl. the `traverse.rs` lint fix) unharmed; q3's own preservation is the T6 golden |
 | _(pending live)_ | W5: region `flatness`/`calibrate` + 12-bot region histogram | | | |
-| _(pending live)_ | T16 A/B (N ≥ 5/arm) | | | |
+| 2026-11-07 | T16 A/B = Plan 73 arena baseline runs A1 + A1b (6 × 10 min; 3 q3 / 2 jev / 1 shadow jev_static; same `(map, servercount)` per run) | K/D jev 53/60 = **0.88**, q3 72/109 = **0.66**, jev_static 27/34 = **0.79**; per run jev vs jev_static 1.18/0.67, 1.38/1.00, 0.18/1.29, 1.11/0.60, 0.88/0.25, 0.77/0.67 (jev ahead 5/6, sign test p ≈ 0.22); decision-level: override ≈ neutral (A1b vs A2) | 6 | the predicted-no-difference metric was not pre-registered separately (deviation); primary, decision-sensitive metrics are the Plan 73 journal cells |
 
 ## Notes / Deviations
 

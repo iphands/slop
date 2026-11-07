@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 89% complete (8/9 tasks)
+- Status: 100% complete (9/9 tasks)
 - Start date: 2026-11-06
 - Plan: `context/plans/73_jev_lab_and_arena.md`
 - Purpose: the learner is **us** — find which situations, facts and wording make the frozen
@@ -38,7 +38,7 @@
 | 6 | T6: Shadow mode for `jev_static` | `brains/jev`, `brains/mod.rs`, `jev::hub`, config `jev.shadow`, supervisor | done | posture only (the objective is parked — asking it in shadow would need placeholder goals; follow-up); acks `Shadowed`, asks counted `shadow_asked`; parity test over 150 ticks |
 | 7 | T7: Arena roster + `jev-probe journal` | `context/fixtures/jev/arena.yaml`, `qbots::jev::journal`, `probe.rs` | done | report by arm × answer / × q3's wish / × margin / × trigger / × state word; <100 decisions **flagged LOW POWER, not refused** (deviation: still useful as hypotheses); `--candidates` writes confident-then-died states for labelling |
 | 8 | T8: Arena rounds (live, repeating) | Rounds table, `jev_lab.md` | done | A1 (deaths invalid), A1b, A2 — 9 × 10 min, 1 510 decisions; conclusion in `jev_lab.md`; **stop rule met differently than written**: rounds still taught, but the finding (posture ≈ q3) moves the next lever to a different question — follow-up, not more posture rounds. Candidate scenarios written each round but **none committed** — labelling is the human's (Follow-ups) |
-| 9 | T9: Hand evidence to Plan 72; close | Plan 72 tracker, pitfalls, brain_notes | pending | |
+| 9 | T9: Hand evidence to Plan 72; close | Plan 72 tracker, pitfalls, brain_notes | done | W3 (`28e22a385`), W4 + composition check (`c6f8aaee5`), T16 A/B row; pitfalls (`2ce7b1b8f` + T6's entry); `brain_notes.md` 2026-11-07 entry |
 
 ## Rounds (lab variants and arena rounds)
 
