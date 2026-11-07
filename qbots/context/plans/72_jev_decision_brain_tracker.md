@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 13% complete (2/16 tasks)
+- Status: 19% complete (3/16 tasks)
 - Start date: 2026-11-06 (`date +%F`, local; the plan's `2026-11-07` dates are UTC)
 - Plan: `context/plans/72_jev_decision_brain.md`
 - Evidence: `context/fixtures/jev/` (harvested live request/response pairs from `qbots jev-probe`)
@@ -95,7 +95,7 @@
 |---|------|---------------|--------|-------|
 | 1 | T1: Record the contract + measurements, settle the open questions | `context/distilled/jev.md` | pending | **human-only, parallel with W1** — never blocks T2; label the numbers loopback; `confidence` is already resolved; strike unanswered questions, never delete |
 | 2 | T2: Closed `DecisionState` + builder + exhaustive renderer | `crates/brain/src/jev/{state,question}.rs`, `crates/qbots/src/jev/{mod,render}.rs` | done | 4 brain + 5 qbots tests; byte-exact state **and** request goldens; 100× determinism; budget drop names the field. Deviations: `MapContext` instead of `&BrainMap`, `render_state(s, max)` returns all dropped keys, `MapId` closes the map name (see Notes) |
-| 3 | T3: Margin gate + `Decision` + ticketed `DecisionSource` + stubs | `crates/brain/src/jev/{decision,source,gate}.rs` | pending | gate = margin `p1−p2` (n ≤ 3), `n_eff` only for n ≥ 4; `submit → TicketId`, `latest → Option<AppliedDecision>` (`Copy`), `ack`; vectors **constructed in Rust** incl. the `{0.80,0.20}` regression row |
+| 3 | T3: Margin gate + `Decision` + ticketed `DecisionSource` + stubs | `crates/brain/src/jev/{decision,source,gate}.rs` | done | gate = margin `p1−p2` (n ≤ 3), `n_eff` only for n ≥ 4; `submit → TicketId`, `latest → Option<AppliedDecision>` (`Copy`), `ack`; vectors **constructed in Rust** incl. the `{0.80,0.20}` regression row. 13 tests; objective travels as an index into its ticket's list (see Notes) |
 | 4 | T4: Hand-rolled HTTP/1.1 POST + wire types | `crates/qbots/src/jev/{net,wire}.rs`, `crates/qbots/tests/jev_net.rs` | pending | `Connection: close`, chunked **and close-delimited**, timeout **wraps connect**, 1 MiB cap, extra-key + model-mismatch cases; **real clock, never `start_paused`** |
 | 5 | T5: Hub — pull workers, bucket, tickets, pacing, generation, tiered breaker | `crates/qbots/src/jev/{hub,transport,mod}.rs`, `crates/qbots/Cargo.toml` | pending | **schedule risk**: 7 mechanisms + a test each; **no semaphore, no `permit_wait_ms`** — workers pick oldest event, else oldest refresh (≤ 2 in flight); hub runs the gate, slot stores only `AppliedDecision` |
 | 6 | T6: q3 generic over `GoalPolicy` (behaviour-preserving) | `crates/brain/src/brains/q3/{policy,mod}.rs`, `q3/testdata/parity_200.txt` | done | golden `41f42b336` (pre-seam), seam in the T6 commit after it; golden byte-identical after the refactor; 12 old q3 tests unedited; 4 new seam tests; both mutation checks fail as they should (Evidence). Live no-op control → **W2** |
@@ -246,6 +246,15 @@ metric, the `EVT jev_fleet` line, `calibrate`.
   `preserve_order`, so its `Map` would sort the offered options alphabetically; (5) the state's
   `loc` line is `exits` + `moving` (no region, no `floor`), matching the plan's no-opaque-index
   rule. `qbots::jev` carries a temporary `#![allow(dead_code)]` until T8 wires it (Follow-ups).
+- **T3 deviations (2026-11-06):** (1) `AppliedDecision.objective` is an **index** (`u8`) into
+  the answering ticket's offered list, not a label — the hub maps the validated wire label to its
+  offered position, so no wire string reaches the brain and the slot stays `Copy`;
+  `OffTicketLabel` = index outside that ticket's list; (2) non-200 statuses are
+  `TransportErr::Http(u16)` (→ `err=http_501`), not `Malformed`; (3) `NoSignalReason` also has
+  `TooFewOptions { n }` (a one-option question cannot discriminate); (4) `gate()` itself returns
+  `Malformed(BadProbabilities)` for non-finite / negative / mis-summed vectors, so an invalid
+  vector can never be gated as `Flat`; (5) `StubDecider` uses `std::sync::Mutex` — it is a test
+  double; the production slot is still the hub's, in `qbots`.
 - **T6 harvest:** the FSM-loop pitfall (one of T16's ten named entries) is already in
   `context/pitfalls.md` — confirmed by mutation in T6, so it was written then rather than at T16.
 - `--brains` and `BrainKind` exist (`main.rs:249`, `:2634-2646`, `brains/mod.rs:35`). Any Verify

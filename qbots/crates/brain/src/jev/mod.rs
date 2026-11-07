@@ -9,5 +9,8 @@
 //! reach a prompt, because no `String` from the wire can become `&'static` without an explicit,
 //! reviewable leak.
 
+pub mod decision;
+pub mod gate;
 pub mod question;
+pub mod source;
 pub mod state;
