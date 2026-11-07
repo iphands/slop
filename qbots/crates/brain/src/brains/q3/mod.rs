@@ -752,7 +752,11 @@ impl<P: GoalPolicy> Q3Brain<P> {
         let backup = self.roll();
         let mut world =
             r#move::attack_move(&self.ch, dist, dir, &mut self.strafe, dt, flip, backup);
-        if retreat {
+        // Backpedal while retreating — except beside a deadly rim (Plan 74 B5): 31 of 57 traced
+        // q2dm3 lava deaths ended in `retreat`; backing away from the enemy along a walkway is
+        // how bots leave it. Near a rim the inward rim-pressure bias below steers instead.
+        let near_rim = cm.is_some_and(|c| crate::hazard::rim_pressure(c, pos).is_some());
+        if retreat && !near_rim {
             world = (world - dir).normalize_or_zero();
         }
         // Never strafe/backpedal into lava or off a blind drop (Plan 48 L2): mirror the
