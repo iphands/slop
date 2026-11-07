@@ -83,6 +83,9 @@ impl Brain for JevBrain {
     fn tick(&mut self, ctx: BrainContext) -> BrainOutput {
         let policy = self.inner.policy_mut();
         policy.set_inert(ctx.goal_override.is_some());
+        if let Some(cm) = ctx.cm {
+            policy.ensure_rim(cm);
+        }
         // Ask (posture, in a fight) — one short lock + notify; never waits on the model.
         policy.pre_tick(ctx.view, ctx.dt);
         // One lock + one Copy: resolve and ack a new decision, if one arrived.

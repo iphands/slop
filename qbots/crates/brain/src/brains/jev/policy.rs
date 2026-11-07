@@ -147,6 +147,9 @@ pub struct JevPolicy {
     retreat: Option<(f32, Option<glam::Vec3>)>,
     /// Retreat toward pads at all (off for the posture-only shadow).
     pad_retreat: bool,
+    /// Per-node rim surcharge for pricing pads (Plan 74 B7), built once per map from the
+    /// collision model the brain's tick carries; empty until then (plain travel cost).
+    rim: Vec<f32>,
 }
 
 /// An open objective outcome window.
@@ -206,6 +209,7 @@ impl JevPolicy {
             held_tier: 0,
             retreat: None,
             pad_retreat: true,
+            rim: Vec::new(),
             shadow: false,
         }
     }
@@ -448,6 +452,21 @@ impl JevPolicy {
         }
     }
 
+    /// The risk overlay pads are priced with (empty ⇒ plain travel cost).
+    fn risk(&self) -> &[f32] {
+        &self.rim
+    }
+
+    /// Build the rim surcharge for the current map once a collision model is available
+    /// (Plan 74 B7 — one probe pass per map, ~20 ms on q2dm3).
+    pub fn ensure_rim(&mut self, cm: &world::CollisionModel) {
+        if self.rim.is_empty() {
+            if let Some(g) = &self.nav_graph {
+                self.rim = crate::hazard::rim_node_costs(g, cm);
+            }
+        }
+    }
+
     /// The pickup objective being walked to, if any.
     pub fn held_objective(&self) -> Option<Pad> {
         self.objective.map(|(p, _)| p)
@@ -496,13 +515,14 @@ impl JevPolicy {
         // Indices are into the old map's table.
         self.memory = ItemMemory::with_trust_range(PAD_TRUST_RANGE);
         self.objective = None;
+        self.rim.clear();
     }
 
     /// The best pad per class for this bot now (Plan 74 T3) — one graph flood, so call it per
     /// ask, never per tick. Empty before the map loads.
     pub fn pad_candidates(&self, view: &Worldview) -> PadCandidates {
         match &self.nav_graph {
-            Some(g) => pads::candidates(&self.items, &self.memory, g, view, self.time),
+            Some(g) => pads::candidates(&self.items, &self.memory, g, self.risk(), view, self.time),
             None => PadCandidates::default(),
         }
     }
@@ -711,10 +731,16 @@ impl GoalPolicy for JevPolicy {
                 .map(|e| e.origin)
                 .min_by(|a, b| (*a - q.pos).length().total_cmp(&(*b - q.pos).length()));
             let pad = match (&self.nav_graph, enemy) {
-                (Some(g), Some(enemy)) => {
-                    pads::retreat_pad(&self.items, &self.memory, g, q.view, self.time, enemy)
-                        .map(|p| p.origin)
-                }
+                (Some(g), Some(enemy)) => pads::retreat_pad(
+                    &self.items,
+                    &self.memory,
+                    g,
+                    self.risk(),
+                    q.view,
+                    self.time,
+                    enemy,
+                )
+                .map(|p| p.origin),
                 _ => None,
             };
             self.retreat = Some((self.time, pad));

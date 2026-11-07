@@ -10,8 +10,10 @@
 //!   against distance;
 //! - **not known empty** — `ItemMemory::available` (Q2 respawn times; the arena server runs
 //!   without `DF_WEAPONS_STAY`, so a taken weapon pad is empty for 30 s);
-//! - **reachable** — finite cost in one `NavGraph::flood_costs` pass from the bot's nearest node
-//!   (one Dijkstra prices every pad; called per ask, never per tick).
+//! - **reachable** — finite cost in one `NavGraph::flood_costs_weighted` pass from the bot's
+//!   nearest node (one Dijkstra prices every pad; called per ask, never per tick), priced with
+//!   the `risk` overlay (Plan 74 B7: the rim surcharge, so a pad reached along lava walkways
+//!   costs more — and reads farther to the model — than one reached over safe floor).
 //!
 //! Ammo pads are never weapon candidates (`MapItem::weapon` is `None` for them — T2).
 
@@ -163,13 +165,14 @@ pub fn retreat_pad(
     items: &[MapItem],
     memory: &ItemMemory,
     graph: &NavGraph,
+    risk: &[f32],
     view: &Worldview,
     now: f32,
     enemy: Vec3,
 ) -> Option<Pad> {
     let s = view.self_state();
     let from = graph.nearest(&s.origin.into())?;
-    let costs = graph.flood_costs(from);
+    let costs = graph.flood_costs_weighted(from, risk);
     let mine = (s.origin - enemy).length();
     let mut best: [Option<Pad>; 2] = [None, None];
     for (i, item) in items.iter().enumerate() {
@@ -212,6 +215,7 @@ pub fn candidates(
     items: &[MapItem],
     memory: &ItemMemory,
     graph: &NavGraph,
+    risk: &[f32],
     view: &Worldview,
     now: f32,
 ) -> PadCandidates {
@@ -220,7 +224,7 @@ pub fn candidates(
     let Some(from) = graph.nearest(&s.origin.into()) else {
         return out;
     };
-    let costs = graph.flood_costs(from);
+    let costs = graph.flood_costs_weighted(from, risk);
     let held_tier = s.held_weapon.map_or(0, Weapon::power_tier);
     for (i, item) in items.iter().enumerate() {
         if !memory.available(i, item.class, now) {
@@ -305,6 +309,7 @@ mod tests {
             &items,
             &ItemMemory::new(),
             &graph(),
+            &[],
             &view(BLASTER, 100, 0, vec![]),
             0.0,
         );
@@ -319,7 +324,7 @@ mod tests {
         let blaster = view(BLASTER, 100, 100, vec![]);
         let g = graph();
         let pick = |items: &[MapItem]| {
-            candidates(items, &ItemMemory::new(), &g, &blaster, 0.0)
+            candidates(items, &ItemMemory::new(), &g, &[], &blaster, 0.0)
                 .weapon
                 .map(|p| p.item)
         };
@@ -359,6 +364,7 @@ mod tests {
             &items,
             &ItemMemory::new(),
             &graph(),
+            &[],
             &view(BLASTER, 40, 0, vec![]),
             0.0,
         );
@@ -386,6 +392,7 @@ mod tests {
             &items,
             &ItemMemory::new(),
             &graph(),
+            &[],
             &view(RAIL, 100, 100, vec![]),
             0.0,
         );
@@ -454,13 +461,13 @@ mod tests {
         mem.observe(&items, &v, 10.0);
         let g = graph();
         assert_eq!(
-            candidates(&items, &mem, &g, &v, 10.0)
+            candidates(&items, &mem, &g, &[], &v, 10.0)
                 .health
                 .map(|p| p.item),
             Some(1)
         );
         assert_eq!(
-            candidates(&items, &mem, &g, &v, 41.0)
+            candidates(&items, &mem, &g, &[], &v, 41.0)
                 .health
                 .map(|p| p.item),
             Some(0)
@@ -476,7 +483,7 @@ mod tests {
         mem.observe(&items, &v, 10.0);
         mem.observe(&items, &view(BLASTER, 40, 0, stocked), 11.0);
         assert_eq!(
-            candidates(&items, &mem, &g, &v, 11.0)
+            candidates(&items, &mem, &g, &[], &v, 11.0)
                 .health
                 .map(|p| p.item),
             Some(0)
