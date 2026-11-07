@@ -1,6 +1,6 @@
 # Plan 73 — Jev lab + arena: learn which situations, facts and wording make the model decide well
 
-> **Status**: pending
+> **Status**: in-progress
 > **Created**: 2026-11-06
 > **Depends on**: Plan 72 T9 (`qbots jev-probe`) for Wave A; Plan 72 T10 + T11 (the first real
 > question + telemetry) for Wave B. Plan 72 is the thing being measured; this plan is its
@@ -348,7 +348,7 @@ Plan 72 T9 (done) ─▶ T1 (human) ─▶ T2 ─▶ T3 (live) ─▶ T4 ─▶ 
 ## Verification Checklist
 
 - [ ] T1: corpus ≥24 obvious + ≥22 ambiguous + ~5 flat per question, human-reviewed, committed before any scoring; each half ≥10/≥10
-- [ ] T2: variants pure/deterministic; baseline ≡ production renderer; split stable; scorer matches hand-computed metrics; holdout guarded
+- [x] T2: variants pure/deterministic; baseline ≡ production renderer; split stable; scorer matches hand-computed metrics; holdout guarded
 - [ ] T3: every variant run in Evidence with its prediction; `jev_lab.md` has per-question best variant + ≥3 "doesn't work" findings
 - [ ] T4: winner ported with schema bump + goldens; holdout scored once; calibrate on holdout → frozen thresholds; Plan 72 W2 row filled
 - [ ] T5: outcome-window tests per field; journal line per decision with outcome; nothing on the tick path

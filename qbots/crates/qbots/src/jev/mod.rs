@@ -5,6 +5,7 @@
 
 pub mod bucket;
 pub mod hub;
+pub mod lab;
 pub mod net;
 pub mod probe;
 pub mod render;

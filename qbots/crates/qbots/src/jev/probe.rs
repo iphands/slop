@@ -92,6 +92,27 @@ pub enum ProbeCmd {
         #[arg(long, default_value = HARVEST)]
         file: PathBuf,
     },
+    /// Plan 73 language lab: score closed wording/fact variants on the labelled corpus.
+    Lab {
+        /// Corpus root (`<dir>/<question>/{obvious/<label>,ambiguous,flat}/*.txt`).
+        #[arg(long, default_value = "context/fixtures/jev/calibration")]
+        dir: PathBuf,
+        /// One question (default: both).
+        #[arg(long, value_enum)]
+        question: Option<ProbeQuestion>,
+        /// One variant (default: all, baseline first).
+        #[arg(long, value_enum)]
+        variant: Option<super::lab::Variant>,
+        /// Which corpus half to score.
+        #[arg(long, value_enum, default_value_t = super::lab::Half::Tuning)]
+        half: super::lab::Half,
+        /// Required to score the holdout (spent once per final wording).
+        #[arg(long)]
+        confirm_holdout: bool,
+        /// Only print the tuning/holdout counts (no model calls).
+        #[arg(long)]
+        split_report: bool,
+    },
 }
 
 /// The probe's question catalogue (the brain's real objective/posture questions arrive with
@@ -105,7 +126,16 @@ pub enum ProbeQuestion {
 }
 
 impl ProbeQuestion {
-    fn spec(self) -> QuestionSpec {
+    /// The corpus sub-directory name (`posture`, `objective`).
+    pub(crate) fn dir_name(self) -> &'static str {
+        match self {
+            ProbeQuestion::Posture => "posture",
+            ProbeQuestion::Objective => "objective",
+        }
+    }
+
+    /// The catalogue question spec (the lab's baseline).
+    pub(crate) fn spec(self) -> QuestionSpec {
         let opt = |label, desc| ChoiceOption {
             label,
             desc: Phrase::lit(desc),
@@ -186,6 +216,11 @@ pub async fn run(cfg: &Config, cmd: ProbeCmd, json: bool) -> Result<bool, String
         ep: Endpoint::parse(&ep_str)?,
         model: cfg.jev.model.clone(),
         json,
+        gate: GateThresholds {
+            margin_binary: cfg.jev.gate_margin_binary,
+            margin_multi: cfg.jev.gate_margin_multi,
+            ..GateThresholds::default()
+        },
     };
     match cmd {
         ProbeCmd::Health => p.health().await,
@@ -212,6 +247,25 @@ pub async fn run(cfg: &Config, cmd: ProbeCmd, json: bool) -> Result<bool, String
         ProbeCmd::Anticorrelation => p.anticorrelation().await,
         ProbeCmd::Flatness => p.flatness().await,
         ProbeCmd::Replay { file } => p.replay(&file).await,
+        ProbeCmd::Lab {
+            dir,
+            question,
+            variant,
+            half,
+            confirm_holdout,
+            split_report,
+        } => {
+            let qs = question.map_or_else(
+                || vec![ProbeQuestion::Posture, ProbeQuestion::Objective],
+                |q| vec![q],
+            );
+            if split_report {
+                return lab_split_report(&dir, &qs);
+            }
+            super::lab::guard_half(half, confirm_holdout)?;
+            let vs = variant.map_or_else(|| super::lab::Variant::ALL.to_vec(), |v| vec![v]);
+            p.lab(&dir, &qs, &vs, half).await
+        }
     }
 }
 
@@ -232,6 +286,7 @@ struct Probe {
     ep: Endpoint,
     model: String,
     json: bool,
+    gate: GateThresholds,
 }
 
 impl Probe {
@@ -434,10 +489,7 @@ impl Probe {
         let mut all = true;
         let mut fields = Vec::new();
         for q in [ProbeQuestion::Posture, ProbeQuestion::Objective] {
-            let qdir = dir.join(
-                q.to_possible_value()
-                    .map_or("?".into(), |v| v.get_name().to_string()),
-            );
+            let qdir = dir.join(q.dir_name());
             if !qdir.exists() {
                 continue;
             }
@@ -599,6 +651,108 @@ impl Probe {
         );
         Ok(ok)
     }
+}
+
+impl Probe {
+    /// Score each variant on one corpus half, per question: one result row per variant.
+    async fn lab(
+        &self,
+        dir: &Path,
+        qs: &[ProbeQuestion],
+        vs: &[super::lab::Variant],
+        half: super::lab::Half,
+    ) -> Result<bool, String> {
+        use super::lab::{half_of, load_corpus, score, CaseKind};
+        for &q in qs {
+            let base = q.spec();
+            let cases: Vec<_> = load_corpus(&dir.join(q.dir_name()), &base)?
+                .into_iter()
+                .filter(|c| half_of(&c.name) == half)
+                .collect();
+            if cases.is_empty() {
+                return Err(format!(
+                    "no {half:?} cases for {:?} under {}",
+                    q,
+                    dir.display()
+                ));
+            }
+            let t = if q == ProbeQuestion::Posture {
+                self.gate.margin_binary
+            } else {
+                self.gate.margin_multi
+            };
+            for &v in vs {
+                let mut scored = Vec::new();
+                let mut errors = 0usize;
+                for c in &cases {
+                    let (text, spec) = v.apply(&c.text, &base);
+                    match self.ask("lab", &raw_state(&text), &spec).await {
+                        Ok(a) => {
+                            let st = stats(&a.probs);
+                            scored.push(super::lab::Scored {
+                                kind: c.kind.clone(),
+                                top: st.and_then(|st| option_label(&spec, st.top)).unwrap_or("?"),
+                                margin: st.map_or(0.0, |st| st.margin),
+                            });
+                        }
+                        Err(_) => errors += 1,
+                    }
+                }
+                let m = score(&scored, t);
+                let obvious = cases
+                    .iter()
+                    .filter(|c| matches!(c.kind, CaseKind::Obvious(_)))
+                    .count();
+                self.report(
+                    &format!("lab {} {v:?} ({half:?})", q.dir_name()),
+                    errors == 0,
+                    &[
+                        (
+                            "cases",
+                            format!("{} ({obvious} obvious), {errors} failed", cases.len()),
+                        ),
+                        ("threshold", format!("{t:.2}")),
+                        ("right_confident", pct(m.right_confident)),
+                        ("confident_wrong", pct(m.confident_wrong)),
+                        ("accuracy", pct(m.accuracy)),
+                        ("margin_correct", format!("{:.3}", m.margin_correct)),
+                        ("ambiguous_leak", pct(m.ambiguous_leak)),
+                        ("flat_max", format!("{:.3}", m.flat_max)),
+                        ("separation", format!("{:.3}", m.separation)),
+                    ],
+                );
+            }
+        }
+        Ok(true)
+    }
+}
+
+fn pct(x: f32) -> String {
+    format!("{:.0}%", 100.0 * x)
+}
+
+/// Print the tuning/holdout counts per question — no model calls (T1's split check).
+fn lab_split_report(dir: &Path, qs: &[ProbeQuestion]) -> Result<bool, String> {
+    use super::lab::{load_corpus, split_counts, Half};
+    let mut ok = true;
+    for &q in qs {
+        let cases = load_corpus(&dir.join(q.dir_name()), &q.spec())?;
+        for half in [Half::Tuning, Half::Holdout] {
+            let (o, a, f) = split_counts(&cases, half);
+            let enough = o >= 10 && a >= 10;
+            ok &= enough;
+            println!(
+                "{:<9} {half:?}: {o} obvious, {a} ambiguous, {f} flat{}",
+                q.dir_name(),
+                if enough {
+                    ""
+                } else {
+                    "  (need ≥10 obvious and ≥10 ambiguous)"
+                }
+            );
+        }
+    }
+    Ok(ok)
 }
 
 /// A rendered state from operator-authored text (calibration sets, `ask --state`). These files
