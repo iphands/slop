@@ -709,7 +709,10 @@ fn classify_model(model_str: &str) -> Option<EntityClass> {
     if s.starts_with("players/") {
         return Some(EntityClass::EnemyPlayer);
     }
-    if s.contains("health") {
+    // Health world models are `models/items/healing/{stimpack,medium,large}` and
+    // `models/items/mega_h` (`vendor/yquake2/src/game/g_items.c:2615-2685`) — none contains
+    // "health", so before Plan 74 B2 every live health pickup was invisible to every brain.
+    if s.contains("health") || s.contains("items/healing/") || s.contains("items/mega_h") {
         Some(EntityClass::ItemHealth)
     } else if s.contains("armor") {
         Some(EntityClass::ItemArmor)
@@ -718,6 +721,18 @@ fn classify_model(model_str: &str) -> Option<EntityClass> {
     } else if s.contains("quad")
         || s.contains("invulnerability")
         || s.contains("environmental_suit")
+        // The world models' real names (`g_items.c:2171-2327`).
+        || [
+            "items/invulner/",
+            "items/enviro/",
+            "items/silencer/",
+            "items/breather/",
+            "items/adrenal/",
+            "items/band/",
+            "items/c_head/",
+        ]
+        .iter()
+        .any(|m| s.contains(m))
     {
         Some(EntityClass::ItemPowerup)
     } else if s.contains("rocket") || s.contains("blaster") || s.contains("bolt") {
@@ -766,6 +781,36 @@ pub fn classify_item_classname(classname: &str) -> Option<EntityClass> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classify_model_knows_the_real_q2_pickup_models() {
+        // Paths straight from vendor/yquake2/src/game/g_items.c.
+        for m in [
+            "models/items/healing/stimpack/tris.md2",
+            "models/items/healing/medium/tris.md2",
+            "models/items/healing/large/tris.md2",
+            "models/items/mega_h/tris.md2",
+        ] {
+            assert_eq!(classify_model(m), Some(EntityClass::ItemHealth), "{m}");
+        }
+        for m in [
+            "models/items/quaddama/tris.md2",
+            "models/items/invulner/tris.md2",
+            "models/items/enviro/tris.md2",
+            "models/items/adrenal/tris.md2",
+            "models/items/band/tris.md2",
+        ] {
+            assert_eq!(classify_model(m), Some(EntityClass::ItemPowerup), "{m}");
+        }
+        assert_eq!(
+            classify_model("models/items/armor/body/tris.md2"),
+            Some(EntityClass::ItemArmor)
+        );
+        assert_eq!(
+            classify_model("models/weapons/g_rocket/tris.md2"),
+            Some(EntityClass::ItemWeapon)
+        );
+    }
 
     #[test]
     fn test_classify_item_classname() {
