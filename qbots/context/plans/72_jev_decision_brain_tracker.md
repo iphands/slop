@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 44% complete (7/16 tasks)
+- Status: 50% complete (8/16 tasks)
 - Start date: 2026-11-06 (`date +%F`, local; the plan's `2026-11-07` dates are UTC)
 - Plan: `context/plans/72_jev_decision_brain.md`
 - Evidence: `context/fixtures/jev/` (harvested live request/response pairs from `qbots jev-probe`)
@@ -101,7 +101,7 @@
 | 6 | T6: q3 generic over `GoalPolicy` (behaviour-preserving) | `crates/brain/src/brains/q3/{policy,mod}.rs`, `q3/testdata/parity_200.txt` | done | golden `41f42b336` (pre-seam), seam in the T6 commit after it; golden byte-identical after the refactor; 12 old q3 tests unedited; 4 new seam tests; both mutation checks fail as they should (Evidence). Live no-op control → **W2** |
 | 7 | T7: `JevBrain` / `JevStatic` + `jev:` config | `brains/jev/{mod,policy}.rs`, `brains/mod.rs`, `config.rs`, `config.example.yaml` (root), `roster.rs`, `supervisor.rs`, `qbots/src/jev/startup.rs` | done | `JevBrain { inner: Q3Brain<JevPolicy> }` intercepts `set_map`, sets the `goal_override` inert flag; `#[value(name="jvs", alias="jev_static")]`; `brain_code` `jev`/`jvs`; dead-endpoint test uses `127.0.0.1:1`. 10 new tests; startup gate wired at **all three** entry points incl. `run_single` (see Notes) |
 | 8 | T8: Hub wiring + `on_map_change` + `goal_override` guard | `crates/qbots/src/main.rs`, `supervisor.rs`, `brains/core.rs`, `brains/jev/{mod,policy}.rs`, `qbots/src/jev/{hub,startup}.rs` | done | **start the hub at BOTH `supervisor.rs:323` and `:682`** or `competition` runs jev with no decider; triggers are flags, submit on the next tick; apply tests live in `brain`; `map_servercount = servercount` stays last. 5 new tests; hub at all three entry points; `allow(dead_code)` removed (one scoped allow left for T11). Submit-on-trigger deferred to T10 (see Notes). Live smoke → **W2** |
-| 9 | T9: `qbots jev-probe` | `crates/qbots/src/jev/probe.rs`, `main.rs` (`Cmd::JevProbe`) | pending | **not `crates/tools`** (qbots is bin-only); offline argv + calibration-search tests are the task; the live checks are the **W2 gate**; 501 needs a well-formed chat body |
+| 9 | T9: `qbots jev-probe` | `crates/qbots/src/jev/probe.rs`, `main.rs` (`Cmd::JevProbe`) | done | **not `crates/tools`** (qbots is bin-only); offline argv + calibration-search tests are the task; the live checks are the **W2 gate**; 501 needs a well-formed chat body. 7 offline tests; **never run against the box by the agent** — every live check is a W2 row below. `matrix --live` cut (#2) |
 | 10 | T10: `objective` question + candidates + triggers | `crates/brain/src/jev/objective.rs`, `brains/jev/policy.rs` | pending | candidates in `JevPolicy`; ≤3 seek/hold moves; resolve against the answer's **own ticket**; **held until released** (no lapse to roam); injection test through the real pipeline (in `qbots`) |
 | 11 | T11: Telemetry — `applied/asked` + the two rates + herd | `crates/qbots/src/jev/telemetry.rs`, `main.rs`, `supervisor.rs` | pending | may move to right after T7; `applied` counted from `ack` only; herd = same-goal until T15; zero-applied ⇒ report first, then non-zero exit |
 | 12 | T12: binary `posture` question, add-caution only | `crates/brain/src/jev/posture.rs`, `brains/jev/policy.rs` | pending | `disengage`/`hold`; `posture_max_age_s` 6.0 brain time; the high-aggression disengage test is the regression guard for the FSM loop |
@@ -155,7 +155,9 @@ metric, the `EVT jev_fleet` line, `calibrate`.
 | 2026-11-06 | T6 mutation 1: `wants_chase = h_chase && post.disengage` (temporary, reverted) | `q3_parity_golden` **fails at tick 55** (chase phase) | 1 | the golden has teeth |
 | 2026-11-06 | T6 mutation 2: first-draft merge `wants_chase = h_chase` with a forced disengage (temporary, reverted) | debug: the new `debug_assert` panics; `--release`: node ends **`"chase"`, expected `"retreat"`** | 1 | empirical confirmation of the review's FSM-loop bug; `disengage_on_a_chase_state_…` is its regression guard |
 | 2026-11-06 | gate after T6 (`just all`) | fmt-check, clippy `-D warnings`, **583** tests, build — green; `crates/brain/Cargo.toml` unchanged | 1 | |
-| _(pending live)_ | W2: `jev-probe calibrate` per question shape | | | thresholds recorded here, then frozen |
+| _(pending live)_ | W2: `cargo run -p qbots -- jev-probe health` | | | slug + 501 fingerprint |
+| _(pending live)_ | W2: `jev-probe sensitivity` / `anticorrelation` / `flatness` | | | both pairs move; distributions differ; meaningless options rejected |
+| _(pending live)_ | W2: `jev-probe calibrate` per question shape | | | needs the human-authored, pre-registered sets committed first; thresholds recorded here, then frozen |
 | _(pending live)_ | W2: T6 inertness — `competition --brains q3,jev_static` | | | `--brains q3,q3` is **not** the proof unless `matrix_specs` is shown to field distinguishable arms |
 | _(pending live)_ | W2: T8 smoke — `connect-one` with `jev:`, then with the box unreachable | | | expect: refuse to start under `require: true` |
 | _(pending live)_ | W2: T9 `bench` (config-derived rate) | | | p95 vs `deadline_ms = 350` |
@@ -319,6 +321,23 @@ metric, the `EVT jev_fleet` line, `calibrate`.
   `goal_override`, so a jev bot there is inert by T7's flag). (7) The T2 module-wide
   `#![allow(dead_code)]` is **gone**; one scoped `cfg_attr(not(test), allow(dead_code))` remains
   on `Hub::counters` until T11 reads it (Follow-ups).
+- **T9 (2026-11-06):** built and tested **offline only** — the agent never contacted the
+  endpoint (no `context/fixtures/jev/` exists yet). (1) `matrix --live` (≈40 scenarios) is
+  **cut** (plan cut order #2, not part of the W2 gate); `replay` is kept (the risk-6 detector).
+  (2) Harvest is one JSONL file, `context/fixtures/jev/harvest.jsonl` (`ts`, `sub`, `request`,
+  `response`, `error`); `replay` re-sends each request and reports the max `|Δp|`. (3) `health`
+  reports the slug check and the 501 fingerprint (well-formed chat body); the "slot count" is not
+  reported — `/v1/systemone` exposes none. (4) Until T10/T12 define the brain's real questions,
+  the probe asks a **provisional catalogue** (binary posture disengage/hold; 3-way objective
+  seek_health/seek_armor/hold_position) built from closed `DecisionState`s through the
+  production renderer; once T10/T12 land, `calibrate`/`sensitivity` must be re-run on the real
+  questions. (5) `calibrate` reads **human-authored, pre-registered** state files at
+  `context/fixtures/jev/calibration/{posture,objective}/{obvious,ambiguous,flat}/*.txt` (state
+  text, one field per line, ≥10 obvious and ≥10 ambiguous) — the agent did not author them; the
+  commit order (sets first, then the first `calibrate` run) is the pre-registration evidence.
+  (6) `bench` defaults: bots = `fleet.count` (36 if 0), rate = bots ÷ `min_dwell_s` (2.4 req/s
+  at 36/15), concurrency = `max_concurrent`, deadline = `deadline_ms`; exit code 2 when a check
+  fails.
 - **T6 harvest:** the FSM-loop pitfall (one of T16's ten named entries) is already in
   `context/pitfalls.md` — confirmed by mutation in T6, so it was written then rather than at T16.
 - `--brains` and `BrainKind` exist (`main.rs:249`, `:2634-2646`, `brains/mod.rs:35`). Any Verify

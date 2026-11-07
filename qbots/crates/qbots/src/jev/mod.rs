@@ -6,6 +6,7 @@
 pub mod bucket;
 pub mod hub;
 pub mod net;
+pub mod probe;
 pub mod render;
 pub mod startup;
 pub mod transport;

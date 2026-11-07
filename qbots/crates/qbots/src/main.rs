@@ -270,6 +270,16 @@ enum Cmd {
     },
     /// Print the loaded config (server + paths + fleet) and exit.
     Config,
+    /// Probe the `jev` brain's decision endpoint (Plan 72): health, calibration, sensitivity,
+    /// load. Reads the same `--config` as the fleet; `JEV_ENDPOINT` overrides the endpoint here
+    /// only. Appends every request/response to `context/fixtures/jev/harvest.jsonl`.
+    JevProbe {
+        /// One JSON object per check instead of text (for pasting into the tracker).
+        #[arg(long, global = true)]
+        json: bool,
+        #[command(subcommand)]
+        cmd: jev::probe::ProbeCmd,
+    },
     /// Query the server's connectionless `status` (map + player list). The fleet
     /// verification lens — confirms bots are connected and fragging (Plan 09).
     Status {
@@ -2721,6 +2731,14 @@ async fn main() -> ExitCode {
             );
             ExitCode::SUCCESS
         }
+        Cmd::JevProbe { json, cmd } => match jev::probe::run(&cfg, cmd, json).await {
+            Ok(true) => ExitCode::SUCCESS,
+            Ok(false) => ExitCode::from(2),
+            Err(e) => {
+                tracing::error!("jev-probe: {e}");
+                ExitCode::FAILURE
+            }
+        },
         Cmd::Status { addr } => {
             let addr_str = addr.unwrap_or_else(|| cfg.server_addr());
             let addr = match resolve_addr(&addr_str).await {
@@ -3141,6 +3159,51 @@ mod tests {
                 ]
             ),
             _ => panic!("expected competition subcommand"),
+        }
+    }
+
+    #[test]
+    fn jev_probe_every_subcommand_parses() {
+        // Plan 72 T9: the W2 gate's operator commands, exactly as the tracker spells them.
+        use jev::probe::{ProbeCmd, ProbeQuestion};
+        let parse = |args: &[&str]| {
+            let mut v = vec!["qbots", "jev-probe"];
+            v.extend_from_slice(args);
+            match Cli::try_parse_from(v).expect("parses").cmd {
+                Cmd::JevProbe { json, cmd } => (json, cmd),
+                _ => panic!("expected jev-probe"),
+            }
+        };
+        assert!(matches!(parse(&["health"]).1, ProbeCmd::Health));
+        assert!(matches!(
+            parse(&["sensitivity", "--json"]),
+            (true, ProbeCmd::Sensitivity)
+        ));
+        assert!(matches!(
+            parse(&["anticorrelation"]).1,
+            ProbeCmd::Anticorrelation
+        ));
+        assert!(matches!(parse(&["flatness"]).1, ProbeCmd::Flatness));
+        assert!(matches!(
+            parse(&["calibrate"]).1,
+            ProbeCmd::Calibrate { .. }
+        ));
+        assert!(matches!(parse(&["replay"]).1, ProbeCmd::Replay { .. }));
+        match parse(&["ask", "--state", "s.txt", "--question", "objective"]).1 {
+            ProbeCmd::Ask { question, .. } => assert_eq!(question, ProbeQuestion::Objective),
+            other => panic!("{other:?}"),
+        }
+        match parse(&["bench", "--bots", "36", "--secs", "10"]).1 {
+            ProbeCmd::Bench {
+                bots, rate, secs, ..
+            } => {
+                assert_eq!(
+                    (bots, rate, secs),
+                    (Some(36), None, 10),
+                    "rate derives from config"
+                );
+            }
+            other => panic!("{other:?}"),
         }
     }
 
