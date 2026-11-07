@@ -123,7 +123,10 @@ impl Default for JevCfg {
             dwell_jitter_max: 1.3,
             ttl_s: 24.0,
             max_state_tokens: 512,
-            gate_margin_binary: 0.50,
+            // Frozen 2026-11-06 (Plan 73 T4): holdout calibration admits [0.138, 0.47]; 0.30 is
+            // the middle — robust on both sides. The multi value is unused: the 3-way objective
+            // failed calibration and is not asked (Plan 72 tracker).
+            gate_margin_binary: 0.30,
             gate_margin_multi: 0.30,
         }
     }

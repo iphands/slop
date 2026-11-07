@@ -89,5 +89,5 @@ fleet:
 #   dwell_jitter_max: 1.3            # jitter factor in [1.0, this] — one-sided on purpose
 #   ttl_s: 24.0                      # a stored decision older than this is ignored
 #   max_state_tokens: 512            # hard cap on the rendered state
-#   gate_margin_binary: 0.50         # min p1−p2 to act on a 2-option answer (calibrated at W2)
-#   gate_margin_multi: 0.30          # min p1−p2 for 3 options (calibrated at W2)
+#   gate_margin_binary: 0.30         # FROZEN 2026-11-06 (Plan 73 T4 holdout calibration, posture)
+#   gate_margin_multi: 0.30          # unused for now — the 3-way objective failed calibration

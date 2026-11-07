@@ -121,7 +121,7 @@ Recorded here (not just in prose) before the gated work may start.
 | Gate | Before | Requires | Result |
 |---|---|---|---|
 | W1 | T7 | build/clippy/test green offline; **no new packages in `Cargo.lock`**; `crates/brain/Cargo.toml` byte-unchanged (T6 may land before or after — it does not wait on W1) | **PASSED 2026-11-06** at the T5 commit: `just all` green (fmt-check, clippy `-D warnings`, 640 tests, build); `git diff` of `Cargo.lock` across T6–T5 **empty** (byte-identical — tokio `test-util` added no package); `crates/brain/Cargo.toml` unchanged. Network: tests touch only `127.0.0.1` sockets and one `*.invalid` lookup answered by the local resolver — no external host. |
-| W2 | T10 | **evidence from Plan 73 T1–T4** plus live `jev-probe`: slug + 501 fingerprint; **`calibrate` thresholds recorded and frozen** (or the question deleted); **both** sensitivity pairs move; anti-correlation; flatness rejected; bench p50/p95/p99 + tok/s vs both figures + p95-vs-`deadline_ms` verdict; T6's `q3,jev_static` no-op control; T8's `connect-one` smoke + refuse-to-start; with **`require: false`** and the endpoint unreachable, jev ≡ jev_static | — |
+| W2 | T10 | **evidence from Plan 73 T1–T4** plus live `jev-probe`: slug + 501 fingerprint; **`calibrate` thresholds recorded and frozen** (or the question deleted); **both** sensitivity pairs move; anti-correlation; flatness rejected; bench p50/p95/p99 + tok/s vs both figures + p95-vs-`deadline_ms` verdict; T6's `q3,jev_static` no-op control; T8's `connect-one` smoke + refuse-to-start; with **`require: false`** and the endpoint unreachable, jev ≡ jev_static | **Partly recorded 2026-11-06 (Plan 73 T4):** endpoint checks PASS — `health` (slug + 501), anticorrelation, flatness, bench (p95 16 ms at 2.4 req/s); **posture** calibrated on the holdout, threshold **frozen 0.30**, sensitivity moves; **objective FAILED** calibration and sensitivity → **not built** (asked only in arena shadow). **Still open (needs the Q2 server):** `connect-one` smoke + refuse-to-start, `q3,jev_static` no-op control, `require: false` ⇒ jev ≡ jev_static. |
 | W3 | T12, T14 | run `cargo run -p qbots -- competition --brains q3,jev_static,jev --count 12 --map q2dm1` **≥ 2×** on a parked q2dm1 (at 12 bots even the event worst case, 12/5 s = 2.4 req/s ⇒ 840 tok/s, is under the 1 000 knob, so the bucket is provably not the limiter). Publish per arm **and per question key**: `asked`, `admitted`, `applied`, `applied/asked`, `gate_reject_rate`, `admission_drop_rate`, the herd line. Decision rule: **`gate_reject_rate ≥ 85 %` on event-triggered asks ⇒ the state does not discriminate — fix the state or delete the question.** Non-trivial `admission_drop_rate` is **not** part of the judgement: raise `min_dwell_s` / `event_floor_s` and re-run. Never loosen the thresholds to move a number. | — |
 | W4 | T16 | no frozen-bot scenario; `decisions_that_changed_per_bot_per_min` published (**> 2/bot/min = investigation**); composition check ≥ 13/24 labelled as a composition check | — |
 | W5 | T16 | T13 human-approved; region `flatness` + `calibrate` pass; live 12-bot region histogram non-degenerate; re-priced budget asserted (T14) — or the region track recorded as cut because T13 was declined | — |
@@ -344,6 +344,12 @@ metric, the `EVT jev_fleet` line, `calibrate`.
   (`obvious/<label>/*.txt`, the label must be one of the question's options) and a threshold
   must act on ≥80 % of them **correctly** and on **≤5 % wrongly**, besides ≤10 % ambiguous and
   0 % flat.
+- **2026-11-06 — W2 result changes the order (decided by the agent, delegated by the user).**
+  Plan 73's lab adopted the wording (state schema v2: coded fields + `threat` + graded summary;
+  questions in `brain::jev::question`). **Posture passed** calibration (threshold 0.30) and
+  sensitivity; **the objective failed** both (Plan 73 T4). So the **first live question is
+  posture**: T12 moves ahead of T10, and T10 (objective) waits for arena shadow evidence. W3's
+  ratios are computed for whichever questions are live.
 - **2026-11-06 — Plan 73 becomes this plan's testing ground.** The user's goal is to *learn*
   which situations, facts and wording make the model decide well. Plan 73 (lab + arena) produces
   this plan's W2 evidence (Wave A: lab sweeps, the winning wording ported here with a schema bump,

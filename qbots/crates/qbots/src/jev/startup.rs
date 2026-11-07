@@ -190,7 +190,10 @@ mod tests {
         );
         let hub = hub_config(&cfg);
         assert_eq!(hub.max_concurrent, 3);
-        assert_eq!(hub.gate.margin_binary, 0.6);
+        assert_eq!(
+            hub.gate.margin_binary, 0.6,
+            "the YAML value wins over the frozen 0.30 default"
+        );
         assert_eq!(hub.event_floor, Duration::from_secs(5));
         assert_eq!(hub.ttl, Duration::from_secs(24));
     }

@@ -350,7 +350,7 @@ Plan 72 T9 (done) ─▶ T1 (human) ─▶ T2 ─▶ T3 (live) ─▶ T4 ─▶ 
 - [x] T1: corpus ≥24 obvious + ≥22 ambiguous + ~5 flat per question, human-reviewed, committed before any scoring; each half ≥10/≥10
 - [x] T2: variants pure/deterministic; baseline ≡ production renderer; split stable; scorer matches hand-computed metrics; holdout guarded
 - [x] T3: every variant run in Evidence with its prediction; `jev_lab.md` has per-question best variant + ≥3 "doesn't work" findings
-- [ ] T4: winner ported with schema bump + goldens; holdout scored once; calibrate on holdout → frozen thresholds; Plan 72 W2 row filled
+- [x] T4: winner ported with schema bump + goldens; holdout scored once; calibrate on holdout → frozen thresholds; Plan 72 W2 row filled
 - [ ] T5: outcome-window tests per field; journal line per decision with outcome; nothing on the tick path
 - [ ] T6: shadow `jev_static` ≡ `NullDecider` `jev_static` output (parity); journal `arm=shadow`, `applied=false`
 - [ ] T7: journal report over a synthetic journal matches expected; <100-decision comparisons refused; roster parses
