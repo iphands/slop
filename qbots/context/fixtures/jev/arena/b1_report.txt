@@ -1,0 +1,35 @@
+# Plan 74 arena round B1 — 3 × 10 min, q2dm1, arena_74.yaml, binary @ ee2d2af35
+# journals: logs/jev/journal-1794073203.jsonl logs/jev/journal-1794073818.jsonl logs/jev/journal-1794074433.jsonl
+objective decisions by arm × applied
+  jev (nothing applied)              n=65   arrived=  0.0%  upgraded=  9.2%  died= 18.5%  hp= -14.4  armor=  +0.3  LOW POWER
+  jev seek_armor                     n=12   arrived=  0.0%  upgraded=  0.0%  died= 16.7%  hp=  -5.9  armor=  -0.4  LOW POWER
+  jev seek_weapon                    n=45   arrived= 17.8%  upgraded= 11.1%  died= 11.1%  hp= -21.7  armor=  +0.1  LOW POWER
+  jev_rule seek_armor                n=53   arrived=  0.0%  upgraded=  3.8%  died= 13.2%  hp= -11.6  armor=  -0.2  LOW POWER
+  jev_rule seek_health               n=3    arrived=  0.0%  upgraded=  0.0%  died=  0.0%  hp=  +6.7  armor=  +2.7  LOW POWER
+  jev_rule seek_weapon               n=92   arrived=  9.8%  upgraded= 10.9%  died= 10.9%  hp= -10.8  armor=  +0.2  LOW POWER
+model/rule agreement (decisive model answers)
+  jev          n=57   agree= 80.7%  LOW POWER
+  jev_rule     n=77   agree= 97.4%  LOW POWER
+lives by arm (secs_to_strong = spawn → first non-weak weapon)
+  jev          lives=35   got_strong=  5.7%  median_secs_to_strong=22.4s   life= 88.6s  frags/life=0.63  LOW POWER
+  jev_rule     lives=28   got_strong= 17.9%  median_secs_to_strong=27.8s   life=102.6s  frags/life=0.50  LOW POWER
+  q3           lives=29   got_strong= 20.7%  median_secs_to_strong=52.5s   life=101.3s  frags/life=0.66  LOW POWER
+P3 weak-weapon share of posture decisions:
+  jev        270/332 = 81%
+  jev_rule   234/322 = 73%
+run 1:
+  q3_as    kills=  8 deaths=  7 kd=1.14 env=1 wp=14
+  jev_as   kills=  7 deaths= 10 kd=0.70 env=2 wp=6
+  jvr_as   kills=  5 deaths= 11 kd=0.45 env=4 wp=7
+run 2:
+  jev_as   kills= 11 deaths= 11 kd=1.00 env=2 wp=13
+  jvr_as   kills=  7 deaths=  9 kd=0.78 env=4 wp=12
+  q3_as    kills=  6 deaths= 13 kd=0.46 env=2 wp=5
+run 3:
+  q3_as    kills= 10 deaths=  9 kd=1.11 env=2 wp=16
+  jvr_as   kills=  4 deaths=  8 kd=0.50 env=6 wp=17
+  jev_as   kills=  6 deaths= 14 kd=0.43 env=2 wp=4
+round total:
+  q3_as    kills= 24 deaths= 29 kd=0.83 env=5 wp=35
+  jev_as   kills= 24 deaths= 35 kd=0.69 env=6 wp=23
+  jvr_as   kills= 16 deaths= 28 kd=0.57 env=14 wp=36
