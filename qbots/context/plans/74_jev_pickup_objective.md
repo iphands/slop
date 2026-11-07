@@ -432,7 +432,7 @@ paragraph with numbers; what wording/facts worked; follow-ups (re-engage timing,
 - [x] T5: `jvr` applies the rule, journals the model's answer as shadow, never applies it
 - [x] W1: `just all` green; parity + posture goldens unchanged
 - [ ] T6: corpus committed and skimmed before scoring; holdout once; threshold frozen **or** failure recorded (W2)
-- [ ] T7: objective windows + per-life `secs_to_strong` for every arm; journal sections tested
+- [x] T7: objective windows + per-life `secs_to_strong` for every arm; journal sections tested
 - [ ] T8: predictions committed before each round; ≥ 100 lives per arm or LOW POWER; P1–P3 answered
 - [ ] T9: `jev_lab.md`, `BRAINS.md`, `brain_notes.md` updated and re-read
 - [ ] Rule A held at every commit (`just all` chained before `git commit`)

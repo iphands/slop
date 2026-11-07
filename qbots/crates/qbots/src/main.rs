@@ -905,6 +905,9 @@ pub(crate) async fn bot_task(
     // Plan 72: this bot's link to the decision hub — `Some` only for a `jev` bot against a
     // healthy endpoint. `None` = exactly the pre-Plan-72 code path.
     jev: Option<jev::hub::JevLink>,
+    // Plan 74 T7: journals each life's `secs_to_strong` — every arm, whenever the fleet runs a
+    // hub. `None` = no life records.
+    lives: Option<jev::hub::LifeSink>,
 ) -> std::io::Result<()> {
     use brain::perception::{ModelTable, MotionTracker, Worldview};
     // `Brain` is the plugin trait (its methods resolve on the `Box<dyn Brain>` the factory
@@ -1019,6 +1022,9 @@ pub(crate) async fn bot_task(
     let mut last_health: Option<i32> = None; // Track health across frames for damage detection
     let mut last_armor: Option<i32> = None; // Track armor for pickup detection (Plan 67)
     let mut last_pickup_cs: Option<i16> = None; // Track STAT_PICKUP_STRING for weapon pickups (Plan 68)
+                                                // Plan 74 T7: the current life's clock (`secs_to_strong`), on this session's monotonic base.
+    let mut life = jev::life::LifeClock::default();
+    let life_t0 = std::time::Instant::now();
     let mut last_frags: Option<i32> = None; // Track frags for kill detection
 
     // Plan 08: per-bot danger/popularity heatmap observer + the origin we were
@@ -1320,6 +1326,10 @@ pub(crate) async fn bot_task(
                         &mut motion,
                     );
                     let current_health = view.self_state().health;
+                    if current_health > 0 && lives.is_some() {
+                        let me = view.self_state();
+                        life.alive(life_t0.elapsed().as_secs_f32(), me.held_weapon, me.frags);
+                    }
                     if current_health > 0 {
                         if let Some(prev) = last_health {
                             if prev > 0 && current_health < prev {
@@ -1415,6 +1425,12 @@ pub(crate) async fn bot_task(
                     // level change first, so it does not count this `on_death` as a death.
                     brain.on_level_change();
                     brain.on_death();
+                    if let (Some(sink), Some(rec)) = (
+                        &lives,
+                        life.end(life_t0.elapsed().as_secs_f32(), false),
+                    ) {
+                        sink.record(&rec);
+                    }
                     // Plan 72: an answer about the old level must never be applied to the new
                     // one — bump this bot's hub generation (sync: two short locks, no I/O).
                     if let Some(link) = &jev {
@@ -1618,6 +1634,12 @@ pub(crate) async fn bot_task(
                                     // also eases the Eraser auto-skill down.
                                     brain.on_death();
                                     stats.record_death(name);
+                                    if let (Some(sink), Some(rec)) = (
+                                        &lives,
+                                        life.end(life_t0.elapsed().as_secs_f32(), true),
+                                    ) {
+                                        sink.record(&rec);
+                                    }
                                     // Plan 08: record where we died (highest-confidence
                                     // danger) and force a replan so the new path avoids it.
                                     let death_pos = last_alive_pos

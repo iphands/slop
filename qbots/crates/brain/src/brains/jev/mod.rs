@@ -247,7 +247,7 @@ mod tests {
             TicketId(7),
             TicketEntry {
                 objectives: vec![Some(pad_at(3, 768.0)), Some(pad_at(0, 1.0))],
-                postures: Vec::new(),
+                ..TicketEntry::default()
             },
         );
         (b, stub)
@@ -666,6 +666,11 @@ mod tests {
     /// A healthy, armored bot holding the blaster at `x` on the corridor, optionally facing an
     /// enemy at 200 u; once `x > 0` the stocked rocket pad is in view.
     fn roam_view(x: f32, enemy: bool) -> Worldview {
+        roam_view_with(x, enemy, "models/weapons/v_blast/tris.md2")
+    }
+
+    /// [`roam_view`] holding the weapon whose view model is `gun`.
+    fn roam_view_with(x: f32, enemy: bool, gun: &str) -> Worldview {
         use q2proto::EntityState;
         let mut frame = Frame::default();
         frame.playerstate.gunindex = 1;
@@ -693,7 +698,7 @@ mod tests {
             });
         }
         let mut cs = ConfigStrings::default();
-        cs.set(32 + 1, "models/weapons/v_blast/tris.md2");
+        cs.set(32 + 1, gun);
         cs.set(32 + 2, "models/weapons/g_rocket/tris.md2");
         Worldview::from_frame(&frame, &cs, 0)
     }
@@ -843,7 +848,7 @@ mod tests {
             newer,
             TicketEntry {
                 objectives: vec![Some(pad_at(1, 768.0)), None],
-                postures: Vec::new(),
+                ..TicketEntry::default()
             },
         );
         stub.set_latest(Some(objective_decision(newer, None)));
@@ -886,6 +891,46 @@ mod tests {
         stub.set_refresh_due(true);
         roam(&mut b, &roam_view(0.0, false), 40);
         assert!(stub.submitted().is_empty(), "the shadow asks posture only");
+    }
+
+    #[test]
+    fn jev_objective_outcome_records_arrival_upgrade_and_closes_on_death_or_30s() {
+        use crate::jev::question::{CARRY_ON, SEEK_WEAPON};
+        let (mut b, stub, t) = asked_and_answered(Some(0)); // seek_weapon
+        roam(&mut b, &roam_view(0.0, false), 1); // resolves: the window opens
+        for i in 1..=22 {
+            roam(&mut b, &roam_view(i as f32 * 32.0, false), 1); // reaches 704 u: arrived
+        }
+        let rocket = "models/weapons/v_rocket/tris.md2";
+        roam(&mut b, &roam_view_with(768.0, false, rocket), 1); // picked it up
+        assert!(stub.outcomes().is_empty(), "still open");
+        b.on_death();
+        let (ot, o) = *stub.outcomes().last().expect("closed on death");
+        assert_eq!(ot, t);
+        assert!(o.died);
+        let ob = o.objective.expect("an objective outcome");
+        assert_eq!(
+            (ob.applied, ob.rule),
+            (Some(SEEK_WEAPON), Some(SEEK_WEAPON))
+        );
+        assert!(ob.arrived && ob.upgraded, "{ob:?}");
+        assert!(
+            ob.secs_to_arrive.is_some_and(|s| s > 0.0 && s < 3.0),
+            "{ob:?}"
+        );
+
+        // carry_on: nothing to walk to; the window closes by itself after 30 s of brain time.
+        let (mut b, stub, _) = asked_and_answered(Some(1));
+        roam(
+            &mut b,
+            &roam_view(0.0, false),
+            (OBJECTIVE_MAX_S * 10.0) as u32 + 2,
+        );
+        let (_, o) = *stub.outcomes().last().expect("closed at 30 s");
+        assert!(!o.died && o.secs >= 30.0);
+        let ob = o.objective.expect("objective");
+        assert_eq!(ob.applied, Some(CARRY_ON));
+        assert!(!ob.arrived && o.q3_retreat.is_none() && !o.biased);
     }
 
     #[test]

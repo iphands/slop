@@ -822,13 +822,25 @@ fn journal_report(
     candidates: Option<&Path>,
     limit: usize,
 ) -> Result<bool, String> {
-    use super::journal::{candidates as worst, parse_line, report};
-    let mut entries = Vec::new();
+    use super::journal::{
+        candidates as worst, life_report, objective_report, parse_life, parse_line,
+        parse_objective, report,
+    };
+    let (mut entries, mut objectives, mut lives) = (Vec::new(), Vec::new(), Vec::new());
     for f in files {
         let text = std::fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?;
         entries.extend(text.lines().filter_map(parse_line));
+        objectives.extend(text.lines().filter_map(parse_objective));
+        lives.extend(text.lines().filter_map(parse_life));
     }
     print!("{}", report(&entries));
+    // Plan 74: printed only when the journal has them (Plan 73 journals do not).
+    if !objectives.is_empty() {
+        print!("{}", objective_report(&objectives));
+    }
+    if !lives.is_empty() {
+        print!("{}", life_report(&lives));
+    }
     if let Some(dir) = candidates {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let c = worst(&entries, limit);

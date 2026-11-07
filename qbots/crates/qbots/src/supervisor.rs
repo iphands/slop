@@ -1115,6 +1115,7 @@ async fn bot_supervisor_loop(
             let cfg = Arc::clone(&cfg);
             let shared = shared.clone();
             let jev = jev.clone();
+            let lives = crate::jev::hub::LifeSink::for_bot(&shared.jev, brain);
             async move {
                 tracing::Instrument::instrument(
                     crate::bot_task(
@@ -1133,6 +1134,7 @@ async fn bot_supervisor_loop(
                         None, // TODO(P27): per-bot fleet persona from config
                         xonchar,
                         jev,
+                        lives,
                     ),
                     span,
                 )
@@ -1218,6 +1220,7 @@ pub async fn run_single(
         .await?
         .start_hub(1);
     let jev = crate::jev::hub::JevLink::for_bot(&hub, brain, 0);
+    let lives = crate::jev::hub::LifeSink::for_bot(&hub, brain);
     let nav = NavCache::new();
     let shutdown = Shutdown::new();
     let stats = FleetStats::new();
@@ -1230,7 +1233,7 @@ pub async fn run_single(
         // fleet-level facility that qctrl expects to be fed by a running fleet.
         crate::bot_task(
             addr, name, qport, skin, cfg, &nav, &shutdown, &stats, None, mode, brain, char,
-            persona, xonchar, jev,
+            persona, xonchar, jev, lives,
         ),
         span,
     )

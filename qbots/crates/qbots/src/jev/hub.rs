@@ -250,6 +250,54 @@ pub struct Hub {
     workers: Vec<JoinHandle<()>>,
 }
 
+/// Seconds to one decimal, rounded in `f64` — rounding in `f32` journals `4.300000190734863`.
+fn round1(s: f32) -> f64 {
+    (f64::from(s) * 10.0).round() / 10.0
+}
+
+/// One finished life, for the journal (Plan 74 T7) — recorded for **every** arm.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LifeRecord {
+    /// Seconds alive.
+    pub secs: f32,
+    /// Seconds from spawn to first holding a non-weak weapon, if it ever did.
+    pub secs_to_strong: Option<f32>,
+    /// It ended in a death (not a level change).
+    pub died: bool,
+    /// Frags gained in the life.
+    pub frags: i32,
+}
+
+/// A bot's handle for journalling its lives — any brain, as long as the fleet runs a hub.
+#[derive(Clone)]
+pub struct LifeSink {
+    hub: Arc<Hub>,
+    arm: &'static str,
+}
+
+impl LifeSink {
+    /// A sink for a bot of `brain`, if the fleet has a hub.
+    pub fn for_bot(hub: &Option<Arc<Hub>>, brain: brain::BrainKind) -> Option<Self> {
+        hub.as_ref().map(|h| Self {
+            hub: h.clone(),
+            arm: brain::brain_tag(brain),
+        })
+    }
+
+    /// Append one `{"kind":"life",…}` line (a no-op without a journal; never blocks).
+    pub fn record(&self, life: &LifeRecord) {
+        let Some(tx) = &self.hub.inner.journal else {
+            return;
+        };
+        let line = serde_json::json!({
+            "kind": "life", "arm": self.arm, "secs": round1(life.secs),
+            "secs_to_strong": life.secs_to_strong.map(round1), "died": life.died,
+            "frags": life.frags,
+        });
+        let _ = tx.send(line.to_string());
+    }
+}
+
 impl Hub {
     /// Start `cfg.max_concurrent` workers for `n_bots` slots. Must be called inside a tokio
     /// runtime.
@@ -398,10 +446,18 @@ impl DecisionSource for BotHandle {
             return;
         };
         line["outcome"] = serde_json::json!({
-            "secs": (o.secs * 10.0).round() / 10.0, "died": o.died, "hp_delta": o.hp_delta,
+            "secs": round1(o.secs), "died": o.died, "hp_delta": o.hp_delta,
             "armor_delta": o.armor_delta, "frags_delta": o.frags_delta,
             "damage_taken": o.damage_taken, "q3_retreat": o.q3_retreat, "biased": o.biased,
         });
+        if let Some(ob) = o.objective {
+            // Plan 74 T7: what the bot acted on (the model's or the rule's), and what followed.
+            line["outcome"]["objective"] = serde_json::json!({
+                "applied": ob.applied, "rule": ob.rule, "arrived": ob.arrived,
+                "secs_to_arrive": ob.secs_to_arrive.map(round1),
+                "upgraded": ob.upgraded,
+            });
+        }
         let _ = tx.send(line.to_string());
     }
 

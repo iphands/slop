@@ -164,10 +164,32 @@ pub struct Outcome {
     pub q3_retreat: Option<bool>,
     /// The decision actually changed q3's inputs (a `disengage` was in force, not in shadow).
     pub biased: bool,
+    /// Set for an objective decision (Plan 74 T7) — its window is [`OBJECTIVE_WINDOW_S`] long.
+    pub objective: Option<ObjectiveOutcome>,
+}
+
+/// What followed an objective decision (Plan 74 T7).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ObjectiveOutcome {
+    /// The label the bot acted on: the model's for `jev`, the rule's for `jev_rule`; `None` when
+    /// nothing was applied (a gated-off answer).
+    pub applied: Option<&'static str>,
+    /// The code rule's choice from the same candidates — applied only by `jev_rule`, journalled
+    /// for both arms so model/rule agreement is measurable.
+    pub rule: Option<&'static str>,
+    /// Reached the applied pad inside the window.
+    pub arrived: bool,
+    /// Brain seconds from the window opening to arrival.
+    pub secs_to_arrive: Option<f32>,
+    /// The held weapon's power tier was higher at close than at open.
+    pub upgraded: bool,
 }
 
 /// How long an outcome window stays open (brain time, seconds).
 pub const OUTCOME_WINDOW_S: f32 = 10.0;
+/// How long an objective decision's outcome window stays open (brain time, seconds) — the
+/// objective's own release cap, so a walk to a far pad can finish inside it.
+pub const OBJECTIVE_WINDOW_S: f32 = 30.0;
 
 /// A bot's handle on the decision hub. Implemented by the hub in `crates/qbots` and by the two
 /// test doubles below.

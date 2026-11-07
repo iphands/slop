@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 56% complete (5/9 tasks)
+- Status: 67% complete (6/9 tasks; T6 blocked on the corpus skim)
 - Start date: 2026-11-07
 - Plan: `context/plans/74_jev_pickup_objective.md`
 - Headline metric: per-life **`secs_to_strong`** (spawn → first non-weak held weapon) per arm;
@@ -36,7 +36,7 @@
 | 4 | T4: Objective question v2, roaming triggers, apply/release | `jev/question.rs`, `jev/source.rs`, `brains/jev/{policy,pads,mod}.rs`, `qbots::jev::{hub,render}` | done | `objective_question_v2(Offered)` + `SEEK_WEAPON`; asks with no enemy in view, ≥ 2 s alive, on a pending event or objective refresh, never while held; resolves via the ticket's own pad list; held until arrival / pad empty / 30 s / stall / death / map change / newer **objective** ticket; `Trigger::Released`; hub pacing per question key + `refresh_due(key)`. 7 brain tests, 1 hub test, 1 render test |
 | 5 | T5: `jvr` code-rule control arm | `brains/jev/{mod,policy,pads}.rs`, `brains/mod.rs`, `qbots::jev::hub`, supervisor | done | `BrainKind::JevRule` (`jvr` / `jev_rule`); `PadCandidates::rule_pick`; the rule's pad is applied when the hub **accepts** the ask (same moments as jev); the model's objective answer acks `Shadowed`; posture live. Hub: `wants_hub` (one truth table for 3 supervisor gates + `JevLink::for_bot`), jvr objective asks count `shadow_asked`. 3 tests |
 | 6 | T6: Corpus, lab, holdout, calibrate (live) | `context/fixtures/jev/calibration/objective_v2/**`, `probe.rs`, `lab.rs`, `jev_lab.md` | blocked | offline half done: `jev-probe lab/calibrate --question objective-v2` (`652aac182`); corpus 78 cases committed before scoring (`0090e5352`; tuning 26/15/6, holdout 18/11/2). **Blocked on the user's skim of the labels** (guard rail: labels approved before any answer is scored); then lab rounds → holdout once → calibrate (live endpoint) |
-| 7 | T7: Objective outcomes + per-life `secs_to_strong` | `jev/source.rs`, `brains/jev/policy.rs`, `main.rs`, `journal.rs` | pending | |
+| 7 | T7: Objective outcomes + per-life `secs_to_strong` | `jev/source.rs`, `brains/jev/{policy,pads}.rs`, `qbots::jev::{hub,life,journal,probe}`, `main.rs`, supervisor | done | separate 30 s objective window (posture windows unchanged): applied label, **rule label (both arms)**, arrived, secs_to_arrive, upgraded, died, hp/armor/frags; `LifeClock` + `LifeSink` journal `{"kind":"life"}` for **every** arm in a hub fleet; `jev-probe journal` prints objective-by-applied, model/rule agreement, lives-by-arm. Tests: 1 brain, 1 life, 1 journal, 1 hub |
 | 8 | T8: Arena rounds (live) | `context/fixtures/jev/arena_74.yaml`, reports | pending | |
 | 9 | T9: Findings, docs, close | `jev_lab.md`, `BRAINS.md`, `brain_notes.md` | pending | |
 
@@ -81,6 +81,12 @@
   5 s trips q3's stall detector (`on_stall` → release), and a pad within `ItemMemory`'s 500 u
   trust range that the view does not transmit reads as taken. The tests now walk the bot and show
   the stocked pad, as PVS would.
+- **T7:** the objective window does **not** close on arrival (the plan said "closes on
+  arrival/death/30 s"): the pickup lands at arrival and the held-weapon switch can come later,
+  so the window records the arrival time and stays open to death / level change / 30 s /
+  supersede. The rule's label is journalled for `jev` asks too (not only `jvr`), so P2's
+  agreement is measurable on both arms. Journal seconds are now rounded in `f64` (the `f32`
+  rounding wrote `4.300000190734863`; posture `secs` had the same noise since Plan 73).
 - **T5:** `run_single` and the single-bot path now start the hub for a `jvs` bot when
   `jev.shadow` is set (they gated on `brain == Jev` only, while `JevLink::for_bot` already linked
   shadow `jvs`) — a side effect of routing every gate through `wants_hub`.

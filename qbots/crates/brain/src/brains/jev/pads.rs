@@ -18,7 +18,7 @@ use world::NavGraph;
 
 use crate::brains::core::MapItem;
 use crate::items::ItemMemory;
-use crate::jev::question::Offered;
+use crate::jev::question::{Offered, CARRY_ON, SEEK_ARMOR, SEEK_HEALTH, SEEK_WEAPON};
 use crate::jev::state::{DistBand, PadFacts};
 use crate::perception::{EntityClass, Worldview};
 use crate::weapons::Weapon;
@@ -81,17 +81,28 @@ impl PadCandidates {
     /// weapon pad → that pad; else health below 50 and a health pad → it; else armor below 50
     /// and an armor pad → it; else `None` (`carry_on`).
     pub fn rule_pick(&self, held: Option<Weapon>, hp: i32, armor: i32) -> Option<Pad> {
+        match self.rule_label(held, hp, armor) {
+            SEEK_WEAPON => self.weapon,
+            SEEK_HEALTH => self.health,
+            SEEK_ARMOR => self.armor,
+            _ => None,
+        }
+    }
+
+    /// The option label [`Self::rule_pick`] stands for (`carry_on` when it picks nothing).
+    pub fn rule_label(&self, held: Option<Weapon>, hp: i32, armor: i32) -> &'static str {
         let weak = matches!(
             held,
             Some(Weapon::Blaster | Weapon::Shotgun | Weapon::Machinegun)
         );
         [
-            (weak, self.weapon),
-            (hp < 50, self.health),
-            (armor < 50, self.armor),
+            (weak && self.weapon.is_some(), SEEK_WEAPON),
+            (hp < 50 && self.health.is_some(), SEEK_HEALTH),
+            (armor < 50 && self.armor.is_some(), SEEK_ARMOR),
         ]
         .into_iter()
-        .find_map(|(want, pad)| want.then_some(pad).flatten())
+        .find_map(|(want, label)| want.then_some(label))
+        .unwrap_or(CARRY_ON)
     }
 
     /// The closed facts the state carries: each candidate's travel-cost band.

@@ -43,8 +43,8 @@ use crate::brains::q3::{GoalPolicy, GoalQuery, Posture, PostureQuery};
 use crate::items::ItemMemory;
 use crate::jev::question::{objective_question_v2, posture_question, QuestionKey};
 use crate::jev::source::{
-    AppliedDecision, ApplyOutcome, Ask, BrainReject, DecisionSource, Outcome, PostureChoice,
-    TicketId, Trigger, OUTCOME_WINDOW_S,
+    AppliedDecision, ApplyOutcome, Ask, BrainReject, DecisionSource, ObjectiveOutcome, Outcome,
+    PostureChoice, TicketId, Trigger, OBJECTIVE_WINDOW_S, OUTCOME_WINDOW_S,
 };
 use crate::jev::state::{DecisionState, Field, MapContext, MapId, SelfSummary};
 use crate::nav::NavGoal;
@@ -74,6 +74,10 @@ pub struct TicketEntry {
     /// The objective options' pads (index = the answer's `objective`; `None` = `carry_on`).
     /// Empty when the ask did not carry the objective question.
     pub objectives: Vec<Option<Pad>>,
+    /// The objective options' labels, same order (journalled with the outcome).
+    pub labels: Vec<&'static str>,
+    /// The code rule's label at ask time — applied only by `jev_rule`, journalled for both.
+    pub rule: Option<&'static str>,
     /// The posture options (index = the answer's `posture`).
     pub postures: Vec<PostureChoice>,
 }
@@ -127,6 +131,25 @@ pub struct JevPolicy {
     vitals: (i32, i32, i32),
     /// The open outcome window, if a decision is being followed (Plan 73 journal).
     window: Option<Window>,
+    /// The open **objective** outcome window (Plan 74 T7) — separate, so posture windows keep
+    /// Plan 73's semantics.
+    obj_window: Option<ObjWindow>,
+    /// The held weapon's power tier, last tick (0 when unrecognised).
+    held_tier: u8,
+}
+
+/// An open objective outcome window.
+struct ObjWindow {
+    ticket: TicketId,
+    opened: f32,
+    vitals: (i32, i32, i32),
+    damage: u32,
+    tier: u8,
+    /// Where the applied objective leads, if anything was applied.
+    target: Option<glam::Vec3>,
+    applied: Option<&'static str>,
+    rule: Option<&'static str>,
+    arrived_at: Option<f32>,
 }
 
 /// An open outcome window: the readings when it opened, and what has happened since.
@@ -166,6 +189,8 @@ impl JevPolicy {
             saw_enemy: false,
             vitals: (0, 0, 0),
             window: None,
+            obj_window: None,
+            held_tier: 0,
             shadow: false,
         }
     }
@@ -214,8 +239,55 @@ impl JevPolicy {
                 damage_taken: w.damage,
                 q3_retreat: w.q3_retreat,
                 biased: w.biased,
+                objective: None,
             },
         );
+    }
+
+    /// Close the open objective window (if any) and report it.
+    fn close_obj_window(&mut self, died: bool) {
+        let Some(w) = self.obj_window.take() else {
+            return;
+        };
+        let (hp, ar, fr) = self.vitals;
+        self.source.outcome(
+            w.ticket,
+            Outcome {
+                secs: self.time - w.opened,
+                died,
+                hp_delta: hp - w.vitals.0,
+                armor_delta: ar - w.vitals.1,
+                frags_delta: fr - w.vitals.2,
+                damage_taken: w.damage,
+                q3_retreat: None,
+                biased: w.target.is_some(),
+                objective: Some(ObjectiveOutcome {
+                    applied: w.applied,
+                    rule: w.rule,
+                    arrived: w.arrived_at.is_some(),
+                    secs_to_arrive: w.arrived_at.map(|t| t - w.opened),
+                    upgraded: self.held_tier > w.tier,
+                }),
+            },
+        );
+    }
+
+    /// Advance the objective window: damage, arrival, and its time limit.
+    fn track_obj_window(&mut self, view: &Worldview, hit: u32) {
+        let Some(w) = &mut self.obj_window else {
+            return;
+        };
+        w.damage += hit;
+        let here = view.self_state().origin;
+        if w.arrived_at.is_none()
+            && w.target
+                .is_some_and(|t| (t - here).truncate().length() <= ARRIVE_RADIUS)
+        {
+            w.arrived_at = Some(self.time);
+        }
+        if self.time - w.opened >= OBJECTIVE_WINDOW_S {
+            self.close_obj_window(false);
+        }
     }
 
     /// Once per tick, before `poll` and before q3 runs: advance brain time, track damage, and
@@ -227,6 +299,8 @@ impl JevPolicy {
         self.last_health = Some(hp);
         let s = view.self_state();
         self.vitals = (hp, s.armor, s.frags);
+        self.held_tier = s.held_weapon.map_or(0, crate::weapons::Weapon::power_tier);
+        self.track_obj_window(view, hit);
         if hit > 0 {
             self.damage.push_back((self.time, hit));
         }
@@ -303,19 +377,24 @@ impl JevPolicy {
         };
         if let Some(ticket) = self.source.submit(ask) {
             self.pending_trigger = None;
+            let s = view.self_state();
+            // The rule's label is journalled for every objective ask (P2: does the model agree?);
+            // only jvr applies it.
+            let rule = Some(cands.rule_label(s.held_weapon, s.health, s.armor));
+            if self.rule {
+                // Same moment, same candidates as a jev ask; only the chooser differs.
+                let pick = cands.rule_pick(s.held_weapon, s.health, s.armor);
+                self.objective = pick.map(|p| (p, self.time));
+            }
             self.record_ticket(
                 ticket,
                 TicketEntry {
                     objectives: cands.option_pads(),
+                    labels: cands.offered().labels(),
+                    rule,
                     postures: Vec::new(),
                 },
             );
-            if self.rule {
-                // Same moment, same candidates as a jev ask; only the chooser differs.
-                let s = view.self_state();
-                let pick = cands.rule_pick(s.held_weapon, s.health, s.armor);
-                self.objective = pick.map(|p| (p, self.time));
-            }
         }
     }
 
@@ -360,8 +439,8 @@ impl JevPolicy {
             self.record_ticket(
                 ticket,
                 TicketEntry {
-                    objectives: Vec::new(),
                     postures,
+                    ..TicketEntry::default()
                 },
             );
         }
@@ -477,10 +556,14 @@ impl JevPolicy {
         let asked_objective = !entry.objectives.is_empty();
         // jvr: the model's objective answer is followed in the journal, never applied.
         let shadowed = self.shadow || (self.rule && asked_objective);
-        let objective = match pick(d.objective, entry.objectives.len()) {
-            Ok(i) => i.and_then(|i| entry.objectives[i]),
+        let (objective, model_label) = match pick(d.objective, entry.objectives.len()) {
+            Ok(i) => (
+                i.and_then(|i| entry.objectives[i]),
+                i.and_then(|i| entry.labels.get(i).copied()),
+            ),
             Err(r) => return Rejected(r),
         };
+        let rule_label = entry.rule;
         let posture = match pick(d.posture, entry.postures.len()) {
             Ok(i) => i.map(|i| entry.postures[i]),
             Err(r) => return Rejected(r),
@@ -501,6 +584,10 @@ impl JevPolicy {
         } else {
             Applied
         };
+        if asked_objective {
+            self.open_obj_window(d.ticket, model_label, rule_label);
+            return outcome;
+        }
         // A newer decision supersedes the one being followed.
         self.close_window(false);
         self.window = Some(Window {
@@ -514,12 +601,35 @@ impl JevPolicy {
         outcome
     }
 
+    /// Open the objective window for an objective decision (closing any older one as superseded).
+    fn open_obj_window(
+        &mut self,
+        ticket: TicketId,
+        model_label: Option<&'static str>,
+        rule_label: Option<&'static str>,
+    ) {
+        self.close_obj_window(false);
+        let applied = if self.rule { rule_label } else { model_label };
+        self.obj_window = Some(ObjWindow {
+            ticket,
+            opened: self.time,
+            vitals: self.vitals,
+            damage: 0,
+            tier: self.held_tier,
+            target: self.objective.map(|(p, _)| p.origin),
+            applied,
+            rule: rule_label,
+            arrived_at: None,
+        });
+    }
+
     /// The bot died: drop the current decision and ask again on respawn.
     pub fn on_death(&mut self) {
         // A level change calls `on_level_change` first (which closes the window as a non-death);
         // anything still open here is a real death. (The policy never sees health ≤ 0: `bot_task`
         // calls `on_death` on the death frame before that frame's tick.)
         self.close_window(true);
+        self.close_obj_window(true);
         self.current = None;
         self.objective = None;
         self.alive_since = None;
@@ -530,11 +640,13 @@ impl JevPolicy {
     /// follows then finds nothing to close).
     pub fn on_level_change(&mut self) {
         self.close_window(false);
+        self.close_obj_window(false);
     }
 
     /// A level loaded: new map identity, forget every decision and ticket, ask again.
     pub fn on_map_change(&mut self, map: MapId) {
         self.close_window(false);
+        self.close_obj_window(false);
         self.map = map;
         self.current = None;
         self.objective = None;

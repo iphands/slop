@@ -555,6 +555,84 @@ async fn jev_telemetry_counts_decisive_no_signal_and_the_three_ratios() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn jev_journal_records_objective_outcomes_and_lives() {
+    use super::hub::{JevLink, LifeRecord, LifeSink};
+    use brain::jev::source::{ObjectiveOutcome, Outcome};
+    use brain::BrainKind;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("journal.jsonl");
+    let t = Scripted::default();
+    let c = HubConfig {
+        journal: Some(path.clone()),
+        ..cfg()
+    };
+    let hub = Some(Arc::new(Hub::start(c, 2, Arc::new(t.clone()))));
+    let link = JevLink::for_bot(&hub, BrainKind::JevRule, 0).expect("jvr");
+    let src = link.source();
+    let tk = src.submit(ask(90, Trigger::Released)).expect("accepted");
+    settle(50).await;
+    src.outcome(
+        tk,
+        Outcome {
+            secs: 30.0,
+            objective: Some(ObjectiveOutcome {
+                applied: Some("seek_weapon"),
+                rule: Some("seek_weapon"),
+                arrived: true,
+                secs_to_arrive: Some(4.26),
+                upgraded: true,
+            }),
+            ..Default::default()
+        },
+    );
+    // Any arm journals its lives — here a q3 bot in the same fleet.
+    let q3 = LifeSink::for_bot(&hub, BrainKind::Quake3).expect("a hub");
+    q3.record(&LifeRecord {
+        secs: 41.04,
+        secs_to_strong: None,
+        died: true,
+        frags: 2,
+    });
+    assert!(
+        LifeSink::for_bot(&None, BrainKind::Quake3).is_none(),
+        "no hub, no lives"
+    );
+    let mut text = String::new();
+    for _ in 0..100 {
+        text = std::fs::read_to_string(&path).unwrap_or_default();
+        if text.lines().count() >= 2 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let lines: Vec<serde_json::Value> = text
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("json"))
+        .collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    let d = lines
+        .iter()
+        .find(|v| v["arm"] == "jev_rule")
+        .expect("decision");
+    let ob = &d["outcome"]["objective"];
+    assert_eq!(
+        (ob["applied"].as_str(), ob["rule"].as_str()),
+        (Some("seek_weapon"), Some("seek_weapon"))
+    );
+    assert_eq!(
+        (ob["arrived"].as_bool(), ob["upgraded"].as_bool()),
+        (Some(true), Some(true))
+    );
+    assert_eq!(ob["secs_to_arrive"].as_f64(), Some(4.3));
+    let l = lines.iter().find(|v| v["kind"] == "life").expect("life");
+    assert_eq!(
+        (l["arm"].as_str(), l["secs"].as_f64()),
+        (Some("q3"), Some(41.0))
+    );
+    assert!(l["secs_to_strong"].is_null());
+}
+
+#[tokio::test(start_paused = true)]
 async fn jev_journal_writes_one_line_per_decision_with_its_outcome() {
     use brain::jev::source::Outcome;
     let dir = tempfile::tempdir().expect("tempdir");
