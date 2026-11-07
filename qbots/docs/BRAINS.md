@@ -14,6 +14,8 @@ nav layer selects a backend with `NavMode` / `build_navigator`.
 | **q3** | `q3` | Quake 3-derived bot — node FSM + aggression-gated retreat/chase + Q3 aim/fire texture | ✅ | ✅ |
 | **sentry** | `sentry` | Stationary turret — fires at any LOS enemy, never moves (reference plugin) | ✅ | ❌ |
 | **runtester** | `runtester` | Combat-free pathfinder — the `spawn-to-*` movement-scenario brain | ❌ | ✅ |
+| **jev** | `jev` | q3, with its engage/disengage posture taken from a hosted decision model (§7) | ✅ | ✅ |
+| **jev_static** | `jvs` (alias `jev_static`) | jev with all its plumbing and no decisions — jev's A/B control; with `jev.shadow` it asks and journals but never acts | ✅ | ✅ |
 
 Source: `crates/brain/src/brains/{main,q3,sentry,runtester}.rs`. Research distillations:
 `context/distilled/eraser.md` (main), `context/distilled/quake3.md` (q3). Implementation history:
@@ -30,7 +32,7 @@ internal constants in §4) is a code-level default that requires editing the sou
 
 | Switch | Where | Values | Default |
 |--------|-------|--------|---------|
-| `--brain <kind>` | `connect-one`, `run` | `main` \| `sentry` \| `runtester` \| `q3` \| `zb2` \| `xon` | `main` (`run`: `[fleet].brain`) |
+| `--brain <kind>` | `connect-one`, `run` | `main` \| `sentry` \| `runtester` \| `q3` \| `zb2` \| `xon` \| `jev` \| `jvs` | `main` (`run`: `[fleet].brain`) |
 | `--brain <kind>` | `spawn-to-spawn`, `spawn-to-weapon` | `runtester` \| `main` (A/B pathing; combat forced off) | `runtester` |
 | `--brains a,b,…` | `competition` | comma list; **`runtester` rejected** (non-combat) | `main` |
 | `[fleet].brain` | `config.yaml` | `"main"` \| `"sentry"` \| `"runtester"` \| `"q3"` \| `"zb2"` \| `"xon"` | `main` |
@@ -237,3 +239,31 @@ isn't wired), so the q3 `croucher` characteristic is best-effort — jump is the
 4. Append a dated entry to `context/brain_notes.md` (the running brain-work log).
 
 See `context/plans/completed/23_*`–`26_*` (the seam) and `36_*`–`38_*` (q3) for worked examples.
+5. If the brain is a *wrapper* over an existing one (like `jev` over `q3`), compose it — make the
+   inner brain generic over a policy (`Q3Brain<P: GoalPolicy = NullPolicy>`) — rather than
+   forking it, and pin behaviour preservation with a golden recorded **before** the seam.
+
+---
+
+## 7. `jev` — q3 plus a hosted decision model (Plans 72–73)
+
+`jev` is `Q3Brain<JevPolicy>`: q3's FSM, aim, weapon choice, dodge and recovery unchanged, with
+one high-level choice — **engage or disengage** — taken from the `/v1/systemone` decision model
+at `jev.endpoint` (contract: `context/distilled/jev.md`). With an enemy in view it asks on
+contact, on taking damage, or on a due refresh; an answer that clears the calibrated margin
+(0.30) and says `disengage` forces q3's retreat **and** clears its chase for 6 s of brain time;
+`hold` changes nothing. All model I/O goes through one process-wide hub (`crates/qbots/src/jev/`)
+— a bot never waits on the model, and a dead endpoint refuses to start (`require: true`).
+
+| Switch | Where | Effect |
+|---|---|---|
+| `jev:` block (`enabled`, `endpoint`, `model`, `require`, budget/pacing knobs) | `config.yaml` | off by default; see `config.example.yaml` |
+| `jev.journal: true` | `config.yaml` | one JSON line per decision + what happened next → `logs/jev/journal-<unix>.jsonl` |
+| `jev.shadow: true` | `config.yaml` | `jev_static` bots ask and journal too, never acting — the arena's "what would the model have said" |
+| `qbots jev-probe <health\|lab\|calibrate\|sensitivity\|…\|journal>` | CLI | the only tool that talks to the endpoint in development; `journal` analyses arena logs offline |
+| `competition --roster context/fixtures/jev/arena.yaml` | CLI | the arena: 3 q3 + 2 jev + 1 shadow `jev_static` |
+
+The wording of the state and the question was chosen by measurement, not taste — the language
+lab's rules and numbers are in `context/distilled/jev_lab.md`. The objective question
+(health / armor / carry on) failed calibration and is not asked.
+
