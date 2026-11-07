@@ -63,6 +63,8 @@ impl Brain for JevBrain {
     fn tick(&mut self, ctx: BrainContext) -> BrainOutput {
         let policy = self.inner.policy_mut();
         policy.set_inert(ctx.goal_override.is_some());
+        // Ask (posture, in a fight) — one short lock + notify; never waits on the model.
+        policy.pre_tick(ctx.view, ctx.dt);
         // One lock + one Copy: resolve and ack a new decision, if one arrived.
         policy.poll();
         self.inner.tick(ctx)
@@ -313,6 +315,139 @@ mod tests {
                 TicketId(8),
                 ApplyOutcome::Rejected(BrainReject::UnknownTicket)
             ))
+        );
+    }
+
+    /// Our bot holds a railgun at full health (sarge ⇒ q3 wants to CHASE), one enemy at 200 u.
+    fn fight_view() -> Worldview {
+        use q2proto::EntityState;
+        let mut frame = Frame::default();
+        frame.playerstate.gunindex = 1;
+        frame.playerstate.stats[1] = 100;
+        frame.playerstate.stats[3] = 8;
+        frame.playerstate.stats[5] = 100;
+        frame.entities = vec![EntityState {
+            number: 9,
+            origin: [200.0, 0.0, 0.0],
+            angles: [0.0, 180.0, 0.0],
+            modelindex: 255,
+            ..Default::default()
+        }];
+        let mut cs = ConfigStrings::default();
+        cs.set(32 + 1, "models/weapons/v_rail/tris.md2");
+        Worldview::from_frame(&frame, &cs, 0)
+    }
+
+    fn tick_view(b: &mut JevBrain, view: &Worldview) {
+        let mut nav = StubNav {
+            pursue: Some(Vec3::new(200.0, 0.0, 0.0)),
+            ..Default::default()
+        };
+        b.tick(BrainContext {
+            view,
+            nav: Some(&mut nav),
+            cm: None,
+            dt: 0.1,
+            ticks: 1,
+            goal_override: None,
+        });
+    }
+
+    fn posture_decision(ticket: u64, choice: u8) -> AppliedDecision {
+        AppliedDecision {
+            ticket: TicketId(ticket),
+            generation: 0,
+            map: MapId::Q2dm1,
+            objective: None,
+            posture: Some(choice),
+        }
+    }
+
+    fn fight_brain() -> (JevBrain, Arc<StubDecider>) {
+        let stub = Arc::new(StubDecider::default());
+        let mut b = JevBrain::new(Q3Character::sarge(), stub.clone());
+        b.on_map_change("q2dm1");
+        (b, stub)
+    }
+
+    #[test]
+    fn jev_posture_contact_asks_the_production_posture_question_once() {
+        let (mut b, stub) = fight_brain();
+        stub.set_refresh_due(true);
+        tick_once(&mut b, None); // no enemy: nothing to ask about, even with a refresh due
+        assert!(stub.submitted().is_empty());
+        stub.set_refresh_due(false);
+        tick_view(&mut b, &fight_view());
+        tick_view(&mut b, &fight_view()); // still in contact, not hit, no refresh due
+        let sent = stub.submitted();
+        assert_eq!(sent.len(), 1, "one ask per contact");
+        assert_eq!(sent[0].1.trig, Trigger::Contact);
+        assert_eq!(
+            sent[0].1.questions,
+            vec![crate::jev::question::posture_question()]
+        );
+        assert_eq!(
+            sent[0].1.state.get(crate::jev::state::FieldKey::Map),
+            Some(&crate::jev::state::Field::Map(
+                crate::jev::state::MapFacts {
+                    map: MapId::Q2dm1,
+                    gap: crate::jev::state::LoadoutGap::None,
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn jev_posture_disengage_turns_a_chase_state_into_retreat_then_expires() {
+        let (mut b, stub) = fight_brain();
+        let view = fight_view();
+        tick_view(&mut b, &view); // contact → ask (ticket 1); q3 alone fights (sarge wants chase)
+        assert_eq!(b.status(), "fight");
+        stub.set_latest(Some(posture_decision(1, 0))); // 0 = disengage
+        tick_view(&mut b, &view);
+        assert_eq!(
+            b.status(),
+            "retreat",
+            "disengage forces retreat AND clears chase"
+        );
+        assert_eq!(stub.acks(), vec![(TicketId(1), ApplyOutcome::Applied)]);
+        for _ in 0..65 {
+            tick_view(&mut b, &view); // 6.5 s of brain time
+        }
+        assert_ne!(
+            b.status(),
+            "retreat",
+            "the bias lapses after POSTURE_MAX_AGE_S"
+        );
+    }
+
+    #[test]
+    fn jev_posture_hold_is_a_no_op() {
+        let (mut b, stub) = fight_brain();
+        let view = fight_view();
+        tick_view(&mut b, &view);
+        stub.set_latest(Some(posture_decision(1, 1))); // 1 = hold
+        tick_view(&mut b, &view);
+        assert_eq!(b.status(), "fight", "hold leaves q3's own choice");
+        assert_eq!(stub.acks(), vec![(TicketId(1), ApplyOutcome::Applied)]);
+    }
+
+    #[test]
+    fn jev_posture_inert_never_asks_or_biases() {
+        let (mut b, stub) = fight_brain();
+        let view = fight_view();
+        let mut nav = StubNav::default();
+        b.tick(BrainContext {
+            view: &view,
+            nav: Some(&mut nav),
+            cm: None,
+            dt: 0.1,
+            ticks: 1,
+            goal_override: Some(NavGoal::Waypoint(1)),
+        });
+        assert!(
+            stub.submitted().is_empty(),
+            "the harnesses never ask the model"
         );
     }
 

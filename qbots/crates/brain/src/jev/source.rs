@@ -34,6 +34,8 @@ pub enum Trigger {
     AreaHeat,
     /// The level changed.
     MapChange,
+    /// An enemy came into view (none was visible last tick) — the posture question's main event.
+    Contact,
     /// Background refresh at `min_dwell_s`.
     Refresh,
 }
@@ -52,6 +54,7 @@ impl Trigger {
             Trigger::Damage => "damage",
             Trigger::AreaHeat => "area_heat",
             Trigger::MapChange => "map_change",
+            Trigger::Contact => "contact",
             Trigger::Refresh => "refresh",
         }
     }

@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 50% complete (8/16 tasks)
+- Status: 56% complete (9/16 tasks)
 - Start date: 2026-11-06 (`date +%F`, local; the plan's `2026-11-07` dates are UTC)
 - Plan: `context/plans/72_jev_decision_brain.md`
 - Evidence: `context/fixtures/jev/` (harvested live request/response pairs from `qbots jev-probe`)
@@ -104,7 +104,7 @@
 | 9 | T9: `qbots jev-probe` | `crates/qbots/src/jev/probe.rs`, `main.rs` (`Cmd::JevProbe`) | done | **not `crates/tools`** (qbots is bin-only); offline argv + calibration-search tests are the task; the live checks are the **W2 gate**; 501 needs a well-formed chat body. 7 offline tests; **never run against the box by the agent** — every live check is a W2 row below. `matrix --live` cut (#2) |
 | 10 | T10: `objective` question + candidates + triggers | `crates/brain/src/jev/objective.rs`, `brains/jev/policy.rs` | pending | candidates in `JevPolicy`; ≤3 seek/hold moves; resolve against the answer's **own ticket**; **held until released** (no lapse to roam); injection test through the real pipeline (in `qbots`) |
 | 11 | T11: Telemetry — `applied/asked` + the two rates + herd | `crates/qbots/src/jev/telemetry.rs`, `main.rs`, `supervisor.rs` | pending | may move to right after T7; `applied` counted from `ack` only; herd = same-goal until T15; zero-applied ⇒ report first, then non-zero exit |
-| 12 | T12: binary `posture` question, add-caution only | `crates/brain/src/jev/posture.rs`, `brains/jev/policy.rs` | pending | `disengage`/`hold`; `posture_max_age_s` 6.0 brain time; the high-aggression disengage test is the regression guard for the FSM loop |
+| 12 | T12: binary `posture` question, add-caution only | `crates/brain/src/brains/jev/{mod,policy}.rs`, `crates/brain/src/jev/source.rs` | done | **pulled ahead of T10** (objective failed W2). Asks the lab-adopted `posture_question()` on `Contact` (new trigger) / `Damage` / due `Refresh` while an enemy is in view; `disengage` applies 6 s (brain time) via T6's merge; `hold` no-op; inert never asks. 4 new tests. `noul` canary and hysteresis not built (cut / follow-up). Live flips/min → **W4** |
 | 13 | T13: `AGENTS.md` fleet-coach carve-out | `AGENTS.md` | pending | **human approval of the exact diff required before T15** |
 | 14 | T14: Per-map region tables + per-bot region question + re-price | `crates/qbots/src/jev/regions.rs`, `config.example.yaml`, `state.rs`, `render.rs` | pending | answers **logged, not applied**; `STATE_SCHEMA_VERSION` → 2; re-price here: 420 tok, `min_dwell_s` 20, `ttl_s` 30 |
 | 15 | T15: Code-side capped region assignment + herd control | `crates/qbots/src/jev/{assign,hub,telemetry}.rs`, `brains/jev/policy.rs` | pending | **no fleet-level model question**; greedy assignment under `region_cap`; objective > region > roam |

@@ -9,11 +9,17 @@
 //!   `Applied`, or `Rejected(Inert | WrongMap | UnknownTicket | OffTicketLabel)`;
 //! - an accepted decision becomes the policy's [`current`](JevPolicy::current) decision.
 //!
-//! What a current decision *does* — hold an objective until released (T10), bias the posture
-//! (T12) — lands with those tasks; until then `objective()`/`posture()` have no opinion. No ask
-//! is ever sent before T10 either (a request with no questions must not reach the endpoint), so
-//! in production nothing reaches this path yet. While inert (`goal_override` set — the
-//! `spawn-to-*` harnesses) a new decision is acked `Inert` and never becomes current.
+//! **Posture is the first live question** (Plan 72 W2: the objective failed calibration and is
+//! not asked). Once per tick, from `JevBrain::tick` ([`pre_tick`](JevPolicy::pre_tick)):
+//! - with an enemy in view, the policy **asks** `brain::jev::question::posture_question()` on
+//!   `Contact` (an enemy appears), `Damage` (hit this tick) or a due `Refresh` — the hub's
+//!   per-bot pacing decides which asks go out;
+//! - an applied `disengage` biases q3 through T6's merge (retreat **and** no chase) for
+//!   [`POSTURE_MAX_AGE_S`] of brain time; `hold` is the no-op. Death, a level change and a newer
+//!   answered ticket release it.
+//!
+//! While inert (`goal_override` set — the `spawn-to-*` harnesses) nothing is asked, a new
+//! decision is acked `Inert`, and the posture stays q3's own.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -22,11 +28,19 @@ use world::NavGraph;
 
 use crate::brains::core::MapItem;
 use crate::brains::q3::{GoalPolicy, GoalQuery, Posture, PostureQuery};
+use crate::jev::question::posture_question;
 use crate::jev::source::{
-    AppliedDecision, ApplyOutcome, BrainReject, DecisionSource, PostureChoice, TicketId, Trigger,
+    AppliedDecision, ApplyOutcome, Ask, BrainReject, DecisionSource, PostureChoice, TicketId,
+    Trigger,
 };
-use crate::jev::state::MapId;
+use crate::jev::state::{DecisionState, MapContext, MapId, SelfSummary};
 use crate::nav::NavGoal;
+use crate::perception::Worldview;
+
+/// How long an applied `disengage` biases q3 (brain time, seconds) — about one fight.
+pub const POSTURE_MAX_AGE_S: f32 = 6.0;
+/// The window `recent` damage is summed over (brain time, seconds).
+const DAMAGE_WINDOW_S: f32 = 10.0;
 
 /// How many recent asks the brain can still resolve an answer against.
 pub const RING: usize = 4;
@@ -63,6 +77,14 @@ pub struct JevPolicy {
     last_seen: Option<TicketId>,
     current: Option<Resolved>,
     pending_trigger: Option<Trigger>,
+    /// Brain time (Σ dt), for the posture lifetime and the damage window.
+    time: f32,
+    /// When the current decision was applied (brain time).
+    applied_at: f32,
+    last_health: Option<i32>,
+    /// `(time, amount)` of recent hits.
+    damage: VecDeque<(f32, u32)>,
+    saw_enemy: bool,
 }
 
 impl JevPolicy {
@@ -79,6 +101,74 @@ impl JevPolicy {
             last_seen: None,
             current: None,
             pending_trigger: None,
+            time: 0.0,
+            applied_at: 0.0,
+            last_health: None,
+            damage: VecDeque::new(),
+            saw_enemy: false,
+        }
+    }
+
+    /// Once per tick, before `poll` and before q3 runs: advance brain time, track damage, and
+    /// ask the posture question when a fight warrants it (see the module doc).
+    pub fn pre_tick(&mut self, view: &Worldview, dt: f32) {
+        self.time += dt;
+        let hp = view.self_state().health;
+        let hit = self.last_health.map_or(0, |prev| (prev - hp).max(0) as u32);
+        self.last_health = Some(hp);
+        if hit > 0 {
+            self.damage.push_back((self.time, hit));
+        }
+        while self
+            .damage
+            .front()
+            .is_some_and(|(t, _)| self.time - t > DAMAGE_WINDOW_S)
+        {
+            self.damage.pop_front();
+        }
+        let enemy = view.enemies().any(|e| !e.is_stale);
+        let contact = enemy && !self.saw_enemy;
+        self.saw_enemy = enemy;
+        if self.inert || !enemy {
+            return;
+        }
+        let trig = if contact {
+            Trigger::Contact
+        } else if hit > 0 {
+            Trigger::Damage
+        } else if self.source.refresh_due() {
+            Trigger::Refresh
+        } else {
+            return;
+        };
+        self.ask(view, trig);
+    }
+
+    /// Build the closed state, ask the posture question, and remember what it offered.
+    fn ask(&mut self, view: &Worldview, trig: Trigger) {
+        let me = SelfSummary {
+            recent_damage: self.damage.iter().map(|(_, n)| n).sum(),
+            secs_since_damage: self.damage.back().map(|(t, _)| self.time - t),
+        };
+        let ctx = MapContext {
+            map: self.map,
+            nav_graph: self.nav_graph.as_deref(),
+        };
+        let ask = Ask {
+            state: DecisionState::build(view, &ctx, &me),
+            questions: vec![posture_question()],
+            trig,
+        };
+        if let Some(ticket) = self.source.submit(ask) {
+            // Same order as `posture_question()`'s options.
+            let postures = vec![PostureChoice::Disengage, PostureChoice::Hold];
+            self.record_ticket(
+                ticket,
+                TicketEntry {
+                    objectives: Vec::new(),
+                    postures,
+                },
+            );
         }
     }
 
@@ -190,6 +280,7 @@ impl JevPolicy {
             objective,
             posture,
         });
+        self.applied_at = self.time;
         Applied
     }
 
@@ -215,7 +306,12 @@ impl GoalPolicy for JevPolicy {
     }
 
     fn posture(&mut self, _q: &PostureQuery) -> Posture {
-        // T12 makes a current `disengage` bias the posture. Never biased while inert.
-        Posture::default()
+        let disengage = !self.inert
+            && self.time - self.applied_at < POSTURE_MAX_AGE_S
+            && self
+                .current
+                .as_ref()
+                .is_some_and(|c| c.posture == Some(PostureChoice::Disengage));
+        Posture { disengage }
     }
 }
