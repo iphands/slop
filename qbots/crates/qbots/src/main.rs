@@ -1427,7 +1427,11 @@ pub(crate) async fn bot_task(
                     brain.on_death();
                     if let (Some(sink), Some(rec)) = (
                         &lives,
-                        life.end(life_t0.elapsed().as_secs_f32(), false),
+                        life.end(
+                            life_t0.elapsed().as_secs_f32(),
+                            false,
+                            brain::jev::state::MapId::from_name(&beacon_map).slug(),
+                        ),
                     ) {
                         sink.record(&rec);
                     }
@@ -1636,7 +1640,11 @@ pub(crate) async fn bot_task(
                                     stats.record_death(name);
                                     if let (Some(sink), Some(rec)) = (
                                         &lives,
-                                        life.end(life_t0.elapsed().as_secs_f32(), true),
+                                        life.end(
+                            life_t0.elapsed().as_secs_f32(),
+                            true,
+                            brain::jev::state::MapId::from_name(&beacon_map).slug(),
+                        ),
                                     ) {
                                         sink.record(&rec);
                                     }

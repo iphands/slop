@@ -36,13 +36,14 @@ impl LifeClock {
 
     /// End the life (a death, or a level change when `died` is false): its record, or `None`
     /// if no alive frame was seen. The clock is reset for the next life.
-    pub fn end(&mut self, now: f32, died: bool) -> Option<LifeRecord> {
+    pub fn end(&mut self, now: f32, died: bool, map: &'static str) -> Option<LifeRecord> {
         let (t0, f0) = self.start.take()?;
         let rec = LifeRecord {
             secs: now - t0,
             secs_to_strong: self.strong_at.take(),
             died,
             frags: self.frags - f0,
+            map,
         };
         Some(rec)
     }
@@ -55,12 +56,12 @@ mod tests {
     #[test]
     fn jev_life_clock_times_the_first_strong_weapon() {
         let mut c = LifeClock::default();
-        assert_eq!(c.end(1.0, true), None, "no alive frame, no life");
+        assert_eq!(c.end(1.0, true, "q2dm1"), None, "no alive frame, no life");
         c.alive(10.0, Some(Weapon::Blaster), 3);
         c.alive(14.0, Some(Weapon::Shotgun), 3);
         c.alive(17.5, Some(Weapon::RocketLauncher), 4);
         c.alive(19.0, Some(Weapon::Blaster), 5); // switched back: the first time still counts
-        let r = c.end(25.0, true).expect("a life");
+        let r = c.end(25.0, true, "q2dm1").expect("a life");
         assert_eq!(
             r,
             LifeRecord {
@@ -68,11 +69,12 @@ mod tests {
                 secs_to_strong: Some(7.5),
                 died: true,
                 frags: 2,
+                map: "q2dm1",
             }
         );
         // The next life starts fresh; never strong ⇒ None.
         c.alive(30.0, Some(Weapon::Machinegun), 5);
-        let r = c.end(40.0, false).expect("a life");
+        let r = c.end(40.0, false, "q2dm3").expect("a life");
         assert_eq!((r.secs_to_strong, r.died, r.frags), (None, false, 0));
         assert!(!is_strong(None) && is_strong(Some(Weapon::SuperShotgun)));
     }

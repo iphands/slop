@@ -593,6 +593,7 @@ async fn jev_journal_records_objective_outcomes_and_lives() {
         secs_to_strong: None,
         died: true,
         frags: 2,
+        map: "q2dm1",
     });
     assert!(
         LifeSink::for_bot(&None, BrainKind::Quake3).is_none(),

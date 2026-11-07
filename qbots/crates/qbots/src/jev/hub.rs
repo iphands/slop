@@ -266,6 +266,8 @@ pub struct LifeRecord {
     pub died: bool,
     /// Frags gained in the life.
     pub frags: i32,
+    /// The map it was lived on (closed slug; Plan 74: the arena server rotates maps).
+    pub map: &'static str,
 }
 
 /// A bot's handle for journalling its lives — any brain, as long as the fleet runs a hub.
@@ -292,7 +294,7 @@ impl LifeSink {
         let line = serde_json::json!({
             "kind": "life", "arm": self.arm, "secs": round1(life.secs),
             "secs_to_strong": life.secs_to_strong.map(round1), "died": life.died,
-            "frags": life.frags,
+            "frags": life.frags, "map": life.map,
         });
         let _ = tx.send(line.to_string());
     }

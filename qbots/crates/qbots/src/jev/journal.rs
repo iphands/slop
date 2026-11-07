@@ -263,8 +263,13 @@ pub fn parse_objective(line: &str) -> Option<ObjEntry> {
     let o = v.get("outcome")?;
     let ob = o.get("objective")?;
     let s = |x: &serde_json::Value| x.as_str().map(str::to_string);
+    let arm = v["arm"].as_str()?;
     Some(ObjEntry {
-        arm: v["arm"].as_str()?.to_string(),
+        // Suffixed `@<map>` when the line names it — a round can span a map rotation.
+        arm: match v["map"].as_str() {
+            Some(m) => format!("{arm}@{m}"),
+            None => arm.to_string(),
+        },
         top: ans["top"].as_str().unwrap_or("?").to_string(),
         decisive: ans["gate"] == "apply",
         applied: s(&ob["applied"]),
@@ -281,7 +286,7 @@ pub fn parse_objective(line: &str) -> Option<ObjEntry> {
 /// One finished life (any arm).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Life {
-    /// The brain tag.
+    /// The brain tag, suffixed `@<map>` when the line names its map (rounds span rotations).
     pub arm: String,
     /// Seconds alive.
     pub secs: f64,
@@ -295,8 +300,12 @@ pub struct Life {
 pub fn parse_life(line: &str) -> Option<Life> {
     let v: serde_json::Value = serde_json::from_str(line).ok()?;
     (v["kind"] == "life").then_some(())?;
+    let arm = v["arm"].as_str()?;
     Some(Life {
-        arm: v["arm"].as_str()?.to_string(),
+        arm: match v["map"].as_str() {
+            Some(m) => format!("{arm}@{m}"),
+            None => arm.to_string(),
+        },
         secs: v["secs"].as_f64()?,
         secs_to_strong: v["secs_to_strong"].as_f64(),
         frags: v["frags"].as_i64().unwrap_or(0),
