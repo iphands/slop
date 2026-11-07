@@ -194,7 +194,7 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 > verification-checklist item in each brain plan — not optional.
 
 > **Currently active**:
-> - **Plan 74** — Jev pickup objective: in progress, 5/9 tasks done, W1 passed; next T6 (objective v2 corpus + lab — live, needs the user's corpus skim). Plan 71 is **deferred** (see its row).
+> - **Plan 74** — Jev pickup objective: in progress, 5/9 tasks done, W1 passed; T6 blocked on the user's corpus skim (corpus committed); next T7 (offline). Plan 71 is **deferred** (see its row).
 > **Next free plan number: 75.**
 
 > Active plans live alongside this file as `NN_name.md` + `NN_name_tracker.md`.
