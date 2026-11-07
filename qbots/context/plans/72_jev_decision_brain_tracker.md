@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 0% complete (0/16 tasks)
+- Status: 6% complete (1/16 tasks)
 - Start date: 2026-11-06 (`date +%F`, local; the plan's `2026-11-07` dates are UTC)
 - Plan: `context/plans/72_jev_decision_brain.md`
 - Evidence: `context/fixtures/jev/` (harvested live request/response pairs from `qbots jev-probe`)
@@ -98,7 +98,7 @@
 | 3 | T3: Margin gate + `Decision` + ticketed `DecisionSource` + stubs | `crates/brain/src/jev/{decision,source,gate}.rs` | pending | gate = margin `p1−p2` (n ≤ 3), `n_eff` only for n ≥ 4; `submit → TicketId`, `latest → Option<AppliedDecision>` (`Copy`), `ack`; vectors **constructed in Rust** incl. the `{0.80,0.20}` regression row |
 | 4 | T4: Hand-rolled HTTP/1.1 POST + wire types | `crates/qbots/src/jev/{net,wire}.rs`, `crates/qbots/tests/jev_net.rs` | pending | `Connection: close`, chunked **and close-delimited**, timeout **wraps connect**, 1 MiB cap, extra-key + model-mismatch cases; **real clock, never `start_paused`** |
 | 5 | T5: Hub — pull workers, bucket, tickets, pacing, generation, tiered breaker | `crates/qbots/src/jev/{hub,transport,mod}.rs`, `crates/qbots/Cargo.toml` | pending | **schedule risk**: 7 mechanisms + a test each; **no semaphore, no `permit_wait_ms`** — workers pick oldest event, else oldest refresh (≤ 2 in flight); hub runs the gate, slot stores only `AppliedDecision` |
-| 6 | T6: q3 generic over `GoalPolicy` (behaviour-preserving) | `crates/brain/src/brains/q3/{policy,mod}.rs`, `q3/testdata/parity_200.txt` | in-progress | **independent of T2–T5, good first task**; **commit the pre-seam golden FIRST**; `Q3Brain<P = NullPolicy>`, `&mut self` methods; posture once per tick; disengage ⇒ retreat **and** no chase |
+| 6 | T6: q3 generic over `GoalPolicy` (behaviour-preserving) | `crates/brain/src/brains/q3/{policy,mod}.rs`, `q3/testdata/parity_200.txt` | done | golden `41f42b336` (pre-seam), seam in the T6 commit after it; golden byte-identical after the refactor; 12 old q3 tests unedited; 4 new seam tests; both mutation checks fail as they should (Evidence). Live no-op control → **W2** |
 | 7 | T7: `JevBrain` / `JevStatic` + `jev:` config | `brains/jev/{mod,policy}.rs`, `brains/mod.rs`, `config.rs`, `config.example.yaml` (root), `roster.rs`, `supervisor.rs` | pending | `JevBrain { inner: Q3Brain<JevPolicy> }` intercepts `set_map`, sets the `goal_override` inert flag; `#[value(name="jvs", alias="jev_static")]`; `brain_code` `jev`/`jvs`; dead-endpoint test uses `127.0.0.1:1` |
 | 8 | T8: Hub wiring + `on_map_change` + `goal_override` guard | `crates/qbots/src/main.rs`, `supervisor.rs`, `brains/core.rs` | pending | **start the hub at BOTH `supervisor.rs:323` and `:682`** or `competition` runs jev with no decider; triggers are flags, submit on the next tick; apply tests live in `brain`; `map_servercount = servercount` stays last |
 | 9 | T9: `qbots jev-probe` | `crates/qbots/src/jev/probe.rs`, `main.rs` (`Cmd::JevProbe`) | pending | **not `crates/tools`** (qbots is bin-only); offline argv + calibration-search tests are the task; the live checks are the **W2 gate**; 501 needs a well-formed chat body |
@@ -151,6 +151,10 @@ metric, the `EVT jev_fleet` line, `calibrate`.
 | 2026-11-07 | review probe: posture, state `hp:18(band:crit) armor:0 weapons:1/8 low:yes` / `enemy n:2 near:180 vis:yes`, criteria engage/trade/disengage | `{engage 0.182, trade 0.377, disengage 0.441}`, confidence 0.1620, 127 input tok | 1 | margin 0.065 — 3-way posture splits mass; motivated the binary question |
 | 2026-11-07 | same state, criteria disengage/stay | `{disengage 0.663, stay 0.337}`, confidence 0.3263, 116 tok | 1 | first-draft `n_eff` gate: reject (1.89 > 1.5) |
 | 2026-11-07 | extreme state (hp 5, blaster only, 3 enemies, "cannot win this fight"), disengage/stay | `{disengage 0.880, stay 0.120}`, confidence 0.7604, 142 tok | 1 | only this cleared the first-draft gate; `confidence = (p1−1/n)·n/(n−1)` exact on all three |
+| 2026-11-06 | T6: `cargo test -p brain --lib brains::q3` after the generic seam | 22 q3-module tests pass incl. `q3_parity_golden`; `git diff --exit-code q3/testdata/` empty — golden **byte-identical** to the pre-seam recording (`41f42b336`) | 1 | golden covers seek-ltg/fight/chase/seek-nbg/retreat/battle-nbg, the `:506` veto, the `:926` roam arm, 2 recovery back-offs |
+| 2026-11-06 | T6 mutation 1: `wants_chase = h_chase && post.disengage` (temporary, reverted) | `q3_parity_golden` **fails at tick 55** (chase phase) | 1 | the golden has teeth |
+| 2026-11-06 | T6 mutation 2: first-draft merge `wants_chase = h_chase` with a forced disengage (temporary, reverted) | debug: the new `debug_assert` panics; `--release`: node ends **`"chase"`, expected `"retreat"`** | 1 | empirical confirmation of the review's FSM-loop bug; `disengage_on_a_chase_state_…` is its regression guard |
+| 2026-11-06 | gate after T6 (`just all`) | fmt-check, clippy `-D warnings`, **583** tests, build — green; `crates/brain/Cargo.toml` unchanged | 1 | |
 | _(pending live)_ | W2: `jev-probe calibrate` per question shape | | | thresholds recorded here, then frozen |
 | _(pending live)_ | W2: T6 inertness — `competition --brains q3,jev_static` | | | `--brains q3,q3` is **not** the proof unless `matrix_specs` is shown to field distinguishable arms |
 | _(pending live)_ | W2: T8 smoke — `connect-one` with `jev:`, then with the box unreachable | | | expect: refuse to start under `require: true` |
@@ -232,6 +236,8 @@ metric, the `EVT jev_fleet` line, `calibrate`.
   Fixed behaviour-preservingly in its own commit `8acd93bf4` (not a task commit); gate after:
   fmt-check, clippy `-D warnings`, 578 tests, build — all green. The T6 golden was recorded on top
   of that commit.
+- **T6 harvest:** the FSM-loop pitfall (one of T16's ten named entries) is already in
+  `context/pitfalls.md` — confirmed by mutation in T6, so it was written then rather than at T16.
 - `--brains` and `BrainKind` exist (`main.rs:249`, `:2634-2646`, `brains/mod.rs:35`). Any Verify
   naming a CLI command must be checked to exist and to field distinguishable arms before it is
   used as proof.

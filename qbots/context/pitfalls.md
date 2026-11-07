@@ -1615,3 +1615,33 @@ on the range.
 ## Sources
 - qbots: crates/brain/src/perception.rs (`assemble`, `CS_MAXCLIENTS`)
 - vendor: yquake2/src/game/player/client.c (`InitBodyQue`, `CopyToBodyQue`)
+
+---
+
+# Biasing one q3 posture input without the other loops `run_fsm` into a non-firing Chase
+
+## Problem
+
+q3's posture inputs are mutually exclusive by construction: `wants_to_retreat` is
+`bot_aggression < retreat_threshold`, `wants_to_chase` is `>` the same value (`q3char.rs:380`,
+`:385`). `Q3Brain::run_fsm` loops **within one tick** until no transition fires. Any external
+bias that forces `wants_retreat = true` but leaves `wants_chase` at its heuristic value creates a
+state q3 has never seen. With the enemy visible: Fight → Retreat (`wants_retreat`) → Chase
+(`wants_chase`) → Fight (visible) → … until `MAX_NODESWITCHES = 50` trips, warns, and stops in
+**Chase** (50 mod 3). Chase path-follows `battle_goal` and never calls `combat_drive`, so a bot
+told to *disengage* runs at the enemy without firing, every tick. Plan 72's first-draft merge did
+exactly this; reproduced 2026-11-06 by mutation (release build: node `"chase"`, expected
+`"retreat"`).
+
+## Fix
+
+Bias both inputs together: a disengage sets `wants_retreat = true` **and** `wants_chase = false`,
+and guard the invariant with `debug_assert!(!(wants_retreat && wants_chase))`. General rule: when a
+state machine iterates to a fixed point inside one tick, any new input combination needs its own
+transition check — feeding it a combination its authors made impossible can oscillate rather
+than settle.
+
+## Sources
+- qbots: crates/brain/src/brains/q3/mod.rs (`run_fsm`, the posture merge in `tick`)
+- qbots: crates/brain/src/brains/q3/policy.rs (`Posture::disengage`)
+- qbots: context/plans/72_jev_decision_brain.md (T6; test `disengage_on_a_chase_state_retreats_instead_of_looping_into_chase`)

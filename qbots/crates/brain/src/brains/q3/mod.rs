@@ -18,6 +18,9 @@
 
 mod aim;
 mod r#move;
+pub mod policy;
+
+pub use policy::{GoalPolicy, GoalQuery, NullPolicy, Posture, PostureQuery};
 
 use std::sync::Arc;
 
@@ -86,7 +89,11 @@ fn fov_cone(forward: Vec3, to_target: Vec3, fov_deg: f32) -> bool {
 
 /// The Quake 3-derived decision brain. Owns the node FSM + Q3 character + combat sub-state;
 /// the `Navigator` is injected each [`tick`](Brain::tick).
-pub struct Q3Brain {
+///
+/// `P` is the [`GoalPolicy`] (Plan 72): a wrapper's hook into the roam-fallback goal and the
+/// engagement posture. It defaults to [`NullPolicy`], so `Q3Brain` in type position — and every
+/// `Q3Brain::new(ch)` — is exactly the q3 brain as it was before the seam.
+pub struct Q3Brain<P: GoalPolicy = NullPolicy> {
     /// The personality (Plan 36) — drives aggression bias, aim, alertness, dodge, firethrottle.
     ch: Q3Character,
     /// Current FSM node.
@@ -155,13 +162,24 @@ pub struct Q3Brain {
 
     /// Deterministic per-bot jitter seed mixer (aim error / strafe-flip / dodge rolls).
     rng_state: u32,
+
+    /// The high-level decision hook (Plan 72). [`NullPolicy`] for plain q3.
+    policy: P,
 }
 
-impl Q3Brain {
+impl Q3Brain<NullPolicy> {
     /// Construct a Q3 brain with the given character. Nav roam goals + the graph arrive later
     /// via [`set_map`](Brain::set_map). The steering turn-rate scales with the character's aim
-    /// skill (a crisp aimer turns faster).
+    /// skill (a crisp aimer turns faster). Defined only on the [`NullPolicy`] instantiation —
+    /// the `HashMap::new` pattern — so `Q3Brain::new(ch)` needs no type annotation.
     pub fn new(ch: Q3Character) -> Self {
+        Self::new_with_policy(ch, NullPolicy)
+    }
+}
+
+impl<P: GoalPolicy> Q3Brain<P> {
+    /// Construct a Q3 brain whose roam-fallback goal and posture consult `policy` (Plan 72).
+    pub fn new_with_policy(ch: Q3Character, policy: P) -> Self {
         let steering = Steering::new(1.0 + ch.aim_skill * 4.0);
         Self {
             ch,
@@ -193,7 +211,13 @@ impl Q3Brain {
             aim: aim::AimState::new(),
             strafe: r#move::StrafeState::new(),
             rng_state: 0x9e3779b9,
+            policy,
         }
+    }
+
+    /// The policy, for the wrapper brain that owns this q3 core (Plan 72 `JevBrain`).
+    pub fn policy_mut(&mut self) -> &mut P {
+        &mut self.policy
     }
 
     /// A cheap deterministic `[0,1)` roll (per-bot LCG) for the random Q3 cadences (strafe flip,
@@ -300,6 +324,12 @@ impl Q3Brain {
             self.recovery
                 .evaluate(pos, dt, cm, view_yaw, has_nav_target, false)
         };
+        if matches!(
+            rec,
+            RecoveryAction::BackOffThenRepath | RecoveryAction::BoxedIn
+        ) {
+            self.policy.on_stall();
+        }
         match rec {
             RecoveryAction::None => {}
             RecoveryAction::Jump => mv.jump(),
@@ -450,6 +480,7 @@ impl Q3Brain {
         view: &crate::perception::Worldview,
         cm: Option<&world::CollisionModel>,
         took_damage: bool,
+        post: Posture,
     ) {
         let self_pos = view.self_state().origin;
         let eye = crate::los::eye_origin(self_pos.into());
@@ -503,7 +534,8 @@ impl Q3Brain {
                 let in_their_fov = fov_cone(enemy_forward, self_pos - e.origin, 90.0);
                 if !in_their_fov {
                     let hdelta = Some(e.origin.z - self_pos.z);
-                    if crate::q3char::wants_to_retreat(view, &self.ch, hdelta) {
+                    // A policy `disengage` adds caution here too (Plan 72): skip, never engage.
+                    if post.disengage || crate::q3char::wants_to_retreat(view, &self.ch, hdelta) {
                         continue;
                     }
                 }
@@ -832,7 +864,7 @@ impl Q3Brain {
     }
 }
 
-impl Brain for Q3Brain {
+impl<P: GoalPolicy + Send> Brain for Q3Brain<P> {
     fn set_map(&mut self, map: BrainMap) {
         let BrainMap {
             roam_nodes,
@@ -884,11 +916,22 @@ impl Brain for Q3Brain {
         let took_damage = health < self.last_health;
 
         // ── 1. Perceive: acquire/refresh the enemy + this frame's aggression decision ──
-        self.select_enemy(view, cm, took_damage);
+        // The policy's posture is asked ONCE, before enemy selection, so the sneak-past veto and
+        // the FSM inputs below see the same answer (Plan 72).
+        let post = self.policy.posture(&PostureQuery { view, ch: &self.ch });
+        self.select_enemy(view, cm, took_damage, post);
         let enemy_visible = self.enemy_visible(view, cm);
         let hdelta = self.enemy_height_delta(view);
-        let wants_retreat = crate::q3char::wants_to_retreat(view, &self.ch, hdelta);
-        let wants_chase = crate::q3char::wants_to_chase(view, &self.ch, hdelta);
+        let h_retreat = crate::q3char::wants_to_retreat(view, &self.ch, hdelta);
+        let h_chase = crate::q3char::wants_to_chase(view, &self.ch, hdelta);
+        // Add caution only: a disengage forces retreat AND clears chase — both true would loop
+        // `run_fsm` Fight → Retreat → Chase → … into a non-firing Chase (see `policy`).
+        let wants_retreat = h_retreat || post.disengage;
+        let wants_chase = h_chase && !post.disengage;
+        debug_assert!(
+            !(wants_retreat && wants_chase),
+            "q3char retreat/chase are `<`/`>` of one threshold"
+        );
 
         // ── 2. Node FSM transitions (aggression-gated) ──
         self.run_fsm(view, wants_retreat, wants_chase, enemy_visible);
@@ -923,7 +966,11 @@ impl Brain for Q3Brain {
                             // Chase / lost-sight fight / retreat → path toward the goal.
                             Q3Node::BattleFight | Q3Node::BattleChase => self.battle_goal(view),
                             Q3Node::BattleRetreat => self.retreat_goal(view),
-                            _ => self.roam_goal(view, ticks, pos),
+                            // Roam fallback: the one goal a policy may replace (Plan 72).
+                            _ => match self.policy.objective(&GoalQuery { view, ticks, pos }) {
+                                Some(g) => g,
+                                None => self.roam_goal(view, ticks, pos),
+                            },
                         };
                         self.locomote(nav, cm, pos, goal, dt, view, &mut mv);
                     }
@@ -1338,5 +1385,126 @@ mod tests {
             PARITY_GOLDEN.lines().count(),
             "trace length differs from the golden"
         );
+    }
+
+    /// A scripted policy for the seam tests: a fixed posture + objective, and a stall counter.
+    #[derive(Default)]
+    struct TestPolicy {
+        disengage: bool,
+        goal: Option<NavGoal>,
+        stalls: u32,
+    }
+
+    impl GoalPolicy for TestPolicy {
+        fn objective(&mut self, _q: &GoalQuery) -> Option<NavGoal> {
+            self.goal.clone()
+        }
+        fn posture(&mut self, _q: &PostureQuery) -> Posture {
+            Posture {
+                disengage: self.disengage,
+            }
+        }
+        fn on_stall(&mut self) {
+            self.stalls += 1;
+        }
+    }
+
+    fn tick_with(b: &mut Q3Brain<TestPolicy>, view: &Worldview, nav: &mut StubNav, t: u32) {
+        b.tick(BrainContext {
+            view,
+            nav: Some(nav),
+            cm: None,
+            dt: 0.1,
+            ticks: t,
+            goal_override: None,
+        });
+    }
+
+    #[test]
+    fn disengage_on_a_chase_state_retreats_instead_of_looping_into_chase() {
+        // Sarge + railgun + full health is the `high_aggression_enemy_enters_fight` state:
+        // q3char says CHASE. A disengage must land in BattleRetreat. With the first draft's
+        // merge (retreat forced on, chase left on) run_fsm cycles Fight→Retreat→Chase→… until
+        // MAX_NODESWITCHES and stops in Chase (50 mod 3) — a node that never calls combat_drive.
+        let policy = TestPolicy {
+            disengage: true,
+            ..Default::default()
+        };
+        let mut b = Q3Brain::new_with_policy(Q3Character::sarge(), policy);
+        let view = view_enemy("models/weapons/v_rail/tris.md2", 100, 8);
+        let mut nav = StubNav {
+            pursue: Some(Vec3::new(200.0, 0.0, 0.0)),
+            ..Default::default()
+        };
+        tick_with(&mut b, &view, &mut nav, 1);
+        assert_eq!(b.status(), "retreat");
+        tick_with(&mut b, &view, &mut nav, 2);
+        assert_eq!(
+            b.status(),
+            "retreat",
+            "stays in retreat; no Retreat→Chase hop"
+        );
+    }
+
+    #[test]
+    fn disengage_vetoes_a_distant_unaware_enemy_q3_would_engage() {
+        // Railgun + full health: plain q3 commits to an enemy 200u away even if it faces away
+        // (wants_retreat is false, so the sneak-past veto does not fire). A disengage adds
+        // that caution: skip it and stay roaming.
+        let view = view_enemy_at(200.0, 0.0, "models/weapons/v_rail/tris.md2", 8, 100);
+        let mut nav = StubNav {
+            pursue: Some(Vec3::new(200.0, 0.0, 0.0)),
+            ..Default::default()
+        };
+        let mut plain = Q3Brain::new_with_policy(Q3Character::sarge(), TestPolicy::default());
+        tick_with(&mut plain, &view, &mut nav, 1);
+        assert_eq!(plain.enemy, Some(9), "plain q3 engages");
+        let cautious = TestPolicy {
+            disengage: true,
+            ..Default::default()
+        };
+        let mut b = Q3Brain::new_with_policy(Q3Character::sarge(), cautious);
+        tick_with(&mut b, &view, &mut nav, 1);
+        assert!(b.enemy.is_none(), "disengage skips the unaware enemy");
+        assert_eq!(b.status(), "seek-ltg");
+    }
+
+    #[test]
+    fn objective_replaces_only_the_roam_fallback_goal() {
+        let g = NavGoal::Position(Vec3::new(512.0, -64.0, 0.0));
+        let policy = TestPolicy {
+            goal: Some(g.clone()),
+            ..Default::default()
+        };
+        let mut b = Q3Brain::new_with_policy(Q3Character::sarge(), policy);
+        let mut nav = StubNav {
+            pursue: Some(Vec3::new(200.0, 0.0, 0.0)),
+            ..Default::default()
+        };
+        // SeekLtg, no enemy: the policy's goal is what the navigator gets.
+        tick_with(&mut b, &empty_view(), &mut nav, 1);
+        assert_eq!(b.status(), "seek-ltg");
+        assert_eq!(nav.last_goal, Some(g.clone()));
+        // A visible enemy: BattleFight drives battle_goal — the objective has no effect.
+        let view = view_enemy("models/weapons/v_rail/tris.md2", 100, 8);
+        tick_with(&mut b, &view, &mut nav, 2);
+        assert_eq!(b.status(), "fight");
+        assert_ne!(nav.last_goal, Some(g), "battle nodes ignore the objective");
+    }
+
+    #[test]
+    fn stuck_recovery_escalation_reports_on_stall() {
+        // A static position with a look-ahead ahead of us: recovery escalates (the golden shows
+        // back-off ticks in the same situation), and each escalation reaches the policy.
+        let mut b = Q3Brain::new_with_policy(Q3Character::sarge(), TestPolicy::default());
+        let mut nav = StubNav {
+            pursue: Some(Vec3::new(200.0, 0.0, 0.0)),
+            ..Default::default()
+        };
+        let view = empty_view();
+        for t in 1..=200 {
+            tick_with(&mut b, &view, &mut nav, t);
+        }
+        assert!(b.policy_mut().stalls > 0, "on_stall was called");
     }
 }
