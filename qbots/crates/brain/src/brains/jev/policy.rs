@@ -69,6 +69,8 @@ pub const RESPAWN_SETTLE_S: f32 = 2.0;
 /// released `empty` still reached the pad and picked the weapon up (a pad on another floor
 /// level is outside PVS) — so only "standing next to it and it is not there" counts.
 const PAD_TRUST_RANGE: f32 = 128.0;
+/// A patrol target not reached in this long is dropped (brain seconds).
+const PATROL_GIVE_UP_S: f32 = 20.0;
 /// A cached retreat pad is recomputed after this long (brain time, seconds) — each is one flood.
 const RETREAT_REFRESH_S: f32 = 1.0;
 /// After an objective ask attempt (sent, paced, or nothing to offer), wait this long before the
@@ -152,6 +154,12 @@ pub struct JevPolicy {
     rim: Vec<f32>,
     /// What pads are priced with: `rim` plus the mover surcharge (Plan 74 B8).
     risk: Vec<f32>,
+    /// Patrol the high-value pads when there is nothing to fetch (Plan 74 B10).
+    patrol: bool,
+    /// The pad being patrolled to, and since when.
+    patrol_target: Option<(Pad, f32)>,
+    /// Recently patrolled pads `(item, arrival time)`.
+    visited: Vec<(usize, f32)>,
 }
 
 /// An open objective outcome window.
@@ -215,6 +223,10 @@ impl JevPolicy {
             pad_retreat: false,
             rim: Vec::new(),
             risk: Vec::new(),
+            // `QBOTS_NO_PATROL` turns it off for interleaved A/B measurement (Plan 74 X3).
+            patrol: std::env::var_os("QBOTS_NO_PATROL").is_none(),
+            patrol_target: None,
+            visited: Vec::new(),
             shadow: false,
         }
     }
@@ -225,6 +237,7 @@ impl JevPolicy {
             shadow: true,
             asks_objective: false,
             pad_retreat: false,
+            patrol: false,
             ..Self::new(source)
         }
     }
@@ -475,6 +488,40 @@ impl JevPolicy {
         self.rim = rim;
     }
 
+    /// Patrol high-value pads when idle (Plan 74 B10; on by default for jev and jvr).
+    pub fn set_patrol(&mut self, on: bool) {
+        self.patrol = on;
+    }
+
+    /// The patrol goal for this tick: keep the current target until arrival (then mark it
+    /// visited) or [`PATROL_GIVE_UP_S`]; otherwise pick the next pad — one graph flood.
+    fn patrol_goal(&mut self, view: &Worldview, pos: glam::Vec3) -> Option<NavGoal> {
+        if let Some((p, since)) = self.patrol_target {
+            let arrived = (p.origin - pos).truncate().length() <= ARRIVE_RADIUS;
+            if arrived {
+                self.visited.retain(|&(i, _)| i != p.item);
+                self.visited.push((p.item, self.time));
+            }
+            if arrived || self.time - since >= PATROL_GIVE_UP_S {
+                self.patrol_target = None;
+            }
+        }
+        if self.patrol_target.is_none() {
+            let g = self.nav_graph.as_ref()?;
+            let pad = pads::patrol_pad(
+                &self.items,
+                &self.memory,
+                g,
+                &self.risk,
+                view,
+                self.time,
+                &self.visited,
+            )?;
+            self.patrol_target = Some((pad, self.time));
+        }
+        self.patrol_target.map(|(p, _)| NavGoal::Position(p.origin))
+    }
+
     /// Retreat toward a pad (Plan 74 B2) or leave the retreat goal to q3 (the default since B8).
     pub fn set_pad_retreat(&mut self, on: bool) {
         self.pad_retreat = on;
@@ -552,6 +599,8 @@ impl JevPolicy {
         self.objective = None;
         self.rim.clear();
         self.risk.clear();
+        self.patrol_target = None;
+        self.visited.clear();
     }
 
     /// The best pad per class for this bot now (Plan 74 T3) — one graph flood, so call it per
@@ -740,15 +789,22 @@ impl JevPolicy {
 }
 
 impl GoalPolicy for JevPolicy {
-    fn objective(&mut self, _q: &GoalQuery) -> Option<NavGoal> {
+    fn objective(&mut self, q: &GoalQuery) -> Option<NavGoal> {
         if self.inert || self.shadow {
             return None;
         }
-        self.objective.map(|(p, _)| NavGoal::Position(p.origin))
+        if let Some((p, _)) = self.objective {
+            return Some(NavGoal::Position(p.origin));
+        }
+        if self.patrol {
+            return self.patrol_goal(q.view, q.pos);
+        }
+        None
     }
 
     fn on_stall(&mut self) {
         self.release_objective("stall");
+        self.patrol_target = None;
         self.retreat = None;
     }
 

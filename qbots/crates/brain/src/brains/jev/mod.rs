@@ -872,16 +872,31 @@ mod tests {
 
     #[test]
     fn jev_objective_carry_on_and_off_ticket_leave_q3_roaming() {
-        let (mut b, stub, t) = asked_and_answered(Some(1)); // carry_on
+        // With patrol off, carry_on / a rejected answer leave q3's own roam goal.
         let roam_goal = Some(NavGoal::Waypoint(4));
+        let (mut b, stub, t) = asked_and_answered(Some(1)); // carry_on
+        b.policy_mut().set_patrol(false);
         assert_eq!(roam(&mut b, &roam_view(0.0, false), 2), roam_goal);
         assert!(b.policy().held_objective().is_none());
         assert_eq!(stub.acks(), vec![(t, ApplyOutcome::Applied)]);
         let (mut b, stub, t) = asked_and_answered(Some(2)); // only 2 options were offered
+        b.policy_mut().set_patrol(false);
         assert_eq!(roam(&mut b, &roam_view(0.0, false), 2), roam_goal);
         assert_eq!(
             stub.acks(),
             vec![(t, ApplyOutcome::Rejected(BrainReject::OffTicketLabel))]
+        );
+    }
+
+    #[test]
+    fn jev_patrol_walks_to_a_high_value_pad_when_there_is_nothing_to_fetch() {
+        // carry_on: no objective — the patrol (on by default) heads for the rocket pad, which
+        // is a strong-weapon pad; the ammo box on node 1 is never a patrol stop.
+        let (mut b, _, _) = asked_and_answered(Some(1));
+        assert!(b.policy().held_objective().is_none());
+        assert_eq!(
+            roam(&mut b, &roam_view(0.0, false), 2),
+            Some(NavGoal::Position(Vec3::new(768.0, 0.0, 0.0)))
         );
     }
 

@@ -163,6 +163,56 @@ pub fn mover_node_costs(graph: &NavGraph) -> Vec<f32> {
     c
 }
 
+/// A patrolled pad is not revisited for this long (brain seconds) — Plan 74 B10.
+pub const PATROL_COOLDOWN_S: f32 = 30.0;
+
+/// The next pad to patrol (Plan 74 B10): when the bot has nothing to fetch, walk the map's
+/// high-value pads — strong weapons and armor — instead of q3's random roam nodes. Opponents
+/// come to the same pads to re-arm, so a patrol meets fights and denies items. Cheapest by the
+/// risk-priced travel cost; skips pads visited within [`PATROL_COOLDOWN_S`], pads known empty,
+/// and the pad we are standing on.
+pub fn patrol_pad(
+    items: &[MapItem],
+    memory: &ItemMemory,
+    graph: &NavGraph,
+    risk: &[f32],
+    view: &Worldview,
+    now: f32,
+    visited: &[(usize, f32)],
+) -> Option<Pad> {
+    let s = view.self_state();
+    let from = graph.nearest(&s.origin.into())?;
+    let costs = graph.flood_costs_weighted(from, risk);
+    let recent = |i: usize| {
+        visited
+            .iter()
+            .any(|&(v, t)| v == i && now - t < PATROL_COOLDOWN_S)
+    };
+    items
+        .iter()
+        .enumerate()
+        .filter(|(i, it)| {
+            let valuable = match it.class {
+                EntityClass::ItemWeapon => it.weapon.is_some_and(|w| !is_weak(w)),
+                EntityClass::ItemArmor => true,
+                _ => false,
+            };
+            valuable
+                && !recent(*i)
+                && memory.available(*i, it.class, now)
+                && (it.origin - s.origin).truncate().length() > 96.0
+        })
+        .filter_map(|(i, it)| {
+            let cost = it.nav_node.and_then(|n| costs.get(n).copied())?;
+            cost.is_finite().then_some(Pad {
+                item: i,
+                origin: it.origin,
+                cost,
+            })
+        })
+        .min_by(|a, b| a.cost.total_cmp(&b.cost))
+}
+
 /// Weak weapons — the decision state's own set. A weak pad is never a weapon objective
 /// (Plan 74 B3): walking to a shotgun leaves the bot as under-armed as the blaster did.
 fn is_weak(w: Weapon) -> bool {
