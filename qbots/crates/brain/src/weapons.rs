@@ -407,9 +407,99 @@ pub fn select_best_weapon(held: Weapon, distance: f32, held_ammo: i32) -> Weapon
     }
 }
 
+/// What the bot can actually switch to (Plan 74 B2) — learned from the server's answers, since
+/// the wire carries no inventory. `use <name>` for an unowned weapon is a silent server no-op,
+/// so a request whose weapon is not **held** within [`Arsenal::GRANT_S`] is marked refused for
+/// [`Arsenal::DENY_S`]; a new pickup is therefore tried within that time. The held weapon (the
+/// view model) is the only truth — never the last request.
+#[derive(Clone, Debug, Default)]
+pub struct Arsenal {
+    /// `(weapon, refused at)`.
+    denied: Vec<(Weapon, f32)>,
+    /// The outstanding request and when it was sent.
+    pending: Option<(Weapon, f32)>,
+}
+
+impl Arsenal {
+    /// How long the server gets to grant a switch before we call the weapon unowned.
+    pub const GRANT_S: f32 = 0.5;
+    /// How long a refused weapon is skipped before being tried again.
+    pub const DENY_S: f32 = 8.0;
+
+    /// Forget everything (a respawn drops the inventory to the blaster).
+    pub fn reset(&mut self) {
+        self.denied.clear();
+        self.pending = None;
+    }
+
+    fn is_denied(&self, w: Weapon, now: f32) -> bool {
+        self.denied
+            .iter()
+            .any(|&(d, t)| d == w && now - t < Self::DENY_S)
+    }
+
+    /// The weapon to request for a target at `distance`, if a switch is worth asking for:
+    /// the best-scoring weapon not recently refused (the blaster is never refused), when it is
+    /// not what we hold and no request is outstanding. `held` is the view model's weapon.
+    pub fn choose(&mut self, held: Option<Weapon>, distance: f32, now: f32) -> Option<Weapon> {
+        if let Some((w, t)) = self.pending {
+            if held == Some(w) {
+                self.pending = None;
+            } else if now - t >= Self::GRANT_S {
+                self.pending = None;
+                self.denied.retain(|&(d, _)| d != w);
+                self.denied.push((w, now));
+            } else {
+                return None;
+            }
+        }
+        let held_score = held.map_or(0.0, |h| score_weapon(h, distance));
+        let best = ALL_WEAPONS
+            .into_iter()
+            .filter(|&w| w == Weapon::Blaster || !self.is_denied(w, now))
+            .max_by(|a, b| score_weapon(*a, distance).total_cmp(&score_weapon(*b, distance)))?;
+        if Some(best) == held || score_weapon(best, distance) <= held_score * 1.05 {
+            return None;
+        }
+        self.pending = Some((best, now));
+        Some(best)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arsenal_learns_what_the_server_refuses_and_retries_later() {
+        let mut a = Arsenal::default();
+        let far = 800.0; // railgun country
+                         // Holding the blaster: ask for the best weapon there is.
+        assert_eq!(
+            a.choose(Some(Weapon::Blaster), far, 0.0),
+            Some(Weapon::Railgun)
+        );
+        assert_eq!(
+            a.choose(Some(Weapon::Blaster), far, 0.2),
+            None,
+            "waiting for the grant"
+        );
+        // Not granted: railgun refused; next best is asked.
+        let second = a
+            .choose(Some(Weapon::Blaster), far, 0.6)
+            .expect("next best");
+        assert_ne!(second, Weapon::Railgun);
+        // Granted this time: no more requests while it is held.
+        assert_eq!(a.choose(Some(second), far, 0.8), None);
+        assert_eq!(a.choose(Some(second), far, 1.0), None);
+        // After DENY_S the railgun is tried again (a pickup may have happened).
+        assert_eq!(a.choose(Some(second), far, 9.0), Some(Weapon::Railgun));
+        a.reset();
+        assert_eq!(
+            a.choose(Some(Weapon::Blaster), far, 9.1),
+            Some(Weapon::Railgun)
+        );
+    }
 
     #[test]
     fn from_classname_maps_weapon_pads_not_ammo() {

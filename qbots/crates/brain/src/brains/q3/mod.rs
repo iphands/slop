@@ -152,6 +152,8 @@ pub struct Q3Brain<P: GoalPolicy = NullPolicy> {
 
     // ── weapon (optimistic held-weapon tracking for `use` requests) ────────────────────
     held_weapon: weapons::Weapon,
+    /// Which switches the server grants (Plan 74 B2) — learned, since the wire has no inventory.
+    arsenal: weapons::Arsenal,
     /// Time (seconds) of the last weapon switch — gates a 0.1 s mid-change fire lockout.
     weapon_switch_time: f32,
 
@@ -207,6 +209,7 @@ impl<P: GoalPolicy> Q3Brain<P> {
             next_jump_time: 0.0,
             next_crouch_time: 0.0,
             held_weapon: weapons::Weapon::Blaster,
+            arsenal: weapons::Arsenal::default(),
             weapon_switch_time: f32::NEG_INFINITY,
             aim: aim::AimState::new(),
             strafe: r#move::StrafeState::new(),
@@ -690,16 +693,18 @@ impl<P: GoalPolicy> Q3Brain<P> {
         let dist = to.length().max(1.0);
         let dir = Vec3::new(to.x, to.y, 0.0).normalize_or_zero();
 
-        // Weapon selection (optimistic; the server grants only owned weapons).
-        // q3 keeps its Plan-38 baseline weapon model — opt out of Plan 30 T4 ammo gating.
-        let desired = weapons::select_best_weapon(self.held_weapon, dist, i32::MAX);
-        let weapon_request = if desired != self.held_weapon {
-            self.held_weapon = desired;
+        // Weapon selection. Plan 74 B2: the held weapon is the VIEW MODEL's, never the last
+        // request — the old optimistic model set `held_weapon = desired` on the request, so after
+        // one `use Railgun` the server ignored (unowned) q3 aimed as if holding a railgun while
+        // firing the blaster, and never asked for the rocket launcher it did pick up.
+        let held_now = view.self_state().held_weapon;
+        if let Some(h) = held_now {
+            self.held_weapon = h;
+        }
+        let weapon_request = self.arsenal.choose(held_now, dist, self.time);
+        if weapon_request.is_some() {
             self.weapon_switch_time = self.time;
-            Some(desired)
-        } else {
-            None
-        };
+        }
         let weapon = self.held_weapon;
 
         // Aim (Q3 per-weapon accuracy + reaction gate + error model).
@@ -898,6 +903,7 @@ impl<P: GoalPolicy + Send> Brain for Q3Brain<P> {
     fn on_death(&mut self) {
         // Respawn loadout is the blaster; reset combat state.
         self.held_weapon = weapons::Weapon::Blaster;
+        self.arsenal.reset();
         self.enemy = None;
         self.last_enemy_pos = None;
         self.enemy_first_seen = None;
