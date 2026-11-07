@@ -456,3 +456,41 @@ async fn jev_wiring_links_only_jev_bots_and_level_change_clears_the_decision() {
         "a level change drops the old level's decision"
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn jev_telemetry_counts_decisive_no_signal_and_the_three_ratios() {
+    let t = Scripted::default();
+    t.push(10, Ok(&decisive()));
+    t.push(10, Ok(&answer(0.55, 0.45)));
+    t.push(10, Err(PostError::Transport(TransportErr::Refused)));
+    let c = HubConfig {
+        event_floor: Duration::from_secs(5),
+        ..cfg()
+    };
+    let (hub, h) = start(c, 1, &t);
+    let t1 = h[0].submit(ask(1, Trigger::Damage)).expect("accepted");
+    settle(50).await;
+    h[0].ack(t1, ApplyOutcome::Applied);
+    assert_eq!(h[0].submit(ask(2, Trigger::Damage)), None, "paced");
+    settle(6600).await;
+    h[0].submit(ask(3, Trigger::Damage)).expect("accepted");
+    settle(6600).await;
+    h[0].submit(ask(4, Trigger::Damage)).expect("accepted");
+    settle(50).await;
+    let c = hub.counters();
+    assert_eq!((c.asked, c.paced, c.admitted), (3, 1, 3));
+    assert_eq!(
+        (c.stored, c.decisive, c.no_signal, c.transport),
+        (2, 1, 1, 1)
+    );
+    assert_eq!(c.applied, 1);
+    assert!(
+        (c.applied_rate() - 1.0 / 3.0).abs() < 1e-9,
+        "applied / asked"
+    );
+    assert!(
+        (c.gate_reject_rate() - 0.5).abs() < 1e-9,
+        "no_signal / stored"
+    );
+    assert_eq!(c.admission_drop_rate(), 0.0);
+}

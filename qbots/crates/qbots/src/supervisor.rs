@@ -323,6 +323,7 @@ pub async fn run_fleet(
     let jev = jev_gate(&cfg, brain == brain::BrainKind::Jev)
         .await?
         .start_hub(count);
+    let jev_report = jev.clone();
 
     let stagger = cfg.fleet.connect_stagger_ms;
     let reconnect = Reconnect {
@@ -416,6 +417,9 @@ pub async fn run_fleet(
     // exiting) — emit the final tally.
     log_final_stats(&stats);
     tracing::info!("fleet exited");
+    if let Some(hub) = &jev_report {
+        log_jev_report(hub);
+    }
     fleet_join_result(&shared)
 }
 
@@ -686,6 +690,7 @@ pub async fn run_competition(
     preflight_capacity(addr, total, loose_botcap).await?;
     let uses_jev = specs.iter().any(|s| s.brain == brain::BrainKind::Jev);
     let jev = jev_gate(&cfg, uses_jev).await?.start_hub(total);
+    let jev_report = jev.clone();
 
     let stagger = cfg.fleet.connect_stagger_ms;
     let reconnect = Reconnect {
@@ -782,7 +787,49 @@ pub async fn run_competition(
     // (which returns Err) still leaves the standings on disk.
     dump_final_roster(&stats, &group_tags, &specs);
     tracing::info!("competition exited");
+    // Plan 72 T11: the jev report, THEN the hard-fail — a jev arm that applied nothing is a null
+    // result indistinguishable from "the model does nothing", never a measurement.
+    if let Some(hub) = &jev_report {
+        if !log_jev_report(hub) {
+            return Err(std::io::Error::other(
+                "the jev arm applied 0 decisions — this run is not a measurement of the model",
+            ));
+        }
+    }
     fleet_join_result(&shared)
+}
+
+/// The jev final report (Plan 72 T11). Returns `false` when nothing was applied.
+fn log_jev_report(hub: &crate::jev::hub::Hub) -> bool {
+    let c = hub.counters();
+    tracing::info!(
+        asked = c.asked,
+        admitted = c.admitted,
+        stored = c.stored,
+        decisive = c.decisive,
+        no_signal = c.no_signal,
+        applied = c.applied,
+        rejected = c.rejected,
+        paced = c.paced,
+        skipped_no_capacity = c.skipped_no_capacity,
+        budget = c.budget,
+        circuit = c.circuit,
+        transport = c.transport,
+        malformed = c.malformed,
+        stale_generation = c.stale_generation,
+        breaker_opened = c.breaker_opened,
+        "── jev report ──"
+    );
+    tracing::info!(
+        applied_over_asked = format!("{:.3}", c.applied_rate()),
+        gate_reject_rate = format!("{:.3}", c.gate_reject_rate()),
+        admission_drop_rate = format!("{:.3}", c.admission_drop_rate()),
+        "jev ratios (headline: applied/asked)"
+    );
+    if c.applied == 0 {
+        tracing::error!("jev applied 0 decisions in this run");
+    }
+    c.applied > 0
 }
 
 /// Report how many map changes the run went through — one aggregated fleet-wide number plus the

@@ -16,8 +16,8 @@
 
 use std::collections::BTreeMap;
 
-use brain::jev::decision::{Decision, MalformedKind};
-use brain::jev::gate::{gate, GateThresholds};
+use brain::jev::decision::{Decision, DistStats, MalformedKind};
+use brain::jev::gate::{gate, stats, GateThresholds};
 use brain::jev::question::{QuestionKey, QuestionKind, QuestionSpec};
 use serde::Deserialize;
 
@@ -91,6 +91,8 @@ pub struct Validated {
     pub results: Vec<(QuestionKey, QuestionResult)>,
     /// `usage.input_tokens`, if reported.
     pub input_tokens: Option<u32>,
+    /// Per result (same order): the distribution's statistics (`None` for `noul`).
+    pub stats: Vec<Option<DistStats>>,
 }
 
 /// Parse, check against what was asked and the configured model, and gate each answer.
@@ -106,11 +108,14 @@ pub fn validate(
     }
     let mut answers = resp.answers.unwrap_or_default();
     let mut results = Vec::with_capacity(asked.len());
+    let mut all_stats = Vec::with_capacity(asked.len());
     for q in asked {
         let a = answers
             .remove(q.key.wire_key())
             .ok_or(MalformedKind::MissingKey)?;
-        results.push((q.key, check(&q.kind, a, th)?));
+        let (r, st) = check(&q.kind, a, th)?;
+        results.push((q.key, r));
+        all_stats.push(st);
     }
     if !answers.is_empty() {
         return Err(MalformedKind::ExtraKey);
@@ -118,6 +123,7 @@ pub fn validate(
     Ok(Validated {
         results,
         input_tokens: resp.usage.and_then(|u| u.input_tokens),
+        stats: all_stats,
     })
 }
 
@@ -126,7 +132,7 @@ fn check(
     kind: &QuestionKind,
     a: Answer,
     th: &GateThresholds,
-) -> Result<QuestionResult, MalformedKind> {
+) -> Result<(QuestionResult, Option<DistStats>), MalformedKind> {
     match (kind, a) {
         (_, Answer::Unknown) => Err(MalformedKind::UnknownType),
         (
@@ -141,19 +147,19 @@ fn check(
             }
             let labels: Vec<&str> = opts.iter().map(|o| o.label).collect();
             let p = ordered(&labels, probabilities)?;
-            Ok(QuestionResult::Choice(gated(&p, th)?))
+            Ok((QuestionResult::Choice(gated(&p, th)?), stats(&p)))
         }
         (QuestionKind::Score(levels), Answer::Score { probabilities, .. }) => {
             let names: Vec<String> = (0..levels.len()).map(|i| i.to_string()).collect();
             let names: Vec<&str> = names.iter().map(String::as_str).collect();
             let p = ordered(&names, probabilities)?;
-            Ok(QuestionResult::Score(gated(&p, th)?))
+            Ok((QuestionResult::Score(gated(&p, th)?), stats(&p)))
         }
         (QuestionKind::Noul, Answer::Noul { noul }) => {
             if !(0.0..=1.0).contains(&noul) {
                 return Err(MalformedKind::BadProbabilities);
             }
-            Ok(QuestionResult::Noul(noul))
+            Ok((QuestionResult::Noul(noul), None))
         }
         // A known type, but not the one we asked for.
         _ => Err(MalformedKind::UnknownType),

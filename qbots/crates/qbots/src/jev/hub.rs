@@ -31,7 +31,7 @@ use std::time::Duration;
 
 use brain::jev::decision::{Decision, MalformedKind, TransportErr};
 use brain::jev::gate::GateThresholds;
-use brain::jev::question::QuestionKey;
+use brain::jev::question::{QuestionKey, QuestionKind};
 use brain::jev::source::{AppliedDecision, ApplyOutcome, Ask, DecisionSource, TicketId};
 use brain::jev::state::{Field, FieldKey, MapId};
 use tokio::sync::Notify;
@@ -127,6 +127,35 @@ pub struct Counters {
     pub rejected: u64,
     /// Times the breaker opened.
     pub breaker_opened: u64,
+    /// Stored answers where at least one question passed the gate.
+    pub decisive: u64,
+    /// Stored answers where every question was gated off (`NoSignal`).
+    pub no_signal: u64,
+}
+
+impl Counters {
+    /// `applied / asked` — the headline (everything we wanted to ask and could not counts).
+    pub fn applied_rate(&self) -> f64 {
+        ratio(self.applied, self.asked)
+    }
+
+    /// `no_signal / stored` — when an answer came back, how often it did not discriminate.
+    pub fn gate_reject_rate(&self) -> f64 {
+        ratio(self.no_signal, self.stored)
+    }
+
+    /// `(asked − admitted) / asked` — was the budget/worker capacity the limiter?
+    pub fn admission_drop_rate(&self) -> f64 {
+        ratio(self.asked.saturating_sub(self.admitted), self.asked)
+    }
+}
+
+fn ratio(n: u64, d: u64) -> f64 {
+    if d == 0 {
+        0.0
+    } else {
+        n as f64 / d as f64
+    }
 }
 
 struct Pending {
@@ -224,9 +253,10 @@ impl Hub {
             notify: Notify::new(),
             stop: AtomicBool::new(false),
         });
-        let workers = (0..inner.cfg.max_concurrent)
+        let mut workers: Vec<JoinHandle<()>> = (0..inner.cfg.max_concurrent)
             .map(|_| tokio::spawn(worker(inner.clone())))
             .collect();
+        workers.push(tokio::spawn(fleet_line(inner.clone())));
         Hub { inner, workers }
     }
 
@@ -252,9 +282,6 @@ impl Hub {
     }
 
     /// A snapshot of the counters.
-    // Read by the tests today; T11 reads it for `EVT jev_fleet` and the final report — remove
-    // this allow there (Plan 72 tracker, Follow-ups).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn counters(&self) -> Counters {
         lock(&self.inner.shared).counters
     }
@@ -325,11 +352,24 @@ impl DecisionSource for BotHandle {
         p.last_ask.is_none_or(|t| t.elapsed() >= p.dwell)
     }
 
-    fn ack(&self, _ticket: TicketId, outcome: ApplyOutcome) {
-        let mut sh = lock(&self.inner.shared);
+    fn ack(&self, ticket: TicketId, outcome: ApplyOutcome) {
+        {
+            let mut sh = lock(&self.inner.shared);
+            match outcome {
+                ApplyOutcome::Applied => sh.counters.applied += 1,
+                ApplyOutcome::Rejected(_) => sh.counters.rejected += 1,
+            }
+        }
         match outcome {
-            ApplyOutcome::Applied => sh.counters.applied += 1,
-            ApplyOutcome::Rejected(_) => sh.counters.rejected += 1,
+            ApplyOutcome::Applied => {
+                tracing::debug!(bot = self.bot, ticket = ticket.0, "EVT jev_applied")
+            }
+            ApplyOutcome::Rejected(why) => tracing::info!(
+                bot = self.bot,
+                ticket = ticket.0,
+                why = why.slug(),
+                "EVT jev_reject"
+            ),
         }
     }
 }
@@ -433,7 +473,9 @@ impl Inner {
     }
 
     async fn run(&self, job: Job) {
+        let t0 = Instant::now();
         let res = self.transport.post(job.body.clone()).await;
+        let lat_ms = t0.elapsed().as_millis();
         let validated = res.and_then(|bytes| {
             validate(
                 &bytes,
@@ -458,8 +500,16 @@ impl Inner {
                 Err(e) => self.note_failure(&mut sh, *e),
             }
         }
-        if let Ok(v) = validated {
-            self.store(job.bot, &job.pending, &v);
+        match validated {
+            Ok(v) => self.store(job.bot, &job.pending, &v, lat_ms),
+            Err(e) => tracing::debug!(
+                bot = job.bot,
+                ticket = job.pending.ticket.0,
+                trig = job.pending.ask.trig.slug(),
+                err = ?e,
+                lat_ms,
+                "EVT jev_drop"
+            ),
         }
         self.notify.notify_waiters();
     }
@@ -498,7 +548,7 @@ impl Inner {
         }
     }
 
-    fn store(&self, bot: usize, pending: &Pending, v: &Validated) {
+    fn store(&self, bot: usize, pending: &Pending, v: &Validated, lat_ms: u128) {
         let slot = &self.bots[bot];
         let mut d = lock(&slot.decision);
         if slot.generation.load(Ordering::Relaxed) != pending.generation {
@@ -530,7 +580,86 @@ impl Inner {
             Instant::now(),
         ));
         drop(d);
-        lock(&self.shared).counters.stored += 1;
+        let decisive = v
+            .results
+            .iter()
+            .any(|(_, r)| matches!(r, QuestionResult::Choice(Decision::Apply(_))));
+        {
+            let mut sh = lock(&self.shared);
+            sh.counters.stored += 1;
+            if decisive {
+                sh.counters.decisive += 1;
+            } else {
+                sh.counters.no_signal += 1;
+            }
+        }
+        log_decision(bot, pending, v, lat_ms);
+    }
+}
+
+/// One `EVT jev_decision` line per question of a stored answer.
+fn log_decision(bot: usize, pending: &Pending, v: &Validated, lat_ms: u128) {
+    for ((key, r), st) in v.results.iter().zip(&v.stats) {
+        let spec = pending.ask.questions.iter().find(|q| q.key == *key);
+        let top = st.and_then(|st| match spec.map(|q| &q.kind) {
+            Some(QuestionKind::Choice(opts)) => opts.get(st.top).map(|o| o.label),
+            _ => None,
+        });
+        tracing::info!(
+            bot,
+            ticket = pending.ticket.0,
+            trig = pending.ask.trig.slug(),
+            q = key.wire_key(),
+            top = top.unwrap_or("-"),
+            margin = format!("{:.3}", st.map_or(0.0, |s| s.margin)),
+            n_eff = format!("{:.2}", st.map_or(0.0, |s| s.n_eff)),
+            gate = if matches!(r, QuestionResult::Choice(Decision::Apply(_))) {
+                "apply"
+            } else {
+                "no_signal"
+            },
+            tok = v.input_tokens.unwrap_or(0),
+            lat_ms,
+            "EVT jev_decision"
+        );
+    }
+}
+
+/// `EVT jev_fleet` every 10 s while anything has been asked — the continuous line that shows
+/// a decision-rate collapse while it happens, not only in the final report.
+async fn fleet_line(inner: Arc<Inner>) {
+    let mut iv = tokio::time::interval(Duration::from_secs(10));
+    iv.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    iv.tick().await;
+    loop {
+        iv.tick().await;
+        if inner.stop.load(Ordering::Relaxed) {
+            return;
+        }
+        let (c, inflight) = {
+            let sh = lock(&inner.shared);
+            (sh.counters, sh.refresh_inflight)
+        };
+        if c.asked == 0 {
+            continue;
+        }
+        tracing::info!(
+            asked = c.asked,
+            admitted = c.admitted,
+            stored = c.stored,
+            decisive = c.decisive,
+            applied = c.applied,
+            rejected = c.rejected,
+            paced = c.paced,
+            skipped = c.skipped_no_capacity,
+            budget = c.budget,
+            circuit = c.circuit,
+            transport = c.transport,
+            malformed = c.malformed,
+            refresh_inflight = inflight,
+            applied_rate = format!("{:.2}", c.applied_rate()),
+            "EVT jev_fleet"
+        );
     }
 }
 

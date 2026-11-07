@@ -193,7 +193,7 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 > verification-checklist item in each brain plan — not optional.
 
 > **Currently active**:
-> - **Plan 72** — Jev decision brain: in progress, 9/16 (T2–T9, T12; W1 + W2 passed — posture only); next T11 (telemetry), then the arena. The objective (T10) is parked: it failed calibration.
+> - **Plan 72** — Jev decision brain: in progress, 10/16 (T2–T9, T11, T12; W1 + W2 passed — posture only); next the W3 measurement, run through Plan 73's arena. The objective (T10) is parked: it failed calibration.
 > - **Plan 73** — Jev lab + arena: **blocked** at 4/9 (T1–T4 done; lab findings in `context/distilled/jev_lab.md`) until Plan 72 T11 lands; resumes at T5 (decision journal).
 > **Next free plan number: 74.**
 

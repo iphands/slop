@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 56% complete (9/16 tasks)
+- Status: 63% complete (10/16 tasks)
 - Start date: 2026-11-06 (`date +%F`, local; the plan's `2026-11-07` dates are UTC)
 - Plan: `context/plans/72_jev_decision_brain.md`
 - Evidence: `context/fixtures/jev/` (harvested live request/response pairs from `qbots jev-probe`)
@@ -103,7 +103,7 @@
 | 8 | T8: Hub wiring + `on_map_change` + `goal_override` guard | `crates/qbots/src/main.rs`, `supervisor.rs`, `brains/core.rs`, `brains/jev/{mod,policy}.rs`, `qbots/src/jev/{hub,startup}.rs` | done | **start the hub at BOTH `supervisor.rs:323` and `:682`** or `competition` runs jev with no decider; triggers are flags, submit on the next tick; apply tests live in `brain`; `map_servercount = servercount` stays last. 5 new tests; hub at all three entry points; `allow(dead_code)` removed (one scoped allow left for T11). Submit-on-trigger deferred to T10 (see Notes). Live smoke → **W2** |
 | 9 | T9: `qbots jev-probe` | `crates/qbots/src/jev/probe.rs`, `main.rs` (`Cmd::JevProbe`) | done | **not `crates/tools`** (qbots is bin-only); offline argv + calibration-search tests are the task; the live checks are the **W2 gate**; 501 needs a well-formed chat body. 7 offline tests; **never run against the box by the agent** — every live check is a W2 row below. `matrix --live` cut (#2) |
 | 10 | T10: `objective` question + candidates + triggers | `crates/brain/src/jev/objective.rs`, `brains/jev/policy.rs` | pending | candidates in `JevPolicy`; ≤3 seek/hold moves; resolve against the answer's **own ticket**; **held until released** (no lapse to roam); injection test through the real pipeline (in `qbots`) |
-| 11 | T11: Telemetry — `applied/asked` + the two rates + herd | `crates/qbots/src/jev/telemetry.rs`, `main.rs`, `supervisor.rs` | pending | may move to right after T7; `applied` counted from `ack` only; herd = same-goal until T15; zero-applied ⇒ report first, then non-zero exit |
+| 11 | T11: Telemetry — `applied/asked` + the two rates + herd | `crates/qbots/src/jev/{hub,wire}.rs`, `supervisor.rs` | done | `EVT jev_decision` per question (bot, ticket, trig, q, top, margin, n_eff, gate, tok, lat_ms); `EVT jev_fleet` every 10 s; `EVT jev_reject` per brain rejection; final report + the three ratios; **competition exits non-zero when jev applied 0 — after the report**. Not built: per-(key × trigger) split, herd metric, debug prompt dumps (cut #3) — the Plan 73 journal carries the per-decision detail |
 | 12 | T12: binary `posture` question, add-caution only | `crates/brain/src/brains/jev/{mod,policy}.rs`, `crates/brain/src/jev/source.rs` | done | **pulled ahead of T10** (objective failed W2). Asks the lab-adopted `posture_question()` on `Contact` (new trigger) / `Damage` / due `Refresh` while an enemy is in view; `disengage` applies 6 s (brain time) via T6's merge; `hold` no-op; inert never asks. 4 new tests. `noul` canary and hysteresis not built (cut / follow-up). Live flips/min → **W4** |
 | 13 | T13: `AGENTS.md` fleet-coach carve-out | `AGENTS.md` | pending | **human approval of the exact diff required before T15** |
 | 14 | T14: Per-map region tables + per-bot region question + re-price | `crates/qbots/src/jev/regions.rs`, `config.example.yaml`, `state.rs`, `render.rs` | pending | answers **logged, not applied**; `STATE_SCHEMA_VERSION` → 2; re-price here: 420 tok, `min_dwell_s` 20, `ttl_s` 30 |
@@ -377,5 +377,5 @@ metric, the `EVT jev_fleet` line, `calibrate`.
 | `--char` / roster `char:` for the jev arms | q3 vs jev_static vs jev currently compare only at the skill-derived default character; named presets need `matrix_specs` + roster to accept jev | before T16 if the A/B wants characters |
 | Capture the flat 24-option response verbatim as a fixture | the plan calls it the most valuable fixture; only its summary (top p 0.051) was recorded | T9 harvest |
 | ~~Remove `#![allow(dead_code)]` from `crates/qbots/src/jev/mod.rs`~~ | done in T8 | — |
-| Remove the scoped `allow(dead_code)` on `Hub::counters` | T11 reads the counters for `EVT jev_fleet` and the report | **T11** |
+| ~~Remove the scoped `allow(dead_code)` on `Hub::counters`~~ | done in T11 | — |
 | Submit-on-trigger test (`on_death` → next tick submits) | moved from T8: needs a real question to ask | **T10** |
