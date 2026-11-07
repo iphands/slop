@@ -142,6 +142,27 @@ fn slot<'a>(
     }
 }
 
+/// Extra pricing cost for a node that starts or ends a ride (mover) edge — Plan 74 B8.
+pub const MOVER_NODE_COST: f32 = 512.0;
+
+/// Per-node pricing surcharge for pad routes that ride a mover: [`MOVER_NODE_COST`] on both ends
+/// of every ride edge. Plan 74 B3–B6: the pickup arms were crushed ("squish") about twice as
+/// often as q3 (jev 32, jvr 37, q3 20), clustered on q2dm3's loop-train/elevator route to the
+/// second railgun — trips to that pad ride the train.
+pub fn mover_node_costs(graph: &NavGraph) -> Vec<f32> {
+    let mut c = vec![0.0; graph.node_count()];
+    for (a, cost) in c.iter_mut().enumerate() {
+        if graph
+            .neighbors(a)
+            .iter()
+            .any(|&(b, _)| graph.is_ride_edge(a, b) || graph.is_ride_edge(b, a))
+        {
+            *cost = MOVER_NODE_COST;
+        }
+    }
+    c
+}
+
 /// Weak weapons — the decision state's own set. A weak pad is never a weapon objective
 /// (Plan 74 B3): walking to a shotgun leaves the bot as under-armed as the blaster did.
 fn is_weak(w: Weapon) -> bool {
@@ -296,6 +317,25 @@ mod tests {
 
     const BLASTER: &str = "models/weapons/v_blast/tris.md2";
     const RAIL: &str = "models/weapons/v_rail/tris.md2";
+
+    #[test]
+    fn jev_pads_mover_surcharge_marks_both_ends_of_a_ride() {
+        let mut g = graph();
+        let info = world::RideInfo {
+            board: [256.0, 0.0, 0.0],
+            far: [512.0, 0.0, 0.0],
+            dismount: [512.0, 0.0, 0.0],
+            model_index: 7,
+            vertical: false,
+            board_ent: [256.0, 0.0, 0.0],
+            far_ent: [512.0, 0.0, 0.0],
+            ladder: false,
+            stand_offset: [0.0; 3],
+        };
+        g.add_ride_edge(1, 2, 300.0, info);
+        let c = mover_node_costs(&g);
+        assert_eq!(c, vec![0.0, MOVER_NODE_COST, MOVER_NODE_COST, 0.0, 0.0]);
+    }
 
     #[test]
     fn jev_pads_out_of_sight_weapon_pad_is_a_candidate_ammo_is_not() {

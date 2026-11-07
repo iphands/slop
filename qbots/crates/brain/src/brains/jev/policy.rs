@@ -150,6 +150,8 @@ pub struct JevPolicy {
     /// Per-node rim surcharge for pricing pads (Plan 74 B7), built once per map from the
     /// collision model the brain's tick carries; empty until then (plain travel cost).
     rim: Vec<f32>,
+    /// What pads are priced with: `rim` plus the mover surcharge (Plan 74 B8).
+    risk: Vec<f32>,
 }
 
 /// An open objective outcome window.
@@ -210,6 +212,7 @@ impl JevPolicy {
             retreat: None,
             pad_retreat: true,
             rim: Vec::new(),
+            risk: Vec::new(),
             shadow: false,
         }
     }
@@ -466,12 +469,13 @@ impl JevPolicy {
     /// Install a rim overlay directly (tests; production builds it with [`Self::ensure_rim`]).
     #[cfg(test)]
     pub(crate) fn set_rim(&mut self, rim: Vec<f32>) {
+        self.risk = rim.clone();
         self.rim = rim;
     }
 
     /// The risk overlay pads are priced with (empty ⇒ plain travel cost).
     fn risk(&self) -> &[f32] {
-        &self.rim
+        &self.risk
     }
 
     /// Build the rim surcharge for the current map once a collision model is available
@@ -480,6 +484,13 @@ impl JevPolicy {
         if self.rim.is_empty() {
             if let Some(g) = &self.nav_graph {
                 self.rim = crate::hazard::rim_node_costs(g, cm);
+                // Lava rims (B7) and mover rides (B8) both make a pad route risky.
+                self.risk = self
+                    .rim
+                    .iter()
+                    .zip(pads::mover_node_costs(g))
+                    .map(|(r, m)| r + m)
+                    .collect();
             }
         }
     }
@@ -533,6 +544,7 @@ impl JevPolicy {
         self.memory = ItemMemory::with_trust_range(PAD_TRUST_RANGE);
         self.objective = None;
         self.rim.clear();
+        self.risk.clear();
     }
 
     /// The best pad per class for this bot now (Plan 74 T3) — one graph flood, so call it per
