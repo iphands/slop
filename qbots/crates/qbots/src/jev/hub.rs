@@ -77,6 +77,8 @@ pub struct HubConfig {
     pub gate: GateThresholds,
     /// Plan 73 decision journal: append one JSON line per decision, with its outcome, here.
     pub journal: Option<std::path::PathBuf>,
+    /// Plan 73 shadow mode: `jev_static` bots ask and journal too, never steering.
+    pub shadow: bool,
 }
 
 impl Default for HubConfig {
@@ -97,6 +99,7 @@ impl Default for HubConfig {
             breaker_open: Duration::from_secs(5),
             gate: GateThresholds::default(),
             journal: None,
+            shadow: false,
         }
     }
 }
@@ -134,6 +137,10 @@ pub struct Counters {
     pub decisive: u64,
     /// Stored answers where every question was gated off (`NoSignal`).
     pub no_signal: u64,
+    /// Asks from shadow bots (Plan 73) — kept out of `asked` so the headline is jev's own.
+    pub shadow_asked: u64,
+    /// Decisions resolved by shadow bots (never applied).
+    pub shadowed: u64,
 }
 
 impl Counters {
@@ -330,8 +337,13 @@ pub struct JevLink {
 
 impl JevLink {
     /// The link for bot index `bot`, if the hub is running and the bot runs the `jev` brain.
+    /// A `jev` bot always gets one; a `jev_static` bot only in shadow mode (it then asks and
+    /// journals but never steers — `build_brain_with_decider` builds it as a shadow brain).
     pub fn for_bot(hub: &Option<Arc<Hub>>, brain: brain::BrainKind, bot: usize) -> Option<Self> {
-        let hub = hub.as_ref().filter(|_| brain == brain::BrainKind::Jev)?;
+        let hub = hub.as_ref().filter(|h| {
+            brain == brain::BrainKind::Jev
+                || (brain == brain::BrainKind::JevStatic && h.inner.cfg.shadow)
+        })?;
         hub.set_arm(bot, brain::brain_tag(brain));
         Some(Self {
             hub: hub.clone(),
@@ -391,12 +403,16 @@ impl DecisionSource for BotHandle {
             let mut sh = lock(&self.inner.shared);
             match outcome {
                 ApplyOutcome::Applied => sh.counters.applied += 1,
+                ApplyOutcome::Shadowed => sh.counters.shadowed += 1,
                 ApplyOutcome::Rejected(_) => sh.counters.rejected += 1,
             }
         }
         match outcome {
             ApplyOutcome::Applied => {
                 tracing::debug!(bot = self.bot, ticket = ticket.0, "EVT jev_applied")
+            }
+            ApplyOutcome::Shadowed => {
+                tracing::debug!(bot = self.bot, ticket = ticket.0, "EVT jev_shadowed")
             }
             ApplyOutcome::Rejected(why) => tracing::info!(
                 bot = self.bot,
@@ -438,7 +454,14 @@ impl Inner {
             created: now,
             generation,
         });
-        lock(&self.shared).counters.asked += 1;
+        {
+            let mut sh = lock(&self.shared);
+            if slot.arm.get() == Some(&"jev_static") {
+                sh.counters.shadow_asked += 1;
+            } else {
+                sh.counters.asked += 1;
+            }
+        }
         self.notify.notify_waiters();
         Some(ticket)
     }
@@ -743,7 +766,7 @@ async fn fleet_line(inner: Arc<Inner>) {
             let sh = lock(&inner.shared);
             (sh.counters, sh.refresh_inflight)
         };
-        if c.asked == 0 {
+        if c.asked + c.shadow_asked == 0 {
             continue;
         }
         tracing::info!(
@@ -759,6 +782,8 @@ async fn fleet_line(inner: Arc<Inner>) {
             circuit = c.circuit,
             transport = c.transport,
             malformed = c.malformed,
+            shadow_asked = c.shadow_asked,
+            shadowed = c.shadowed,
             refresh_inflight = inflight,
             applied_rate = format!("{:.2}", c.applied_rate()),
             "EVT jev_fleet"

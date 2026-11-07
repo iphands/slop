@@ -39,6 +39,14 @@ impl JevBrain {
         }
     }
 
+    /// A **shadow** jev brain (Plan 73): q3 exactly as `jev_static`, asking and journalling the
+    /// posture question through `source` without ever acting on it.
+    pub fn new_shadow(ch: Q3Character, source: Arc<dyn DecisionSource>) -> Self {
+        Self {
+            inner: Q3Brain::new_with_policy(ch, JevPolicy::new_shadow(source)),
+        }
+    }
+
     /// The policy (tests, telemetry).
     pub fn policy(&self) -> &JevPolicy {
         self.inner.policy()
@@ -500,6 +508,69 @@ mod tests {
         let o = stub.outcomes();
         assert_eq!(o.len(), 1);
         assert!(!o[0].1.died, "a level change is not a death");
+    }
+
+    #[test]
+    fn jev_shadow_plays_exactly_as_jev_static_while_asking_and_journalling() {
+        use crate::brains::{build_brain, build_brain_with_decider, BrainConfig, BrainKind};
+        use crate::skill::BotSkill;
+        let stub = Arc::new(StubDecider::default());
+        let mut shadow = build_brain_with_decider(
+            BrainKind::JevStatic,
+            BotSkill::default(),
+            BrainConfig::default(),
+            None,
+            None,
+            None,
+            Some(stub.clone()),
+        );
+        let mut plain = build_brain(
+            BrainKind::JevStatic,
+            BotSkill::default(),
+            BrainConfig::default(),
+            None,
+            None,
+            None,
+        );
+        shadow.on_map_change("q2dm1");
+        plain.on_map_change("q2dm1");
+        let run = |b: &mut Box<dyn Brain + Send>, view: &Worldview| {
+            let mut nav = StubNav {
+                pursue: Some(Vec3::new(200.0, 0.0, 0.0)),
+                ..Default::default()
+            };
+            let out = b.tick(BrainContext {
+                view,
+                nav: Some(&mut nav),
+                cm: None,
+                dt: 0.1,
+                ticks: 1,
+                goal_override: None,
+            });
+            format!("{out:?} | {:?} | {}", nav.last_goal, b.status())
+        };
+        for i in 0..150 {
+            if i == 1 {
+                stub.set_latest(Some(posture_decision(1, 0))); // a disengage it must NOT act on
+            }
+            let view = fight_view_hp(if i < 60 { 100 } else { 60 });
+            assert_eq!(run(&mut shadow, &view), run(&mut plain, &view), "tick {i}");
+        }
+        let trigs: Vec<Trigger> = stub.submitted().iter().map(|(_, a)| a.trig).collect();
+        assert_eq!(
+            trigs,
+            vec![Trigger::Contact, Trigger::Damage],
+            "the shadow asks like jev: on contact, and when hit (the stub does not pace)"
+        );
+        assert_eq!(stub.acks(), vec![(TicketId(1), ApplyOutcome::Shadowed)]);
+        let o = stub.outcomes();
+        assert_eq!(o.len(), 1);
+        assert!(!o[0].1.biased, "a shadow never biases");
+        assert_eq!(
+            o[0].1.q3_retreat,
+            Some(false),
+            "and still records what q3 wanted"
+        );
     }
 
     #[test]

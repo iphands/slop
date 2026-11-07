@@ -134,6 +134,8 @@ impl BrainReject {
 pub enum ApplyOutcome {
     /// Applied — counted as `applied`.
     Applied,
+    /// Resolved by a **shadow** brain (Plan 73): followed and journalled, never steered.
+    Shadowed,
     /// Not applied, and why.
     Rejected(BrainReject),
 }

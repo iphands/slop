@@ -85,6 +85,8 @@ pub struct JevPolicy {
     /// `(time, amount)` of recent hits.
     damage: VecDeque<(f32, u32)>,
     saw_enemy: bool,
+    /// Shadow (Plan 73): ask, resolve and journal, but never steer q3.
+    shadow: bool,
     /// Latest (health, armor, frags) seen — the outcome window's readings.
     vitals: (i32, i32, i32),
     /// The open outcome window, if a decision is being followed (Plan 73 journal).
@@ -122,7 +124,21 @@ impl JevPolicy {
             saw_enemy: false,
             vitals: (0, 0, 0),
             window: None,
+            shadow: false,
         }
+    }
+
+    /// A shadow policy: asks and journals like jev, never biases q3 (the arena's control).
+    pub fn new_shadow(source: Arc<dyn DecisionSource>) -> Self {
+        Self {
+            shadow: true,
+            ..Self::new(source)
+        }
+    }
+
+    /// Is this a shadow policy?
+    pub fn is_shadow(&self) -> bool {
+        self.shadow
     }
 
     /// Close the open outcome window (if any) and report it.
@@ -326,6 +342,11 @@ impl JevPolicy {
             posture,
         });
         self.applied_at = self.time;
+        let outcome = if self.shadow {
+            ApplyOutcome::Shadowed
+        } else {
+            Applied
+        };
         // A newer decision supersedes the one being followed.
         self.close_window(false);
         self.window = Some(Window {
@@ -336,7 +357,7 @@ impl JevPolicy {
             q3_retreat: None,
             biased: false,
         });
-        Applied
+        outcome
     }
 
     /// The bot died: drop the current decision and ask again on respawn.
@@ -370,6 +391,7 @@ impl GoalPolicy for JevPolicy {
             w.q3_retreat = Some(crate::q3char::wants_to_retreat(q.view, q.ch, None));
         }
         let disengage = !self.inert
+            && !self.shadow
             && self.time - self.applied_at < POSTURE_MAX_AGE_S
             && self
                 .current

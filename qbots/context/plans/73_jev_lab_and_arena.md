@@ -352,7 +352,7 @@ Plan 72 T9 (done) ─▶ T1 (human) ─▶ T2 ─▶ T3 (live) ─▶ T4 ─▶ 
 - [x] T3: every variant run in Evidence with its prediction; `jev_lab.md` has per-question best variant + ≥3 "doesn't work" findings
 - [x] T4: winner ported with schema bump + goldens; holdout scored once; calibrate on holdout → frozen thresholds; Plan 72 W2 row filled
 - [x] T5: outcome-window tests per field; journal line per decision with outcome; nothing on the tick path
-- [ ] T6: shadow `jev_static` ≡ `NullDecider` `jev_static` output (parity); journal `arm=shadow`, `applied=false`
+- [x] T6: shadow `jev_static` ≡ `NullDecider` `jev_static` output (parity); journal `arm=shadow`, `applied=false`
 - [ ] T7: journal report over a synthetic journal matches expected; <100-decision comparisons refused; roster parses
 - [ ] T8: Rounds table with predictions; arena section in `jev_lab.md`; ≥1 arena-derived scenario batch committed
 - [ ] T9: Plan 72 W3 filled from journals; pitfalls + brain_notes; plan + tracker moved to `completed/`

@@ -108,6 +108,9 @@ pub struct JevCfg {
     /// Plan 73: write the decision journal (one JSON line per decision with its outcome) to
     /// `logs/jev/journal-<unix>.jsonl`.
     pub journal: bool,
+    /// Plan 73: `jev_static` bots ask and journal the posture question too, never acting on it
+    /// (the arena's "what would the model have said where q3 decided alone").
+    pub shadow: bool,
 }
 
 impl Default for JevCfg {
@@ -132,6 +135,7 @@ impl Default for JevCfg {
             gate_margin_binary: 0.30,
             gate_margin_multi: 0.30,
             journal: false,
+            shadow: false,
         }
     }
 }

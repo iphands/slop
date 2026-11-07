@@ -688,7 +688,11 @@ pub async fn run_competition(
     // Plan 55: bail out now if the server plainly can't seat this many bots, before we
     // spawn any. Strict (default) exits non-zero; --loose-botcap warns and proceeds.
     preflight_capacity(addr, total, loose_botcap).await?;
-    let uses_jev = specs.iter().any(|s| s.brain == brain::BrainKind::Jev);
+    // Plan 73: shadow `jev_static` bots need the hub too.
+    let uses_jev = specs.iter().any(|s| {
+        s.brain == brain::BrainKind::Jev
+            || (s.brain == brain::BrainKind::JevStatic && cfg.jev.shadow)
+    });
     let jev = jev_gate(&cfg, uses_jev).await?.start_hub(total);
     let jev_report = jev.clone();
 
@@ -818,6 +822,8 @@ fn log_jev_report(hub: &crate::jev::hub::Hub) -> bool {
         malformed = c.malformed,
         stale_generation = c.stale_generation,
         breaker_opened = c.breaker_opened,
+        shadow_asked = c.shadow_asked,
+        shadowed = c.shadowed,
         "── jev report ──"
     );
     tracing::info!(

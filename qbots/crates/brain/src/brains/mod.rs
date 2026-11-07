@@ -140,9 +140,11 @@ pub fn build_brain_with_decider(
             let src = decider.unwrap_or_else(|| Arc::new(NullDecider::default()));
             Box::new(JevBrain::new(q3_char(), src))
         }
-        BrainKind::JevStatic => {
-            Box::new(JevBrain::new(q3_char(), Arc::new(NullDecider::default())))
-        }
+        // JevStatic with a decider = shadow mode (Plan 73): asks and journals, never steers.
+        BrainKind::JevStatic => match decider {
+            Some(src) => Box::new(JevBrain::new_shadow(q3_char(), src)),
+            None => Box::new(JevBrain::new(q3_char(), Arc::new(NullDecider::default()))),
+        },
     }
 }
 
