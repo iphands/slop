@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 78% complete (7/9 tasks)
+- Status: 89% complete (8/9 tasks)
 - Start date: 2026-11-06
 - Plan: `context/plans/73_jev_lab_and_arena.md`
 - Purpose: the learner is **us** — find which situations, facts and wording make the frozen
@@ -37,7 +37,7 @@
 | 5 | T5: Decision journal + outcome windows | `brain::jev::source` (`Outcome`, `outcome()`), `brains/jev/policy.rs`, `qbots::jev::hub` (journal), config `jev.journal` | done | window opens on resolution, closes at 10 s / death (hp ≤ 0 — a level change is not a death) / level change / supersede; records hp/armor/frags deltas, damage, q3's own retreat wish, whether the bias was in force; hub joins it with state + answer and a dedicated thread appends `logs/jev/journal-<unix>.jsonl`. 3 tests |
 | 6 | T6: Shadow mode for `jev_static` | `brains/jev`, `brains/mod.rs`, `jev::hub`, config `jev.shadow`, supervisor | done | posture only (the objective is parked — asking it in shadow would need placeholder goals; follow-up); acks `Shadowed`, asks counted `shadow_asked`; parity test over 150 ticks |
 | 7 | T7: Arena roster + `jev-probe journal` | `context/fixtures/jev/arena.yaml`, `qbots::jev::journal`, `probe.rs` | done | report by arm × answer / × q3's wish / × margin / × trigger / × state word; <100 decisions **flagged LOW POWER, not refused** (deviation: still useful as hypotheses); `--candidates` writes confident-then-died states for labelling |
-| 8 | T8: Arena rounds (live, repeating) | Rounds table, `jev_lab.md` | pending | **live** — needs Q2 server + permission |
+| 8 | T8: Arena rounds (live, repeating) | Rounds table, `jev_lab.md` | done | A1 (deaths invalid), A1b, A2 — 9 × 10 min, 1 510 decisions; conclusion in `jev_lab.md`; **stop rule met differently than written**: rounds still taught, but the finding (posture ≈ q3) moves the next lever to a different question — follow-up, not more posture rounds. Candidate scenarios written each round but **none committed** — labelling is the human's (Follow-ups) |
 | 9 | T9: Hand evidence to Plan 72; close | Plan 72 tracker, pitfalls, brain_notes | pending | |
 
 ## Rounds (lab variants and arena rounds)
@@ -67,7 +67,7 @@ Every row is written **before** its run (prediction), then completed.
 | A0 | 2026-11-06 | arena (smoke, **not pre-registered**) | first live run: posture live at 0.30 | — (no prediction written; recorded as a smoke) | jev K/D 0.40 vs q3 0.86 / jev_static 0.67; **disengage 64/69**; jev env deaths 5 (4 drown) | live state mix ≠ corpus mix (weak-weapon contact dominates); q3 retreat is hazard-blind — see `jev_lab.md` A0 |
 | A1 | 2026-11-06 | arena (3 × 10 min, `arena.yaml`, journal + shadow on) | **baseline — no change** (posture live at 0.30, production wording) | (1) jev answers **disengage ≥ 80 %** of posture asks, mostly on contact; (2) the shadow (`jev_static`) also hears disengage ≥ 80 % while q3 itself wanted to fight on most of those (agree rate < 30 %); (3) jev's **died-in-window rate after a disengage is not lower** than the shadow's after the same answer q3 ignored (retreating does not save the bot); (4) jev K/D below q3's and more environmental deaths (drowning while retreating); (5) the weak-weapon state word carries most disengages | | **died invalid** (journal bug, fixed `fix(T5)`); disengage = **71 %** of jev answers (90 % of gated); q3 itself wanted retreat on **70 %** of jev's disengages; 198/232 disengages carry `weak weapon`; K/D jev 1.18/1.38/0.18, q3 0.59/0.57/0.69, jvs 0.67/1.00/1.29; env deaths per bot jev 3.5, q3 3.3, jvs 4 | (1) **wrong** (71 % < 80 %); (2) **wrong** — strong agreement with q3, not < 30 %; (3) **not measurable** (died bug); (4) **wrong** in aggregate (jev 0.87 vs q3 0.61, noise) and env deaths per bot level; (5) **right** |
 | A1b | 2026-11-06 | arena (3 × 10 min) | **baseline re-run** after the journal death fix — no behaviour change | same as A1 for (1), (2), (4), (5), plus (3): jev's died-in-window rate after an applied `disengage` is **not lower** than the shadow's after a `disengage` q3 ignored | | 502 decisions (deaths recorded); disengage 75 % of jev answers; q3 wanted retreat on 67 % of them; weak weapon in 88 %; overrides (n=83): died 3.6 %, hp −9.0 vs shadow same cell (n=42) 0.0 %, −5.6; all 71 applied overrides 'healthy, weak weapon'; K/D jev 0.90, q3 0.72, jvs 0.53; env deaths/bot jev 4.5, q3 3.3, jvs 4 | (1) **wrong** (75 %); (2) **wrong** (agree 67 %); (3) **right** — overriding did not save lives (low power); (4) **wrong** on K/D, env deaths slightly higher per jev bot; (5) **right** |
-| A2 | 2026-11-06 | arena (3 × 10 min) | `jev.disengage_needs_hurt: true` — a disengage counts only when the bot's health band is crit/lo | (1) jev overrides (disengage applied while q3 wanted fight) fall from 83 to **≤ 10**; (2) jev's applied disengages fall **≥ 30 %** (204 → ≤ 143); (3) mean hp Δ over jev's contact windows less negative than A1b's −2.4; (4) no K/D claim (noise); (5) died rate after an applied disengage **≥ 14 %** (what remains is the hurt states) | | |
+| A2 | 2026-11-06 | arena (3 × 10 min) | `jev.disengage_needs_hurt: true` — a disengage counts only when the bot's health band is crit/lo | (1) jev overrides (disengage applied while q3 wanted fight) fall from 83 to **≤ 10**; (2) jev's applied disengages fall **≥ 30 %** (204 → ≤ 143); (3) mean hp Δ over jev's contact windows less negative than A1b's −2.4; (4) no K/D claim (noise); (5) died rate after an applied disengage **≥ 14 %** (what remains is the hurt states) | | 515 decisions; overrides **0** (141 suppressed); applied disengages 108 (−47 %); died after applied disengage 22.2 %; jev contact hp Δ −3.3; same-situation comparison vs A1b: fight (A2) died 0.0 %, hp −12.9 vs retreat (A1b) 3.6 %, −9.0; K/D jev 0.72, q3 0.65, jvs 1.08 | (1) **right**; (2) **right**; (3) **wrong**; (5) **right** — the override is roughly neutral; switch stays **off** |
 
 ## Evidence
 
@@ -145,6 +145,14 @@ Every row is written **before** its run (prediction), then completed.
   text and `&'static str` literals — a variant can never inject file or wire text. The
   thresholds the metrics use are the config's (`jev.gate_margin_*`), i.e. the provisional
   0.50 / 0.30 until Plan 72's W2 freezes them.
+
+## Follow-ups (added at T8)
+
+| Follow-up | Why | Lands in |
+|-----------|-----|----------|
+| Label the arena's confident-then-died candidate states into the corpus | arena-derived scenarios beat hand-written ones; `jev-probe journal --candidates` writes them | a later plan (human labelling) |
+| Ask a question q3 does not already answer (pickup choice / re-engage timing), judged by arena journals | the posture layer ≈ q3 (A1b, A2) | a later plan |
+| q3 `retreat_goal` is hazard-blind (steps 256 u straight back — drowning on q2dm1) | A0/A1 env deaths; affects every q3-based arm | a later plan |
 
 ## Follow-ups
 

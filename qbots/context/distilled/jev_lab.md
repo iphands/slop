@@ -207,3 +207,30 @@ q3 agreement and hp/frag deltas are valid. 493 posture decisions journalled (326
 - **A1b-2 Deaths follow the state, not the answer**: the hopeless states (badly hurt, threat high)
   carry the deaths whatever the model said; confident disengages die more (17 % at margin ≥ 0.50)
   because they are those states.
+
+## Arena A2 — 2026-11-07, one change: a disengage counts only when the bot is hurt, 3 × 10 min
+
+`jev.disengage_needs_hurt: true` (hub-side; wording and threshold unchanged; the shadow follows
+the same rule). 515 decisions. K/D over the round: jev 0.72, q3 0.65, jev_static 1.08.
+Report: `context/fixtures/jev/arena/a2_report.txt` (its "no_signal" rows include the 141
+`suppressed` answers).
+
+- Overrides (disengage applied while q3 wanted to fight): **83 → 0**; applied disengages
+  204 → 108; died after an applied disengage **22 %** (what remains is the hurt states).
+- **A2-1 Retreat vs fight in the one case jev changes, side by side** (healthy, weak weapon, model
+  says disengage, q3 wants to fight): A1b — jev **retreated**, n = 83, died 3.6 %, hp −9.0;
+  A2 — jev **fought**, n = 90, died 0.0 %, hp −12.9. Fighting costs a little more health,
+  retreating a few more deaths: **neither clearly wins**.
+
+## Arena conclusion (Plan 73 T8, 9 × 10 min, 1 510 journalled decisions)
+
+1. **The posture question mostly agrees with q3's own heuristic** (q3 wanted to retreat on
+   ~67 % of the model's disengages); its one systematic disagreement — pull healthy bots with
+   the respawn weapon out of fights — is **roughly neutral** in outcome.
+2. **Live states are far less decisive than any hand-written corpus**: 24–47 % of live answers
+   fall under the calibrated 0.30 margin; the corpus holdout had none.
+3. **Frags cannot judge this at this scale**: one arm's K/D ranged 0.18–1.38 across runs of
+   identical code; outcome windows per decision are the usable signal.
+4. **What to try next is a different question, not a different gate**: one whose answer q3 does
+   *not* already compute — e.g. which pickup to go for (the objective question, now that arena
+   journals can judge its labels), or when to re-engage after a retreat.

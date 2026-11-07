@@ -354,7 +354,7 @@ Plan 72 T9 (done) ─▶ T1 (human) ─▶ T2 ─▶ T3 (live) ─▶ T4 ─▶ 
 - [x] T5: outcome-window tests per field; journal line per decision with outcome; nothing on the tick path
 - [x] T6: shadow `jev_static` ≡ `NullDecider` `jev_static` output (parity); journal `arm=shadow`, `applied=false`
 - [x] T7: journal report over a synthetic journal matches expected; <100-decision comparisons refused; roster parses
-- [ ] T8: Rounds table with predictions; arena section in `jev_lab.md`; ≥1 arena-derived scenario batch committed
+- [x] T8: Rounds table with predictions; arena section in `jev_lab.md` — *the arena-derived scenario batch was generated but NOT committed: labelling is the human's (Follow-ups)*
 - [ ] T9: Plan 72 W3 filled from journals; pitfalls + brain_notes; plan + tracker moved to `completed/`
 - [ ] Rule A held at every commit: `cargo fmt` + `cargo clippy -- -D warnings` + `cargo test` green
 - [ ] Rule C: plan + tracker `git mv` to `completed/` and `SERIES.md` marked done
