@@ -220,6 +220,11 @@ impl<P: GoalPolicy> Q3Brain<P> {
         &mut self.policy
     }
 
+    /// Read access to the policy (Plan 72 `JevBrain` tests and status).
+    pub fn policy(&self) -> &P {
+        &self.policy
+    }
+
     /// A cheap deterministic `[0,1)` roll (per-bot LCG) for the random Q3 cadences (strafe flip,
     /// dodge chance, fire-throttle window) — keeps behavior repeatable in tests.
     fn roll(&mut self) -> f32 {

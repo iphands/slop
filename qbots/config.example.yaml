@@ -61,3 +61,33 @@ fleet:
                                           #   slow interval costs resolution, not accuracy.
 #   socket_mode: 0o666                    # mode on the socket file (default: 0o666)
 #   max_clients: 4                        # concurrent readers (default: 4)
+
+# ── Decision model for the `jev` brain (Plan 72) ──────────────────────────────
+# `--brain jev` / `--brains …,jev` is q3 with its high-level choices (objective,
+# posture, area) taken from a hosted `/v1/systemone` decision model. All model I/O
+# goes through one process-wide hub; a bot never waits on it.
+#
+# OFF by default. Omit the block and a jev bot plays exactly as `jev_static` (q3 with
+# all the plumbing and no decisions) — and the fleet logs an error saying so.
+# With the block present `require` defaults to TRUE: an unreachable endpoint or a
+# different model REFUSES TO START, because a fleet silently playing q3 while you
+# think you are measuring a model is a voided experiment. Diagnose with:
+#   cargo run -p qbots -- jev-probe health
+# jev:
+#   enabled: true                    # (default: false)
+#   endpoint: cosmo.lan:8710         # host:port; config-only, no CLI override.
+                                     #   On the dev box `cosmo.lan` is an /etc/hosts entry
+                                     #   for 127.0.0.1 (fleet and model share the host).
+#   model: h2oai/h2o-lightning-4b    # every response must report exactly this slug
+#   require: true                    # refuse to start if the startup health check fails
+#   max_input_tokens_per_s: 1000     # THE budget knob — a fleet-wide token bucket
+#   max_concurrent: 3                # hub workers (measured, not the server's slot count)
+#   deadline_ms: 350                 # hard per-request deadline, wrapping connect
+#   snapshot_ttl_ms: 1500            # an ask waiting longer than this is dropped, never sent
+#   min_dwell_s: 15.0                # background refresh per bot (× one-sided jitter)
+#   event_floor_s: 5.0               # min interval between any two asks of one bot
+#   dwell_jitter_max: 1.3            # jitter factor in [1.0, this] — one-sided on purpose
+#   ttl_s: 24.0                      # a stored decision older than this is ignored
+#   max_state_tokens: 512            # hard cap on the rendered state
+#   gate_margin_binary: 0.50         # min p1−p2 to act on a 2-option answer (calibrated at W2)
+#   gate_margin_multi: 0.30          # min p1−p2 for 3 options (calibrated at W2)

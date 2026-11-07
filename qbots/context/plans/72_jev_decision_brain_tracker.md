@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 31% complete (5/16 tasks)
+- Status: 38% complete (6/16 tasks)
 - Start date: 2026-11-06 (`date +%F`, local; the plan's `2026-11-07` dates are UTC)
 - Plan: `context/plans/72_jev_decision_brain.md`
 - Evidence: `context/fixtures/jev/` (harvested live request/response pairs from `qbots jev-probe`)
@@ -99,7 +99,7 @@
 | 4 | T4: Hand-rolled HTTP/1.1 POST + wire types | `crates/qbots/src/jev/{net,wire,tests_net}.rs`, `crates/qbots/src/jev/testdata/` | done | `Connection: close`, chunked **and close-delimited**, timeout **wraps connect**, 1 MiB cap, extra-key + model-mismatch cases; **real clock, never `start_paused`**. 17 tests; plan's `tests/jev_net.rs` path was **invalid** (qbots is bin-only) — tests are an in-crate module |
 | 5 | T5: Hub — pull workers, bucket, tickets, pacing, generation, tiered breaker | `crates/qbots/src/jev/{hub,bucket,transport,tests_hub,mod}.rs`, `crates/qbots/Cargo.toml`, `crates/brain/src/jev/source.rs` | done | **schedule risk**: 7 mechanisms + a test each; **no semaphore, no `permit_wait_ms`** — workers pick oldest event, else oldest refresh (≤ 2 in flight); hub runs the gate, slot stores only `AppliedDecision`. 18 tests (3 bucket, explicit clock; 15 hub, paused clock). **Response cache cut** (cut order #1). Seam corrected — see Notes |
 | 6 | T6: q3 generic over `GoalPolicy` (behaviour-preserving) | `crates/brain/src/brains/q3/{policy,mod}.rs`, `q3/testdata/parity_200.txt` | done | golden `41f42b336` (pre-seam), seam in the T6 commit after it; golden byte-identical after the refactor; 12 old q3 tests unedited; 4 new seam tests; both mutation checks fail as they should (Evidence). Live no-op control → **W2** |
-| 7 | T7: `JevBrain` / `JevStatic` + `jev:` config | `brains/jev/{mod,policy}.rs`, `brains/mod.rs`, `config.rs`, `config.example.yaml` (root), `roster.rs`, `supervisor.rs` | pending | `JevBrain { inner: Q3Brain<JevPolicy> }` intercepts `set_map`, sets the `goal_override` inert flag; `#[value(name="jvs", alias="jev_static")]`; `brain_code` `jev`/`jvs`; dead-endpoint test uses `127.0.0.1:1` |
+| 7 | T7: `JevBrain` / `JevStatic` + `jev:` config | `brains/jev/{mod,policy}.rs`, `brains/mod.rs`, `config.rs`, `config.example.yaml` (root), `roster.rs`, `supervisor.rs`, `qbots/src/jev/startup.rs` | done | `JevBrain { inner: Q3Brain<JevPolicy> }` intercepts `set_map`, sets the `goal_override` inert flag; `#[value(name="jvs", alias="jev_static")]`; `brain_code` `jev`/`jvs`; dead-endpoint test uses `127.0.0.1:1`. 10 new tests; startup gate wired at **all three** entry points incl. `run_single` (see Notes) |
 | 8 | T8: Hub wiring + `on_map_change` + `goal_override` guard | `crates/qbots/src/main.rs`, `supervisor.rs`, `brains/core.rs` | pending | **start the hub at BOTH `supervisor.rs:323` and `:682`** or `competition` runs jev with no decider; triggers are flags, submit on the next tick; apply tests live in `brain`; `map_servercount = servercount` stays last |
 | 9 | T9: `qbots jev-probe` | `crates/qbots/src/jev/probe.rs`, `main.rs` (`Cmd::JevProbe`) | pending | **not `crates/tools`** (qbots is bin-only); offline argv + calibration-search tests are the task; the live checks are the **W2 gate**; 501 needs a well-formed chat body |
 | 10 | T10: `objective` question + candidates + triggers | `crates/brain/src/jev/objective.rs`, `brains/jev/policy.rs` | pending | candidates in `JevPolicy`; ≤3 seek/hold moves; resolve against the answer's **own ticket**; **held until released** (no lapse to roam); injection test through the real pipeline (in `qbots`) |
@@ -281,6 +281,20 @@ metric, the `EVT jev_fleet` line, `calibrate`.
   `Shutdown` is T8; idle workers re-scan at least once a second, so asks submitted while the
   breaker was open are dropped promptly. **Cut:** the optional response cache (cut order #1 —
   off by default, a herding hazard, no consumer until T15); T15's decision about it stands.
+- **T7 (2026-11-06):** (1) the `JevCfg` block carries only the knobs consumed so far
+  (endpoint/model/require/budget/pacing/ttl/state cap/gate margins); `posture_max_age_s`,
+  `region_cap`, `debug`/`debug_sample`, `cache`, `tokens_per_req_target` are added by the tasks
+  that read them — an unread field is a rustc warning, and Rule A forbids those; (2) the startup
+  gate (`jev::startup::gate`) is wired at `run_fleet`, `run_competition` **and `run_single`**
+  (`connect-one` — the plan's T8 smoke uses it, but T8's file list names only the two fleet
+  spawn points); a fleet with no jev bot returns before any I/O; (3) an absent/disabled `jev:`
+  block with a jev bot is an `error!` and the bots play as `jev_static` — loud, not a refusal
+  (`require` governs only a *configured* endpoint); (4) the startup health probe gets a 2 s
+  deadline (a cold model), not the 350 ms steady-state `deadline_ms`; (5) `Quake3` and the jev
+  kinds now share one `q3_char` derivation in `build_brain_with_decider` (same semantics; the
+  `build_q3_brain_starts_in_seek_ltg` test and the T6 golden are unchanged), so the A/B arms
+  cannot drift apart on character; (6) `--char` presets are not expanded for the jev arms
+  (`matrix_specs` expands only `q3`, the roster allows `char` only for `q3`) — Follow-ups.
 - **T6 harvest:** the FSM-loop pitfall (one of T16's ten named entries) is already in
   `context/pitfalls.md` — confirmed by mutation in T6, so it was written then rather than at T16.
 - `--brains` and `BrainKind` exist (`main.rs:249`, `:2634-2646`, `brains/mod.rs:35`). Any Verify
@@ -298,5 +312,6 @@ metric, the `EVT jev_fleet` line, `calibrate`.
 | Re-run `jev-probe flatness` + `calibrate` + `matrix --live` after **any** server-side change | determinism is per-process; a restarted box with different slot/parallel settings may not reproduce, and frozen thresholds were calibrated against the old one | recurring, note in `context/pitfalls.md` (T16) |
 | Per-trigger split of the herd/oscillation metrics | W3's gate needs it; W4/W5 want it trended across runs | T11, then T16's report shape |
 | Re-run `bench` from the fleet host if the fleet ever leaves the model host | every latency here is loopback | T1 decision; recurring |
+| `--char` / roster `char:` for the jev arms | q3 vs jev_static vs jev currently compare only at the skill-derived default character; named presets need `matrix_specs` + roster to accept jev | before T16 if the A/B wants characters |
 | Capture the flat 24-option response verbatim as a fixture | the plan calls it the most valuable fixture; only its summary (top p 0.051) was recorded | T9 harvest |
 | Remove `#![allow(dead_code)]` from `crates/qbots/src/jev/mod.rs` | `qbots` is bin-only, so T2–T5's module has no caller until the hub is wired; anything still unused after T8 is genuinely dead | **T8** |

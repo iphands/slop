@@ -241,6 +241,14 @@ fn start_beacon(
     Some(beacon)
 }
 
+/// Plan 72's startup gate for the `jev` brain (see `jev::startup`): `Err` refuses to start.
+/// The hub itself is started from the `Ready` result in T8.
+async fn jev_gate(cfg: &Config, wanted: bool) -> std::io::Result<crate::jev::startup::JevStartup> {
+    crate::jev::startup::gate(&cfg.jev, wanted)
+        .await
+        .map_err(std::io::Error::other)
+}
+
 /// Reconnect policy for a bot in the fleet.
 #[derive(Clone, Copy)]
 struct Reconnect {
@@ -308,6 +316,8 @@ pub async fn run_fleet(
 
     // Plan 55: refuse to launch a fleet the server can't seat, before spawning any bot.
     preflight_capacity(addr, count, loose_botcap).await?;
+    // Plan 72: a jev fleet with an unhealthy decision endpoint refuses to start (`require`).
+    let _jev = jev_gate(&cfg, brain == brain::BrainKind::Jev).await?;
 
     let stagger = cfg.fleet.connect_stagger_ms;
     let reconnect = Reconnect {
@@ -511,6 +521,8 @@ pub(crate) fn brain_code(brain: brain::BrainKind) -> &'static str {
         brain::BrainKind::Quake3 => "q3",
         brain::BrainKind::Zb2 => "zb2",
         brain::BrainKind::Xon => "xon",
+        brain::BrainKind::Jev => "jev",
+        brain::BrainKind::JevStatic => "jvs",
     }
 }
 
@@ -664,6 +676,8 @@ pub async fn run_competition(
     // Plan 55: bail out now if the server plainly can't seat this many bots, before we
     // spawn any. Strict (default) exits non-zero; --loose-botcap warns and proceeds.
     preflight_capacity(addr, total, loose_botcap).await?;
+    let uses_jev = specs.iter().any(|s| s.brain == brain::BrainKind::Jev);
+    let _jev = jev_gate(&cfg, uses_jev).await?;
 
     let stagger = cfg.fleet.connect_stagger_ms;
     let reconnect = Reconnect {
@@ -1132,6 +1146,7 @@ pub async fn run_single(
     persona: Option<brain::persona::Persona>,
     xonchar: Option<brain::XonCharPreset>,
 ) -> std::io::Result<()> {
+    let _jev = jev_gate(cfg, brain == brain::BrainKind::Jev).await?;
     let nav = NavCache::new();
     let shutdown = Shutdown::new();
     let stats = FleetStats::new();

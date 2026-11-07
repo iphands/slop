@@ -47,7 +47,7 @@ pub use brains::core::{Brain, BrainConfig, BrainContext, BrainMap, BrainOutput};
 pub use brains::main::MainBrain;
 pub use brains::runtester::RunTesterBrain;
 pub use brains::sentry::SentryBrain;
-pub use brains::{brain_tag, build_brain, BrainKind};
+pub use brains::{brain_tag, build_brain, build_brain_with_decider, BrainKind};
 pub use combat::{CombatDecision, CombatDriver};
 pub use danger::{DangerDriver, DodgeAction};
 pub use heatmap::Heatmap;

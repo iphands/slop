@@ -275,6 +275,21 @@ mod tests {
     }
 
     #[test]
+    fn jev_brain_tokens_parse_and_fit_the_netname_budget() {
+        // Plan 72 T7: `jev`, `jvs` and the long alias `jev_static` are roster brain tokens.
+        let specs = specs_from(
+            "groups:\n  - brain: jev\n    navmode: as\n  - brain: jev_static\n    navmode: as\n",
+        )
+        .unwrap();
+        assert_eq!(specs[0].brain, brain::BrainKind::Jev);
+        assert_eq!(specs[1].brain, brain::BrainKind::JevStatic);
+        assert_eq!(
+            (specs[0].tag.as_str(), specs[1].tag.as_str()),
+            ("jev_as", "jvs_as")
+        );
+    }
+
+    #[test]
     fn default_count_is_eight_when_unset() {
         let specs = specs_from("groups:\n  - brain: mai\n    navmode: as\n").unwrap();
         assert_eq!(specs[0].count, 8);

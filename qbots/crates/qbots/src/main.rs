@@ -3113,6 +3113,24 @@ mod tests {
     }
 
     #[test]
+    fn competition_brains_accept_the_jev_arms() {
+        // Plan 72 T7: the A/B surface. `jev_static` is the long alias of `jvs`.
+        let cli = Cli::try_parse_from(["qbots", "competition", "--brains", "q3,jev_static,jev"])
+            .expect("parses");
+        match cli.cmd {
+            Cmd::Competition { brains, .. } => assert_eq!(
+                brains,
+                vec![
+                    brain::BrainKind::Quake3,
+                    brain::BrainKind::JevStatic,
+                    brain::BrainKind::Jev
+                ]
+            ),
+            _ => panic!("expected competition subcommand"),
+        }
+    }
+
+    #[test]
     fn competition_roster_alone_parses() {
         let cli = Cli::try_parse_from(["qbots", "competition", "--roster", "r.yaml"]).unwrap();
         match cli.cmd {

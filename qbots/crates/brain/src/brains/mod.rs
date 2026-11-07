@@ -5,6 +5,7 @@
 //! the nav layer's `NavMode` / `build_navigator`.
 
 pub mod core;
+pub mod jev;
 pub mod main;
 pub mod q3;
 pub mod runtester;
@@ -14,12 +15,16 @@ pub mod zb2;
 
 pub use core::{Brain, BrainConfig, BrainContext, BrainMap, BrainOutput};
 
+use std::sync::Arc;
+
+use crate::brains::jev::JevBrain;
 use crate::brains::main::MainBrain;
 use crate::brains::q3::Q3Brain;
 use crate::brains::runtester::RunTesterBrain;
 use crate::brains::sentry::SentryBrain;
 use crate::brains::xon::XonBrain;
 use crate::brains::zb2::Zb2Brain;
+use crate::jev::source::{DecisionSource, NullDecider};
 use crate::q3char::{CharPreset, Q3Character};
 use crate::skill::BotSkill;
 use crate::xonchar::{XonCharPreset, XonSkill};
@@ -52,6 +57,13 @@ pub enum BrainKind {
     /// movement; Plan 60).
     #[value(name = "xon", alias = "xonotic")]
     Xon,
+    /// jev — q3's core, with objective/posture/area taken from a hosted decision model (Plan 72).
+    #[value(name = "jev")]
+    Jev,
+    /// jev_static — jev with all its plumbing and a never-deciding source: the primary A/B
+    /// control for jev (Plan 72).
+    #[value(name = "jvs", alias = "jev_static")]
+    JevStatic,
 }
 
 /// Short kebab-case tag for `kind` — for logging + competition bot naming (mirrors `mode_tag`).
@@ -63,6 +75,8 @@ pub fn brain_tag(kind: BrainKind) -> &'static str {
         BrainKind::Quake3 => "q3",
         BrainKind::Zb2 => "zb2",
         BrainKind::Xon => "xon",
+        BrainKind::Jev => "jev",
+        BrainKind::JevStatic => "jev_static",
     }
 }
 
@@ -81,6 +95,25 @@ pub fn build_brain(
     persona: Option<crate::persona::Persona>,
     xonchar: Option<XonCharPreset>,
 ) -> Box<dyn Brain + Send> {
+    build_brain_with_decider(kind, skill, cfg, char, persona, xonchar, None)
+}
+
+/// [`build_brain`] plus the decision source a `Jev` brain reads (Plan 72). `None` — or any
+/// other kind — behaves exactly as `build_brain`; `Jev` with `None` gets a never-deciding source
+/// (it then plays as `JevStatic`); `JevStatic` always does.
+pub fn build_brain_with_decider(
+    kind: BrainKind,
+    skill: BotSkill,
+    cfg: BrainConfig,
+    char: Option<CharPreset>,
+    persona: Option<crate::persona::Persona>,
+    xonchar: Option<XonCharPreset>,
+    decider: Option<Arc<dyn DecisionSource>>,
+) -> Box<dyn Brain + Send> {
+    let q3_char = || {
+        char.map(CharPreset::character)
+            .unwrap_or_else(|| Q3Character::from_skill(skill.skill))
+    };
     match kind {
         BrainKind::Main => Box::new(MainBrain::new(skill, cfg).with_persona(persona)),
         // Sentry ignores `cfg` (no nav, no goal override) — it's a proof-of-pluggability.
@@ -90,12 +123,8 @@ pub fn build_brain(
         // Quake3: a named roster preset if given, else derive the character from the master skill
         // level. `cfg` is unused: in a movement scenario there are no enemies, so the Q3 combat
         // path never fires anyway.
-        BrainKind::Quake3 => {
-            let ch = char
-                .map(CharPreset::character)
-                .unwrap_or_else(|| Q3Character::from_skill(skill.skill));
-            Box::new(Q3Brain::new(ch))
-        }
+        // The same `q3_char` derivation feeds Jev/JevStatic, so the A/B arms share a character.
+        BrainKind::Quake3 => Box::new(Q3Brain::new(q3_char())),
         // Zb2 reuses the shared combat driver; `cfg.combat_enabled` gates it for scenarios.
         // It ignores `char`/`persona` (its personality IS the committed-route texture).
         BrainKind::Zb2 => Box::new(Zb2Brain::new(skill, cfg.combat_enabled)),
@@ -105,6 +134,14 @@ pub fn build_brain(
                 .map(XonCharPreset::skill)
                 .unwrap_or_else(|| XonSkill::new(skill.skill.min(10) as f32));
             Box::new(XonBrain::new(sk, cfg))
+        }
+        // Jev / JevStatic: the q3 character exactly as `Quake3` derives it, plus a decider.
+        BrainKind::Jev => {
+            let src = decider.unwrap_or_else(|| Arc::new(NullDecider::default()));
+            Box::new(JevBrain::new(q3_char(), src))
+        }
+        BrainKind::JevStatic => {
+            Box::new(JevBrain::new(q3_char(), Arc::new(NullDecider::default())))
         }
     }
 }
@@ -164,6 +201,30 @@ mod tests {
         assert_eq!(brain_tag(BrainKind::RunTester), "runtester");
         assert_eq!(brain_tag(BrainKind::Quake3), "q3");
         assert_eq!(brain_tag(BrainKind::Xon), "xon");
+        // Plan 72: the jev kinds.
+        assert_eq!(BrainKind::from_str("jev", false), Ok(BrainKind::Jev));
+        assert_eq!(BrainKind::from_str("jvs", false), Ok(BrainKind::JevStatic));
+        assert_eq!(
+            BrainKind::from_str("jev_static", false),
+            Ok(BrainKind::JevStatic)
+        );
+        assert_eq!(brain_tag(BrainKind::Jev), "jev");
+        assert_eq!(brain_tag(BrainKind::JevStatic), "jev_static");
+    }
+
+    #[test]
+    fn build_jev_brains_play_as_q3_until_decided() {
+        for kind in [BrainKind::Jev, BrainKind::JevStatic] {
+            let brain = build_brain(
+                kind,
+                BotSkill::default(),
+                BrainConfig::default(),
+                None,
+                None,
+                None,
+            );
+            assert_eq!(brain.status(), "seek-ltg", "{kind:?} starts as q3 does");
+        }
     }
 
     #[test]

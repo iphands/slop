@@ -13,6 +13,9 @@ pub struct Config {
     /// Optional serverframe beacon for qctrl (Plan 66). Absent → disabled.
     #[serde(default)]
     pub beacon: BeaconCfg,
+    /// Optional decision-model endpoint for the `jev` brain (Plan 72). Absent → disabled.
+    #[serde(default)]
+    pub jev: JevCfg,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -58,6 +61,70 @@ impl Default for BeaconCfg {
             publish_interval_ms: 1000,
             socket_mode: 0o666,
             max_clients: 4,
+        }
+    }
+}
+
+/// The `jev` brain's decision endpoint and budget (Plan 72). **Off by default**: a config with
+/// no `jev:` block behaves exactly as before — no probe, no hub, no socket. With the block
+/// present, `require` defaults to **true**: a fleet that silently plays q3 while you believe
+/// you are measuring a model is a voided experiment, so an unreachable endpoint refuses to start.
+///
+/// Knobs that later Plan 72 tasks consume (`posture_max_age_s`, `region_cap`, `debug`,
+/// `cache`, …) are added by those tasks, so no field here is ever unread.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
+pub struct JevCfg {
+    /// Use the endpoint at all.
+    pub enabled: bool,
+    /// `host:port` of the `/v1/systemone` server. Config-only — no CLI override.
+    pub endpoint: String,
+    /// The model slug every response must report.
+    pub model: String,
+    /// Refuse to start if the endpoint fails its startup health check.
+    pub require: bool,
+    /// Fleet input-token budget (the primary knob).
+    pub max_input_tokens_per_s: f64,
+    /// Hub workers.
+    pub max_concurrent: usize,
+    /// Hard client-side deadline per request (wraps connect).
+    pub deadline_ms: u64,
+    /// A pending ask older than this is dropped, never sent.
+    pub snapshot_ttl_ms: u64,
+    /// Background refresh period per bot (before one-sided jitter).
+    pub min_dwell_s: f64,
+    /// Minimum interval between any two asks of one bot (before jitter).
+    pub event_floor_s: f64,
+    /// One-sided jitter factor upper bound.
+    pub dwell_jitter_max: f64,
+    /// A stored decision older than this reads as absent.
+    pub ttl_s: f64,
+    /// Hard cap on the rendered state's estimated tokens.
+    pub max_state_tokens: usize,
+    /// Gate: minimum `p1 − p2` for a two-option question (calibrated at W2).
+    pub gate_margin_binary: f32,
+    /// Gate: minimum `p1 − p2` for three or more options (calibrated at W2).
+    pub gate_margin_multi: f32,
+}
+
+impl Default for JevCfg {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            endpoint: "cosmo.lan:8710".into(),
+            model: "h2oai/h2o-lightning-4b".into(),
+            require: true,
+            max_input_tokens_per_s: 1000.0,
+            max_concurrent: 3,
+            deadline_ms: 350,
+            snapshot_ttl_ms: 1500,
+            min_dwell_s: 15.0,
+            event_floor_s: 5.0,
+            dwell_jitter_max: 1.3,
+            ttl_s: 24.0,
+            max_state_tokens: 512,
+            gate_margin_binary: 0.50,
+            gate_margin_multi: 0.30,
         }
     }
 }
