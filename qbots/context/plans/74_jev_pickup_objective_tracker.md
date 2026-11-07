@@ -52,6 +52,7 @@
 | Round | Change | Prediction (written first) | Result |
 |---|---|---|---|
 | L5 | lab: 15 variants on objective_v2 tuning, then holdout once | (not pre-registered — the user waived pre-registration-by-skim; recorded as exploratory) | production wording wins (RC 96 % tuning, 100 % holdout, CW 0); `drop-map` the only CW (19 %) |
+| B1 | arena baseline, 3 × 10 min, parked q2dm1, `arena_74.yaml` (2 q3 + 2 jev + 2 jvr), gate 0.30, `disengage_needs_hurt` off | **P1** jvr median `secs_to_strong` ≤ 0.7 × q3's. **P2** jev within ±15 % of jvr on median `secs_to_strong`; model/rule agree on ≥ 80 % of decisive objective answers. **P3** weak-weapon share of posture decisions < 60 % for jev and jvr (76 % in Plan 73). | |
 
 ## Evidence
 

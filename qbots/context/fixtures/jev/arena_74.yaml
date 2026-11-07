@@ -1,0 +1,17 @@
+# Plan 74 arena roster: q3 vs jev (model picks the pickup) vs jvr (code rule picks the pickup,
+# same candidates). Posture is live in both jev arms; q3 has no pad knowledge at all.
+#
+#   cargo run -p qbots -- --config <config with jev: {enabled: true, journal: true}> \
+#     competition --roster context/fixtures/jev/arena_74.yaml
+#
+# Headline metric: per-life secs_to_strong (`jev-probe journal` "lives by arm").
+groups:
+  - brain: q3
+    navmode: as
+    count: 2
+  - brain: jev
+    navmode: as
+    count: 2
+  - brain: jvr
+    navmode: as
+    count: 2
