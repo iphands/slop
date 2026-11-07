@@ -125,7 +125,7 @@ pub enum ProbeCmd {
 pub enum ProbeQuestion {
     /// Binary posture: disengage / hold.
     Posture,
-    /// Three-way objective: seek health / seek armor / hold position.
+    /// Three-way objective: seek health / seek armor / carry on (the no-op — Plan 73 round 3).
     Objective,
 }
 
@@ -160,7 +160,7 @@ impl ProbeQuestion {
                 kind: QuestionKind::Choice(vec![
                     opt("seek_health", "go to the nearest health pickup"),
                     opt("seek_armor", "go to the nearest armor pickup"),
-                    opt("hold_position", "stay and control the current area"),
+                    opt("carry_on", "no particular objective: keep roaming as usual"),
                 ]),
             },
         }

@@ -246,6 +246,10 @@ impl Variant {
             Variant::SummaryGradedCarryOn => {
                 if q.key == QuestionKey::Objective {
                     if let QuestionKind::Choice(opts) = &mut q.kind {
+                        // Since round 4 the catalogue already offers `carry_on`.
+                        if opts.iter().any(|o| o.label == CARRY_ON) {
+                            return (append(text, &summary_graded(&Facts::parse(text))), q);
+                        }
                         opts.push(ChoiceOption {
                             label: CARRY_ON,
                             desc: Phrase::lit("no particular objective: keep roaming as usual"),
@@ -446,9 +450,7 @@ fn consequence_options(key: QuestionKey, kind: &QuestionKind) -> QuestionKind {
             (QuestionKey::Objective, "seek_armor") => {
                 "walk to the armor pickup: absorbs future damage, time away from the action"
             }
-            (QuestionKey::Objective, "hold_position") => {
-                "stay here: no pickup, but the bot keeps control of this area"
-            }
+            (QuestionKey::Objective, "carry_on") => "keep roaming: no detour, but no pickup either",
             _ => return None,
         })
     };
@@ -469,8 +471,8 @@ fn criterion_instruction(key: QuestionKey) -> &'static str {
              otherwise choose hold."
         }
         QuestionKey::Objective => {
-            "Choose the pickup the bot needs most right now; choose hold_position only if it \
-             needs nothing that is in reach."
+            "Choose the pickup the bot needs most right now; choose carry_on only if it needs \
+             nothing that is in reach."
         }
     }
 }
@@ -662,7 +664,12 @@ mod tests {
         let obj = ProbeQuestion::Objective.spec();
         let (_, carry) = Variant::SummaryGradedCarryOn.apply(CRIT, &obj);
         assert_eq!(noop_label(&carry), Some(CARRY_ON));
-        assert_eq!(noop_label(&obj), None);
+        assert_eq!(
+            noop_label(&obj),
+            Some(CARRY_ON),
+            "the catalogue offers carry_on (round 4)"
+        );
+        assert_eq!(carry, obj, "no duplicate carry_on");
         assert_eq!(noop_label(&q), Some("hold"));
         assert_eq!(
             Variant::SummaryGradedCarryOn.apply(CRIT, &q),

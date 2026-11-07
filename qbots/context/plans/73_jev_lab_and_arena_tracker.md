@@ -61,6 +61,7 @@ Every row is written **before** its run (prediction), then completed.
 | L13 | 2026-11-06 | lab (tuning half) | summary-graded + items-renamed (combination of L11 + L12) | **best overall**: posture RC ≥ 60 %, leakA ≤ 10 %, flatA ≈ 0; objective RC ≥ 90 %, flatA < 0.40 | | posture RC 45 %; objective acc 83 % | **wrong** — the rename drags the combination below L12 alone |
 | L14 | 2026-11-06 | lab (tuning half) | summary-graded + add-threat (combination) | posture RC ≥ L12 and flatA 0 (threat removed flat disengages in round 1); objective leakA up (threat raised it in round 1) | | posture RC 82 %, mC 0.563, sep **0.355**, leakA 0, flatA 0; objective leakA 70 % | **right** — best posture wording so far; objective leak up as predicted |
 | L15 | 2026-11-06 | lab (tuning half) | objective only: summary-graded + a 4th option `carry_on` ("no particular objective, keep roaming"), the objective's harmless default (tests Plan 72's ≤3-options / no-none-of-the-above rule) | objective **flatA (acting) < 0.30** (blanks go to `carry_on`), **leakA ≤ 40 %** (from 60 %), RC ≥ 85 % (some `hold_position` mass moves to `carry_on`), CW 0; posture identical to summary-graded | | objective flatA 0.527→**0.271**, leakA 60→**40 %**, sep 0.233→**0.356**; but RC 100→**75 %**, CW **17 %** — all 3 obvious `hold_position` cases answered `carry_on` | **right** on blanks and leakage, **wrong** on RC: `hold_position` and `carry_on` are the same answer without a reason to hold a place |
+| L16 | 2026-11-06 | lab (tuning half) | the **production candidate**: state = coded + `threat` + graded summary for both questions (one state per request); objective options `seek_health / seek_armor / carry_on` (variant `summary-graded-threat`) | posture as L14 (RC 82 %, leakA 0, flatA 0); objective **RC ≥ 90 %, CW ≤ 10 %, flatA ≤ 0.30, leakA ≤ 40 %** | | |
 
 ## Evidence
 
@@ -83,6 +84,14 @@ Every row is written **before** its run (prediction), then completed.
 - The corpus drafted on 2026-11-06 was produced under Plan 72's calibration step; it moves under
   this plan's T1 because the lab is now its first consumer. Nobody has scored it against the model.
 
+- **T3 decisions (2026-11-06, delegated by the user — "you decide, best guess"):**
+  (1) **adopt `carry_on`**: the objective options become `seek_health / seek_armor / carry_on`
+  (still ≤ 3, so Plan 72's cap holds) and the 9 obvious `hold_position` cases are relabelled
+  `carry_on` by `git mv` — *after* their tuning-half answers were seen, so those tuning cases are
+  no longer blind; the holdout's were never scored and stay clean. Area control returns as its
+  own question once regions exist (Plan 72 T14). (2) **keep the objective `ambiguous` labels the
+  model answered confidently**: relabelling a case because the model disagreed is the bias the lab
+  exists to prevent; the arena's outcomes judge them instead. Also: the raw harvest is gitignored.
 - **T3 round 1 (2026-11-06):** the lab gained `--detail` (one line per case) and the
   `ambiguous_leak_acting` / `flat_max_acting` metrics mid-round: for posture, `hold` is the no-op
   ("leave it to q3"), so a confident `hold` on an ambiguous or blank state costs nothing — only an

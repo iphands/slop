@@ -29,3 +29,7 @@
 .DS_Store
 
 # NOTE: Cargo.lock stays COMMITTED — qbots ships binaries.
+
+# Plan 73: jev-probe's raw request/response log — reproducible (deterministic model +
+# committed corpus + code); per-case results are committed under context/fixtures/jev/lab/.
+/context/fixtures/jev/harvest.jsonl
