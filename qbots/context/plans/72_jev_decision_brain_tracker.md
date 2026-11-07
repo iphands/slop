@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 63% complete (10/16 tasks)
+- Status: 69% complete (11/16 tasks)
 - Start date: 2026-11-06 (`date +%F`, local; the plan's `2026-11-07` dates are UTC)
 - Plan: `context/plans/72_jev_decision_brain.md`
 - Evidence: `context/fixtures/jev/` (harvested live request/response pairs from `qbots jev-probe`)
@@ -93,7 +93,7 @@
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: Record the contract + measurements, settle the open questions | `context/distilled/jev.md` | pending | **human-only, parallel with W1** — never blocks T2; label the numbers loopback; `confidence` is already resolved; strike unanswered questions, never delete |
+| 1 | T1: Record the contract + measurements, settle the open questions | `context/distilled/jev.md` | done | written by the agent 2026-11-06 (the human-only part was answering the questions: `confidence` resolved by measurement, resolution recorded, API stability **struck as UNANSWERED** — no owner reachable) |
 | 2 | T2: Closed `DecisionState` + builder + exhaustive renderer | `crates/brain/src/jev/{state,question}.rs`, `crates/qbots/src/jev/{mod,render}.rs` | done | 4 brain + 5 qbots tests; byte-exact state **and** request goldens; 100× determinism; budget drop names the field. Deviations: `MapContext` instead of `&BrainMap`, `render_state(s, max)` returns all dropped keys, `MapId` closes the map name (see Notes) |
 | 3 | T3: Margin gate + `Decision` + ticketed `DecisionSource` + stubs | `crates/brain/src/jev/{decision,source,gate}.rs` | done | gate = margin `p1−p2` (n ≤ 3), `n_eff` only for n ≥ 4; `submit → TicketId`, `latest → Option<AppliedDecision>` (`Copy`), `ack`; vectors **constructed in Rust** incl. the `{0.80,0.20}` regression row. 13 tests; objective travels as an index into its ticket's list (see Notes) |
 | 4 | T4: Hand-rolled HTTP/1.1 POST + wire types | `crates/qbots/src/jev/{net,wire,tests_net}.rs`, `crates/qbots/src/jev/testdata/` | done | `Connection: close`, chunked **and close-delimited**, timeout **wraps connect**, 1 MiB cap, extra-key + model-mismatch cases; **real clock, never `start_paused`**. 17 tests; plan's `tests/jev_net.rs` path was **invalid** (qbots is bin-only) — tests are an in-crate module |

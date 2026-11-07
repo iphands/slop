@@ -1561,7 +1561,7 @@ T2 ─▶ T3 ─▶ T4 ─▶ T5 ─▶ [W1 gate] ──────────
 
 ## Verification Checklist
 
-- [ ] T1: `context/distilled/jev.md` holds the contract, the measurement table **labelled loopback**, the `confidence` formula, and the other two answers resolved or struck
+- [x] T1: `context/distilled/jev.md` holds the contract, the measurement table **labelled loopback**, the `confidence` formula, and the other two answers resolved or struck
 - [x] T2: golden render byte-exact; 100× re-render byte-equal; over-budget drops the named bucket; no region facts or opaque indices in the state; `crates/brain/Cargo.toml` byte-unchanged
 - [x] T3: every `NoSignalReason` arm covered by a **Rust-constructed** table test (no JSON in brain); flat 4-way ⇒ `Flat{margin 0.175, n_eff 3.20}`; live `{0.880,0.120}` ⇒ apply; `{0.663,0.337}` ⇒ flat; regression row `{0.80,0.20}` ⇒ apply
 - [x] T4: chunked / **close-delimited** / truncated / 400 / 501 / malformed / empty / **missing key** / **extra key** / bad-sum / unknown type / **model mismatch** / refused / zero-bytes / slow-body each yield the specified `Decision` variant, on the **real** clock; no new packages in `Cargo.lock`
