@@ -1,0 +1,6 @@
+self  hp:13(crit) armor:0 held:hyperblaster ammo:3 low_ammo:yes
+dmg   recent:85 since:now
+enemy visible:3 nearest:near moving:yes
+loc   exits:2 moving:yes
+items health:none armor:none weapon:none powerup:none
+map   q2dm1 wants:health

@@ -1,0 +1,6 @@
+self  hp:60(mid) armor:40 held:rocket_launcher ammo:15 low_ammo:no
+dmg   recent:40 since:recent
+enemy visible:2 nearest:near moving:yes
+loc   exits:2 moving:yes
+items health:none armor:none weapon:none powerup:none
+map   q2dm1 wants:none

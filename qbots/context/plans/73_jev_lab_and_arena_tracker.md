@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 11% complete (1/9 tasks)
+- Status: 22% complete (2/9 tasks)
 - Start date: 2026-11-06
 - Plan: `context/plans/73_jev_lab_and_arena.md`
 - Purpose: the learner is **us** — find which situations, facts and wording make the frozen
@@ -30,7 +30,7 @@
 
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
-| 1 | T1: Lock the scenario corpus (human), split | `context/fixtures/jev/calibration/**` | pending | first 56 committed `34f28aefa` at the user's request, **before any scoring**; split report shows every half short (5–9 per category vs ≥10) and both flat sets entirely in tuning — needs ≈ +10 obvious, +11 ambiguous, +3 flat per question |
+| 1 | T1: Lock the scenario corpus (human), split | `context/fixtures/jev/calibration/**` | done | 138 states (56 in `34f28aefa` + 82 here), all drafted by the agent, **skimmed and approved by the user 2026-11-06 before any scoring**; every half ≥10 obvious / ≥10 ambiguous, flat cases in both halves |
 | 2 | T2: `jev-probe lab` — variants, split, scoring | `crates/qbots/src/jev/lab.rs`, `probe.rs` | done | 10 closed variants (baseline + 3 drop-a-fact, add-threat, hp-band-only, add-summary, consequence options, criterion / role instructions); FNV-1a split; holdout needs `--confirm-holdout`; `--split-report` is offline. 7 tests |
 | 3 | T3: Run the lab, write findings | `context/distilled/jev_lab.md` | pending | **live** — needs endpoint permission |
 | 4 | T4: Port winner, holdout once, calibrate | renderer, question specs, goldens | pending | closes Plan 72 W2 |
@@ -52,6 +52,7 @@ Every row is written **before** its run (prediction), then completed.
 | Date | What ran (command / build / input) | Result | Runs | Spread / notes |
 |------|------------------------------------|--------|------|----------------|
 | 2026-11-06 | `cargo run -p qbots -- jev-probe lab --split-report` (offline, corpus @ `34f28aefa`) | posture: tuning 6 obv / 5 amb / 3 flat, holdout 8 / 6 / 0; objective: tuning 9 / 5 / 3, holdout 5 / 6 / 0 | 1 | no model call; confirms T1 must grow the corpus |
+| 2026-11-06 | `jev-probe lab --split-report` on the locked corpus (138 states) | posture: tuning 11 obv / 14 amb / 12 flat, holdout 18 / 10 / 2; objective: tuning 12 / 10 / 12, holdout 15 / 20 / 2 | 1 | offline; T1's split requirement met |
 | 2026-11-07 | Plan 72 review probes (carried over as motivation) | same bad situation: disengage 0.441 (3-way) vs 0.663 (binary); explicit "cannot win" → 0.880 | 3 | framing moves the answer more than anything else we control |
 
 ## Notes / Deviations
@@ -63,6 +64,14 @@ Every row is written **before** its run (prediction), then completed.
 - The corpus drafted on 2026-11-06 was produced under Plan 72's calibration step; it moves under
   this plan's T1 because the lab is now its first consumer. Nobody has scored it against the model.
 
+- **T1 (2026-11-06):** batch 2 (82 states) took three generator runs because the FNV-1a split is
+  decided by file name, not chosen: the first top-up left posture-tuning at 9 obvious,
+  objective-tuning at 9 ambiguous and every flat case in tuning, so two small self-contained
+  top-ups followed until each half met ≥10/≥10 with flat cases in both. One generator run also
+  re-ran batch 1 by importing its script; the 56 byte-identical duplicates it wrote were detected
+  against their committed twins and deleted before anything was committed — the committed batch
+  1 was never modified. Flat states never contain an `enemy` line: "no enemy visible" is not
+  information-free for posture (`hold` is the right answer there).
 - **T2 (2026-11-06):** the variant set is the plan's four families made concrete — facts:
   `drop-dmg`, `drop-loc`, `drop-map`, `add-threat` (a derived `threat none|low|medium|high` line
   from enemies × distance × our band/weapon/armor); form: `hp-band-only`, `add-summary` (one of

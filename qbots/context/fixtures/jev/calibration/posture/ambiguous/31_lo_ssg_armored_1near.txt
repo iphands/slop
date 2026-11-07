@@ -1,0 +1,6 @@
+self  hp:45(lo) armor:150 held:super_shotgun ammo:30 low_ammo:no
+dmg   recent:55 since:now
+enemy visible:1 nearest:near moving:yes
+loc   exits:2 moving:yes
+items health:none armor:none weapon:none powerup:none
+map   q2dm1 wants:health

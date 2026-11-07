@@ -1,0 +1,6 @@
+self  hp:60(mid) armor:20 held:chaingun ammo:100 low_ammo:no
+dmg   recent:20 since:earlier
+enemy visible:3 nearest:far moving:yes
+loc   exits:2 moving:yes
+items health:none armor:none weapon:none powerup:none
+map   q2dm1 wants:armor

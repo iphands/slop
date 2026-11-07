@@ -1,0 +1,6 @@
+self  hp:35(lo) armor:100 held:bfg ammo:60 low_ammo:no
+dmg   recent:60 since:now
+enemy visible:2 nearest:mid moving:yes
+loc   exits:2 moving:yes
+items health:mid armor:none weapon:none powerup:none
+map   q2dm1 wants:health

@@ -1,0 +1,6 @@
+self  hp:11(crit) armor:0 held:grenade_launcher ammo:1 low_ammo:yes
+dmg   recent:80 since:now
+enemy visible:2 nearest:touch moving:yes
+loc   exits:2 moving:yes
+items health:near armor:none weapon:none powerup:none
+map   q2dm1 wants:health

@@ -1,0 +1,2 @@
+loc   exits:3 moving:yes
+map   other wants:none

@@ -1,0 +1,6 @@
+self  hp:100(hi) armor:0 held:rocket_launcher ammo:30 low_ammo:no
+dmg   recent:0 since:never
+enemy visible:0 nearest:none moving:no
+loc   exits:2 moving:yes
+items health:none armor:touch weapon:none powerup:none
+map   q2dm1 wants:armor

@@ -1,0 +1,6 @@
+self  hp:60(mid) armor:25 held:railgun ammo:15 low_ammo:no
+dmg   recent:30 since:recent
+enemy visible:1 nearest:touch moving:yes
+loc   exits:2 moving:yes
+items health:none armor:none weapon:none powerup:none
+map   q2dm1 wants:none

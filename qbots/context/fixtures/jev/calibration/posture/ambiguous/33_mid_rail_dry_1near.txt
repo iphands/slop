@@ -1,0 +1,6 @@
+self  hp:70(mid) armor:50 held:railgun ammo:3 low_ammo:yes
+dmg   recent:30 since:recent
+enemy visible:1 nearest:near moving:yes
+loc   exits:2 moving:yes
+items health:none armor:none weapon:none powerup:none
+map   q2dm1 wants:ammo
