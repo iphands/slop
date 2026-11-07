@@ -1206,4 +1206,137 @@ mod tests {
         );
         assert_eq!(b.status(), "retreat");
     }
+
+    // ── Plan 72 T6: behaviour-preservation golden ──────────────────────────────────────────
+
+    /// The committed 200-tick trace. Recorded from the q3 brain **before** the `GoalPolicy` seam
+    /// existed (Plan 72 T6 step 1) — a refactor that changes any byte of it changed behaviour.
+    const PARITY_GOLDEN: &str = include_str!("testdata/parity_200.txt");
+
+    /// A view holding one item entity (a body-armor pickup, `modelindex` 2) 100 u ahead —
+    /// inside q3's 150 u nearby-goal range — plus, optionally, the railgun-sighted enemy.
+    fn view_item(with_enemy: bool) -> Worldview {
+        use q2proto::EntityState;
+        let mut frame = Frame::default();
+        frame.playerstate.gunindex = 1;
+        frame.playerstate.stats[1] = 100;
+        frame.playerstate.stats[3] = 8;
+        frame.playerstate.stats[5] = 100;
+        frame.entities = vec![EntityState {
+            number: 12,
+            origin: [100.0, 0.0, 0.0],
+            modelindex: 2,
+            ..Default::default()
+        }];
+        if with_enemy {
+            frame.entities.push(EntityState {
+                number: 9,
+                origin: [200.0, 0.0, 0.0],
+                angles: [0.0, 180.0, 0.0],
+                modelindex: 255,
+                ..Default::default()
+            });
+        }
+        let mut cs = ConfigStrings::default();
+        cs.set(32 + 1, "models/weapons/v_rail/tris.md2");
+        cs.set(32 + 2, "models/items/armor/body/tris.md2");
+        Worldview::from_frame(&frame, &cs, 0)
+    }
+
+    /// The scripted 200-tick sequence: every FSM node, both posture sites, the roam fallback
+    /// arm (`roam_nodes` set, ticks advance so the 50-tick cursor moves), and a static position
+    /// so stuck recovery escalates. One `Worldview` per tick.
+    fn parity_script() -> Vec<Worldview> {
+        let rail = "models/weapons/v_rail/tris.md2";
+        let machn = "models/weapons/v_machn/tris.md2";
+        let fight = view_enemy(rail, 100, 8);
+        let mut stale = fight.clone();
+        for e in stale.entities_mut() {
+            if e.entity_number == 9 {
+                e.is_stale = true;
+            }
+        }
+        let phases: [(usize, Worldview); 12] = [
+            (30, empty_view()),                               // SeekLtg roam (`:926`)
+            (25, fight.clone()),                              // BattleFight
+            (15, stale),                                      // BattleChase
+            (15, empty_view()),                               // back to SeekLtg
+            (20, view_item(false)),                           // SeekNbg
+            (20, view_enemy(machn, 100, 200)),                // BattleRetreat
+            (10, empty_view()),                               // SeekLtg
+            (15, view_enemy_at(200.0, 0.0, machn, 200, 100)), // `:506` sneak-past veto
+            (10, view_enemy_at(200.0, 0.0, machn, 200, 70)),  // damage → full awareness
+            (15, view_item(true)),                            // fight with an item near → BattleNbg
+            (15, fight),                                      // BattleFight again
+            (10, empty_view()),                               // SeekLtg, recovery escalating
+        ];
+        let script: Vec<Worldview> = phases
+            .into_iter()
+            .flat_map(|(n, v)| std::iter::repeat_n(v, n))
+            .collect();
+        assert_eq!(
+            script.len(),
+            200,
+            "the golden is defined over exactly 200 ticks"
+        );
+        script
+    }
+
+    /// Run the script and render one line per tick: tick, node label, the full `BrainOutput`,
+    /// and the goal set on the navigator this tick. `{:?}` on `f32` is the shortest
+    /// round-tripping form, so string equality here is bit equality of every float.
+    fn parity_trace(b: &mut Q3Brain) -> String {
+        b.set_map(BrainMap {
+            roam_nodes: (0..10).collect(),
+            nav_graph: Arc::new(NavGraph::from_raw(
+                (0..10).map(|i| [i as f32 * 64.0, 32.0, 0.0]).collect(),
+                vec![Vec::new(); 10],
+            )),
+            roam_as_position: false,
+            items: Vec::new(),
+        });
+        let mut nav = StubNav {
+            pursue: Some(Vec3::new(200.0, 0.0, 0.0)),
+            ..Default::default()
+        };
+        let mut out = String::new();
+        for (t, view) in parity_script().iter().enumerate() {
+            nav.last_goal = None;
+            let o = b.tick(BrainContext {
+                view,
+                nav: Some(&mut nav),
+                cm: None,
+                dt: 0.1,
+                ticks: t as u32 + 1,
+                goal_override: None,
+            });
+            out.push_str(&format!(
+                "{t:03} {} | {o:?} | {:?}\n",
+                b.status(),
+                nav.last_goal
+            ));
+        }
+        out
+    }
+
+    #[test]
+    fn q3_parity_golden() {
+        let trace = parity_trace(&mut Q3Brain::new(Q3Character::sarge()));
+        if std::env::var_os("Q3_PARITY_RECORD").is_some() {
+            let path = concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/brains/q3/testdata/parity_200.txt"
+            );
+            std::fs::write(path, &trace).expect("write the q3 parity golden");
+            return;
+        }
+        for (i, (got, want)) in trace.lines().zip(PARITY_GOLDEN.lines()).enumerate() {
+            assert_eq!(got, want, "q3 behaviour changed at tick {i}");
+        }
+        assert_eq!(
+            trace.lines().count(),
+            PARITY_GOLDEN.lines().count(),
+            "trace length differs from the golden"
+        );
+    }
 }

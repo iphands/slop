@@ -1,6 +1,6 @@
 # Plan 72 — Jev decision brain (`jev`): model-driven high-level play over a q3 core
 
-> **Status**: pending
+> **Status**: in-progress
 > **Created**: 2026-11-07
 > **Revised**: 2026-11-07 (pre-commit) — corrected after two artifact reviews: the `GoalPolicy`
 > trait shape (ownership made the policy unreachable from the wrapper), the posture merge (it

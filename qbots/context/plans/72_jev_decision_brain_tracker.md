@@ -3,7 +3,7 @@
 ## Overview
 
 - Status: 0% complete (0/16 tasks)
-- Start date: — (set when the first task starts)
+- Start date: 2026-11-06 (`date +%F`, local; the plan's `2026-11-07` dates are UTC)
 - Plan: `context/plans/72_jev_decision_brain.md`
 - Evidence: `context/fixtures/jev/` (harvested live request/response pairs from `qbots jev-probe`)
   and this tracker's **Evidence** table for every number. Live model runs are **human-run**:
@@ -98,7 +98,7 @@
 | 3 | T3: Margin gate + `Decision` + ticketed `DecisionSource` + stubs | `crates/brain/src/jev/{decision,source,gate}.rs` | pending | gate = margin `p1−p2` (n ≤ 3), `n_eff` only for n ≥ 4; `submit → TicketId`, `latest → Option<AppliedDecision>` (`Copy`), `ack`; vectors **constructed in Rust** incl. the `{0.80,0.20}` regression row |
 | 4 | T4: Hand-rolled HTTP/1.1 POST + wire types | `crates/qbots/src/jev/{net,wire}.rs`, `crates/qbots/tests/jev_net.rs` | pending | `Connection: close`, chunked **and close-delimited**, timeout **wraps connect**, 1 MiB cap, extra-key + model-mismatch cases; **real clock, never `start_paused`** |
 | 5 | T5: Hub — pull workers, bucket, tickets, pacing, generation, tiered breaker | `crates/qbots/src/jev/{hub,transport,mod}.rs`, `crates/qbots/Cargo.toml` | pending | **schedule risk**: 7 mechanisms + a test each; **no semaphore, no `permit_wait_ms`** — workers pick oldest event, else oldest refresh (≤ 2 in flight); hub runs the gate, slot stores only `AppliedDecision` |
-| 6 | T6: q3 generic over `GoalPolicy` (behaviour-preserving) | `crates/brain/src/brains/q3/{policy,mod}.rs`, `q3/testdata/parity_200.txt` | pending | **independent of T2–T5, good first task**; **commit the pre-seam golden FIRST**; `Q3Brain<P = NullPolicy>`, `&mut self` methods; posture once per tick; disengage ⇒ retreat **and** no chase |
+| 6 | T6: q3 generic over `GoalPolicy` (behaviour-preserving) | `crates/brain/src/brains/q3/{policy,mod}.rs`, `q3/testdata/parity_200.txt` | in-progress | **independent of T2–T5, good first task**; **commit the pre-seam golden FIRST**; `Q3Brain<P = NullPolicy>`, `&mut self` methods; posture once per tick; disengage ⇒ retreat **and** no chase |
 | 7 | T7: `JevBrain` / `JevStatic` + `jev:` config | `brains/jev/{mod,policy}.rs`, `brains/mod.rs`, `config.rs`, `config.example.yaml` (root), `roster.rs`, `supervisor.rs` | pending | `JevBrain { inner: Q3Brain<JevPolicy> }` intercepts `set_map`, sets the `goal_override` inert flag; `#[value(name="jvs", alias="jev_static")]`; `brain_code` `jev`/`jvs`; dead-endpoint test uses `127.0.0.1:1` |
 | 8 | T8: Hub wiring + `on_map_change` + `goal_override` guard | `crates/qbots/src/main.rs`, `supervisor.rs`, `brains/core.rs` | pending | **start the hub at BOTH `supervisor.rs:323` and `:682`** or `competition` runs jev with no decider; triggers are flags, submit on the next tick; apply tests live in `brain`; `map_servercount = servercount` stays last |
 | 9 | T9: `qbots jev-probe` | `crates/qbots/src/jev/probe.rs`, `main.rs` (`Cmd::JevProbe`) | pending | **not `crates/tools`** (qbots is bin-only); offline argv + calibration-search tests are the task; the live checks are the **W2 gate**; 501 needs a well-formed chat body |
@@ -227,6 +227,11 @@ metric, the `EVT jev_fleet` line, `calibrate`.
   `[jev]`); default-method params named `_q` (clippy); no `start_paused` with real sockets; a
   close-delimited body case; `node:84`/`region:` removed from the pre-T14 state; W1 gates T7 not
   T6; the W4/W5 ordering made consistent; RULES statuses only, live checks moved to gates.
+- **2026-11-06, before T6:** the project gate (`just all`) was already **red** — clippy 0.1.98
+  (rustc 1.98.1) `needless_late_init` at `crates/brain/src/traverse.rs:261`, outside this plan.
+  Fixed behaviour-preservingly in its own commit `8acd93bf4` (not a task commit); gate after:
+  fmt-check, clippy `-D warnings`, 578 tests, build — all green. The T6 golden was recorded on top
+  of that commit.
 - `--brains` and `BrainKind` exist (`main.rs:249`, `:2634-2646`, `brains/mod.rs:35`). Any Verify
   naming a CLI command must be checked to exist and to field distinguishable arms before it is
   used as proof.
