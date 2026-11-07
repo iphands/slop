@@ -56,6 +56,18 @@ fn respawn_time(class: EntityClass) -> f32 {
 const ITEM_TRUST_RANGE: f32 = 500.0;
 /// An item entity within this distance of a known spawn origin counts as "that pad is stocked".
 const ITEM_PAD_RADIUS: f32 = 48.0;
+/// How far BELOW its BSP origin a live item may sit: `droptofloor` traces the item up to 128 u
+/// straight down and moves it to the floor (`vendor/yquake2/src/game/g_items.c` `droptofloor`,
+/// `dest = origin + (0,0,-128)`), plus slack for the trace's box. Found by Plan 74 B2: a 3D
+/// 48 u match never saw pads authored above the floor as stocked, so they always read "taken".
+const ITEM_PAD_DROP: f32 = 136.0;
+
+/// Is a live item at `live` the item of the pad whose BSP origin is `pad`? Horizontally within
+/// [`ITEM_PAD_RADIUS`], and at most [`ITEM_PAD_DROP`] below (a few units above) the BSP origin.
+fn on_pad(live: Vec3, pad: Vec3) -> bool {
+    let dz = live.z - pad.z;
+    (live - pad).truncate().length() < ITEM_PAD_RADIUS && (-ITEM_PAD_DROP..=8.0).contains(&dz)
+}
 
 /// True for a pickup class the bot would seek (excludes players/projectiles/unknown).
 fn is_pickup(class: EntityClass) -> bool {
@@ -117,7 +129,7 @@ impl ItemMemory {
             }
             let stocked = view
                 .entities()
-                .any(|e| is_pickup(e.class) && (e.origin - item.origin).length() < ITEM_PAD_RADIUS);
+                .any(|e| is_pickup(e.class) && on_pad(e.origin, item.origin));
             if stocked {
                 self.taken.remove(&i); // seen present → forget any stale "taken" mark
             } else {
@@ -354,6 +366,37 @@ mod tests {
             mem.available(0, EntityClass::ItemHealth, 41.0),
             "respawned after 30 s"
         );
+    }
+
+    #[test]
+    fn dropped_item_below_its_bsp_origin_still_stocks_the_pad() {
+        // Authored 100 u above the floor: the live item sits 100 u lower (droptofloor).
+        let items = [health_item([100.0, 0.0, 100.0])];
+        let mut mem = ItemMemory::new();
+        mem.observe(
+            &items,
+            &view_with(
+                [120.0, 0.0, 0.0],
+                &[([100.0, 0.0, 0.0], "models/items/healing/medium/tris.md2")],
+            ),
+            10.0,
+        );
+        assert!(
+            mem.available(0, EntityClass::ItemHealth, 10.0),
+            "stocked, not taken"
+        );
+        assert!(on_pad(
+            Vec3::new(130.0, 0.0, 100.0),
+            Vec3::new(100.0, 0.0, 100.0)
+        ));
+        assert!(
+            !on_pad(Vec3::new(100.0, 0.0, 300.0), Vec3::new(100.0, 0.0, 100.0)),
+            "an item ABOVE its pad is another item"
+        );
+        assert!(!on_pad(
+            Vec3::new(200.0, 0.0, 100.0),
+            Vec3::new(100.0, 0.0, 100.0)
+        ));
     }
 
     #[test]
