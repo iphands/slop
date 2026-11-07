@@ -1,0 +1,13 @@
+# Plan 74 arena roster from round B8: jev vs q3 head to head (the jvr rule arm is dropped — the
+# model agreed with the rule on 95–100 % of objective answers in B1–B6; its edge was gating,
+# measured already). 3 + 3 gives each arm 50 % more lives per round than arena_74.yaml.
+#
+#   cargo run -p qbots -- --config <config with jev: {enabled: true, journal: true}> \
+#     competition --roster context/fixtures/jev/arena_74_duel.yaml
+groups:
+  - brain: q3
+    navmode: as
+    count: 3
+  - brain: jev
+    navmode: as
+    count: 3
