@@ -4,7 +4,7 @@
 
 - Status: 100% complete (9/9 tasks)
 - Start date: 2026-11-06
-- Plan: `context/plans/73_jev_lab_and_arena.md`
+- Plan: `context/plans/completed/73_jev_lab_and_arena.md`
 - Purpose: the learner is **us** — find which situations, facts and wording make the frozen
   decision model answer well, and write it down (`context/distilled/jev_lab.md`).
 - Interleaves with Plan 72: Wave A (T1–T4) produces Plan 72's W2 evidence and its question

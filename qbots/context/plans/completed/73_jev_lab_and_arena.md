@@ -1,6 +1,6 @@
 # Plan 73 — Jev lab + arena: learn which situations, facts and wording make the model decide well
 
-> **Status**: in-progress
+> **Status**: done
 > **Created**: 2026-11-06
 > **Depends on**: Plan 72 T9 (`qbots jev-probe`) for Wave A; Plan 72 T10 + T11 (the first real
 > question + telemetry) for Wave B. Plan 72 is the thing being measured; this plan is its
@@ -344,6 +344,13 @@ Plan 72 T9 (done) ─▶ T1 (human) ─▶ T2 ─▶ T3 (live) ─▶ T4 ─▶ 
 7. **Endpoint permission.** Wave A's live runs (T3, T4) call `cosmo.lan:8710` (loopback on the dev
    box). Asked on 2026-11-06; the agent runs them only once the user says yes, otherwise they are
    human-run with `cargo run -p qbots -- jev-probe lab …`.
+   *Resolved*: tuning/holdout used as written; the holdout was scored once (posture 78 % vs tuning 82 %, objective 100 % vs 100 %) — the wording generalised.
+   *Deferred — a later plan*: the objective's "ambiguous" labels look too cautious (T4) and the arena's confident-then-died states were generated as candidates; relabelling is the human's (Follow-ups).
+   *Resolved in practice*: comparisons were drawn only on contrasted cells (agreed vs disagreed, A1b vs A2) and labelled low-power where n < 100; the windows found real effects (and a real bug).
+   *Resolved*: 0 admission drops in all 9 arena runs.
+   *Resolved*: every variant is closed code over `&'static str` literals; the production wording is pinned by a parity test.
+   *Resolved*: SERIES flipped 72/73 blocked↔active at every switch, with the reason.
+   *Resolved*: granted by the user in-session 2026-11-06; all live runs were agent-run after that.
 
 ## Verification Checklist
 
@@ -356,5 +363,5 @@ Plan 72 T9 (done) ─▶ T1 (human) ─▶ T2 ─▶ T3 (live) ─▶ T4 ─▶ 
 - [x] T7: journal report over a synthetic journal matches expected; <100-decision comparisons refused; roster parses
 - [x] T8: Rounds table with predictions; arena section in `jev_lab.md` — *the arena-derived scenario batch was generated but NOT committed: labelling is the human's (Follow-ups)*
 - [x] T9: Plan 72 W3 filled from journals; pitfalls + brain_notes; plan + tracker moved to `completed/`
-- [ ] Rule A held at every commit: `cargo fmt` + `cargo clippy -- -D warnings` + `cargo test` green
-- [ ] Rule C: plan + tracker `git mv` to `completed/` and `SERIES.md` marked done
+- [x] Rule A: `cargo fmt` + `cargo clippy -- -D warnings` + `cargo test` green at every commit **except one** — `42bf607b5` went in over a failed clippy run (recorded; fixed by `8738499df`)
+- [x] Rule C: plan + tracker `git mv` to `completed/` and `SERIES.md` marked done

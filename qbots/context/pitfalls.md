@@ -1692,4 +1692,4 @@ failed clippy run because the two were not chained.
 ## Sources
 - qbots: crates/qbots/src/jev/{hub,render,wire,net}.rs, crates/brain/src/jev/{gate,source,state}.rs
 - qbots: crates/brain/src/brains/q3/{mod,policy}.rs (golden `testdata/parity_200.txt`)
-- qbots: context/plans/72_jev_decision_brain*.md, 73_jev_lab_and_arena*.md, context/distilled/jev_lab.md
+- qbots: context/plans/72_jev_decision_brain*.md, context/plans/completed/73_jev_lab_and_arena*.md, context/distilled/jev_lab.md
