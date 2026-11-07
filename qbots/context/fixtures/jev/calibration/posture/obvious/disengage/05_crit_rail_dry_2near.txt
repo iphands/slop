@@ -1,0 +1,6 @@
+self  hp:22(crit) armor:0 held:railgun ammo:1 low_ammo:yes
+dmg   recent:90 since:now
+enemy visible:2 nearest:near moving:yes
+loc   exits:2 moving:yes
+items health:none armor:none weapon:none powerup:none
+map   q2dm1 wants:health

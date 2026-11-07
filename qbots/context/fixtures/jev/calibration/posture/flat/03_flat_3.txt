@@ -1,0 +1,2 @@
+loc   exits:unknown moving:no
+map   other wants:none

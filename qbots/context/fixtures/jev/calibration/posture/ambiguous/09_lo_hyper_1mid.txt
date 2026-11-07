@@ -1,0 +1,6 @@
+self  hp:40(lo) armor:25 held:hyperblaster ammo:80 low_ammo:no
+dmg   recent:55 since:now
+enemy visible:1 nearest:mid moving:yes
+loc   exits:2 moving:yes
+items health:none armor:none weapon:none powerup:none
+map   q2dm1 wants:health

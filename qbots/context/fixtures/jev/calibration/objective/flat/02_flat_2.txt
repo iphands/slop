@@ -1,0 +1,2 @@
+items health:none armor:none weapon:none powerup:none
+map   other wants:none
