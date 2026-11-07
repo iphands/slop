@@ -76,6 +76,10 @@ const MAX_NODESWITCHES: u32 = 50;
 /// Is `to_target` (a non-unit direction *from* the viewer) inside a horizontal FOV cone of total
 /// angle `fov_deg` centered on the unit `forward`? `fov_deg >= 360` is always true (full
 /// awareness). Used for both our awareness cone and the enemy's "is it looking at me?" check.
+/// The fight distance idle weapon readiness prepares for (Plan 74 B4) — mid range, where every
+/// strong weapon scores and splash weapons are safe.
+const IDLE_SWITCH_RANGE: f32 = 512.0;
+
 fn fov_cone(forward: Vec3, to_target: Vec3, fov_deg: f32) -> bool {
     if fov_deg >= 360.0 {
         return true;
@@ -154,6 +158,8 @@ pub struct Q3Brain<P: GoalPolicy = NullPolicy> {
     held_weapon: weapons::Weapon,
     /// Which switches the server grants (Plan 74 B2) — learned, since the wire has no inventory.
     arsenal: weapons::Arsenal,
+    /// No idle weapon switch before this time (Plan 74 B4).
+    next_idle_switch: f32,
     /// Time (seconds) of the last weapon switch — gates a 0.1 s mid-change fire lockout.
     weapon_switch_time: f32,
 
@@ -210,6 +216,7 @@ impl<P: GoalPolicy> Q3Brain<P> {
             next_crouch_time: 0.0,
             held_weapon: weapons::Weapon::Blaster,
             arsenal: weapons::Arsenal::default(),
+            next_idle_switch: 0.0,
             weapon_switch_time: f32::NEG_INFINITY,
             aim: aim::AimState::new(),
             strafe: r#move::StrafeState::new(),
@@ -997,6 +1004,23 @@ impl<P: GoalPolicy + Send> Brain for Q3Brain<P> {
         } else {
             // No nav graph yet — walk forward so the bot isn't a statue.
             mv.move_forward(1.0);
+        }
+
+        // Idle weapon readiness (Plan 74 B4): out of combat, hold the best owned weapon for a
+        // mid-range fight now, instead of switching at the first shot. One ask per second at
+        // most; the Arsenal skips weapons the server recently refused.
+        if weapon_request.is_none()
+            && !enemy_visible
+            && goal_override.is_none()
+            && self.time >= self.next_idle_switch
+        {
+            self.next_idle_switch = self.time + 1.0;
+            weapon_request =
+                self.arsenal
+                    .choose(view.self_state().held_weapon, IDLE_SWITCH_RANGE, self.time);
+            if weapon_request.is_some() {
+                self.weapon_switch_time = self.time;
+            }
         }
 
         // Survival override (Plan 50 E2): standing in lava/slime outranks combat, dodge,
