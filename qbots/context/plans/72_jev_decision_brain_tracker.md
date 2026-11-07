@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 19% complete (3/16 tasks)
+- Status: 25% complete (4/16 tasks)
 - Start date: 2026-11-06 (`date +%F`, local; the plan's `2026-11-07` dates are UTC)
 - Plan: `context/plans/72_jev_decision_brain.md`
 - Evidence: `context/fixtures/jev/` (harvested live request/response pairs from `qbots jev-probe`)
@@ -96,7 +96,7 @@
 | 1 | T1: Record the contract + measurements, settle the open questions | `context/distilled/jev.md` | pending | **human-only, parallel with W1** — never blocks T2; label the numbers loopback; `confidence` is already resolved; strike unanswered questions, never delete |
 | 2 | T2: Closed `DecisionState` + builder + exhaustive renderer | `crates/brain/src/jev/{state,question}.rs`, `crates/qbots/src/jev/{mod,render}.rs` | done | 4 brain + 5 qbots tests; byte-exact state **and** request goldens; 100× determinism; budget drop names the field. Deviations: `MapContext` instead of `&BrainMap`, `render_state(s, max)` returns all dropped keys, `MapId` closes the map name (see Notes) |
 | 3 | T3: Margin gate + `Decision` + ticketed `DecisionSource` + stubs | `crates/brain/src/jev/{decision,source,gate}.rs` | done | gate = margin `p1−p2` (n ≤ 3), `n_eff` only for n ≥ 4; `submit → TicketId`, `latest → Option<AppliedDecision>` (`Copy`), `ack`; vectors **constructed in Rust** incl. the `{0.80,0.20}` regression row. 13 tests; objective travels as an index into its ticket's list (see Notes) |
-| 4 | T4: Hand-rolled HTTP/1.1 POST + wire types | `crates/qbots/src/jev/{net,wire}.rs`, `crates/qbots/tests/jev_net.rs` | pending | `Connection: close`, chunked **and close-delimited**, timeout **wraps connect**, 1 MiB cap, extra-key + model-mismatch cases; **real clock, never `start_paused`** |
+| 4 | T4: Hand-rolled HTTP/1.1 POST + wire types | `crates/qbots/src/jev/{net,wire,tests_net}.rs`, `crates/qbots/src/jev/testdata/` | done | `Connection: close`, chunked **and close-delimited**, timeout **wraps connect**, 1 MiB cap, extra-key + model-mismatch cases; **real clock, never `start_paused`**. 17 tests; plan's `tests/jev_net.rs` path was **invalid** (qbots is bin-only) — tests are an in-crate module |
 | 5 | T5: Hub — pull workers, bucket, tickets, pacing, generation, tiered breaker | `crates/qbots/src/jev/{hub,transport,mod}.rs`, `crates/qbots/Cargo.toml` | pending | **schedule risk**: 7 mechanisms + a test each; **no semaphore, no `permit_wait_ms`** — workers pick oldest event, else oldest refresh (≤ 2 in flight); hub runs the gate, slot stores only `AppliedDecision` |
 | 6 | T6: q3 generic over `GoalPolicy` (behaviour-preserving) | `crates/brain/src/brains/q3/{policy,mod}.rs`, `q3/testdata/parity_200.txt` | done | golden `41f42b336` (pre-seam), seam in the T6 commit after it; golden byte-identical after the refactor; 12 old q3 tests unedited; 4 new seam tests; both mutation checks fail as they should (Evidence). Live no-op control → **W2** |
 | 7 | T7: `JevBrain` / `JevStatic` + `jev:` config | `brains/jev/{mod,policy}.rs`, `brains/mod.rs`, `config.rs`, `config.example.yaml` (root), `roster.rs`, `supervisor.rs` | pending | `JevBrain { inner: Q3Brain<JevPolicy> }` intercepts `set_map`, sets the `goal_override` inert flag; `#[value(name="jvs", alias="jev_static")]`; `brain_code` `jev`/`jvs`; dead-endpoint test uses `127.0.0.1:1` |
@@ -255,6 +255,18 @@ metric, the `EVT jev_fleet` line, `calibrate`.
   `Malformed(BadProbabilities)` for non-finite / negative / mis-summed vectors, so an invalid
   vector can never be gated as `Flat`; (5) `StubDecider` uses `std::sync::Mutex` — it is a test
   double; the production slot is still the hub's, in `qbots`.
+- **T4 (2026-11-06) — plan item invalid as written:** the plan put the tests in
+  `crates/qbots/tests/jev_net.rs` with fixtures in `crates/qbots/tests/fixtures/`. `qbots` has no
+  `lib.rs`, so an integration test cannot import `jev::net`/`wire` at all. Reality: tests are the
+  in-crate module `crates/qbots/src/jev/tests_net.rs` (`cargo test -p qbots jev_`), fixtures in
+  `crates/qbots/src/jev/testdata/`. Other T4 decisions: (1) the four fixtures are **verbatim**
+  bodies from the 2026-11-07 review probes (decisive/unclear binary posture, 3-way posture, the
+  chat 501); the flat 24-option body was never captured verbatim, so it is **not** a fixture yet —
+  T9's harvest should add it (Follow-ups); (2) a **missing** `model` fails closed as
+  `ModelMismatch`, same as a different one; (3) an answer of a known type other than the one asked
+  is `UnknownType`; probability keys must equal the offered labels exactly (else
+  `BadProbabilities`); any structural problem rejects the whole response; (4) the resolve test
+  dials `*.invalid` (RFC 6761), answered by the local resolver, not the network.
 - **T6 harvest:** the FSM-loop pitfall (one of T16's ten named entries) is already in
   `context/pitfalls.md` — confirmed by mutation in T6, so it was written then rather than at T16.
 - `--brains` and `BrainKind` exist (`main.rs:249`, `:2634-2646`, `brains/mod.rs:35`). Any Verify
@@ -272,4 +284,5 @@ metric, the `EVT jev_fleet` line, `calibrate`.
 | Re-run `jev-probe flatness` + `calibrate` + `matrix --live` after **any** server-side change | determinism is per-process; a restarted box with different slot/parallel settings may not reproduce, and frozen thresholds were calibrated against the old one | recurring, note in `context/pitfalls.md` (T16) |
 | Per-trigger split of the herd/oscillation metrics | W3's gate needs it; W4/W5 want it trended across runs | T11, then T16's report shape |
 | Re-run `bench` from the fleet host if the fleet ever leaves the model host | every latency here is loopback | T1 decision; recurring |
+| Capture the flat 24-option response verbatim as a fixture | the plan calls it the most valuable fixture; only its summary (top p 0.051) was recorded | T9 harvest |
 | Remove `#![allow(dead_code)]` from `crates/qbots/src/jev/mod.rs` | `qbots` is bin-only, so T2–T5's module has no caller until the hub is wired; anything still unused after T8 is genuinely dead | **T8** |

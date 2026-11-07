@@ -1,0 +1,1 @@
+{"error":{"code":501,"message":"This model is a decision model without text generation, use /v1/systemone","type":"not_supported_error"}}

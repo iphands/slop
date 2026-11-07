@@ -1,0 +1,1 @@
+{"model":"h2oai/h2o-lightning-4b","answers":{"posture":{"type":"choice","choice":"disengage","probabilities":{"disengage":0.8801887543203412,"stay":0.11981124567965881},"confidence":0.7603775086406823}},"usage":{"input_tokens":142,"output_tokens":0}}

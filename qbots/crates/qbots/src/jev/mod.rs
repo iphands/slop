@@ -9,4 +9,9 @@
 // genuinely dead.
 #![allow(dead_code)]
 
+pub mod net;
 pub mod render;
+pub mod wire;
+
+#[cfg(test)]
+mod tests_net;
