@@ -63,6 +63,31 @@ pub fn noop_label(q: &QuestionSpec) -> Option<&'static str> {
     (q.key == QuestionKey::Posture && opts.iter().any(|o| o.label == "hold")).then_some("hold")
 }
 
+/// Which classes a rendered state's `pads` line offers (Plan 74): a class counts when its band is
+/// anything but `none`. No `pads` line ⇒ nothing offered. Closed: reads only known keys.
+pub fn offered_from_pads(text: &str) -> brain::jev::question::Offered {
+    let mut o = brain::jev::question::Offered::default();
+    let Some(line) = text
+        .lines()
+        .find(|l| l.split_whitespace().next() == Some("pads"))
+    else {
+        return o;
+    };
+    for tok in line.split_whitespace().skip(1) {
+        let Some((k, v)) = tok.split_once(':') else {
+            continue;
+        };
+        let on = v != "none";
+        match k {
+            "weapon" => o.weapon = on,
+            "health" => o.health = on,
+            "armor" => o.armor = on,
+            _ => {}
+        }
+    }
+    o
+}
+
 /// The wording adopted for production (Plan 73 T3 round 4). `render_state` produces exactly this
 /// variant applied to the field rendering — `jev_render_v2_equals_the_lab_tested_wording` pins it.
 pub const PRODUCTION: Variant = Variant::SummaryGradedThreat;
@@ -590,6 +615,53 @@ pub fn score(answers: &[Scored], t: f32, noop: Option<&str>) -> Metrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jev_probe_objective_v2_offers_follow_the_pads_line() {
+        use crate::jev::probe::ProbeQuestion;
+        use brain::jev::question::{Offered, CARRY_ON, SEEK_ARMOR, SEEK_WEAPON};
+        let text = "self  hp:100(hi) armor:0 held:blaster ammo:0 low_ammo:yes\n\
+                    pads  weapon:mid health:none armor:far\n\
+                    map   q2dm1 wants:heavy_damage";
+        assert_eq!(
+            offered_from_pads(text),
+            Offered {
+                weapon: true,
+                health: false,
+                armor: true
+            }
+        );
+        assert_eq!(
+            offered_from_pads("map   q2dm1 wants:none"),
+            Offered::default()
+        );
+        let spec = ProbeQuestion::ObjectiveV2.spec_for(text);
+        let QuestionKind::Choice(opts) = &spec.kind else {
+            panic!("choice")
+        };
+        let labels: Vec<_> = opts.iter().map(|o| o.label).collect();
+        assert_eq!(labels, [SEEK_WEAPON, SEEK_ARMOR, CARRY_ON]);
+        // A case labelled with a class its own pads line does not offer is a corpus error.
+        let case = |label| CorpusCase {
+            name: "x.txt".into(),
+            text: text.into(),
+            kind: CaseKind::Obvious(label),
+        };
+        assert!(ProbeQuestion::ObjectiveV2
+            .check_offered(&[case(SEEK_WEAPON)])
+            .is_ok());
+        assert!(ProbeQuestion::ObjectiveV2
+            .check_offered(&[case(brain::jev::question::SEEK_HEALTH)])
+            .is_err());
+        // The production transform keeps the pads line and appends the derived lines.
+        let (out, q) = PRODUCTION.apply(text, &spec);
+        assert!(out.contains("\npads  weapon:mid health:none armor:far\n"));
+        assert!(out.ends_with("summary: healthy, weak weapon, no enemy in sight"));
+        assert_eq!(
+            q, spec,
+            "production wording leaves the v2 question as built"
+        );
+    }
     use crate::jev::probe::ProbeQuestion;
 
     const CRIT: &str = "self  hp:15(crit) armor:0 held:blaster ammo:50 low_ammo:no\n\

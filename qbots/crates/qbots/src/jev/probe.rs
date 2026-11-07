@@ -137,6 +137,9 @@ pub enum ProbeQuestion {
     Posture,
     /// Three-way objective: seek health / seek armor / carry on (the no-op — Plan 73 round 3).
     Objective,
+    /// Plan 74 pickup objective: `seek_weapon / seek_health / seek_armor / carry_on`, each case
+    /// offering only the classes its `pads` line names (see [`ProbeQuestion::spec_for`]).
+    ObjectiveV2,
 }
 
 impl ProbeQuestion {
@@ -145,7 +148,38 @@ impl ProbeQuestion {
         match self {
             ProbeQuestion::Posture => "posture",
             ProbeQuestion::Objective => "objective",
+            ProbeQuestion::ObjectiveV2 => "objective_v2",
         }
+    }
+
+    /// The question as asked about one case's state text: v2 offers what that state's `pads`
+    /// line offers — built by the same `objective_question_v2` the bot uses; every other
+    /// question is the same for every case.
+    pub(crate) fn spec_for(self, text: &str) -> QuestionSpec {
+        match self {
+            ProbeQuestion::ObjectiveV2 => {
+                brain::jev::question::objective_question_v2(super::lab::offered_from_pads(text))
+            }
+            _ => self.spec(),
+        }
+    }
+
+    /// Every obvious case's label must be one of the options its own question offers.
+    pub(crate) fn check_offered(self, cases: &[super::lab::CorpusCase]) -> Result<(), String> {
+        for c in cases {
+            if let super::lab::CaseKind::Obvious(label) = c.kind {
+                let QuestionKind::Choice(opts) = self.spec_for(&c.text).kind else {
+                    continue;
+                };
+                if !opts.iter().any(|o| o.label == label) {
+                    return Err(format!(
+                        "{}: labelled '{label}' but its pads line does not offer it",
+                        c.name
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// The question spec — the production question (Plan 73 T4: one source for lab and bot).
@@ -153,6 +187,13 @@ impl ProbeQuestion {
         match self {
             ProbeQuestion::Posture => brain::jev::question::posture_question(),
             ProbeQuestion::Objective => brain::jev::question::objective_question(),
+            ProbeQuestion::ObjectiveV2 => {
+                brain::jev::question::objective_question_v2(brain::jev::question::Offered {
+                    weapon: true,
+                    health: true,
+                    armor: true,
+                })
+            }
         }
     }
 }
@@ -488,7 +529,11 @@ impl Probe {
         let th = GateThresholds::default();
         let mut all = true;
         let mut fields = Vec::new();
-        for q in [ProbeQuestion::Posture, ProbeQuestion::Objective] {
+        for q in [
+            ProbeQuestion::Posture,
+            ProbeQuestion::Objective,
+            ProbeQuestion::ObjectiveV2,
+        ] {
             let qdir = dir.join(q.dir_name());
             if !qdir.exists() {
                 continue;
@@ -504,6 +549,7 @@ impl Probe {
                 .into_iter()
                 .filter(|c| half_of(&c.name) == Half::Holdout)
                 .collect();
+            q.check_offered(&cases)?;
             let count = |f: fn(&CaseKind) -> bool| cases.iter().filter(|c| f(&c.kind)).count();
             let (n_ob, n_am) = (
                 count(|k| matches!(k, CaseKind::Obvious(_))),
@@ -518,7 +564,7 @@ impl Probe {
             let mut obvious = Vec::new();
             let mut margins = [Vec::new(), Vec::new()];
             for c in &cases {
-                let text = PRODUCTION.apply(&c.text, &base).0;
+                let (text, spec) = PRODUCTION.apply(&c.text, &q.spec_for(&c.text));
                 let a = self.ask("calibrate", &raw_state(&text), &spec).await?;
                 let st = stats(&a.probs);
                 let top = st.and_then(|st| option_label(&spec, st.top));
@@ -546,7 +592,11 @@ impl Probe {
                 th.margin_multi
             };
             fields.push((
-                if q == ProbeQuestion::Posture { "posture (binary)" } else { "objective (3-way)" },
+                match q {
+                    ProbeQuestion::Posture => "posture (binary)",
+                    ProbeQuestion::Objective => "objective (3-way)",
+                    ProbeQuestion::ObjectiveV2 => "objective v2 (2–4 way)",
+                },
                 match t {
                     Some(t) => format!(
                         "threshold={t:.3} (provisional {current:.2}); obvious picked wrong: {wrong}/{}",
@@ -685,6 +735,7 @@ impl Probe {
                 .into_iter()
                 .filter(|c| half_of(&c.name) == half)
                 .collect();
+            q.check_offered(&cases)?;
             if cases.is_empty() {
                 return Err(format!(
                     "no {half:?} cases for {:?} under {}",
@@ -701,7 +752,7 @@ impl Probe {
                 let mut scored = Vec::new();
                 let mut errors = 0usize;
                 for c in &cases {
-                    let (text, spec) = v.apply(&c.text, &base);
+                    let (text, spec) = v.apply(&c.text, &q.spec_for(&c.text));
                     match self.ask("lab", &raw_state(&text), &spec).await {
                         Ok(a) => {
                             let st = stats(&a.probs);
