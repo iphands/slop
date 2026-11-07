@@ -210,7 +210,9 @@ impl JevPolicy {
             obj_window: None,
             held_tier: 0,
             retreat: None,
-            pad_retreat: true,
+            // Plan 74 B8: off — on lava maps the health pads sit beside the basin, and B7 jev died in
+            // `retreat` far more than q3 (lava 79 vs 49). Kept switchable for a dry map.
+            pad_retreat: false,
             rim: Vec::new(),
             risk: Vec::new(),
             shadow: false,
@@ -471,6 +473,11 @@ impl JevPolicy {
     pub(crate) fn set_rim(&mut self, rim: Vec<f32>) {
         self.risk = rim.clone();
         self.rim = rim;
+    }
+
+    /// Retreat toward a pad (Plan 74 B2) or leave the retreat goal to q3 (the default since B8).
+    pub fn set_pad_retreat(&mut self, on: bool) {
+        self.pad_retreat = on;
     }
 
     /// The risk overlay pads are priced with (empty ⇒ plain travel cost).

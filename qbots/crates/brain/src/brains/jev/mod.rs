@@ -496,6 +496,7 @@ mod tests {
         let (mut b, stub) = fight_brain();
         b.set_map(map);
         b.on_map_change("q2dm1");
+        b.policy_mut().set_pad_retreat(true); // off by default since B8
         let view = fight_view_hp(60);
         tick_view(&mut b, &view);
         stub.set_latest(Some(posture_decision(1, 0)));
