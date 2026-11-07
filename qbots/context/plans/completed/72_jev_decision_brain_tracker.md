@@ -4,7 +4,7 @@
 
 - Status: 100% complete (16/16 rows closed — 12 done, 4 skipped with reasons)
 - Start date: 2026-11-06 (`date +%F`, local; the plan's `2026-11-07` dates are UTC)
-- Plan: `context/plans/72_jev_decision_brain.md`
+- Plan: `context/plans/completed/72_jev_decision_brain.md`
 - Evidence: `context/fixtures/jev/` (harvested live request/response pairs from `qbots jev-probe`)
   and this tracker's **Evidence** table for every number. Live model runs are **human-run**:
   `cosmo.lan:8710` (model `h2oai/h2o-lightning-4b` Q8_0, `total_slots` 16, no auth). On the dev
@@ -24,7 +24,7 @@
 ## Resume Instructions
 
 1. Read `AGENTS.md` (root **and** `../CLAUDE.md`), `context/plans/RULES.md` **in full**,
-   `context/plans/72_jev_decision_brain.md`, then `context/distilled/jev.md` (T1's output — the
+   `context/plans/completed/72_jev_decision_brain.md`, then `context/distilled/jev.md` (T1's output — the
    wire contract and the measured latency/token envelope; **if T1 has not landed, the plan's
    Context section is sufficient for T2–T4**). Read the Concurrency Model section of `AGENTS.md`
    again before T15 — that task only exists because of the T13 carve-out.

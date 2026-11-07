@@ -1,6 +1,6 @@
 # Plan 72 — Jev decision brain (`jev`): model-driven high-level play over a q3 core
 
-> **Status**: in-progress
+> **Status**: done (closed 2026-11-07 — 12 tasks done, T10 and T13–T15 skipped with reasons; see the tracker)
 > **Created**: 2026-11-07
 > **Revised**: 2026-11-07 (pre-commit) — corrected after two artifact reviews: the `GoalPolicy`
 > trait shape (ownership made the policy unreachable from the wrapper), the posture merge (it
@@ -1559,6 +1559,35 @@ T2 ─▶ T3 ─▶ T4 ─▶ T5 ─▶ [W1 gate] ──────────
     W4/W5 are independent tracks after W3, and if W3 slips they move to sub-plans `72_1`/`72_2`
     rather than being compressed.
 
+### Resolutions at close (2026-11-07)
+
+1. **Applied-rate** — not zero: the margin gate (0.30, frozen at W2 from the holdout half) let
+   posture answers through; live gate-reject ran 24–47 % per arena run (tracker W3). The objective
+   question had no admissible threshold and was not asked (T10 skipped).
+2. **Herding** — not separately assessed at close. The mitigation T15 carried (code-side capped
+   region assignment) was not built; posture flips stayed ≤ 0.40/bot/min (W4). Open for any
+   region follow-up.
+3. **A/B confound** — `jev_static` ran as the primary control in shadow mode (Plan 73 arena).
+   K/D over six baseline runs: jev 0.88, jvs 0.79, q3 0.66; jev > jvs in 5/6 runs (p ≈ 0.22) —
+   **not significant**. The posture answer mostly agrees with q3; its one systematic
+   disagreement measured roughly neutral (`context/distilled/jev_lab.md`).
+4. **Carve-out** — never put to the human in this run; T13–T15 skipped and the plan closes
+   after T12 exactly as this risk provides.
+5. **Loopback** — still true; recorded in `context/distilled/jev.md` (§ design question 2).
+6. **Stopgap API** — unanswered (no API owner reachable); slug pinned, fail closed, `jev-probe
+   replay` detects a server-side change.
+7. **`confidence`** — formula confirmed and recorded; logged, never gated on.
+8. **`noul`** — not used by the production ask; remains unvalidated and not load-bearing.
+9. **Dynamic `status()` tag** — still deferred; no operator asked for it.
+10. **Plan 71** — still deferred in SERIES; no ghost-chase confound was attributed in jev runs.
+11. **State cost** — production asks are ~190 input tokens (schema v2, posture only); region
+    legends were never built, so the total-prompt concern did not materialise.
+12. **Calibration labels** — the corpus was committed before the first `calibrate` run (commit
+    order is the evidence); posture threshold frozen; the objective question, which no threshold
+    could serve, was not deployed.
+13. **Effort** — W1–W4 landed 2026-11-06 → 2026-11-07 with Plan 73 as the testing ground; W5
+    was cut rather than compressed.
+
 ## Verification Checklist
 
 - [x] T1: `context/distilled/jev.md` holds the contract, the measurement table **labelled loopback**, the `confidence` formula, and the other two answers resolved or struck
@@ -1578,5 +1607,5 @@ T2 ─▶ T3 ─▶ T4 ─▶ T5 ─▶ [W1 gate] ──────────
 - [ ] T14: — **skipped** (region layer deferred); not verified
 - [ ] T15: — **skipped** (needs T13); not verified
 - [x] T16: A/B in Evidence (six paired arena runs; the predicted-no-difference metric not pre-registered separately — deviation); `docs/BRAINS.md` lists `jev`; dated `brain_notes.md`; pitfalls entries
-- [ ] Rule A held at every commit: `cargo fmt` + `cargo clippy -- -D warnings` + `cargo test` green
-- [ ] Rule C: plan + tracker `git mv` to `completed/` and `SERIES.md` marked done
+- [x] Rule A held at every commit: `cargo fmt` + `cargo clippy -- -D warnings` + `cargo test` green — *for Plan 72's commits; the one false 'gate green' in this window (`42bf607b5`) was Plan 73's T5, corrected by `8738499df`*
+- [x] Rule C: plan + tracker `git mv` to `completed/` and `SERIES.md` marked done (2026-11-07)
