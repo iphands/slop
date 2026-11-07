@@ -17,7 +17,9 @@
 pub mod pads;
 mod policy;
 
-pub use policy::{JevPolicy, Resolved, TicketEntry, RING};
+pub use policy::{
+    JevPolicy, Resolved, TicketEntry, ARRIVE_RADIUS, OBJECTIVE_MAX_S, RESPAWN_SETTLE_S, RING,
+};
 
 use std::sync::Arc;
 
@@ -218,6 +220,15 @@ mod tests {
         }
     }
 
+    /// A pad for item `item` at `x` on the x axis.
+    fn pad_at(item: usize, x: f32) -> super::pads::Pad {
+        super::pads::Pad {
+            item,
+            origin: Vec3::new(x, 0.0, 0.0),
+            cost: x,
+        }
+    }
+
     /// A brain on q2dm1 with ticket 7 offering two objective goals.
     fn seeded() -> (JevBrain, Arc<StubDecider>) {
         let stub = Arc::new(StubDecider::default());
@@ -226,10 +237,7 @@ mod tests {
         b.policy_mut().record_ticket(
             TicketId(7),
             TicketEntry {
-                objectives: vec![
-                    NavGoal::Waypoint(3),
-                    NavGoal::Position(Vec3::new(1.0, 2.0, 3.0)),
-                ],
+                objectives: vec![Some(pad_at(3, 768.0)), Some(pad_at(0, 1.0))],
                 postures: Vec::new(),
             },
         );
@@ -248,8 +256,8 @@ mod tests {
             "acked once"
         );
         assert_eq!(
-            b.policy().current().and_then(|r| r.objective.clone()),
-            Some(NavGoal::Position(Vec3::new(1.0, 2.0, 3.0)))
+            b.policy().current().and_then(|r| r.objective),
+            Some(pad_at(0, 1.0))
         );
     }
 
@@ -612,6 +620,263 @@ mod tests {
             Some(false),
             "and still records what q3 wanted"
         );
+    }
+
+    // ── Plan 74 T4: the pickup objective ─────────────────────────────────────────────────
+
+    /// A corridor 0..4 along +x, 256 u apart; a rocket pad on node 3 (768 u) and an ammo box on
+    /// node 1. The bot sees none of them.
+    fn pad_map() -> BrainMap {
+        let nodes = (0..5).map(|i| [i as f32 * 256.0, 0.0, 0.0]).collect();
+        let adj = (0..5usize)
+            .map(|i| {
+                [i.checked_sub(1), (i < 4).then_some(i + 1)]
+                    .into_iter()
+                    .flatten()
+                    .map(|j| (j, 256.0))
+                    .collect()
+            })
+            .collect();
+        let pad = |weapon, node: usize| MapItem {
+            class: EntityClass::ItemWeapon,
+            weapon,
+            origin: Vec3::new(node as f32 * 256.0, 0.0, 0.0),
+            nav_node: Some(node),
+        };
+        BrainMap {
+            roam_nodes: vec![4],
+            nav_graph: Arc::new(NavGraph::from_raw(nodes, adj)),
+            roam_as_position: false,
+            items: vec![
+                pad(None, 1),
+                pad(Some(crate::weapons::Weapon::RocketLauncher), 3),
+            ],
+        }
+    }
+
+    /// A healthy, armored bot holding the blaster at `x` on the corridor, optionally facing an
+    /// enemy at 200 u; once `x > 0` the stocked rocket pad is in view.
+    fn roam_view(x: f32, enemy: bool) -> Worldview {
+        use q2proto::EntityState;
+        let mut frame = Frame::default();
+        frame.playerstate.gunindex = 1;
+        frame.playerstate.stats[1] = 100;
+        frame.playerstate.stats[3] = 50;
+        frame.playerstate.stats[5] = 100;
+        frame.playerstate.pmove.origin = [(x * 8.0) as i16, 0, 0];
+        if enemy {
+            frame.entities.push(EntityState {
+                number: 9,
+                origin: [x + 200.0, 0.0, 0.0],
+                angles: [0.0, 180.0, 0.0],
+                modelindex: 255,
+                ..Default::default()
+            });
+        }
+        if x > 0.0 {
+            // Walking up the corridor the rocket pad is in PVS, and stocked — without it,
+            // `ItemMemory` would (correctly) read the pad as taken inside its trust range.
+            frame.entities.push(EntityState {
+                number: 20,
+                origin: [768.0, 0.0, 0.0],
+                modelindex: 2,
+                ..Default::default()
+            });
+        }
+        let mut cs = ConfigStrings::default();
+        cs.set(32 + 1, "models/weapons/v_blast/tris.md2");
+        cs.set(32 + 2, "models/weapons/g_rocket/tris.md2");
+        Worldview::from_frame(&frame, &cs, 0)
+    }
+
+    fn pad_brain() -> (JevBrain, Arc<StubDecider>) {
+        let stub = Arc::new(StubDecider::default());
+        let mut b = JevBrain::new(Q3Character::default(), stub.clone());
+        b.set_map(pad_map());
+        b.on_map_change("q2dm1");
+        (b, stub)
+    }
+
+    /// Tick `n` times at `view`; the goal the navigator was last given.
+    fn roam(b: &mut JevBrain, view: &Worldview, n: u32) -> Option<NavGoal> {
+        let mut nav = StubNav::default();
+        for t in 0..n {
+            b.tick(BrainContext {
+                view,
+                nav: Some(&mut nav),
+                cm: None,
+                dt: 0.1,
+                ticks: t + 1,
+                goal_override: None,
+            });
+        }
+        nav.last_goal
+    }
+
+    fn objective_decision(ticket: TicketId, choice: Option<u8>) -> AppliedDecision {
+        AppliedDecision {
+            ticket,
+            generation: 0,
+            map: MapId::Q2dm1,
+            objective: choice,
+            posture: None,
+        }
+    }
+
+    /// Run until the brain has asked the objective, then answer it with option `choice`.
+    fn asked_and_answered(choice: Option<u8>) -> (JevBrain, Arc<StubDecider>, TicketId) {
+        let (mut b, stub) = pad_brain();
+        roam(&mut b, &roam_view(0.0, false), 25); // > RESPAWN_SETTLE_S
+        let (ticket, _) = *stub.submitted().last().expect("an objective ask");
+        stub.set_latest(Some(objective_decision(ticket, choice)));
+        (b, stub, ticket)
+    }
+
+    #[test]
+    fn jev_objective_asks_v2_with_pads_after_settling_and_seek_drives_to_the_pad() {
+        use crate::jev::question::{objective_question_v2, Offered};
+        use crate::jev::state::{DistBand, Field, FieldKey, PadFacts};
+        let (mut b, stub) = pad_brain();
+        roam(&mut b, &roam_view(0.0, false), 15);
+        assert!(stub.submitted().is_empty(), "not before RESPAWN_SETTLE_S");
+        roam(&mut b, &roam_view(0.0, false), 10);
+        let sent = stub.submitted();
+        assert_eq!(sent.len(), 1);
+        let a = &sent[0].1;
+        assert_eq!(
+            a.trig,
+            Trigger::MapChange,
+            "the pending event, not a refresh"
+        );
+        let only_weapon = Offered {
+            weapon: true,
+            ..Offered::default()
+        };
+        assert_eq!(a.questions, vec![objective_question_v2(only_weapon)]);
+        assert_eq!(
+            a.state.get(FieldKey::Pads),
+            Some(&Field::Pads(PadFacts {
+                weapon: Some(DistBand::Mid),
+                health: None,
+                armor: None,
+            })),
+            "the rocket pad, 768 u of travel; the ammo box is not a weapon"
+        );
+        stub.set_latest(Some(objective_decision(sent[0].0, Some(0))));
+        let goal = roam(&mut b, &roam_view(0.0, false), 3);
+        assert_eq!(goal, Some(NavGoal::Position(Vec3::new(768.0, 0.0, 0.0))));
+        assert_eq!(stub.acks(), vec![(sent[0].0, ApplyOutcome::Applied)]);
+    }
+
+    #[test]
+    fn jev_objective_carry_on_and_off_ticket_leave_q3_roaming() {
+        let (mut b, stub, t) = asked_and_answered(Some(1)); // carry_on
+        let roam_goal = Some(NavGoal::Waypoint(4));
+        assert_eq!(roam(&mut b, &roam_view(0.0, false), 2), roam_goal);
+        assert!(b.policy().held_objective().is_none());
+        assert_eq!(stub.acks(), vec![(t, ApplyOutcome::Applied)]);
+        let (mut b, stub, t) = asked_and_answered(Some(2)); // only 2 options were offered
+        assert_eq!(roam(&mut b, &roam_view(0.0, false), 2), roam_goal);
+        assert_eq!(
+            stub.acks(),
+            vec![(t, ApplyOutcome::Rejected(BrainReject::OffTicketLabel))]
+        );
+    }
+
+    #[test]
+    fn jev_objective_holds_without_new_answers_and_releases_on_arrival() {
+        let (mut b, stub, _) = asked_and_answered(Some(0));
+        let pad = Some(NavGoal::Position(Vec3::new(768.0, 0.0, 0.0)));
+        // Walk toward the pad at 32 u per tick (a standing bot would trip q3's stall detector,
+        // which releases the objective — tested below).
+        for i in 0..20 {
+            let goal = roam(&mut b, &roam_view(i as f32 * 32.0, false), 1);
+            assert_eq!(goal, pad, "held at tick {i}, no new answer needed");
+        }
+        assert_eq!(stub.submitted().len(), 1, "no re-ask while held");
+        // Arrive: within ARRIVE_RADIUS of the pad (and the pad is now "seen" stocked or not —
+        // either way the objective is done).
+        roam(&mut b, &roam_view(768.0 - ARRIVE_RADIUS + 1.0, false), 1);
+        assert!(b.policy().held_objective().is_none());
+        let sent = stub.submitted();
+        assert_eq!(sent.len(), 2, "the release re-asks at once");
+        assert_eq!(sent[1].1.trig, Trigger::Released);
+    }
+
+    #[test]
+    fn jev_objective_releases_on_stall_death_timeout_and_a_newer_objective_ticket() {
+        use crate::brains::q3::GoalPolicy;
+        let (mut b, ..) = asked_and_answered(Some(0));
+        roam(&mut b, &roam_view(0.0, false), 1);
+        b.policy_mut().on_stall();
+        assert!(b.policy().held_objective().is_none(), "stall");
+
+        let (mut b, ..) = asked_and_answered(Some(0));
+        roam(&mut b, &roam_view(0.0, false), 1);
+        b.on_death();
+        assert!(b.policy().held_objective().is_none(), "death");
+
+        let (mut b, ..) = asked_and_answered(Some(0));
+        roam(&mut b, &roam_view(0.0, false), 1);
+        assert!(b.policy().held_objective().is_some());
+        roam(
+            &mut b,
+            &roam_view(0.0, false),
+            (OBJECTIVE_MAX_S * 10.0) as u32 + 1,
+        );
+        assert!(b.policy().held_objective().is_none(), "timeout");
+
+        // A newer ticket that asked the objective and came back gated off releases to roam.
+        let (mut b, stub, t) = asked_and_answered(Some(0));
+        roam(&mut b, &roam_view(0.0, false), 1);
+        let newer = TicketId(t.0 + 1);
+        b.policy_mut().record_ticket(
+            newer,
+            TicketEntry {
+                objectives: vec![Some(pad_at(1, 768.0)), None],
+                postures: Vec::new(),
+            },
+        );
+        stub.set_latest(Some(objective_decision(newer, None)));
+        roam(&mut b, &roam_view(0.0, false), 1);
+        assert!(
+            b.policy().held_objective().is_none(),
+            "newer objective ticket"
+        );
+    }
+
+    #[test]
+    fn jev_objective_survives_a_posture_only_ticket_and_is_never_asked_in_a_fight() {
+        let (mut b, stub, _) = asked_and_answered(Some(0));
+        roam(&mut b, &roam_view(0.0, false), 1);
+        // Contact: a posture ask goes out; its answer carries objective None but did not ask it.
+        roam(&mut b, &roam_view(0.0, true), 1);
+        let (posture_ticket, a) = stub.submitted().last().cloned().expect("posture ask");
+        assert_eq!(a.questions, vec![crate::jev::question::posture_question()]);
+        stub.set_latest(Some(posture_decision(posture_ticket.0, 1)));
+        stub.set_refresh_due(true);
+        roam(&mut b, &roam_view(0.0, true), 30);
+        assert!(
+            b.policy().held_objective().is_some(),
+            "a posture-only ticket never releases the objective"
+        );
+        let objective_asks = stub
+            .submitted()
+            .iter()
+            .filter(|(_, a)| a.questions[0].key == crate::jev::question::QuestionKey::Objective)
+            .count();
+        assert_eq!(objective_asks, 1, "no objective ask with an enemy in view");
+    }
+
+    #[test]
+    fn jev_objective_shadow_never_asks_it() {
+        let stub = Arc::new(StubDecider::default());
+        let mut b = JevBrain::new_shadow(Q3Character::default(), stub.clone());
+        b.set_map(pad_map());
+        b.on_map_change("q2dm1");
+        stub.set_refresh_due(true);
+        roam(&mut b, &roam_view(0.0, false), 40);
+        assert!(stub.submitted().is_empty(), "the shadow asks posture only");
     }
 
     #[test]

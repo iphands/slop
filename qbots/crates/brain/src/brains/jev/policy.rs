@@ -18,6 +18,17 @@
 //!   [`POSTURE_MAX_AGE_S`] of brain time; `hold` is the no-op. Death, a level change and a newer
 //!   answered ticket release it.
 //!
+//! **The pickup objective (Plan 74 T4)** — asked only with **no** enemy in view, at least
+//! [`RESPAWN_SETTLE_S`] after a respawn, on a pending event (`Respawn`, `MapChange`, `Released`)
+//! or a due objective refresh, and never while an objective is held:
+//! - candidates come from [`pads::candidates`] (one graph flood per ask); the ask's state gains
+//!   the `pads` field and offers `objective_question_v2` over the classes that have a pad;
+//! - an answer resolves through **its own** ticket's pad list (`carry_on` → no goal); an applied
+//!   seek is **held** — q3's roam fallback walks to the pad — until arrival (≤ [`ARRIVE_RADIUS`]
+//!   horizontally), the pad seen empty, [`OBJECTIVE_MAX_S`], `on_stall`, death, a map change, or
+//!   a newer ticket that **asked the objective** (a posture-only ticket never releases it);
+//! - a release sets the `Released` trigger, so the next ask follows promptly.
+//!
 //! While inert (`goal_override` set — the `spawn-to-*` harnesses) nothing is asked, a new
 //! decision is acked `Inert`, and the posture stays q3's own.
 
@@ -26,16 +37,16 @@ use std::sync::Arc;
 
 use world::NavGraph;
 
-use super::pads::{self, PadCandidates};
+use super::pads::{self, Pad, PadCandidates};
 use crate::brains::core::MapItem;
 use crate::brains::q3::{GoalPolicy, GoalQuery, Posture, PostureQuery};
 use crate::items::ItemMemory;
-use crate::jev::question::posture_question;
+use crate::jev::question::{objective_question_v2, posture_question, QuestionKey};
 use crate::jev::source::{
     AppliedDecision, ApplyOutcome, Ask, BrainReject, DecisionSource, Outcome, PostureChoice,
     TicketId, Trigger, OUTCOME_WINDOW_S,
 };
-use crate::jev::state::{DecisionState, MapContext, MapId, SelfSummary};
+use crate::jev::state::{DecisionState, Field, MapContext, MapId, SelfSummary};
 use crate::nav::NavGoal;
 use crate::perception::Worldview;
 
@@ -47,11 +58,22 @@ const DAMAGE_WINDOW_S: f32 = 10.0;
 /// How many recent asks the brain can still resolve an answer against.
 pub const RING: usize = 4;
 
+/// An applied pickup objective is released after this long (brain time, seconds).
+pub const OBJECTIVE_MAX_S: f32 = 30.0;
+/// Within this horizontal distance of the pad, the objective has arrived.
+pub const ARRIVE_RADIUS: f32 = 64.0;
+/// No objective ask until the bot has been alive this long (brain time, seconds).
+pub const RESPAWN_SETTLE_S: f32 = 2.0;
+/// After an objective ask attempt (sent, paced, or nothing to offer), wait this long before the
+/// next — each attempt floods the nav graph once.
+const OBJECTIVE_RETRY_S: f32 = 1.0;
+
 /// What one ask offered, in offered order — the only list its answer may resolve against.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TicketEntry {
-    /// The objective options' goals (index = the answer's `objective`).
-    pub objectives: Vec<NavGoal>,
+    /// The objective options' pads (index = the answer's `objective`; `None` = `carry_on`).
+    /// Empty when the ask did not carry the objective question.
+    pub objectives: Vec<Option<Pad>>,
     /// The posture options (index = the answer's `posture`).
     pub postures: Vec<PostureChoice>,
 }
@@ -61,8 +83,8 @@ pub struct TicketEntry {
 pub struct Resolved {
     /// The ask it answers.
     pub ticket: TicketId,
-    /// The chosen objective's goal, if that question was answered decisively.
-    pub objective: Option<NavGoal>,
+    /// The chosen objective's pad, if that question was answered decisively with a seek.
+    pub objective: Option<Pad>,
     /// The chosen posture, if that question was answered decisively.
     pub posture: Option<PostureChoice>,
 }
@@ -76,6 +98,14 @@ pub struct JevPolicy {
     items: Vec<MapItem>,
     /// Pads seen empty (Plan 74 T3), observed every tick — keyed by index into `items`.
     memory: ItemMemory,
+    /// The applied pickup objective being walked to, and since when (Plan 74 T4).
+    objective: Option<(Pad, f32)>,
+    /// Does this policy ask the objective question? (`false` for the posture-only shadow.)
+    asks_objective: bool,
+    /// Brain time of the first tick of this life.
+    alive_since: Option<f32>,
+    /// No objective ask attempt before this brain time.
+    next_objective_try: f32,
     map: MapId,
     ring: VecDeque<(TicketId, TicketEntry)>,
     last_seen: Option<TicketId>,
@@ -117,6 +147,10 @@ impl JevPolicy {
             nav_graph: None,
             items: Vec::new(),
             memory: ItemMemory::new(),
+            objective: None,
+            asks_objective: true,
+            alive_since: None,
+            next_objective_try: 0.0,
             map: MapId::Other,
             ring: VecDeque::with_capacity(RING),
             last_seen: None,
@@ -137,6 +171,7 @@ impl JevPolicy {
     pub fn new_shadow(source: Arc<dyn DecisionSource>) -> Self {
         Self {
             shadow: true,
+            asks_objective: false,
             ..Self::new(source)
         }
     }
@@ -193,26 +228,32 @@ impl JevPolicy {
             self.damage.pop_front();
         }
         self.memory.observe(&self.items, view, self.time);
+        let alive_since = *self.alive_since.get_or_insert(self.time);
+        self.check_release(view);
         let enemy = view.enemies().any(|e| !e.is_stale);
         let contact = enemy && !self.saw_enemy;
         self.saw_enemy = enemy;
-        if self.inert || !enemy {
+        if self.inert {
             return;
         }
-        let trig = if contact {
-            Trigger::Contact
-        } else if hit > 0 {
-            Trigger::Damage
-        } else if self.source.refresh_due() {
-            Trigger::Refresh
-        } else {
-            return;
-        };
-        self.ask(view, trig);
+        if enemy {
+            let trig = if contact {
+                Trigger::Contact
+            } else if hit > 0 {
+                Trigger::Damage
+            } else if self.source.refresh_due(QuestionKey::Posture) {
+                Trigger::Refresh
+            } else {
+                return;
+            };
+            self.ask(view, trig);
+        } else if self.time - alive_since >= RESPAWN_SETTLE_S {
+            self.maybe_ask_objective(view);
+        }
     }
 
-    /// Build the closed state, ask the posture question, and remember what it offered.
-    fn ask(&mut self, view: &Worldview, trig: Trigger) {
+    /// The closed state for an ask from this frame.
+    fn state(&self, view: &Worldview) -> DecisionState {
         let me = SelfSummary {
             recent_damage: self.damage.iter().map(|(_, n)| n).sum(),
             secs_since_damage: self.damage.back().map(|(t, _)| self.time - t),
@@ -221,8 +262,73 @@ impl JevPolicy {
             map: self.map,
             nav_graph: self.nav_graph.as_deref(),
         };
+        DecisionState::build(view, &ctx, &me)
+    }
+
+    /// Ask the pickup objective if it is wanted, allowed and has something to offer.
+    fn maybe_ask_objective(&mut self, view: &Worldview) {
+        if !self.asks_objective || self.objective.is_some() || self.time < self.next_objective_try {
+            return;
+        }
+        let trig = match self.pending_trigger {
+            Some(t) => t,
+            None if self.source.refresh_due(QuestionKey::Objective) => Trigger::Refresh,
+            None => return,
+        };
+        self.next_objective_try = self.time + OBJECTIVE_RETRY_S;
+        let cands = self.pad_candidates(view);
+        if cands.is_empty() {
+            return;
+        }
         let ask = Ask {
-            state: DecisionState::build(view, &ctx, &me),
+            state: self.state(view).with(Field::Pads(cands.facts())),
+            questions: vec![objective_question_v2(cands.offered())],
+            trig,
+        };
+        if let Some(ticket) = self.source.submit(ask) {
+            self.pending_trigger = None;
+            self.record_ticket(
+                ticket,
+                TicketEntry {
+                    objectives: cands.option_pads(),
+                    postures: Vec::new(),
+                },
+            );
+        }
+    }
+
+    /// Release the held objective on arrival, an empty pad, or old age.
+    fn check_release(&mut self, view: &Worldview) {
+        let Some((pad, since)) = self.objective else {
+            return;
+        };
+        let here = view.self_state().origin;
+        let arrived = (pad.origin - here).truncate().length() <= ARRIVE_RADIUS;
+        let empty = self
+            .items
+            .get(pad.item)
+            .is_none_or(|it| !self.memory.available(pad.item, it.class, self.time));
+        if arrived || empty || self.time - since >= OBJECTIVE_MAX_S {
+            self.release_objective();
+        }
+    }
+
+    /// Drop the held objective and ask again soon.
+    fn release_objective(&mut self) {
+        if self.objective.take().is_some() {
+            self.pending_trigger.get_or_insert(Trigger::Released);
+        }
+    }
+
+    /// The pickup objective being walked to, if any.
+    pub fn held_objective(&self) -> Option<Pad> {
+        self.objective.map(|(p, _)| p)
+    }
+
+    /// Build the closed state, ask the posture question, and remember what it offered.
+    fn ask(&mut self, view: &Worldview, trig: Trigger) {
+        let ask = Ask {
+            state: self.state(view),
             questions: vec![posture_question()],
             trig,
         };
@@ -261,6 +367,7 @@ impl JevPolicy {
         self.items = items;
         // Indices are into the old map's table.
         self.memory = ItemMemory::new();
+        self.objective = None;
     }
 
     /// The best pad per class for this bot now (Plan 74 T3) — one graph flood, so call it per
@@ -345,8 +452,9 @@ impl JevPolicy {
             Some(i) if usize::from(i) < len => Ok(Some(usize::from(i))),
             Some(_) => Err(BrainReject::OffTicketLabel),
         };
+        let asked_objective = !entry.objectives.is_empty();
         let objective = match pick(d.objective, entry.objectives.len()) {
-            Ok(i) => i.map(|i| entry.objectives[i].clone()),
+            Ok(i) => i.and_then(|i| entry.objectives[i]),
             Err(r) => return Rejected(r),
         };
         let posture = match pick(d.posture, entry.postures.len()) {
@@ -359,6 +467,11 @@ impl JevPolicy {
             posture,
         });
         self.applied_at = self.time;
+        // Only an answer to the objective question moves the objective; `carry_on` or a gated-off
+        // answer releases to q3's roam (no Released trigger: the model chose to roam).
+        if asked_objective && !self.shadow {
+            self.objective = objective.map(|p| (p, self.time));
+        }
         let outcome = if self.shadow {
             ApplyOutcome::Shadowed
         } else {
@@ -384,6 +497,8 @@ impl JevPolicy {
         // calls `on_death` on the death frame before that frame's tick.)
         self.close_window(true);
         self.current = None;
+        self.objective = None;
+        self.alive_since = None;
         self.pending_trigger = Some(Trigger::Respawn);
     }
 
@@ -398,6 +513,7 @@ impl JevPolicy {
         self.close_window(false);
         self.map = map;
         self.current = None;
+        self.objective = None;
         self.ring.clear();
         self.pending_trigger = Some(Trigger::MapChange);
     }
@@ -405,8 +521,14 @@ impl JevPolicy {
 
 impl GoalPolicy for JevPolicy {
     fn objective(&mut self, _q: &GoalQuery) -> Option<NavGoal> {
-        // T10 makes the current decision's objective steer (held until released).
-        None
+        if self.inert || self.shadow {
+            return None;
+        }
+        self.objective.map(|(p, _)| NavGoal::Position(p.origin))
+    }
+
+    fn on_stall(&mut self) {
+        self.release_objective();
     }
 
     fn posture(&mut self, q: &PostureQuery) -> Posture {

@@ -117,13 +117,104 @@ pub fn objective_question() -> QuestionSpec {
     }
 }
 
+/// Which pad classes an objective v2 ask offers — each one has a candidate pad (Plan 74).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Offered {
+    /// A weapon pad stronger than the held weapon.
+    pub weapon: bool,
+    /// A health pad.
+    pub health: bool,
+    /// An armor pad.
+    pub armor: bool,
+}
+
+impl Offered {
+    /// Anything to offer besides `carry_on`?
+    pub fn any(self) -> bool {
+        self.weapon || self.health || self.armor
+    }
+
+    /// The option labels in offered order: the offered classes, then `carry_on` (always last).
+    pub fn labels(self) -> Vec<&'static str> {
+        [
+            (self.weapon, SEEK_WEAPON),
+            (self.health, SEEK_HEALTH),
+            (self.armor, SEEK_ARMOR),
+            (true, CARRY_ON),
+        ]
+        .into_iter()
+        .filter_map(|(on, l)| on.then_some(l))
+        .collect()
+    }
+}
+
+/// Plan 74's objective: which out-of-sight pickup to head for. Only classes with a candidate pad
+/// are offered (the state's `pads` line names their travel-cost bands); `carry_on` is the no-op
+/// and always last. Wording is provisional until the Plan 74 T6 lab.
+pub fn objective_question_v2(offered: Offered) -> QuestionSpec {
+    let desc = |label: &'static str| match label {
+        SEEK_WEAPON => "go to the nearest better weapon",
+        SEEK_HEALTH => "go to the nearest health pickup",
+        SEEK_ARMOR => "go to the nearest armor pickup",
+        _ => "no particular objective: keep roaming as usual",
+    };
+    QuestionSpec {
+        key: QuestionKey::Objective,
+        instructions: "Choose this bot's next objective.",
+        kind: QuestionKind::Choice(
+            offered
+                .labels()
+                .into_iter()
+                .map(|label| ChoiceOption {
+                    label,
+                    desc: Phrase::lit(desc(label)),
+                })
+                .collect(),
+        ),
+    }
+}
+
 /// Posture option: retreat and do not chase.
 pub const DISENGAGE: &str = "disengage";
 /// Posture option (no-op): leave the fight to q3.
 pub const HOLD: &str = "hold";
+/// Objective option (v2, Plan 74): walk to the best weapon pad stronger than the held weapon.
+pub const SEEK_WEAPON: &str = "seek_weapon";
 /// Objective option: walk to the nearest health pickup.
 pub const SEEK_HEALTH: &str = "seek_health";
 /// Objective option: walk to the nearest armor pickup.
 pub const SEEK_ARMOR: &str = "seek_armor";
 /// Objective option (no-op): keep roaming.
 pub const CARRY_ON: &str = "carry_on";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn labels(q: &QuestionSpec) -> Vec<&'static str> {
+        match &q.kind {
+            QuestionKind::Choice(o) => o.iter().map(|o| o.label).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn jev_objective_v2_offers_only_classes_with_a_candidate() {
+        let all = Offered {
+            weapon: true,
+            health: true,
+            armor: true,
+        };
+        assert_eq!(
+            labels(&objective_question_v2(all)),
+            [SEEK_WEAPON, SEEK_HEALTH, SEEK_ARMOR, CARRY_ON]
+        );
+        let w = Offered {
+            weapon: true,
+            ..Offered::default()
+        };
+        assert_eq!(labels(&objective_question_v2(w)), [SEEK_WEAPON, CARRY_ON]);
+        assert!(!Offered::default().any());
+        assert_eq!(objective_question_v2(w).key, QuestionKey::Objective);
+    }
+}

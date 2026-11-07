@@ -14,7 +14,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
-use super::question::QuestionSpec;
+use super::question::{QuestionKey, QuestionSpec};
 use super::state::{DecisionState, MapId};
 
 /// A hub-issued ask id. Unique per process; never reused across bot reconnects.
@@ -38,6 +38,8 @@ pub enum Trigger {
     Contact,
     /// Background refresh at `min_dwell_s`.
     Refresh,
+    /// The applied objective was released (arrived, stalled, pad empty, or timed out) — Plan 74.
+    Released,
 }
 
 impl Trigger {
@@ -56,6 +58,7 @@ impl Trigger {
             Trigger::MapChange => "map_change",
             Trigger::Contact => "contact",
             Trigger::Refresh => "refresh",
+            Trigger::Released => "released",
         }
     }
 }
@@ -175,9 +178,11 @@ pub trait DecisionSource: Send + Sync {
     /// hub's per-bot pacing refused it (an event inside `event_floor_s`, or a refresh before
     /// it is due) — a refused ask must not take a slot in the brain's ticket ring.
     fn submit(&self, ask: Ask) -> Option<TicketId>;
-    /// Is a background refresh due for this bot? Cheap — lets the brain skip building a state
-    /// on the ~all ticks where a refresh would be refused.
-    fn refresh_due(&self) -> bool;
+    /// Is a background refresh of question `key` due for this bot? Cheap — lets the brain skip
+    /// building a state on the ~all ticks where a refresh would be refused. Each question key
+    /// keeps its own pacing (Plan 74 T4), so a roaming objective ask never paces out a contact
+    /// posture ask.
+    fn refresh_due(&self, key: QuestionKey) -> bool;
     /// The brain's verdict on a decision `latest()` returned.
     fn ack(&self, ticket: TicketId, outcome: ApplyOutcome);
     /// What happened after an applied decision (Plan 73 journal). Best effort, never blocks.
@@ -198,7 +203,7 @@ impl DecisionSource for NullDecider {
         // Tickets stay unique even here, so ring logic behaves identically in the control arm.
         Some(TicketId(self.next.fetch_add(1, Ordering::Relaxed) + 1))
     }
-    fn refresh_due(&self) -> bool {
+    fn refresh_due(&self, _key: QuestionKey) -> bool {
         false
     }
     fn ack(&self, _ticket: TicketId, _outcome: ApplyOutcome) {}
@@ -262,7 +267,7 @@ impl DecisionSource for StubDecider {
         lock(&self.submitted).push((t, ask));
         Some(t)
     }
-    fn refresh_due(&self) -> bool {
+    fn refresh_due(&self, _key: QuestionKey) -> bool {
         self.refresh_due.load(Ordering::Relaxed)
     }
     fn ack(&self, ticket: TicketId, outcome: ApplyOutcome) {
@@ -303,7 +308,7 @@ mod tests {
         let b = d.submit(ask(Trigger::Refresh));
         assert!(a.is_some() && b.is_some());
         assert_ne!(a, b);
-        assert!(!d.refresh_due());
+        assert!(!d.refresh_due(QuestionKey::Posture));
     }
 
     #[test]
@@ -334,7 +339,7 @@ mod tests {
         );
         assert_eq!(d.submitted().len(), 1);
         d.set_refresh_due(true);
-        assert!(d.refresh_due());
+        assert!(d.refresh_due(QuestionKey::Posture));
     }
 
     #[test]

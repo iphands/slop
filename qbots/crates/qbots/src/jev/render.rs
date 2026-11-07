@@ -421,6 +421,45 @@ mod tests {
     }
 
     #[test]
+    fn jev_objective_render_offers_the_candidates_in_order_within_budget() {
+        use brain::jev::question::{objective_question_v2, Offered};
+        // Weapon and armor pads, no health pad: exactly those two seeks, then carry_on.
+        let offered = Offered {
+            weapon: true,
+            health: false,
+            armor: true,
+        };
+        let state = golden_state().with(Field::Pads(PadFacts {
+            weapon: Some(DistBand::Far),
+            health: None,
+            armor: Some(DistBand::Near),
+        }));
+        let r = render_state(&state, 512);
+        let body = render_request(&r, &[objective_question_v2(offered)]);
+        let v: serde_json::Value = serde_json::from_str(&body).expect("valid JSON");
+        let crit = v["questions"]["objective"]["criteria"]
+            .as_object()
+            .expect("criteria");
+        assert_eq!(crit.len(), 3);
+        let (w, a, c) = (
+            body.find("\"seek_weapon\""),
+            body.find("\"seek_armor\""),
+            body.find("\"carry_on\""),
+        );
+        assert!(
+            w.is_some() && w < a && a < c,
+            "offered order on the wire: {body}"
+        );
+        assert!(
+            !body.contains("seek_health"),
+            "no health pad, no health option"
+        );
+        assert!(body.contains("pads  weapon:far health:none armor:near"));
+        // The whole request — state, derived lines, question — not just the state (Plan 72 T10).
+        assert!(est_tokens(&body) <= 400, "{} tokens", est_tokens(&body));
+    }
+
+    #[test]
     fn jev_render_v2_equals_the_lab_tested_wording() {
         // Plan 73 T4: production must say EXACTLY what the lab measured — the
         // `summary-graded-threat` variant applied to the field rendering — on every state shape.

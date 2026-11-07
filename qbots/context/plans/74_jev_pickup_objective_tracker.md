@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 33% complete (3/9 tasks)
+- Status: 44% complete (4/9 tasks)
 - Start date: 2026-11-07
 - Plan: `context/plans/74_jev_pickup_objective.md`
 - Headline metric: per-life **`secs_to_strong`** (spawn → first non-weak held weapon) per arm;
@@ -33,7 +33,7 @@
 | 1 | T1: Confirm hub keying, DM autoswitch, pad counts | tracker Evidence | done | all three resolved (Evidence). Hub: one pending + **one pacing clock** per bot → T4 gains per-question pacing and an asked-objective-only release rule. DM switches only from the blaster. `dmflags 17424`, no weapons-stay. q2dm1: 11 weapon vs 35 ammo pads |
 | 2 | T2: `MapItem.weapon` — weapon vs ammo pads | `brains/core.rs`, `items.rs`, `weapons.rs` | done | `Weapon::from_classname` (yquake2 `g_items.c` classnames; ammo incl. `ammo_grenades` → `None`); 3 test constructors set `weapon: None`; new pak-gated `tests/map_items_q2dm1.rs` asserts 11 weapon / 35 ammo; parity golden unchanged; pitfalls entry |
 | 3 | T3: Pad candidates + objective-only `pads` line | `brains/jev/pads.rs` (new), `brains/jev/policy.rs`, `jev/state.rs`, `qbots::jev::render` | done | `pads::candidates` = one `flood_costs` per ask; relevance = stronger weapon / hp < 100 / armor < 100; `ItemMemory` observed per tick, reset on map change. `FieldKey::Pads` (keep-priority 5), schema **v3**; `pads` added only via `DecisionState::with` in objective asks → posture golden byte-identical; new objective golden. 6 tests (see Deviations) |
-| 4 | T4: Objective question v2, roaming triggers, apply/release | `jev/question.rs`, `brains/jev/policy.rs`, `qbots::jev::hub` | pending | |
+| 4 | T4: Objective question v2, roaming triggers, apply/release | `jev/question.rs`, `jev/source.rs`, `brains/jev/{policy,pads,mod}.rs`, `qbots::jev::{hub,render}` | done | `objective_question_v2(Offered)` + `SEEK_WEAPON`; asks with no enemy in view, ≥ 2 s alive, on a pending event or objective refresh, never while held; resolves via the ticket's own pad list; held until arrival / pad empty / 30 s / stall / death / map change / newer **objective** ticket; `Trigger::Released`; hub pacing per question key + `refresh_due(key)`. 7 brain tests, 1 hub test, 1 render test |
 | 5 | T5: `jvr` code-rule control arm | `brains/jev`, `brains/mod.rs`, hub | pending | |
 | 6 | T6: Corpus, lab, holdout, calibrate (live) | `context/fixtures/jev/calibration/objective_v2/**`, `lab.rs`, `jev_lab.md` | pending | |
 | 7 | T7: Objective outcomes + per-life `secs_to_strong` | `jev/source.rs`, `brains/jev/policy.rs`, `main.rs`, `journal.rs` | pending | |
@@ -70,6 +70,17 @@
   the roam fallback), so a near visible pad needs no special case. "Objective-only" is by
   construction rather than a renderer branch: `DecisionState::build` never adds `Pads`; the
   objective ask adds it with `with(Field::Pads(..))`.
+- **T4:** additions beyond the plan text — `Trigger::Released` (slug `released`) for the re-ask
+  after a release; a 1 s retry throttle per objective attempt (each attempt floods the graph); the
+  2 s settle applies after a map change too. `DecisionSource::refresh_due` now takes the
+  `QuestionKey` (trait change: hub, `NullDecider`, `StubDecider`).
+- **T4:** a plain `jev_static` (`NullDecider`) now also *asks* the objective — a no-op (the null
+  decider never answers), about one graph flood per life. The posture-only shadow (Plan 73's
+  `jvs` with a decider) does **not** ask it; T5 gives `jvr` its own picker.
+- **T4:** two test "failures" on the way were the release rules working: a bot standing still for
+  5 s trips q3's stall detector (`on_stall` → release), and a pad within `ItemMemory`'s 500 u
+  trust range that the view does not transmit reads as taken. The tests now walk the bot and show
+  the stocked pad, as PVS would.
 - **T3:** pad cost is the graph's edge-cost sum (world-unit scale, plus whatever penalties the
   graph carries for swim/jump edges), banded with the same `DistBand` edges as straight-line
   distances — "travel cost band", not a pure distance.

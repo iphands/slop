@@ -13,7 +13,9 @@
 //!   at most `snapshot_ttl` old when its send starts; oldest-first means no bot starves.
 //! - **Admission:** the fleet token [`Bucket`] (reserve `chars/4`, true up with
 //!   `usage.input_tokens`).
-//! - **Pacing, per bot (at `submit`):** `event_floor` between any two asks, refresh every
+//! - **Pacing, per bot and per question key (at `submit`; Plan 74 T4 split it by key so a
+//!   roaming objective ask never paces out the contact posture ask after it):** `event_floor`
+//!   between any two asks of one key, refresh every
 //!   `min_dwell`, both jittered one-sided ×[1, `jitter_max`]; an ask resets the refresh timer.
 //! - **Generation, per bot:** bumped on a level change; an answer carrying an older generation
 //!   is discarded before it is stored.
@@ -190,7 +192,8 @@ struct Pacing {
 struct BotSlot {
     pending: Mutex<Option<Pending>>,
     decision: Mutex<Option<(AppliedDecision, Instant)>>,
-    pacing: Mutex<Pacing>,
+    /// One pacing clock per question key ([`pace_idx`]).
+    pacing: Mutex<[Pacing; 2]>,
     /// Only changed under the `decision` lock, so store-vs-bump cannot race.
     generation: AtomicU64,
     /// The arm this bot plays (`jev`, `jev_static`) — journal label, set once by `JevLink`.
@@ -259,7 +262,7 @@ impl Hub {
                 .map(|_| BotSlot {
                     pending: Mutex::new(None),
                     decision: Mutex::new(None),
-                    pacing: Mutex::new(Pacing::default()),
+                    pacing: Mutex::new(Default::default()),
                     generation: AtomicU64::new(0),
                     arm: std::sync::OnceLock::new(),
                 })
@@ -383,8 +386,8 @@ impl DecisionSource for BotHandle {
         self.inner.submit(self.bot, ask)
     }
 
-    fn refresh_due(&self) -> bool {
-        let p = lock(&self.inner.bots[self.bot].pacing);
+    fn refresh_due(&self, key: QuestionKey) -> bool {
+        let p = &lock(&self.inner.bots[self.bot].pacing)[pace_idx(key)];
         p.last_ask.is_none_or(|t| t.elapsed() >= p.dwell)
     }
 
@@ -433,8 +436,13 @@ impl Inner {
     fn submit(&self, bot: usize, ask: Ask) -> Option<TicketId> {
         let slot = &self.bots[bot];
         let now = Instant::now();
+        let key = ask
+            .questions
+            .first()
+            .map_or(QuestionKey::Posture, |q| q.key);
         let ticket = {
-            let mut p = lock(&slot.pacing);
+            let mut clocks = lock(&slot.pacing);
+            let p = &mut clocks[pace_idx(key)];
             let gap = p.last_ask.map(|t| now.saturating_duration_since(t));
             let allowed = match gap {
                 None => true,
@@ -442,7 +450,7 @@ impl Inner {
                 Some(g) => g >= p.dwell,
             };
             if !allowed {
-                drop(p);
+                drop(clocks);
                 lock(&self.shared).counters.paced += 1;
                 return None;
             }
@@ -669,6 +677,14 @@ impl Inner {
             }
             lock(&self.journal_open).insert(pending.ticket.0, line);
         }
+    }
+}
+
+/// Which pacing clock an ask of `key` uses (an ask's first question decides).
+fn pace_idx(key: QuestionKey) -> usize {
+    match key {
+        QuestionKey::Posture => 0,
+        QuestionKey::Objective => 1,
     }
 }
 

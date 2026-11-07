@@ -18,6 +18,7 @@ use world::NavGraph;
 
 use crate::brains::core::MapItem;
 use crate::items::ItemMemory;
+use crate::jev::question::Offered;
 use crate::jev::state::{DistBand, PadFacts};
 use crate::perception::{EntityClass, Worldview};
 use crate::weapons::Weapon;
@@ -53,6 +54,26 @@ impl PadCandidates {
     /// No candidate in any class — nothing worth asking about.
     pub fn is_empty(&self) -> bool {
         self.weapon.is_none() && self.health.is_none() && self.armor.is_none()
+    }
+
+    /// Which classes an objective ask offers.
+    pub fn offered(&self) -> Offered {
+        Offered {
+            weapon: self.weapon.is_some(),
+            health: self.health.is_some(),
+            armor: self.armor.is_some(),
+        }
+    }
+
+    /// The pads behind the offered options, **in [`Offered::labels`] order** — `None` for the
+    /// trailing `carry_on`. An answer's option index resolves through this list.
+    pub fn option_pads(&self) -> Vec<Option<Pad>> {
+        [self.weapon, self.health, self.armor]
+            .into_iter()
+            .flatten()
+            .map(Some)
+            .chain([None])
+            .collect()
     }
 
     /// The closed facts the state carries: each candidate's travel-cost band.

@@ -247,25 +247,59 @@ async fn jev_hub_pacing_floor_refresh_dwell_and_event_reset() {
         ..cfg()
     };
     let (hub, h) = start(c, 1, &t);
-    assert!(h[0].refresh_due(), "a bot that never asked is due");
+    assert!(
+        h[0].refresh_due(QuestionKey::Objective),
+        "a bot that never asked is due"
+    );
     assert!(h[0].submit(ask(1, Trigger::Respawn)).is_some());
     assert_eq!(
         h[0].submit(ask(2, Trigger::Damage)),
         None,
         "inside the event floor"
     );
-    assert!(!h[0].refresh_due());
+    assert!(!h[0].refresh_due(QuestionKey::Objective));
     settle(6600).await; // > 5 s × 1.3
     assert!(
         h[0].submit(ask(3, Trigger::Damage)).is_some(),
         "floor passed"
     );
     settle(10_000).await; // 16.6 s after the first ask, 10 s after the second
-    assert!(!h[0].refresh_due(), "the event reset the refresh timer");
+    assert!(
+        !h[0].refresh_due(QuestionKey::Objective),
+        "the event reset the refresh timer"
+    );
     assert_eq!(h[0].submit(ask(4, Trigger::Refresh)), None);
     settle(10_000).await; // 20 s after the second ask > 15 s × 1.3
-    assert!(h[0].refresh_due());
+    assert!(h[0].refresh_due(QuestionKey::Objective));
     assert!(h[0].submit(ask(5, Trigger::Refresh)).is_some());
+    assert_eq!(hub.counters().paced, 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn jev_hub_pacing_is_per_question_key() {
+    // Plan 74 T4: a roaming objective ask must not pace out the posture ask on contact a moment
+    // later; each key keeps its own floor and refresh clock.
+    let t = Scripted::default();
+    let c = HubConfig {
+        event_floor: Duration::from_secs(5),
+        min_dwell: Duration::from_secs(15),
+        ..cfg()
+    };
+    let (hub, h) = start(c, 1, &t);
+    assert!(
+        h[0].submit(ask(1, Trigger::Released)).is_some(),
+        "objective"
+    );
+    let mut posture = ask(2, Trigger::Contact);
+    posture.questions = vec![brain::jev::question::posture_question()];
+    assert!(
+        h[0].submit(posture.clone()).is_some(),
+        "posture has its own clock"
+    );
+    assert!(!h[0].refresh_due(QuestionKey::Objective));
+    assert!(!h[0].refresh_due(QuestionKey::Posture));
+    assert_eq!(h[0].submit(posture), None, "but its own floor still holds");
+    assert_eq!(h[0].submit(ask(3, Trigger::Released)), None);
     assert_eq!(hub.counters().paced, 2);
 }
 
