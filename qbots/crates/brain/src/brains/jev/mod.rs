@@ -44,6 +44,15 @@ impl JevBrain {
 
     /// A **shadow** jev brain (Plan 73): q3 exactly as `jev_static`, asking and journalling the
     /// posture question through `source` without ever acting on it.
+    /// The `jvr` control (Plan 74): the pickup objective comes from [`pads::PadCandidates::rule_pick`],
+    /// applied when the hub accepts the ask; the model's objective answer is journalled, never
+    /// applied. Posture plays exactly as `jev`.
+    pub fn new_rule(ch: Q3Character, source: Arc<dyn DecisionSource>) -> Self {
+        Self {
+            inner: Q3Brain::new_with_policy(ch, JevPolicy::new_rule(source)),
+        }
+    }
+
     pub fn new_shadow(ch: Q3Character, source: Arc<dyn DecisionSource>) -> Self {
         Self {
             inner: Q3Brain::new_with_policy(ch, JevPolicy::new_shadow(source)),
@@ -877,6 +886,34 @@ mod tests {
         stub.set_refresh_due(true);
         roam(&mut b, &roam_view(0.0, false), 40);
         assert!(stub.submitted().is_empty(), "the shadow asks posture only");
+    }
+
+    #[test]
+    fn jev_rule_applies_its_pick_at_ask_time_and_only_shadows_the_model() {
+        let stub = Arc::new(StubDecider::default());
+        let mut b = JevBrain::new_rule(Q3Character::default(), stub.clone());
+        b.set_map(pad_map());
+        b.on_map_change("q2dm1");
+        assert!(b.policy().is_rule());
+        let rocket = Some(NavGoal::Position(Vec3::new(768.0, 0.0, 0.0)));
+        // Blaster + a rocket pad: the rule seeks the weapon the moment the ask is accepted.
+        assert_eq!(roam(&mut b, &roam_view(0.0, false), 25), rocket);
+        let (t, a) = stub.submitted()[0].clone();
+        assert_eq!(
+            a.questions[0].key,
+            crate::jev::question::QuestionKey::Objective,
+            "the model is still asked"
+        );
+        // The model disagrees (carry_on): journalled as a shadow, the rule's goal stands.
+        stub.set_latest(Some(objective_decision(t, Some(1))));
+        assert_eq!(roam(&mut b, &roam_view(0.0, false), 1), rocket);
+        assert_eq!(stub.acks(), vec![(t, ApplyOutcome::Shadowed)]);
+        // Posture is live, exactly as jev's.
+        roam(&mut b, &roam_view(0.0, true), 1);
+        let (pt, _) = stub.submitted().last().cloned().expect("posture ask");
+        stub.set_latest(Some(posture_decision(pt.0, 1)));
+        roam(&mut b, &roam_view(0.0, true), 1);
+        assert_eq!(stub.acks().last(), Some(&(pt, ApplyOutcome::Applied)));
     }
 
     #[test]

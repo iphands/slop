@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 44% complete (4/9 tasks)
+- Status: 56% complete (5/9 tasks)
 - Start date: 2026-11-07
 - Plan: `context/plans/74_jev_pickup_objective.md`
 - Headline metric: per-life **`secs_to_strong`** (spawn → first non-weak held weapon) per arm;
@@ -34,7 +34,7 @@
 | 2 | T2: `MapItem.weapon` — weapon vs ammo pads | `brains/core.rs`, `items.rs`, `weapons.rs` | done | `Weapon::from_classname` (yquake2 `g_items.c` classnames; ammo incl. `ammo_grenades` → `None`); 3 test constructors set `weapon: None`; new pak-gated `tests/map_items_q2dm1.rs` asserts 11 weapon / 35 ammo; parity golden unchanged; pitfalls entry |
 | 3 | T3: Pad candidates + objective-only `pads` line | `brains/jev/pads.rs` (new), `brains/jev/policy.rs`, `jev/state.rs`, `qbots::jev::render` | done | `pads::candidates` = one `flood_costs` per ask; relevance = stronger weapon / hp < 100 / armor < 100; `ItemMemory` observed per tick, reset on map change. `FieldKey::Pads` (keep-priority 5), schema **v3**; `pads` added only via `DecisionState::with` in objective asks → posture golden byte-identical; new objective golden. 6 tests (see Deviations) |
 | 4 | T4: Objective question v2, roaming triggers, apply/release | `jev/question.rs`, `jev/source.rs`, `brains/jev/{policy,pads,mod}.rs`, `qbots::jev::{hub,render}` | done | `objective_question_v2(Offered)` + `SEEK_WEAPON`; asks with no enemy in view, ≥ 2 s alive, on a pending event or objective refresh, never while held; resolves via the ticket's own pad list; held until arrival / pad empty / 30 s / stall / death / map change / newer **objective** ticket; `Trigger::Released`; hub pacing per question key + `refresh_due(key)`. 7 brain tests, 1 hub test, 1 render test |
-| 5 | T5: `jvr` code-rule control arm | `brains/jev`, `brains/mod.rs`, hub | pending | |
+| 5 | T5: `jvr` code-rule control arm | `brains/jev/{mod,policy,pads}.rs`, `brains/mod.rs`, `qbots::jev::hub`, supervisor | done | `BrainKind::JevRule` (`jvr` / `jev_rule`); `PadCandidates::rule_pick`; the rule's pad is applied when the hub **accepts** the ask (same moments as jev); the model's objective answer acks `Shadowed`; posture live. Hub: `wants_hub` (one truth table for 3 supervisor gates + `JevLink::for_bot`), jvr objective asks count `shadow_asked`. 3 tests |
 | 6 | T6: Corpus, lab, holdout, calibrate (live) | `context/fixtures/jev/calibration/objective_v2/**`, `lab.rs`, `jev_lab.md` | pending | |
 | 7 | T7: Objective outcomes + per-life `secs_to_strong` | `jev/source.rs`, `brains/jev/policy.rs`, `main.rs`, `journal.rs` | pending | |
 | 8 | T8: Arena rounds (live) | `context/fixtures/jev/arena_74.yaml`, reports | pending | |
@@ -44,7 +44,7 @@
 
 | Gate | After | Condition | Result |
 |---|---|---|---|
-| W1 | T5 | `just all` green; `q3_parity_golden` + posture render goldens unchanged | — |
+| W1 | T5 | `just all` green; `q3_parity_golden` + posture render goldens unchanged | **passed** 2026-11-07: gate green; `git diff 0ab6cf846 -- crates/brain/src/brains/q3/` = 0 lines; `render.rs` since then removed only an import line and the `STATE_SCHEMA_VERSION == 2` assert — `GOLDEN_STATE` and the request golden untouched |
 | W2 | T6 | holdout threshold with CW = 0 and leakA ≤ 20 % — else stop the model half | — |
 
 ## Rounds (lab variants and arena rounds)
@@ -81,6 +81,11 @@
   5 s trips q3's stall detector (`on_stall` → release), and a pad within `ItemMemory`'s 500 u
   trust range that the view does not transmit reads as taken. The tests now walk the bot and show
   the stocked pad, as PVS would.
+- **T5:** `run_single` and the single-bot path now start the hub for a `jvs` bot when
+  `jev.shadow` is set (they gated on `brain == Jev` only, while `JevLink::for_bot` already linked
+  shadow `jvs`) — a side effect of routing every gate through `wants_hub`.
+- **T5 → T7:** the rule's pick is not yet in the journal, so rule/model agreement (P2) cannot be
+  computed from it. T7 must journal the rule's label alongside the model's answer.
 - **T3:** pad cost is the graph's edge-cost sum (world-unit scale, plus whatever penalties the
   graph carries for swim/jump edges), banded with the same `DistBand` edges as straight-line
   distances — "travel cost band", not a pure distance.

@@ -307,7 +307,8 @@ lab round; then `task(T6): objective v2 holdout + calibrate — <threshold|faile
 **File**: `crates/brain/src/jev/source.rs` (`Outcome`), `brains/jev/policy.rs`,
 `crates/qbots/src/main.rs` (`bot_task`: per-life EVT), `crates/qbots/src/jev/journal.rs`
 
-**What to do**: Objective windows (30 s, from apply): `arrived`, `secs_to_arrive`, `upgraded`
+**What to do**: *(added by T5)* journal `jvr`'s **rule pick** next to the model's answer, so
+rule/model agreement (P2) is computable. Objective windows (30 s, from apply): `arrived`, `secs_to_arrive`, `upgraded`
 (held weapon tier rose), hp/armor gained, died, frags. A per-life `EVT life` line from `bot_task`
 for **every** brain: `secs_to_strong` (spawn → first non-weak held weapon, or none — *held*, not
 owned: past the blaster, DM does not auto-switch, so a bot wields a picked-up weapon only once
@@ -428,8 +429,8 @@ paragraph with numbers; what wording/facts worked; follow-ups (re-engage timing,
 - [x] T2: `weapon_*` → `Some(Weapon)`, `ammo_*` → `None`; `q3_parity_golden` unchanged
 - [x] T3: out-of-sight pad becomes a candidate; empty pad skipped until respawn; posture goldens byte-identical; objective golden has `pads`
 - [x] T4: stub `seek_weapon` drives to the pad; off-ticket rejected; held until each release condition; no ask with an enemy in view
-- [ ] T5: `jvr` applies the rule, journals the model's answer as shadow, never applies it
-- [ ] W1: `just all` green; parity + posture goldens unchanged
+- [x] T5: `jvr` applies the rule, journals the model's answer as shadow, never applies it
+- [x] W1: `just all` green; parity + posture goldens unchanged
 - [ ] T6: corpus committed and skimmed before scoring; holdout once; threshold frozen **or** failure recorded (W2)
 - [ ] T7: objective windows + per-life `secs_to_strong` for every arm; journal sections tested
 - [ ] T8: predictions committed before each round; ≥ 100 lives per arm or LOW POWER; P1–P3 answered

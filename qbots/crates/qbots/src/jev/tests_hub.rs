@@ -492,6 +492,31 @@ async fn jev_wiring_links_only_jev_bots_and_level_change_clears_the_decision() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn jev_rule_links_always_and_its_objective_asks_count_as_shadow() {
+    use super::hub::{wants_hub, JevLink};
+    use brain::BrainKind;
+    // Who talks to the hub (Plan 74 T5): one truth table for the gates and the links.
+    assert!(wants_hub(BrainKind::Jev, false) && wants_hub(BrainKind::JevRule, false));
+    assert!(!wants_hub(BrainKind::JevStatic, false) && wants_hub(BrainKind::JevStatic, true));
+    assert!(!wants_hub(BrainKind::Quake3, true));
+    let t = Scripted::default();
+    let hub = Arc::new(Hub::start(cfg(), 1, Arc::new(t.clone())));
+    let link = JevLink::for_bot(&Some(hub.clone()), BrainKind::JevRule, 0).expect("jvr links");
+    let src = link.source();
+    src.submit(ask(1, Trigger::Released))
+        .expect("objective ask");
+    let mut posture = ask(2, Trigger::Contact);
+    posture.questions = vec![brain::jev::question::posture_question()];
+    src.submit(posture).expect("posture ask");
+    let c = hub.counters();
+    assert_eq!(
+        (c.asked, c.shadow_asked),
+        (1, 1),
+        "jvr's posture is live; its objective is the rule's, the model's a shadow"
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn jev_telemetry_counts_decisive_no_signal_and_the_three_ratios() {
     let t = Scripted::default();
     t.push(10, Ok(&decisive()));

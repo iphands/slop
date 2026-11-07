@@ -102,6 +102,8 @@ pub struct JevPolicy {
     objective: Option<(Pad, f32)>,
     /// Does this policy ask the objective question? (`false` for the posture-only shadow.)
     asks_objective: bool,
+    /// `jvr` (Plan 74 T5): the objective comes from the code rule; the model's is journalled.
+    rule: bool,
     /// Brain time of the first tick of this life.
     alive_since: Option<f32>,
     /// No objective ask attempt before this brain time.
@@ -149,6 +151,7 @@ impl JevPolicy {
             memory: ItemMemory::new(),
             objective: None,
             asks_objective: true,
+            rule: false,
             alive_since: None,
             next_objective_try: 0.0,
             map: MapId::Other,
@@ -174,6 +177,19 @@ impl JevPolicy {
             asks_objective: false,
             ..Self::new(source)
         }
+    }
+
+    /// The `jvr` policy: objective by [`PadCandidates::rule_pick`], posture as jev.
+    pub fn new_rule(source: Arc<dyn DecisionSource>) -> Self {
+        Self {
+            rule: true,
+            ..Self::new(source)
+        }
+    }
+
+    /// Is this the `jvr` rule policy?
+    pub fn is_rule(&self) -> bool {
+        self.rule
     }
 
     /// Is this a shadow policy?
@@ -294,6 +310,12 @@ impl JevPolicy {
                     postures: Vec::new(),
                 },
             );
+            if self.rule {
+                // Same moment, same candidates as a jev ask; only the chooser differs.
+                let s = view.self_state();
+                let pick = cands.rule_pick(s.held_weapon, s.health, s.armor);
+                self.objective = pick.map(|p| (p, self.time));
+            }
         }
     }
 
@@ -453,6 +475,8 @@ impl JevPolicy {
             Some(_) => Err(BrainReject::OffTicketLabel),
         };
         let asked_objective = !entry.objectives.is_empty();
+        // jvr: the model's objective answer is followed in the journal, never applied.
+        let shadowed = self.shadow || (self.rule && asked_objective);
         let objective = match pick(d.objective, entry.objectives.len()) {
             Ok(i) => i.and_then(|i| entry.objectives[i]),
             Err(r) => return Rejected(r),
@@ -469,10 +493,10 @@ impl JevPolicy {
         self.applied_at = self.time;
         // Only an answer to the objective question moves the objective; `carry_on` or a gated-off
         // answer releases to q3's roam (no Released trigger: the model chose to roam).
-        if asked_objective && !self.shadow {
+        if asked_objective && !shadowed {
             self.objective = objective.map(|p| (p, self.time));
         }
-        let outcome = if self.shadow {
+        let outcome = if shadowed {
             ApplyOutcome::Shadowed
         } else {
             Applied

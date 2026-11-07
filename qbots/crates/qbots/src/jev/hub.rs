@@ -348,10 +348,9 @@ impl JevLink {
     /// A `jev` bot always gets one; a `jev_static` bot only in shadow mode (it then asks and
     /// journals but never steers — `build_brain_with_decider` builds it as a shadow brain).
     pub fn for_bot(hub: &Option<Arc<Hub>>, brain: brain::BrainKind, bot: usize) -> Option<Self> {
-        let hub = hub.as_ref().filter(|h| {
-            brain == brain::BrainKind::Jev
-                || (brain == brain::BrainKind::JevStatic && h.inner.cfg.shadow)
-        })?;
+        let hub = hub
+            .as_ref()
+            .filter(|h| wants_hub(brain, h.inner.cfg.shadow))?;
         hub.set_arm(bot, brain::brain_tag(brain));
         Some(Self {
             hub: hub.clone(),
@@ -469,7 +468,7 @@ impl Inner {
         });
         {
             let mut sh = lock(&self.shared);
-            if slot.arm.get() == Some(&"jev_static") {
+            if is_shadow_ask(slot.arm.get(), key) {
                 sh.counters.shadow_asked += 1;
             } else {
                 sh.counters.asked += 1;
@@ -677,6 +676,26 @@ impl Inner {
             }
             lock(&self.journal_open).insert(pending.ticket.0, line);
         }
+    }
+}
+
+/// Does a bot of `brain` talk to the hub? `jev` and `jev_rule` always; `jev_static` only in
+/// shadow mode. The one place this is decided (supervisor gates and `JevLink::for_bot`).
+pub fn wants_hub(brain: brain::BrainKind, shadow: bool) -> bool {
+    match brain {
+        brain::BrainKind::Jev | brain::BrainKind::JevRule => true,
+        brain::BrainKind::JevStatic => shadow,
+        _ => false,
+    }
+}
+
+/// Is an ask from `arm` with first question `key` a shadow ask (followed, never applied)?
+/// `jev_static` asks only as a shadow; `jev_rule`'s objective asks are shadows (the rule picks).
+fn is_shadow_ask(arm: Option<&&'static str>, key: QuestionKey) -> bool {
+    match arm.copied() {
+        Some("jev_static") => true,
+        Some("jev_rule") => key == QuestionKey::Objective,
+        _ => false,
     }
 }
 

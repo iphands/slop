@@ -64,6 +64,11 @@ pub enum BrainKind {
     /// control for jev (Plan 72).
     #[value(name = "jvs", alias = "jev_static")]
     JevStatic,
+    /// jev_rule — jev whose pickup objective is chosen by a fixed code rule from the same pad
+    /// candidates (the model's objective answer is still asked and journalled, never applied);
+    /// posture as jev. Plan 74's control: "does the model choose better than a rule?"
+    #[value(name = "jvr", alias = "jev_rule")]
+    JevRule,
 }
 
 /// Short kebab-case tag for `kind` — for logging + competition bot naming (mirrors `mode_tag`).
@@ -77,6 +82,7 @@ pub fn brain_tag(kind: BrainKind) -> &'static str {
         BrainKind::Xon => "xon",
         BrainKind::Jev => "jev",
         BrainKind::JevStatic => "jev_static",
+        BrainKind::JevRule => "jev_rule",
     }
 }
 
@@ -145,6 +151,11 @@ pub fn build_brain_with_decider(
             Some(src) => Box::new(JevBrain::new_shadow(q3_char(), src)),
             None => Box::new(JevBrain::new(q3_char(), Arc::new(NullDecider::default()))),
         },
+        // JevRule: the rule picks the objective; a decider (if any) still answers posture.
+        BrainKind::JevRule => {
+            let src = decider.unwrap_or_else(|| Arc::new(NullDecider::default()));
+            Box::new(JevBrain::new_rule(q3_char(), src))
+        }
     }
 }
 
@@ -212,11 +223,18 @@ mod tests {
         );
         assert_eq!(brain_tag(BrainKind::Jev), "jev");
         assert_eq!(brain_tag(BrainKind::JevStatic), "jev_static");
+        // Plan 74: the rule control.
+        assert_eq!(BrainKind::from_str("jvr", false), Ok(BrainKind::JevRule));
+        assert_eq!(
+            BrainKind::from_str("jev_rule", false),
+            Ok(BrainKind::JevRule)
+        );
+        assert_eq!(brain_tag(BrainKind::JevRule), "jev_rule");
     }
 
     #[test]
     fn build_jev_brains_play_as_q3_until_decided() {
-        for kind in [BrainKind::Jev, BrainKind::JevStatic] {
+        for kind in [BrainKind::Jev, BrainKind::JevStatic, BrainKind::JevRule] {
             let brain = build_brain(
                 kind,
                 BotSkill::default(),

@@ -320,7 +320,7 @@ pub async fn run_fleet(
     // Plan 55: refuse to launch a fleet the server can't seat, before spawning any bot.
     preflight_capacity(addr, count, loose_botcap).await?;
     // Plan 72: a jev fleet with an unhealthy decision endpoint refuses to start (`require`).
-    let jev = jev_gate(&cfg, brain == brain::BrainKind::Jev)
+    let jev = jev_gate(&cfg, crate::jev::hub::wants_hub(brain, cfg.jev.shadow))
         .await?
         .start_hub(count);
     let jev_report = jev.clone();
@@ -535,6 +535,7 @@ pub(crate) fn brain_code(brain: brain::BrainKind) -> &'static str {
         brain::BrainKind::Xon => "xon",
         brain::BrainKind::Jev => "jev",
         brain::BrainKind::JevStatic => "jvs",
+        brain::BrainKind::JevRule => "jvr",
     }
 }
 
@@ -689,10 +690,9 @@ pub async fn run_competition(
     // spawn any. Strict (default) exits non-zero; --loose-botcap warns and proceeds.
     preflight_capacity(addr, total, loose_botcap).await?;
     // Plan 73: shadow `jev_static` bots need the hub too.
-    let uses_jev = specs.iter().any(|s| {
-        s.brain == brain::BrainKind::Jev
-            || (s.brain == brain::BrainKind::JevStatic && cfg.jev.shadow)
-    });
+    let uses_jev = specs
+        .iter()
+        .any(|s| crate::jev::hub::wants_hub(s.brain, cfg.jev.shadow));
     let jev = jev_gate(&cfg, uses_jev).await?.start_hub(total);
     let jev_report = jev.clone();
 
@@ -1214,7 +1214,7 @@ pub async fn run_single(
     persona: Option<brain::persona::Persona>,
     xonchar: Option<brain::XonCharPreset>,
 ) -> std::io::Result<()> {
-    let hub = jev_gate(cfg, brain == brain::BrainKind::Jev)
+    let hub = jev_gate(cfg, crate::jev::hub::wants_hub(brain, cfg.jev.shadow))
         .await?
         .start_hub(1);
     let jev = crate::jev::hub::JevLink::for_bot(&hub, brain, 0);

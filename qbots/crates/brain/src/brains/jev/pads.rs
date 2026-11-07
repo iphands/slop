@@ -76,6 +76,24 @@ impl PadCandidates {
             .collect()
     }
 
+    /// The `jvr` control's fixed rule (Plan 74 T5), from the same candidates the model sees:
+    /// a weak held weapon (blaster / shotgun / machinegun — the state's own definition) and a
+    /// weapon pad → that pad; else health below 50 and a health pad → it; else armor below 50
+    /// and an armor pad → it; else `None` (`carry_on`).
+    pub fn rule_pick(&self, held: Option<Weapon>, hp: i32, armor: i32) -> Option<Pad> {
+        let weak = matches!(
+            held,
+            Some(Weapon::Blaster | Weapon::Shotgun | Weapon::Machinegun)
+        );
+        [
+            (weak, self.weapon),
+            (hp < 50, self.health),
+            (armor < 50, self.armor),
+        ]
+        .into_iter()
+        .find_map(|(want, pad)| want.then_some(pad).flatten())
+    }
+
     /// The closed facts the state carries: each candidate's travel-cost band.
     pub fn facts(&self) -> PadFacts {
         let band = |p: Option<Pad>| p.map(|p| DistBand::of(p.cost));
@@ -258,6 +276,49 @@ mod tests {
             c.is_empty(),
             "rail (95) beats shotgun and rockets (≤90); full hp + armor: {c:?}"
         );
+    }
+
+    #[test]
+    fn jev_rule_pick_follows_the_table() {
+        let p = |item| {
+            Some(Pad {
+                item,
+                origin: Vec3::ZERO,
+                cost: 1.0,
+            })
+        };
+        let all = PadCandidates {
+            weapon: p(0),
+            health: p(1),
+            armor: p(2),
+        };
+        let pick = |c: &PadCandidates, held, hp, ar| c.rule_pick(held, hp, ar).map(|p| p.item);
+        assert_eq!(
+            pick(&all, Some(Weapon::Blaster), 20, 0),
+            Some(0),
+            "weak weapon first"
+        );
+        assert_eq!(
+            pick(&all, Some(Weapon::Railgun), 20, 0),
+            Some(1),
+            "then low health"
+        );
+        assert_eq!(
+            pick(&all, Some(Weapon::Railgun), 90, 10),
+            Some(2),
+            "then low armor"
+        );
+        assert_eq!(
+            pick(&all, Some(Weapon::Railgun), 90, 60),
+            None,
+            "else carry_on"
+        );
+        assert_eq!(pick(&all, None, 90, 60), None, "unknown held is not weak");
+        let no_weapon = PadCandidates {
+            weapon: None,
+            ..all
+        };
+        assert_eq!(pick(&no_weapon, Some(Weapon::Shotgun), 40, 0), Some(1));
     }
 
     #[test]
