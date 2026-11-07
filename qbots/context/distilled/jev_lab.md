@@ -118,3 +118,25 @@ Answers by kind: obvious `seek_health` 5/5 and `seek_armor` 4/4 correct; **obvio
   `carry_on` as the no-op that lets the gate's leakage stop mattering — and bring area control back
   as its own question with region facts. Adopting it means relabelling the corpus's obvious
   `hold_position` cases, which is the human's call (labels are never flipped by the lab).
+
+## Round 4 — 2026-11-06, tuning half: the production candidate → **adopted**
+
+State = coded fields + `threat <none|low|medium|high>` + graded summary sentence, **one state for
+both questions** (a request carries one state); posture `disengage / hold`; objective
+`seek_health / seek_armor / carry_on`.
+
+| question | RC | CW | acc | mC | leakA | flatA | sep | blank states |
+|---|---|---|---|---|---|---|---|---|
+| posture | 82% | 0% | 100% | 0.563 | 0% | 0.000 | 0.355 | 12/12 → `hold` |
+| objective | 100% | 0% | 100% | 0.712 | 40% | 0.000 | 0.212 | 12/12 → `carry_on` |
+
+- **R4-1 The two harmless defaults make blank states free**: every information-free state answers
+  the question's no-op. What remains to calibrate is ambiguous-case leakage on the objective (40 %
+  at the provisional 0.30) — a threshold question for the holdout `calibrate`, not a wording one.
+- **R4-2 Rules for writing a jev question (the summary of rounds 1–4):**
+  1. say the situation in one short plain-English sentence, graded as finely as the bands;
+  2. keep the derived one-word facts the answer hinges on (`wants:`, `threat`);
+  3. give every question a harmless "leave it to q3" option;
+  4. keep option descriptions short and literal — no consequences, no role play;
+  5. never rename a field to "fix" a misreading without measuring it — the model reads short
+     codes fine on real states.

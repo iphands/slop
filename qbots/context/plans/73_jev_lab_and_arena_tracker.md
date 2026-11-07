@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 22% complete (2/9 tasks)
+- Status: 33% complete (3/9 tasks)
 - Start date: 2026-11-06
 - Plan: `context/plans/73_jev_lab_and_arena.md`
 - Purpose: the learner is **us** — find which situations, facts and wording make the frozen
@@ -32,7 +32,7 @@
 |---|------|---------------|--------|-------|
 | 1 | T1: Lock the scenario corpus (human), split | `context/fixtures/jev/calibration/**` | done | 138 states (56 in `34f28aefa` + 82 here), all drafted by the agent, **skimmed and approved by the user 2026-11-06 before any scoring**; every half ≥10 obvious / ≥10 ambiguous, flat cases in both halves |
 | 2 | T2: `jev-probe lab` — variants, split, scoring | `crates/qbots/src/jev/lab.rs`, `probe.rs` | done | 10 closed variants (baseline + 3 drop-a-fact, add-threat, hp-band-only, add-summary, consequence options, criterion / role instructions); FNV-1a split; holdout needs `--confirm-holdout`; `--split-report` is offline. 7 tests |
-| 3 | T3: Run the lab, write findings | `context/distilled/jev_lab.md` | in-progress | permission granted 2026-11-06; rounds 1–3 done (15 variants, 1 028 asks, 0 failed). **Waiting on the human**: adopt `carry_on` for the objective (relabel the obvious `hold_position` cases?) and re-review some objective `ambiguous` labels the model answers confidently |
+| 3 | T3: Run the lab, write findings | `context/distilled/jev_lab.md` | done | 4 rounds, 16 pre-registered predictions (9 right — 2 of them only partly — and 7 wrong; see Rounds), 1 099 asks, 0 failed; winner = coded + threat + graded summary, objective `seek_health / seek_armor / carry_on` |
 | 4 | T4: Port winner, holdout once, calibrate | renderer, question specs, goldens | pending | closes Plan 72 W2 |
 | 5 | T5: Decision journal + outcome windows | `brain::jev::source`, `JevPolicy`, `qbots::jev::journal` | pending | needs Plan 72 T10 + T11 |
 | 6 | T6: Shadow mode for `jev_static` | `brains/jev`, config, supervisor | pending | parity test: shadow ≡ NullDecider output |
@@ -61,7 +61,7 @@ Every row is written **before** its run (prediction), then completed.
 | L13 | 2026-11-06 | lab (tuning half) | summary-graded + items-renamed (combination of L11 + L12) | **best overall**: posture RC ≥ 60 %, leakA ≤ 10 %, flatA ≈ 0; objective RC ≥ 90 %, flatA < 0.40 | | posture RC 45 %; objective acc 83 % | **wrong** — the rename drags the combination below L12 alone |
 | L14 | 2026-11-06 | lab (tuning half) | summary-graded + add-threat (combination) | posture RC ≥ L12 and flatA 0 (threat removed flat disengages in round 1); objective leakA up (threat raised it in round 1) | | posture RC 82 %, mC 0.563, sep **0.355**, leakA 0, flatA 0; objective leakA 70 % | **right** — best posture wording so far; objective leak up as predicted |
 | L15 | 2026-11-06 | lab (tuning half) | objective only: summary-graded + a 4th option `carry_on` ("no particular objective, keep roaming"), the objective's harmless default (tests Plan 72's ≤3-options / no-none-of-the-above rule) | objective **flatA (acting) < 0.30** (blanks go to `carry_on`), **leakA ≤ 40 %** (from 60 %), RC ≥ 85 % (some `hold_position` mass moves to `carry_on`), CW 0; posture identical to summary-graded | | objective flatA 0.527→**0.271**, leakA 60→**40 %**, sep 0.233→**0.356**; but RC 100→**75 %**, CW **17 %** — all 3 obvious `hold_position` cases answered `carry_on` | **right** on blanks and leakage, **wrong** on RC: `hold_position` and `carry_on` are the same answer without a reason to hold a place |
-| L16 | 2026-11-06 | lab (tuning half) | the **production candidate**: state = coded + `threat` + graded summary for both questions (one state per request); objective options `seek_health / seek_armor / carry_on` (variant `summary-graded-threat`) | posture as L14 (RC 82 %, leakA 0, flatA 0); objective **RC ≥ 90 %, CW ≤ 10 %, flatA ≤ 0.30, leakA ≤ 40 %** | | |
+| L16 | 2026-11-06 | lab (tuning half) | the **production candidate**: state = coded + `threat` + graded summary for both questions (one state per request); objective options `seek_health / seek_armor / carry_on` (variant `summary-graded-threat`) | posture as L14 (RC 82 %, leakA 0, flatA 0); objective **RC ≥ 90 %, CW ≤ 10 %, flatA ≤ 0.30, leakA ≤ 40 %** | | posture RC 82 %, CW 0, acc 100 %, leakA 0, flatA 0; objective RC **100 %**, CW 0, acc 100 %, leakA 40 %, flatA **0** — every blank state answers the no-op | **right** on every bound — adopted as the production wording |
 
 ## Evidence
 
@@ -69,6 +69,7 @@ Every row is written **before** its run (prediction), then completed.
 |------|------------------------------------|--------|------|----------------|
 | 2026-11-06 | `cargo run -p qbots -- jev-probe lab --split-report` (offline, corpus @ `34f28aefa`) | posture: tuning 6 obv / 5 amb / 3 flat, holdout 8 / 6 / 0; objective: tuning 9 / 5 / 3, holdout 5 / 6 / 0 | 1 | no model call; confirms T1 must grow the corpus |
 | 2026-11-06 | `jev-probe health` | PASS — slug matches, chat route answers 501 | 1 | endpoint permission granted by the user in-session 2026-11-06 |
+| 2026-11-06 | `jev-probe --json lab --half tuning --variant summary-graded-threat --detail …` (round 4, production candidate; 71 asks, 0 failed) | posture RC 82 %, objective RC 100 %, CW 0, every blank → no-op | 1 | `round4_tuning{,.detail}.jsonl` |
 | 2026-11-06 | `jev-probe --json lab --half tuning --question objective --variant summary-graded-carry-on --detail …` (round 3; 34 asks, 0 failed) | `context/fixtures/jev/lab/round3_tuning{,.detail}.jsonl`; findings R3-1…R3-2 | 1 | |
 | 2026-11-06 | `jev-probe --json lab --half tuning --variant <v> --detail …` × 4 (round 2: items-renamed, summary-graded, summary-graded-items-renamed, summary-graded-threat; 284 asks, 0 failed) | `context/fixtures/jev/lab/round2_tuning{,.detail}.jsonl`; findings R2-1…R2-4 in `jev_lab.md` | 1 | |
 | 2026-11-06 | `jev-probe --json lab --half tuning --detail …` (round 1, 10 variants × 71 tuning states = 710 asks, 0 failed, ~10 s) | results + per-case detail in `context/fixtures/jev/lab/round1_tuning{,.detail}.jsonl`; summary in `context/distilled/jev_lab.md` | 1 | deterministic model — a re-run reproduces it |
