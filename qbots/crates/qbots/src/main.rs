@@ -26,6 +26,7 @@ macro_rules! fatal {
 
 mod beacon;
 mod config;
+mod jev;
 mod roster;
 mod scenario;
 mod skins;

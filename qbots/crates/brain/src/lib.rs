@@ -16,6 +16,7 @@ pub mod hazard;
 pub mod heatmap;
 pub mod hybrid;
 pub mod items;
+pub mod jev;
 pub mod los;
 pub mod move_ctrl;
 pub mod nav;

@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 6% complete (1/16 tasks)
+- Status: 13% complete (2/16 tasks)
 - Start date: 2026-11-06 (`date +%F`, local; the plan's `2026-11-07` dates are UTC)
 - Plan: `context/plans/72_jev_decision_brain.md`
 - Evidence: `context/fixtures/jev/` (harvested live request/response pairs from `qbots jev-probe`)
@@ -94,7 +94,7 @@
 | # | Task | File / Module | Status | Notes |
 |---|------|---------------|--------|-------|
 | 1 | T1: Record the contract + measurements, settle the open questions | `context/distilled/jev.md` | pending | **human-only, parallel with W1** — never blocks T2; label the numbers loopback; `confidence` is already resolved; strike unanswered questions, never delete |
-| 2 | T2: Closed `DecisionState` + builder + exhaustive renderer | `crates/brain/src/jev/state.rs`, `crates/qbots/src/jev/render.rs` | pending | no `Here`/`Alts` keys (T14), no region facts, no opaque indices; injection test is **not** here (renderer can't see a `Worldview`) |
+| 2 | T2: Closed `DecisionState` + builder + exhaustive renderer | `crates/brain/src/jev/{state,question}.rs`, `crates/qbots/src/jev/{mod,render}.rs` | done | 4 brain + 5 qbots tests; byte-exact state **and** request goldens; 100× determinism; budget drop names the field. Deviations: `MapContext` instead of `&BrainMap`, `render_state(s, max)` returns all dropped keys, `MapId` closes the map name (see Notes) |
 | 3 | T3: Margin gate + `Decision` + ticketed `DecisionSource` + stubs | `crates/brain/src/jev/{decision,source,gate}.rs` | pending | gate = margin `p1−p2` (n ≤ 3), `n_eff` only for n ≥ 4; `submit → TicketId`, `latest → Option<AppliedDecision>` (`Copy`), `ack`; vectors **constructed in Rust** incl. the `{0.80,0.20}` regression row |
 | 4 | T4: Hand-rolled HTTP/1.1 POST + wire types | `crates/qbots/src/jev/{net,wire}.rs`, `crates/qbots/tests/jev_net.rs` | pending | `Connection: close`, chunked **and close-delimited**, timeout **wraps connect**, 1 MiB cap, extra-key + model-mismatch cases; **real clock, never `start_paused`** |
 | 5 | T5: Hub — pull workers, bucket, tickets, pacing, generation, tiered breaker | `crates/qbots/src/jev/{hub,transport,mod}.rs`, `crates/qbots/Cargo.toml` | pending | **schedule risk**: 7 mechanisms + a test each; **no semaphore, no `permit_wait_ms`** — workers pick oldest event, else oldest refresh (≤ 2 in flight); hub runs the gate, slot stores only `AppliedDecision` |
@@ -236,6 +236,16 @@ metric, the `EVT jev_fleet` line, `calibrate`.
   Fixed behaviour-preservingly in its own commit `8acd93bf4` (not a task commit); gate after:
   fmt-check, clippy `-D warnings`, 578 tests, build — all green. The T6 golden was recorded on top
   of that commit.
+- **T2 deviations (2026-11-06):** (1) the builder takes `MapContext { map: MapId, nav_graph }`
+  rather than `&BrainMap` — `BrainMap` is not `Clone` and the policy keeps field copies (T7), and
+  the map **name** was itself an unlisted wire-text vector, now closed as `MapId` (unknown names
+  ⇒ `Other`); (2) `render_state(state, max_tokens)` returns **every** dropped key
+  (`Vec<FieldKey>`), not one — a single drop need not fit the budget; (3) question text is typed
+  as `&'static str` / `Piece::{Lit, Num}`, so criteria (T10) cannot carry wire text either;
+  (4) the request JSON is hand-written in declared order — `serde_json` in this lockfile has no
+  `preserve_order`, so its `Map` would sort the offered options alphabetically; (5) the state's
+  `loc` line is `exits` + `moving` (no region, no `floor`), matching the plan's no-opaque-index
+  rule. `qbots::jev` carries a temporary `#![allow(dead_code)]` until T8 wires it (Follow-ups).
 - **T6 harvest:** the FSM-loop pitfall (one of T16's ten named entries) is already in
   `context/pitfalls.md` — confirmed by mutation in T6, so it was written then rather than at T16.
 - `--brains` and `BrainKind` exist (`main.rs:249`, `:2634-2646`, `brains/mod.rs:35`). Any Verify
@@ -253,3 +263,4 @@ metric, the `EVT jev_fleet` line, `calibrate`.
 | Re-run `jev-probe flatness` + `calibrate` + `matrix --live` after **any** server-side change | determinism is per-process; a restarted box with different slot/parallel settings may not reproduce, and frozen thresholds were calibrated against the old one | recurring, note in `context/pitfalls.md` (T16) |
 | Per-trigger split of the herd/oscillation metrics | W3's gate needs it; W4/W5 want it trended across runs | T11, then T16's report shape |
 | Re-run `bench` from the fleet host if the fleet ever leaves the model host | every latency here is loopback | T1 decision; recurring |
+| Remove `#![allow(dead_code)]` from `crates/qbots/src/jev/mod.rs` | `qbots` is bin-only, so T2–T5's module has no caller until the hub is wired; anything still unused after T8 is genuinely dead | **T8** |
