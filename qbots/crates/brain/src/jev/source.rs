@@ -11,9 +11,10 @@
 //! brain resolves an answer only against the ticket it carries. They come from a hub-owned
 //! counter because brains are rebuilt per connection session.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
+use super::question::QuestionSpec;
 use super::state::{DecisionState, MapId};
 
 /// A hub-issued ask id. Unique per process; never reused across bot reconnects.
@@ -56,7 +57,20 @@ impl Trigger {
     }
 }
 
-/// The binary posture answer (T12).
+/// One ask: the state, the questions about it (whose option order the brain keeps in its
+/// ticket ring), and why it is being asked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ask {
+    /// The bot's situation.
+    pub state: DecisionState,
+    /// The questions, options in offered order.
+    pub questions: Vec<QuestionSpec>,
+    /// Why now.
+    pub trig: Trigger,
+}
+
+/// The binary posture answer (T12). The hub stores the option **index**; the brain maps it
+/// through its ticket to this.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PostureChoice {
     /// Add caution: retreat and do not chase.
@@ -77,8 +91,8 @@ pub struct AppliedDecision {
     pub map: MapId,
     /// Index of the chosen objective in **that ticket's** offered list.
     pub objective: Option<u8>,
-    /// The posture answer.
-    pub posture: Option<PostureChoice>,
+    /// Index of the chosen posture option in **that ticket's** posture question.
+    pub posture: Option<u8>,
 }
 
 /// Why the brain did not apply a decision `latest()` returned.
@@ -126,8 +140,13 @@ pub enum ApplyOutcome {
 pub trait DecisionSource: Send + Sync {
     /// Newest gated decision for this bot, if any (already expired ones read as `None`).
     fn latest(&self) -> Option<AppliedDecision>;
-    /// Newest-wins: replaces this bot's pending snapshot. Returns the hub-issued ticket.
-    fn submit(&self, state: DecisionState, trig: Trigger) -> TicketId;
+    /// Newest-wins: replaces this bot's pending ask. `Some(ticket)` if accepted; `None` if the
+    /// hub's per-bot pacing refused it (an event inside `event_floor_s`, or a refresh before
+    /// it is due) — a refused ask must not take a slot in the brain's ticket ring.
+    fn submit(&self, ask: Ask) -> Option<TicketId>;
+    /// Is a background refresh due for this bot? Cheap — lets the brain skip building a state
+    /// on the ~all ticks where a refresh would be refused.
+    fn refresh_due(&self) -> bool;
     /// The brain's verdict on a decision `latest()` returned.
     fn ack(&self, ticket: TicketId, outcome: ApplyOutcome);
 }
@@ -142,21 +161,26 @@ impl DecisionSource for NullDecider {
     fn latest(&self) -> Option<AppliedDecision> {
         None
     }
-    fn submit(&self, _state: DecisionState, _trig: Trigger) -> TicketId {
+    fn submit(&self, _ask: Ask) -> Option<TicketId> {
         // Tickets stay unique even here, so ring logic behaves identically in the control arm.
-        TicketId(self.next.fetch_add(1, Ordering::Relaxed) + 1)
+        Some(TicketId(self.next.fetch_add(1, Ordering::Relaxed) + 1))
+    }
+    fn refresh_due(&self) -> bool {
+        false
     }
     fn ack(&self, _ticket: TicketId, _outcome: ApplyOutcome) {}
 }
 
-/// A scripted decider for brain tests: set what `latest()` returns, inspect what was submitted
-/// and acked. Tickets count up from 1.
+/// A scripted decider for brain tests: set what `latest()` and `refresh_due()` return and
+/// whether asks are refused; inspect what was submitted and acked. Tickets count up from 1.
 #[derive(Debug, Default)]
 pub struct StubDecider {
     next: AtomicU64,
     latest: Mutex<Option<AppliedDecision>>,
-    submitted: Mutex<Vec<(TicketId, DecisionState, Trigger)>>,
+    submitted: Mutex<Vec<(TicketId, Ask)>>,
     acks: Mutex<Vec<(TicketId, ApplyOutcome)>>,
+    refuse: AtomicBool,
+    refresh_due: AtomicBool,
 }
 
 impl StubDecider {
@@ -165,9 +189,19 @@ impl StubDecider {
         *lock(&self.latest) = d;
     }
 
-    /// Every `submit` so far, oldest first.
-    pub fn submitted(&self) -> Vec<(TicketId, DecisionState, Trigger)> {
+    /// Every accepted `submit` so far, oldest first.
+    pub fn submitted(&self) -> Vec<(TicketId, Ask)> {
         lock(&self.submitted).clone()
+    }
+
+    /// Make `submit` refuse (as the hub's pacing would) from now on.
+    pub fn set_refuse(&self, refuse: bool) {
+        self.refuse.store(refuse, Ordering::Relaxed);
+    }
+
+    /// Set what `refresh_due()` returns.
+    pub fn set_refresh_due(&self, due: bool) {
+        self.refresh_due.store(due, Ordering::Relaxed);
     }
 
     /// Every `ack` so far, oldest first.
@@ -180,10 +214,16 @@ impl DecisionSource for StubDecider {
     fn latest(&self) -> Option<AppliedDecision> {
         *lock(&self.latest)
     }
-    fn submit(&self, state: DecisionState, trig: Trigger) -> TicketId {
+    fn submit(&self, ask: Ask) -> Option<TicketId> {
+        if self.refuse.load(Ordering::Relaxed) {
+            return None;
+        }
         let t = TicketId(self.next.fetch_add(1, Ordering::Relaxed) + 1);
-        lock(&self.submitted).push((t, state, trig));
-        t
+        lock(&self.submitted).push((t, ask));
+        Some(t)
+    }
+    fn refresh_due(&self) -> bool {
+        self.refresh_due.load(Ordering::Relaxed)
     }
     fn ack(&self, ticket: TicketId, outcome: ApplyOutcome) {
         lock(&self.acks).push((ticket, outcome));
@@ -201,26 +241,32 @@ mod tests {
     use super::*;
     use crate::jev::state::{DecisionState, Field, LoadoutGap, MapFacts};
 
-    fn state() -> DecisionState {
-        DecisionState::from_fields(vec![Field::Map(MapFacts {
-            map: MapId::Q2dm1,
-            gap: LoadoutGap::None,
-        })])
+    fn ask(trig: Trigger) -> Ask {
+        Ask {
+            state: DecisionState::from_fields(vec![Field::Map(MapFacts {
+                map: MapId::Q2dm1,
+                gap: LoadoutGap::None,
+            })]),
+            questions: Vec::new(),
+            trig,
+        }
     }
 
     #[test]
     fn jev_source_null_decider_never_decides_but_issues_unique_tickets() {
         let d = NullDecider::default();
         assert_eq!(d.latest(), None);
-        let a = d.submit(state(), Trigger::Respawn);
-        let b = d.submit(state(), Trigger::Refresh);
+        let a = d.submit(ask(Trigger::Respawn));
+        let b = d.submit(ask(Trigger::Refresh));
+        assert!(a.is_some() && b.is_some());
         assert_ne!(a, b);
+        assert!(!d.refresh_due());
     }
 
     #[test]
     fn jev_source_stub_decider_scripts_latest_and_records_traffic() {
         let d = StubDecider::default();
-        let t = d.submit(state(), Trigger::Damage);
+        let t = d.submit(ask(Trigger::Damage)).expect("accepted");
         assert_eq!(t, TicketId(1));
         let dec = AppliedDecision {
             ticket: t,
@@ -236,7 +282,16 @@ mod tests {
             d.acks(),
             vec![(t, ApplyOutcome::Rejected(BrainReject::OffTicketLabel))]
         );
-        assert_eq!(d.submitted()[0].2, Trigger::Damage);
+        assert_eq!(d.submitted()[0].1.trig, Trigger::Damage);
+        d.set_refuse(true);
+        assert_eq!(
+            d.submit(ask(Trigger::Respawn)),
+            None,
+            "a refused ask gets no ticket"
+        );
+        assert_eq!(d.submitted().len(), 1);
+        d.set_refresh_due(true);
+        assert!(d.refresh_due());
     }
 
     #[test]

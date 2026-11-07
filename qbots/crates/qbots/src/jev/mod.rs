@@ -9,9 +9,14 @@
 // genuinely dead.
 #![allow(dead_code)]
 
+pub mod bucket;
+pub mod hub;
 pub mod net;
 pub mod render;
+pub mod transport;
 pub mod wire;
 
+#[cfg(test)]
+mod tests_hub;
 #[cfg(test)]
 mod tests_net;

@@ -192,7 +192,7 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 > verification-checklist item in each brain plan — not optional.
 
 > **Currently active**:
-> - **Plan 72** — Jev decision brain: in progress, 4/16 tasks done (T6, T2, T3, T4); next T5 (the process-wide jev hub).
+> - **Plan 72** — Jev decision brain: in progress, 5/16 tasks done (T6, T2, T3, T4, T5; W1 gate passed); next T7 (`JevBrain` + `jev:` config).
 > Plan 71 is **deferred** (see its row), not closed.
 > **Next free plan number: 73.**
 

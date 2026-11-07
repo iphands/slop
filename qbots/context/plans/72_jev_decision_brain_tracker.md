@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 25% complete (4/16 tasks)
+- Status: 31% complete (5/16 tasks)
 - Start date: 2026-11-06 (`date +%F`, local; the plan's `2026-11-07` dates are UTC)
 - Plan: `context/plans/72_jev_decision_brain.md`
 - Evidence: `context/fixtures/jev/` (harvested live request/response pairs from `qbots jev-probe`)
@@ -97,7 +97,7 @@
 | 2 | T2: Closed `DecisionState` + builder + exhaustive renderer | `crates/brain/src/jev/{state,question}.rs`, `crates/qbots/src/jev/{mod,render}.rs` | done | 4 brain + 5 qbots tests; byte-exact state **and** request goldens; 100× determinism; budget drop names the field. Deviations: `MapContext` instead of `&BrainMap`, `render_state(s, max)` returns all dropped keys, `MapId` closes the map name (see Notes) |
 | 3 | T3: Margin gate + `Decision` + ticketed `DecisionSource` + stubs | `crates/brain/src/jev/{decision,source,gate}.rs` | done | gate = margin `p1−p2` (n ≤ 3), `n_eff` only for n ≥ 4; `submit → TicketId`, `latest → Option<AppliedDecision>` (`Copy`), `ack`; vectors **constructed in Rust** incl. the `{0.80,0.20}` regression row. 13 tests; objective travels as an index into its ticket's list (see Notes) |
 | 4 | T4: Hand-rolled HTTP/1.1 POST + wire types | `crates/qbots/src/jev/{net,wire,tests_net}.rs`, `crates/qbots/src/jev/testdata/` | done | `Connection: close`, chunked **and close-delimited**, timeout **wraps connect**, 1 MiB cap, extra-key + model-mismatch cases; **real clock, never `start_paused`**. 17 tests; plan's `tests/jev_net.rs` path was **invalid** (qbots is bin-only) — tests are an in-crate module |
-| 5 | T5: Hub — pull workers, bucket, tickets, pacing, generation, tiered breaker | `crates/qbots/src/jev/{hub,transport,mod}.rs`, `crates/qbots/Cargo.toml` | pending | **schedule risk**: 7 mechanisms + a test each; **no semaphore, no `permit_wait_ms`** — workers pick oldest event, else oldest refresh (≤ 2 in flight); hub runs the gate, slot stores only `AppliedDecision` |
+| 5 | T5: Hub — pull workers, bucket, tickets, pacing, generation, tiered breaker | `crates/qbots/src/jev/{hub,bucket,transport,tests_hub,mod}.rs`, `crates/qbots/Cargo.toml`, `crates/brain/src/jev/source.rs` | done | **schedule risk**: 7 mechanisms + a test each; **no semaphore, no `permit_wait_ms`** — workers pick oldest event, else oldest refresh (≤ 2 in flight); hub runs the gate, slot stores only `AppliedDecision`. 18 tests (3 bucket, explicit clock; 15 hub, paused clock). **Response cache cut** (cut order #1). Seam corrected — see Notes |
 | 6 | T6: q3 generic over `GoalPolicy` (behaviour-preserving) | `crates/brain/src/brains/q3/{policy,mod}.rs`, `q3/testdata/parity_200.txt` | done | golden `41f42b336` (pre-seam), seam in the T6 commit after it; golden byte-identical after the refactor; 12 old q3 tests unedited; 4 new seam tests; both mutation checks fail as they should (Evidence). Live no-op control → **W2** |
 | 7 | T7: `JevBrain` / `JevStatic` + `jev:` config | `brains/jev/{mod,policy}.rs`, `brains/mod.rs`, `config.rs`, `config.example.yaml` (root), `roster.rs`, `supervisor.rs` | pending | `JevBrain { inner: Q3Brain<JevPolicy> }` intercepts `set_map`, sets the `goal_override` inert flag; `#[value(name="jvs", alias="jev_static")]`; `brain_code` `jev`/`jvs`; dead-endpoint test uses `127.0.0.1:1` |
 | 8 | T8: Hub wiring + `on_map_change` + `goal_override` guard | `crates/qbots/src/main.rs`, `supervisor.rs`, `brains/core.rs` | pending | **start the hub at BOTH `supervisor.rs:323` and `:682`** or `competition` runs jev with no decider; triggers are flags, submit on the next tick; apply tests live in `brain`; `map_servercount = servercount` stays last |
@@ -120,7 +120,7 @@ Recorded here (not just in prose) before the gated work may start.
 
 | Gate | Before | Requires | Result |
 |---|---|---|---|
-| W1 | T7 | build/clippy/test green offline; **no new packages in `Cargo.lock`**; `crates/brain/Cargo.toml` byte-unchanged (T6 may land before or after — it does not wait on W1) | — |
+| W1 | T7 | build/clippy/test green offline; **no new packages in `Cargo.lock`**; `crates/brain/Cargo.toml` byte-unchanged (T6 may land before or after — it does not wait on W1) | **PASSED 2026-11-06** at the T5 commit: `just all` green (fmt-check, clippy `-D warnings`, 640 tests, build); `git diff` of `Cargo.lock` across T6–T5 **empty** (byte-identical — tokio `test-util` added no package); `crates/brain/Cargo.toml` unchanged. Network: tests touch only `127.0.0.1` sockets and one `*.invalid` lookup answered by the local resolver — no external host. |
 | W2 | T10 | live `jev-probe`: slug + 501 fingerprint; **`calibrate` thresholds recorded and frozen** (or the question deleted); **both** sensitivity pairs move; anti-correlation; flatness rejected; bench p50/p95/p99 + tok/s vs both figures + p95-vs-`deadline_ms` verdict; T6's `q3,jev_static` no-op control; T8's `connect-one` smoke + refuse-to-start; with **`require: false`** and the endpoint unreachable, jev ≡ jev_static | — |
 | W3 | T12, T14 | run `cargo run -p qbots -- competition --brains q3,jev_static,jev --count 12 --map q2dm1` **≥ 2×** on a parked q2dm1 (at 12 bots even the event worst case, 12/5 s = 2.4 req/s ⇒ 840 tok/s, is under the 1 000 knob, so the bucket is provably not the limiter). Publish per arm **and per question key**: `asked`, `admitted`, `applied`, `applied/asked`, `gate_reject_rate`, `admission_drop_rate`, the herd line. Decision rule: **`gate_reject_rate ≥ 85 %` on event-triggered asks ⇒ the state does not discriminate — fix the state or delete the question.** Non-trivial `admission_drop_rate` is **not** part of the judgement: raise `min_dwell_s` / `event_floor_s` and re-run. Never loosen the thresholds to move a number. | — |
 | W4 | T16 | no frozen-bot scenario; `decisions_that_changed_per_bot_per_min` published (**> 2/bot/min = investigation**); composition check ≥ 13/24 labelled as a composition check | — |
@@ -267,6 +267,20 @@ metric, the `EVT jev_fleet` line, `calibrate`.
   is `UnknownType`; probability keys must equal the offered labels exactly (else
   `BadProbabilities`); any structural problem rejects the whole response; (4) the resolve test
   dials `*.invalid` (RFC 6761), answered by the local resolver, not the network.
+- **T5 (2026-11-06) — the T3 seam, corrected while building its only real implementation:**
+  (1) `submit` takes an `Ask { state, questions, trig }` — the hub cannot invent the candidate
+  list, and the brain must keep the exact option order its ticket resolves against; (2) it
+  returns `Option<TicketId>` — `None` when per-bot pacing refuses, so a refused ask never evicts
+  a live ticket from the brain's ring; (3) new `refresh_due()` — a cheap check so the brain
+  builds a state only when a refresh would be accepted; (4) `AppliedDecision.posture` is an
+  **option index** (`Option<u8>`) like `objective`, because only the brain's ticket knows which
+  index means `disengage`. Other T5 decisions: the bucket's burst capacity is one second of
+  `rate`; a budget-refused ask is **dropped** (counted `budget`), never re-queued; the hard breaker
+  tier is every non-timeout transport fault plus `ModelMismatch` (other malformed bodies count
+  but do not trip it); `Hub::stop()` / `Drop` end the workers — wiring that to the fleet's
+  `Shutdown` is T8; idle workers re-scan at least once a second, so asks submitted while the
+  breaker was open are dropped promptly. **Cut:** the optional response cache (cut order #1 —
+  off by default, a herding hazard, no consumer until T15); T15's decision about it stands.
 - **T6 harvest:** the FSM-loop pitfall (one of T16's ten named entries) is already in
   `context/pitfalls.md` — confirmed by mutation in T6, so it was written then rather than at T16.
 - `--brains` and `BrainKind` exist (`main.rs:249`, `:2634-2646`, `brains/mod.rs:35`). Any Verify

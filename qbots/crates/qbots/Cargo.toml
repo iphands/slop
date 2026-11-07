@@ -28,3 +28,5 @@ world = { path = "../world" }
 
 [dev-dependencies]
 tempfile = "3"
+# Plan 72 T5: `start_paused` / `time::advance` for the jev hub's fake-clock tests.
+tokio = { version = "1", features = ["test-util"] }
