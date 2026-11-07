@@ -54,6 +54,7 @@ impl Bucket {
     }
 
     /// The current balance (may be negative), refilled to `now`.
+    #[cfg(test)]
     pub fn balance(&mut self, now: Instant) -> f64 {
         self.refill(now);
         self.tokens

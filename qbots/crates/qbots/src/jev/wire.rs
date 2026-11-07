@@ -56,8 +56,10 @@ pub enum Answer {
     },
     /// A `score` answer.
     Score {
-        /// The float score (discarded except as a within-level tie-break; required).
-        score: f32,
+        /// The float score — required by the contract (a body without it is `Malformed`), but
+        /// its value is not used: the level is the argmax of `probabilities`.
+        #[serde(rename = "score")]
+        _score: f32,
         /// Level index (`"0"`, `"1"`, …) → probability (required).
         probabilities: BTreeMap<String, f32>,
     },

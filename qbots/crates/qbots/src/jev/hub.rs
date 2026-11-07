@@ -252,6 +252,9 @@ impl Hub {
     }
 
     /// A snapshot of the counters.
+    // Read by the tests today; T11 reads it for `EVT jev_fleet` and the final report — remove
+    // this allow there (Plan 72 tracker, Follow-ups).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn counters(&self) -> Counters {
         lock(&self.inner.shared).counters
     }
@@ -269,6 +272,35 @@ impl Drop for Hub {
         for w in &self.workers {
             w.abort();
         }
+    }
+}
+
+/// One bot's link to the hub: its `DecisionSource` handle and its level-change hook. Only
+/// `jev` bots get one — `jev_static` always reads a never-deciding source.
+#[derive(Clone)]
+pub struct JevLink {
+    hub: Arc<Hub>,
+    bot: usize,
+}
+
+impl JevLink {
+    /// The link for bot index `bot`, if the hub is running and the bot runs the `jev` brain.
+    pub fn for_bot(hub: &Option<Arc<Hub>>, brain: brain::BrainKind, bot: usize) -> Option<Self> {
+        let hub = hub.as_ref().filter(|_| brain == brain::BrainKind::Jev)?;
+        Some(Self {
+            hub: hub.clone(),
+            bot,
+        })
+    }
+
+    /// This bot's decision source (for `build_brain_with_decider`, once per session).
+    pub fn source(&self) -> Arc<dyn DecisionSource> {
+        self.hub.handle(self.bot)
+    }
+
+    /// The server changed level: discard this bot's in-flight answer, pending ask and decision.
+    pub fn level_changed(&self) {
+        self.hub.bump_generation(self.bot);
     }
 }
 

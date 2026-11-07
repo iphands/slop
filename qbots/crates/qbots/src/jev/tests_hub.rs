@@ -428,3 +428,31 @@ async fn jev_hub_slot_reads_from_a_non_tokio_thread() {
         .expect("reader thread");
     assert_eq!(seen.map(|d| d.ticket), Some(tk));
 }
+
+#[tokio::test(start_paused = true)]
+async fn jev_wiring_links_only_jev_bots_and_level_change_clears_the_decision() {
+    use super::hub::JevLink;
+    use brain::BrainKind;
+    let t = Scripted::default();
+    let hub = Some(Arc::new(Hub::start(cfg(), 3, Arc::new(t.clone()))));
+    assert!(
+        JevLink::for_bot(&hub, BrainKind::JevStatic, 0).is_none(),
+        "the control reads nothing"
+    );
+    assert!(JevLink::for_bot(&hub, BrainKind::Quake3, 1).is_none());
+    assert!(
+        JevLink::for_bot(&None, BrainKind::Jev, 2).is_none(),
+        "no hub, no link"
+    );
+    let link = JevLink::for_bot(&hub, BrainKind::Jev, 2).expect("a jev bot with a hub");
+    let src = link.source();
+    src.submit(ask(1, Trigger::Respawn)).expect("accepted");
+    settle(50).await;
+    assert!(src.latest().is_some());
+    link.level_changed();
+    assert_eq!(
+        src.latest(),
+        None,
+        "a level change drops the old level's decision"
+    );
+}

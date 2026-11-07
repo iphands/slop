@@ -16,13 +16,14 @@
 
 mod policy;
 
-pub use policy::JevPolicy;
+pub use policy::{JevPolicy, Resolved, TicketEntry, RING};
 
 use std::sync::Arc;
 
 use crate::brains::core::{Brain, BrainContext, BrainMap, BrainOutput};
 use crate::brains::q3::Q3Brain;
 use crate::jev::source::DecisionSource;
+use crate::jev::state::MapId;
 use crate::q3char::Q3Character;
 
 /// The jev brain. See the module doc.
@@ -42,6 +43,11 @@ impl JevBrain {
     pub fn policy(&self) -> &JevPolicy {
         self.inner.policy()
     }
+
+    /// Mutable policy access (the ask path records tickets through it; tests seed it).
+    pub fn policy_mut(&mut self) -> &mut JevPolicy {
+        self.inner.policy_mut()
+    }
 }
 
 impl Brain for JevBrain {
@@ -55,9 +61,10 @@ impl Brain for JevBrain {
     }
 
     fn tick(&mut self, ctx: BrainContext) -> BrainOutput {
-        self.inner
-            .policy_mut()
-            .set_inert(ctx.goal_override.is_some());
+        let policy = self.inner.policy_mut();
+        policy.set_inert(ctx.goal_override.is_some());
+        // One lock + one Copy: resolve and ack a new decision, if one arrived.
+        policy.poll();
         self.inner.tick(ctx)
     }
 
@@ -67,6 +74,12 @@ impl Brain for JevBrain {
 
     fn on_death(&mut self) {
         self.inner.on_death();
+        self.inner.policy_mut().on_death();
+    }
+
+    fn on_map_change(&mut self, map: &str) {
+        // The wire's map name is matched against a closed table and not kept.
+        self.inner.policy_mut().on_map_change(MapId::from_name(map));
     }
 
     fn heatmap_weights(&self) -> (f32, f32) {
@@ -82,7 +95,9 @@ impl Brain for JevBrain {
 mod tests {
     use super::*;
     use crate::brains::core::MapItem;
-    use crate::jev::source::{AppliedDecision, StubDecider, TicketId};
+    use crate::jev::source::{
+        AppliedDecision, ApplyOutcome, BrainReject, StubDecider, TicketId, Trigger,
+    };
     use crate::jev::state::MapId;
     use crate::nav::NavGoal;
     use crate::nav_mode::StubNav;
@@ -162,6 +177,143 @@ mod tests {
             goal_override: None,
         });
         assert!(!b.policy().is_inert(), "inertness is per tick");
+    }
+
+    fn tick_once(b: &mut JevBrain, override_goal: Option<NavGoal>) {
+        let view = empty_view();
+        let mut nav = StubNav::default();
+        b.tick(BrainContext {
+            view: &view,
+            nav: Some(&mut nav),
+            cm: None,
+            dt: 0.1,
+            ticks: 1,
+            goal_override: override_goal,
+        });
+    }
+
+    fn decision(ticket: u64, map: MapId, objective: Option<u8>) -> AppliedDecision {
+        AppliedDecision {
+            ticket: TicketId(ticket),
+            generation: 0,
+            map,
+            objective,
+            posture: None,
+        }
+    }
+
+    /// A brain on q2dm1 with ticket 7 offering two objective goals.
+    fn seeded() -> (JevBrain, Arc<StubDecider>) {
+        let stub = Arc::new(StubDecider::default());
+        let mut b = JevBrain::new(Q3Character::default(), stub.clone());
+        b.on_map_change("q2dm1");
+        b.policy_mut().record_ticket(
+            TicketId(7),
+            TicketEntry {
+                objectives: vec![
+                    NavGoal::Waypoint(3),
+                    NavGoal::Position(Vec3::new(1.0, 2.0, 3.0)),
+                ],
+                postures: Vec::new(),
+            },
+        );
+        (b, stub)
+    }
+
+    #[test]
+    fn jev_apply_resolves_against_its_own_ticket_and_acks_once() {
+        let (mut b, stub) = seeded();
+        stub.set_latest(Some(decision(7, MapId::Q2dm1, Some(1))));
+        tick_once(&mut b, None);
+        tick_once(&mut b, None);
+        assert_eq!(
+            stub.acks(),
+            vec![(TicketId(7), ApplyOutcome::Applied)],
+            "acked once"
+        );
+        assert_eq!(
+            b.policy().current().and_then(|r| r.objective.clone()),
+            Some(NavGoal::Position(Vec3::new(1.0, 2.0, 3.0)))
+        );
+    }
+
+    #[test]
+    fn jev_apply_rejects_wrong_map_off_ticket_unknown_and_inert() {
+        let cases = [
+            (
+                decision(7, MapId::Q2dm3, Some(0)),
+                None,
+                BrainReject::WrongMap,
+            ),
+            (
+                decision(7, MapId::Q2dm1, Some(2)),
+                None,
+                BrainReject::OffTicketLabel,
+            ),
+            (
+                decision(9, MapId::Q2dm1, Some(0)),
+                None,
+                BrainReject::UnknownTicket,
+            ),
+            (
+                decision(7, MapId::Q2dm1, Some(0)),
+                Some(NavGoal::Waypoint(1)),
+                BrainReject::Inert,
+            ),
+        ];
+        for (d, override_goal, why) in cases {
+            let (mut b, stub) = seeded();
+            stub.set_latest(Some(d));
+            tick_once(&mut b, override_goal);
+            assert_eq!(
+                stub.acks(),
+                vec![(d.ticket, ApplyOutcome::Rejected(why))],
+                "{why:?}"
+            );
+            assert!(b.policy().current().is_none(), "{why:?}: nothing applied");
+        }
+    }
+
+    #[test]
+    fn jev_apply_ring_forgets_the_oldest_ticket() {
+        let (mut b, stub) = seeded();
+        for t in 100..100 + RING as u64 {
+            b.policy_mut()
+                .record_ticket(TicketId(t), TicketEntry::default());
+        }
+        stub.set_latest(Some(decision(7, MapId::Q2dm1, None)));
+        tick_once(&mut b, None);
+        assert_eq!(
+            stub.acks(),
+            vec![(
+                TicketId(7),
+                ApplyOutcome::Rejected(BrainReject::UnknownTicket)
+            )]
+        );
+    }
+
+    #[test]
+    fn jev_apply_death_and_level_change_clear_and_mark_a_trigger() {
+        let (mut b, stub) = seeded();
+        stub.set_latest(Some(decision(7, MapId::Q2dm1, Some(0))));
+        tick_once(&mut b, None);
+        assert!(b.policy().current().is_some());
+        b.on_death();
+        assert!(b.policy().current().is_none());
+        assert_eq!(b.policy().pending_trigger(), Some(Trigger::Respawn));
+        b.on_map_change("q2dm2");
+        assert_eq!(b.policy().map(), MapId::Q2dm2);
+        assert_eq!(b.policy().pending_trigger(), Some(Trigger::MapChange));
+        // The ring was cleared with the level: the old ticket no longer resolves.
+        stub.set_latest(Some(decision(8, MapId::Q2dm2, None)));
+        tick_once(&mut b, None);
+        assert_eq!(
+            stub.acks().last(),
+            Some(&(
+                TicketId(8),
+                ApplyOutcome::Rejected(BrainReject::UnknownTicket)
+            ))
+        );
     }
 
     #[test]

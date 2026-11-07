@@ -272,6 +272,9 @@ struct FleetShared {
     /// Plan 66: the serverframe beacon, when `[beacon] enabled` is set. `None` (the default)
     /// means no socket, no task, and no change to bot behaviour.
     beacon: Option<crate::beacon::Beacon>,
+    /// Plan 72: the decision hub, when a `jev` bot runs against a healthy endpoint. `None`
+    /// otherwise — every bot then takes exactly the code path it took before Plan 72.
+    jev: Option<Arc<crate::jev::hub::Hub>>,
 }
 
 /// Run the full fleet from config: shared nav cache + shutdown, one task per bot,
@@ -317,7 +320,9 @@ pub async fn run_fleet(
     // Plan 55: refuse to launch a fleet the server can't seat, before spawning any bot.
     preflight_capacity(addr, count, loose_botcap).await?;
     // Plan 72: a jev fleet with an unhealthy decision endpoint refuses to start (`require`).
-    let _jev = jev_gate(&cfg, brain == brain::BrainKind::Jev).await?;
+    let jev = jev_gate(&cfg, brain == brain::BrainKind::Jev)
+        .await?
+        .start_hub(count);
 
     let stagger = cfg.fleet.connect_stagger_ms;
     let reconnect = Reconnect {
@@ -339,6 +344,7 @@ pub async fn run_fleet(
         join_failure: Arc::new(Mutex::new(None)),
         loose_botcap,
         beacon,
+        jev,
     };
 
     // Per-process default so concurrent `run` fleets get disjoint qport ranges (the
@@ -365,10 +371,12 @@ pub async fn run_fleet(
             .or_else(|| xonchar.map(|x| x.skin().to_string()))
             .or_else(|| skin.per_bot(&mut skin_rng));
         let cfg = Arc::clone(&cfg);
+        let jev = crate::jev::hub::JevLink::for_bot(&shared.jev, brain, i);
         let shared = shared.clone();
         tasks.push(tokio::spawn(async move {
             bot_supervisor_loop(
                 addr, name, qport, bot_skin, cfg, shared, reconnect, mode, brain, char, xonchar,
+                jev,
             )
             .await;
         }));
@@ -677,7 +685,7 @@ pub async fn run_competition(
     // spawn any. Strict (default) exits non-zero; --loose-botcap warns and proceeds.
     preflight_capacity(addr, total, loose_botcap).await?;
     let uses_jev = specs.iter().any(|s| s.brain == brain::BrainKind::Jev);
-    let _jev = jev_gate(&cfg, uses_jev).await?;
+    let jev = jev_gate(&cfg, uses_jev).await?.start_hub(total);
 
     let stagger = cfg.fleet.connect_stagger_ms;
     let reconnect = Reconnect {
@@ -694,6 +702,7 @@ pub async fn run_competition(
         join_failure: Arc::new(Mutex::new(None)),
         loose_botcap,
         beacon: start_beacon(&cfg, addr, &shutdown),
+        jev,
     };
     // Contiguous per-group qport blocks (`base + running_offset + i`) are disjoint, so the
     // server's (ip, qport) slot keys never collide across groups.
@@ -721,6 +730,8 @@ pub async fn run_competition(
             let bot_skin = spec.skin.clone();
             let (mode, bk, gc) = (spec.mode, spec.brain, spec.gc);
             let cfg = Arc::clone(&cfg);
+            // Hub slots are indexed fleet-wide, in spawn order.
+            let jev = crate::jev::hub::JevLink::for_bot(&shared.jev, bk, qport_offset + i);
             let shared = shared.clone();
             tasks.push(tokio::spawn(async move {
                 bot_supervisor_loop(
@@ -735,6 +746,7 @@ pub async fn run_competition(
                     bk,
                     gc.q3(),
                     gc.xon(),
+                    jev,
                 )
                 .await;
             }));
@@ -1015,6 +1027,7 @@ async fn bot_supervisor_loop(
     brain: brain::BrainKind,
     char: Option<brain::CharPreset>,
     xonchar: Option<brain::XonCharPreset>,
+    jev: Option<crate::jev::hub::JevLink>,
 ) {
     let mut attempts: u32 = 0;
     let mut backoff_ms: u64 = 1000;
@@ -1048,6 +1061,7 @@ async fn bot_supervisor_loop(
             let skin = skin.clone();
             let cfg = Arc::clone(&cfg);
             let shared = shared.clone();
+            let jev = jev.clone();
             async move {
                 tracing::Instrument::instrument(
                     crate::bot_task(
@@ -1065,6 +1079,7 @@ async fn bot_supervisor_loop(
                         char,
                         None, // TODO(P27): per-bot fleet persona from config
                         xonchar,
+                        jev,
                     ),
                     span,
                 )
@@ -1146,7 +1161,10 @@ pub async fn run_single(
     persona: Option<brain::persona::Persona>,
     xonchar: Option<brain::XonCharPreset>,
 ) -> std::io::Result<()> {
-    let _jev = jev_gate(cfg, brain == brain::BrainKind::Jev).await?;
+    let hub = jev_gate(cfg, brain == brain::BrainKind::Jev)
+        .await?
+        .start_hub(1);
+    let jev = crate::jev::hub::JevLink::for_bot(&hub, brain, 0);
     let nav = NavCache::new();
     let shutdown = Shutdown::new();
     let stats = FleetStats::new();
@@ -1159,7 +1177,7 @@ pub async fn run_single(
         // fleet-level facility that qctrl expects to be fed by a running fleet.
         crate::bot_task(
             addr, name, qport, skin, cfg, &nav, &shutdown, &stats, None, mode, brain, char,
-            persona, xonchar,
+            persona, xonchar, jev,
         ),
         span,
     )

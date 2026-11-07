@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 38% complete (6/16 tasks)
+- Status: 44% complete (7/16 tasks)
 - Start date: 2026-11-06 (`date +%F`, local; the plan's `2026-11-07` dates are UTC)
 - Plan: `context/plans/72_jev_decision_brain.md`
 - Evidence: `context/fixtures/jev/` (harvested live request/response pairs from `qbots jev-probe`)
@@ -100,7 +100,7 @@
 | 5 | T5: Hub — pull workers, bucket, tickets, pacing, generation, tiered breaker | `crates/qbots/src/jev/{hub,bucket,transport,tests_hub,mod}.rs`, `crates/qbots/Cargo.toml`, `crates/brain/src/jev/source.rs` | done | **schedule risk**: 7 mechanisms + a test each; **no semaphore, no `permit_wait_ms`** — workers pick oldest event, else oldest refresh (≤ 2 in flight); hub runs the gate, slot stores only `AppliedDecision`. 18 tests (3 bucket, explicit clock; 15 hub, paused clock). **Response cache cut** (cut order #1). Seam corrected — see Notes |
 | 6 | T6: q3 generic over `GoalPolicy` (behaviour-preserving) | `crates/brain/src/brains/q3/{policy,mod}.rs`, `q3/testdata/parity_200.txt` | done | golden `41f42b336` (pre-seam), seam in the T6 commit after it; golden byte-identical after the refactor; 12 old q3 tests unedited; 4 new seam tests; both mutation checks fail as they should (Evidence). Live no-op control → **W2** |
 | 7 | T7: `JevBrain` / `JevStatic` + `jev:` config | `brains/jev/{mod,policy}.rs`, `brains/mod.rs`, `config.rs`, `config.example.yaml` (root), `roster.rs`, `supervisor.rs`, `qbots/src/jev/startup.rs` | done | `JevBrain { inner: Q3Brain<JevPolicy> }` intercepts `set_map`, sets the `goal_override` inert flag; `#[value(name="jvs", alias="jev_static")]`; `brain_code` `jev`/`jvs`; dead-endpoint test uses `127.0.0.1:1`. 10 new tests; startup gate wired at **all three** entry points incl. `run_single` (see Notes) |
-| 8 | T8: Hub wiring + `on_map_change` + `goal_override` guard | `crates/qbots/src/main.rs`, `supervisor.rs`, `brains/core.rs` | pending | **start the hub at BOTH `supervisor.rs:323` and `:682`** or `competition` runs jev with no decider; triggers are flags, submit on the next tick; apply tests live in `brain`; `map_servercount = servercount` stays last |
+| 8 | T8: Hub wiring + `on_map_change` + `goal_override` guard | `crates/qbots/src/main.rs`, `supervisor.rs`, `brains/core.rs`, `brains/jev/{mod,policy}.rs`, `qbots/src/jev/{hub,startup}.rs` | done | **start the hub at BOTH `supervisor.rs:323` and `:682`** or `competition` runs jev with no decider; triggers are flags, submit on the next tick; apply tests live in `brain`; `map_servercount = servercount` stays last. 5 new tests; hub at all three entry points; `allow(dead_code)` removed (one scoped allow left for T11). Submit-on-trigger deferred to T10 (see Notes). Live smoke → **W2** |
 | 9 | T9: `qbots jev-probe` | `crates/qbots/src/jev/probe.rs`, `main.rs` (`Cmd::JevProbe`) | pending | **not `crates/tools`** (qbots is bin-only); offline argv + calibration-search tests are the task; the live checks are the **W2 gate**; 501 needs a well-formed chat body |
 | 10 | T10: `objective` question + candidates + triggers | `crates/brain/src/jev/objective.rs`, `brains/jev/policy.rs` | pending | candidates in `JevPolicy`; ≤3 seek/hold moves; resolve against the answer's **own ticket**; **held until released** (no lapse to roam); injection test through the real pipeline (in `qbots`) |
 | 11 | T11: Telemetry — `applied/asked` + the two rates + herd | `crates/qbots/src/jev/telemetry.rs`, `main.rs`, `supervisor.rs` | pending | may move to right after T7; `applied` counted from `ack` only; herd = same-goal until T15; zero-applied ⇒ report first, then non-zero exit |
@@ -295,6 +295,30 @@ metric, the `EVT jev_fleet` line, `calibrate`.
   `build_q3_brain_starts_in_seek_ltg` test and the T6 golden are unchanged), so the A/B arms
   cannot drift apart on character; (6) `--char` presets are not expanded for the jev arms
   (`matrix_specs` expands only `q3`, the roster allows `char` only for `q3`) — Follow-ups.
+- **T8 (2026-11-06):** (1) **`on_map_change(&map)` is called where the map loads**, not at
+  the servercount branch (`main.rs:1398` in the plan): the new map's name (CS 33) has not been
+  parsed there — the existing comment in that branch says so. The *level change* itself is handled
+  at the branch by `JevLink::level_changed()` (hub generation bump: discards the in-flight
+  answer, clears the pending ask and stored decision) next to the existing `on_death()`;
+  `map_servercount` is still set to `None` there and assigned only at the later load —
+  unchanged order, verified by reading the code, not by a unit test (`bot_task` is one large
+  async loop). (2) **Every level change invalidates**, including a same-map restart: the plan's
+  `(map_name, region_fp)` keep-alive needs region fingerprints (T14) and only saves one ask —
+  the `MapChange` trigger re-asks anyway. (3) The hub is started at **all three** entry points
+  (`run_fleet`, `run_competition`, `run_single`); hub slots are indexed fleet-wide in spawn
+  order; only `jev` bots get a `JevLink` — `jev_static` reads a `NullDecider`, as planned.
+  (4) **Plan item invalid as written — "`on_death` marks a trigger and the next tick submits":**
+  no question exists until T10, and a question-less request must never reach the endpoint, so
+  T8 implements the trigger *flag* (`Respawn` on death, `MapChange` on load; tested) and the
+  whole **apply** path (ticket ring of 4, resolve against the answer's own ticket, ack exactly
+  once: `Applied` / `Inert` / `WrongMap` / `UnknownTicket` / `OffTicketLabel`; tested). The
+  submit-on-trigger test moves to T10, where the first question exists. (5) `ack(Applied)` means
+  "passed every brain-side check and became the current decision"; what a current decision
+  *steers* lands in T10 (objective) and T12 (posture) — no ask is sent before T10, so no real
+  `Applied` can occur earlier. (6) `scenario.rs` keeps plain `build_brain` (its harness pins
+  `goal_override`, so a jev bot there is inert by T7's flag). (7) The T2 module-wide
+  `#![allow(dead_code)]` is **gone**; one scoped `cfg_attr(not(test), allow(dead_code))` remains
+  on `Hub::counters` until T11 reads it (Follow-ups).
 - **T6 harvest:** the FSM-loop pitfall (one of T16's ten named entries) is already in
   `context/pitfalls.md` — confirmed by mutation in T6, so it was written then rather than at T16.
 - `--brains` and `BrainKind` exist (`main.rs:249`, `:2634-2646`, `brains/mod.rs:35`). Any Verify
@@ -314,4 +338,6 @@ metric, the `EVT jev_fleet` line, `calibrate`.
 | Re-run `bench` from the fleet host if the fleet ever leaves the model host | every latency here is loopback | T1 decision; recurring |
 | `--char` / roster `char:` for the jev arms | q3 vs jev_static vs jev currently compare only at the skill-derived default character; named presets need `matrix_specs` + roster to accept jev | before T16 if the A/B wants characters |
 | Capture the flat 24-option response verbatim as a fixture | the plan calls it the most valuable fixture; only its summary (top p 0.051) was recorded | T9 harvest |
-| Remove `#![allow(dead_code)]` from `crates/qbots/src/jev/mod.rs` | `qbots` is bin-only, so T2–T5's module has no caller until the hub is wired; anything still unused after T8 is genuinely dead | **T8** |
+| ~~Remove `#![allow(dead_code)]` from `crates/qbots/src/jev/mod.rs`~~ | done in T8 | — |
+| Remove the scoped `allow(dead_code)` on `Hub::counters` | T11 reads the counters for `EVT jev_fleet` and the report | **T11** |
+| Submit-on-trigger test (`on_death` → next tick submits) | moved from T8: needs a real question to ask | **T10** |

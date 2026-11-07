@@ -114,6 +114,10 @@ pub trait Brain: Send {
     fn on_kill(&mut self) {}
     /// React to dying (reset held-weapon tracking, ease auto-skill, etc).
     fn on_death(&mut self) {}
+    /// A new level has loaded (Plan 72): `map` is its BSP name (`q2dm1`). Unlike `on_death` —
+    /// which fires on every respawn **and** on a level change — this fires only when a level's
+    /// map is loaded, so strategy state can reset without treating every death as a new map.
+    fn on_map_change(&mut self, _map: &str) {}
     /// Danger/popularity heatmap cost weights `(w_danger, w_pop)` for the nav overlay feed.
     fn heatmap_weights(&self) -> (f32, f32) {
         (0.0, 0.0)

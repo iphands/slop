@@ -41,6 +41,18 @@ pub enum JevStartup {
     },
 }
 
+impl JevStartup {
+    /// Start the hub for `n_bots` bot slots when `Ready`; `None` otherwise.
+    pub fn start_hub(self, n_bots: usize) -> Option<Arc<super::hub::Hub>> {
+        match self {
+            JevStartup::Ready { hub, transport } => {
+                Some(Arc::new(super::hub::Hub::start(hub, n_bots, transport)))
+            }
+            JevStartup::Disabled | JevStartup::Degraded => None,
+        }
+    }
+}
+
 /// Run the startup gate. `wanted`: does any bot in this fleet run the `jev` brain?
 /// `Err` = refuse to start, with an actionable message.
 pub async fn gate(cfg: &JevCfg, wanted: bool) -> Result<JevStartup, String> {

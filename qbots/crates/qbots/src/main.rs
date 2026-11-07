@@ -892,13 +892,16 @@ pub(crate) async fn bot_task(
     char: Option<brain::CharPreset>,
     persona: Option<brain::persona::Persona>,
     xonchar: Option<brain::XonCharPreset>,
+    // Plan 72: this bot's link to the decision hub — `Some` only for a `jev` bot against a
+    // healthy endpoint. `None` = exactly the pre-Plan-72 code path.
+    jev: Option<jev::hub::JevLink>,
 ) -> std::io::Result<()> {
     use brain::perception::{ModelTable, MotionTracker, Worldview};
     // `Brain` is the plugin trait (its methods resolve on the `Box<dyn Brain>` the factory
-    // returns); `build_brain`/`BrainKind` select the implementation, mirroring `build_navigator`.
+    // returns); `build_brain_with_decider`/`BrainKind` select the implementation, mirroring
+    // `build_navigator`.
     use brain::{
-        build_brain, BotSkill, Brain, BrainConfig, BrainContext, BrainMap, MovementController,
-        Navigator,
+        BotSkill, Brain, BrainConfig, BrainContext, BrainMap, MovementController, Navigator,
     };
     use client::{Conn, ConnState, CS_MODELS};
     use q2proto::Usercmd;
@@ -970,13 +973,16 @@ pub(crate) async fn bot_task(
     // The decision layer (Plan 22): owns combat/FSM/dodge/steering/recovery/skill/roam.
     // Built early; learns the nav graph at map load via `set_map`. The `Navigator` is
     // injected into `brain.tick` each frame — the brain uses nav, never owns it.
-    let mut brain: Box<dyn Brain + Send> = build_brain(
+    // Plan 72: a `jev` bot gets its hub handle here, once per session (brains are rebuilt per
+    // session, which is why tickets come from the hub). Reads are a lock + a Copy, in-tick.
+    let mut brain: Box<dyn Brain + Send> = brain::build_brain_with_decider(
         brain_kind,
         BotSkill::default(),
         BrainConfig::default(),
         char,
         persona,
         xonchar,
+        jev.as_ref().map(jev::hub::JevLink::source),
     );
     // Boxed behind the `Navigator` trait so the tick loop is backend-agnostic: `--navmode`
     // picks A* (waypoint graph) or navmesh (polygons + funnel) at map load. `+ Send`
@@ -1397,6 +1403,11 @@ pub(crate) async fn bot_task(
                     // that would otherwise reference the old map. `set_map` below re-feeds
                     // the graph/items when the new nav graph loads.
                     brain.on_death();
+                    // Plan 72: an answer about the old level must never be applied to the new
+                    // one — bump this bot's hub generation (sync: two short locks, no I/O).
+                    if let Some(link) = &jev {
+                        link.level_changed();
+                    }
                 }
 
                 if !map_loaded && state == ConnState::Active {
@@ -1412,6 +1423,9 @@ pub(crate) async fn bot_task(
                             map_loaded = true;
                             map_servercount = servercount;
                             beacon_map = map.clone(); // Plan 66
+                            // Plan 72: the level's map identity is known only here (CS 33 has
+                            // been parsed), not at the servercount change above.
+                            brain.on_map_change(&map);
                             // Plan 70: note this level fleet-wide. Keyed on servercount, so all N
                             // bots loading the same level collapse to one entry (dedup); the
                             // competition FINAL report totals the distinct levels − 1.
