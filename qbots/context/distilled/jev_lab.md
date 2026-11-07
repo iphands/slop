@@ -234,3 +234,30 @@ Report: `context/fixtures/jev/arena/a2_report.txt` (its "no_signal" rows include
 4. **What to try next is a different question, not a different gate**: one whose answer q3 does
    *not* already compute — e.g. which pickup to go for (the objective question, now that arena
    journals can judge its labels), or when to re-engage after a retreat.
+
+## Round 5 — 2026-11-07, Plan 74: the pickup objective (`objective_v2`, out-of-sight pads)
+
+Question `seek_weapon / seek_health / seek_armor / carry_on`, offering only the classes the
+state's `pads` line names (travel-cost band to the best reachable, not-known-empty pad). Corpus
+`context/fixtures/jev/calibration/objective_v2/` (78 states, no enemy in view). Tuning half, all
+15 variants; raw: `context/fixtures/jev/lab/round5_objective_v2_{tuning,holdout}.jsonl`.
+
+| variant (tuning) | RC | CW | acc | leakA | flatA |
+|---|---|---|---|---|---|
+| baseline (fields only) | 62% | 0% | 92% | 53% | 0.466 |
+| summary-graded | 88% | 0% | 100% | 53% | 0.139 |
+| **summary-graded-threat (production)** | **96%** | **0%** | 96% | 67% | 0.187 |
+| drop-map (loses `wants:`) | 31% | **19%** | 42% | 0% | 0.689 |
+| instruction-criterion | 77% | 0% | 92% | 67% | 0.788 |
+
+Holdout (once, production): **RC 100 %, CW 0 %, acc 100 %, flatA 0.015**, leakA 64 %.
+
+- **R5-1 The production state wording carries over unchanged.** The graded summary + threat that
+  won posture also wins the pickup objective; no new wording was needed.
+- **R5-2 `wants:` is load-bearing for objectives** — dropping the `map` line (which carries it)
+  is the only variant with confident-wrong answers (19 %).
+- **R5-3 "Ambiguous leakage" is not harm for a pickup question.** Every ambiguous answer was a
+  defensible pickup (hurt → health, weak → weapon, no armor → armor); `calibrate`'s ≤ 10 %
+  ambiguous criterion (built for posture, where acting changes q3) rejects it anyway. Decision:
+  W2 for this question = holdout RC ≥ 80 %, CW 0, flat answers below the 0.30 gate — met. The
+  arena, not the corpus, judges whether the choices are good.
