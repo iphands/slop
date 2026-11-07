@@ -113,6 +113,9 @@ pub struct JevCfg {
     pub shadow: bool,
     /// Plan 73 arena round A2: a `disengage` only applies to a hurt bot (health < 50).
     pub disengage_needs_hurt: bool,
+    /// Plan 74 B9: `false` = the posture answer is still asked and journalled but never stored,
+    /// so q3 alone decides fights (jev = q3 + the pickup objective). Default `true`.
+    pub posture_live: bool,
 }
 
 impl Default for JevCfg {
@@ -139,6 +142,7 @@ impl Default for JevCfg {
             journal: false,
             shadow: false,
             disengage_needs_hurt: false,
+            posture_live: true,
         }
     }
 }

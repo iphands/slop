@@ -85,6 +85,8 @@ pub struct HubConfig {
     /// `crit`/`lo`); on a healthy bot it is suppressed (stored as no posture, journalled
     /// `suppressed`).
     pub disengage_needs_hurt: bool,
+    /// Plan 74 B9: `false` suppresses every posture answer (journalled `suppressed`).
+    pub posture_live: bool,
 }
 
 impl Default for HubConfig {
@@ -107,6 +109,7 @@ impl Default for HubConfig {
             journal: None,
             shadow: false,
             disengage_needs_hurt: false,
+            posture_live: true,
         }
     }
 }
@@ -692,10 +695,12 @@ impl Inner {
                     _ => None,
                 })
         };
-        let suppressed = self.cfg.disengage_needs_hurt
-            && posture_label(pending, choice(QuestionKey::Posture))
-                == Some(brain::jev::question::DISENGAGE)
-            && !bot_is_hurt(pending);
+        let posture_asked = choice(QuestionKey::Posture).is_some();
+        let suppressed = (posture_asked && !self.cfg.posture_live)
+            || (self.cfg.disengage_needs_hurt
+                && posture_label(pending, choice(QuestionKey::Posture))
+                    == Some(brain::jev::question::DISENGAGE)
+                && !bot_is_hurt(pending));
         let map = match pending.ask.state.get(FieldKey::Map) {
             Some(Field::Map(m)) => m.map,
             _ => MapId::Other,

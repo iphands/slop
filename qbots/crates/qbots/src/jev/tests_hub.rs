@@ -733,3 +733,26 @@ async fn jev_a2_off_by_default_keeps_the_healthy_disengage() {
     settle(50).await;
     assert_eq!(h[0].latest().map(|d| d.posture), Some(Some(0)));
 }
+
+#[tokio::test(start_paused = true)]
+async fn jev_b9_posture_off_stores_no_posture_even_for_a_hurt_bot() {
+    let t = Scripted::default();
+    t.push(10, Ok(&disengage_answer()));
+    let c = HubConfig {
+        posture_live: false,
+        ..cfg()
+    };
+    let (hub, h) = start(c, 1, &t);
+    h[0].submit(posture_ask(20)).expect("accepted"); // crit — A2 would keep it
+    settle(50).await;
+    assert_eq!(
+        h[0].latest().map(|d| d.posture),
+        Some(None),
+        "posture off: asked, never stored"
+    );
+    assert_eq!(
+        hub.counters().stored,
+        1,
+        "the answer still arrived and was journalled"
+    );
+}

@@ -1,0 +1,30 @@
+# Plan 74 arena round B8 — 3 x 10 min, q2dm3 PARKED, arena_74_duel.yaml (3 jev + 3 q3), disengage_needs_hurt, binary @ 36cdb6282
+# journals: logs/jev/journal-1794090925.jsonl logs/jev/journal-1794091540.jsonl logs/jev/journal-1794092155.jsonl
+objective decisions by arm × applied
+  jev@q2dm3 (nothing applied)        n=69   arrived=  0.0%  upgraded= 17.4%  died= 52.2%  hp= -32.2  armor=  +1.0  LOW POWER
+  jev@q2dm3 seek_armor               n=58   arrived= 32.8%  upgraded=  6.9%  died= 29.3%  hp= -23.9  armor=  +0.2  LOW POWER
+  jev@q2dm3 seek_weapon              n=74   arrived= 23.0%  upgraded= 13.5%  died= 44.6%  hp= -52.3  armor=  -0.4  LOW POWER
+why objectives ended (applied seeks only)
+  jev@q2dm3 arrived                  6
+  jev@q2dm3 empty                    83
+  jev@q2dm3 held at close            43
+model/rule agreement (decisive model answers)
+  jev@q2dm3    n=132  agree= 98.5%
+lives by arm (secs_to_strong = spawn → first non-weak weapon)
+  jev@q2dm3    lives=124  got_strong= 40.3%  median_secs_to_strong=5.6s    life= 37.3s  frags/life=0.21
+  q3@q2dm3     lives=130  got_strong= 33.1%  median_secs_to_strong=1.3s    life= 36.5s  frags/life=0.27
+P3 weak-weapon share of posture decisions:
+  jev        254/466 = 55%
+run 1:
+  q3_as    kills= 16 deaths= 58 kd=0.28 env=49 wp=32
+  jev_as   kills=  8 deaths= 48 kd=0.17 env=32 wp=31
+run 2:
+  q3_as    kills= 11 deaths= 35 kd=0.31 env=23 wp=23
+  jev_as   kills= 10 deaths= 32 kd=0.31 env=23 wp=24
+run 3:
+  q3_as    kills= 12 deaths= 37 kd=0.32 env=23 wp=34
+  jev_as   kills= 11 deaths= 44 kd=0.25 env=34 wp=20
+round total:
+  q3_as    kills= 39 deaths=130 kd=0.30 env=95 wp=89
+  jev_as   kills= 29 deaths=124 kd=0.23 env=89 wp=75
+# lava deaths: jev 83, q3 88; squish jev 5, q3 3
