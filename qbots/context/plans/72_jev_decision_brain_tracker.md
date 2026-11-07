@@ -338,6 +338,12 @@ metric, the `EVT jev_fleet` line, `calibrate`.
   (6) `bench` defaults: bots = `fleet.count` (36 if 0), rate = bots ÷ `min_dwell_s` (2.4 req/s
   at 36/15), concurrency = `max_concurrent`, deadline = `deadline_ms`; exit code 2 when a check
   fails.
+- **T9 correction (2026-11-06):** `calibrate` as first committed only measured *confidence* on
+  the obvious set, so a model confidently picking the **wrong** answer to an obvious case would
+  have counted as a success. Fixed: obvious cases are filed by expected answer
+  (`obvious/<label>/*.txt`, the label must be one of the question's options) and a threshold
+  must act on ≥80 % of them **correctly** and on **≤5 % wrongly**, besides ≤10 % ambiguous and
+  0 % flat.
 - **T6 harvest:** the FSM-loop pitfall (one of T16's ten named entries) is already in
   `context/pitfalls.md` — confirmed by mutation in T6, so it was written then rather than at T16.
 - `--brains` and `BrainKind` exist (`main.rs:249`, `:2634-2646`, `brains/mod.rs:35`). Any Verify

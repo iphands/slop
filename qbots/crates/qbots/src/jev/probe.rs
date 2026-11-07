@@ -72,7 +72,9 @@ pub enum ProbeCmd {
         secs: u64,
     },
     /// Choose gate thresholds from PRE-REGISTERED, human-labelled sets:
-    /// `<dir>/<question>/{obvious,ambiguous,flat}/*.txt` (≥10 obvious, ≥10 ambiguous).
+    /// `<dir>/<question>/obvious/<expected_label>/*.txt`, `<dir>/<question>/ambiguous/*.txt`,
+    /// `<dir>/<question>/flat/*.txt` (≥10 obvious, ≥10 ambiguous). An obvious case counts only
+    /// when the model picks its expected label.
     Calibrate {
         /// Root of the labelled sets.
         #[arg(long, default_value = "context/fixtures/jev/calibration")]
@@ -439,8 +441,12 @@ impl Probe {
             if !qdir.exists() {
                 continue;
             }
-            let set = |label: &str| read_states(&qdir.join(label));
-            let (ob, am, fl) = (set("obvious")?, set("ambiguous")?, set("flat")?);
+            let spec = q.spec();
+            let ob = read_obvious(&qdir.join("obvious"), &spec)?;
+            let (am, fl) = (
+                read_states(&qdir.join("ambiguous"))?,
+                read_states(&qdir.join("flat"))?,
+            );
             if ob.len() < 10 || am.len() < 10 {
                 return Err(format!(
                     "{}: need ≥10 obvious and ≥10 ambiguous pre-registered states (have {} / {})",
@@ -449,14 +455,24 @@ impl Probe {
                     am.len()
                 ));
             }
-            let mut margins = [Vec::new(), Vec::new(), Vec::new()];
-            for (i, states) in [ob, am, fl].iter().enumerate() {
+            let mut obvious = Vec::new();
+            for (expected, s) in &ob {
+                let a = self.ask("calibrate", &raw_state(s), &spec).await?;
+                let st = stats(&a.probs);
+                obvious.push(ObviousAnswer {
+                    margin: st.map_or(0.0, |st| st.margin),
+                    correct: st.is_some_and(|st| option_label(&spec, st.top) == Some(*expected)),
+                });
+            }
+            let mut margins = [Vec::new(), Vec::new()];
+            for (i, states) in [am, fl].iter().enumerate() {
                 for s in states {
-                    let a = self.ask("calibrate", &raw_state(s), &q.spec()).await?;
+                    let a = self.ask("calibrate", &raw_state(s), &spec).await?;
                     margins[i].push(stats(&a.probs).map_or(0.0, |st| st.margin));
                 }
             }
-            let t = calibrate_threshold(&margins[0], &margins[1], &margins[2]);
+            let wrong = obvious.iter().filter(|o| !o.correct).count();
+            let t = calibrate_threshold(&obvious, &margins[0], &margins[1]);
             all &= t.is_some();
             let current = if q == ProbeQuestion::Posture {
                 th.margin_binary
@@ -466,8 +482,16 @@ impl Probe {
             fields.push((
                 if q == ProbeQuestion::Posture { "posture (binary)" } else { "objective (3-way)" },
                 match t {
-                    Some(t) => format!("threshold={t:.3} (provisional {current:.2})"),
-                    None => "NO threshold applies ≥80% obvious, ≤10% ambiguous, 0% flat — delete the question".into(),
+                    Some(t) => format!(
+                        "threshold={t:.3} (provisional {current:.2}); obvious picked wrong: {wrong}/{}",
+                        obvious.len()
+                    ),
+                    None => format!(
+                        "NO threshold applies ≥80% of obvious correctly, ≤5% of obvious wrongly, \
+                         ≤10% ambiguous, 0% flat — delete the question (obvious picked wrong: \
+                         {wrong}/{})",
+                        obvious.len()
+                    ),
                 },
             ));
         }
@@ -629,27 +653,90 @@ fn meaningless(n: usize) -> QuestionSpec {
     }
 }
 
-/// The lowest margin threshold that applies ≥ 80 % of `obvious`, ≤ 10 % of `ambiguous` and
-/// none of `flat`; `None` if no threshold satisfies all three (the question is then deleted).
-pub fn calibrate_threshold(obvious: &[f32], ambiguous: &[f32], flat: &[f32]) -> Option<f32> {
-    let rate = |xs: &[f32], t: f32| {
-        if xs.is_empty() {
-            0.0
-        } else {
-            xs.iter().filter(|&&m| m >= t).count() as f32 / xs.len() as f32
-        }
-    };
+/// One obvious calibration case: the answer's margin, and whether it picked the expected label.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ObviousAnswer {
+    /// `p1 − p2`.
+    pub margin: f32,
+    /// Did the top choice match the pre-registered expected label?
+    pub correct: bool,
+}
+
+/// The lowest margin threshold `t` at which the gate would act on
+/// - **≥ 80 %** of the obvious cases **with the right answer** (`correct && margin ≥ t`),
+/// - **≤ 5 %** of the obvious cases **with the wrong answer** (acting confidently wrong on a case
+///   any player gets right is disqualifying),
+/// - **≤ 10 %** of the ambiguous cases, and **none** of the flat ones.
+///
+/// `None` if no threshold satisfies all four — the question is then deleted, not tuned.
+pub fn calibrate_threshold(
+    obvious: &[ObviousAnswer],
+    ambiguous: &[f32],
+    flat: &[f32],
+) -> Option<f32> {
+    let share = |n: usize, of: usize| if of == 0 { 0.0 } else { n as f32 / of as f32 };
     let mut candidates: Vec<f32> = obvious
         .iter()
-        .chain(ambiguous)
-        .chain(flat)
-        .copied()
+        .map(|o| o.margin)
+        .chain(ambiguous.iter().copied())
+        .chain(flat.iter().copied())
         .collect();
     candidates.push(1.0);
     candidates.sort_by(f32::total_cmp);
     candidates.into_iter().find(|&t| {
-        rate(obvious, t) >= 0.8 && rate(ambiguous, t) <= 0.1 && flat.iter().all(|&m| m < t)
+        let right = obvious
+            .iter()
+            .filter(|o| o.correct && o.margin >= t)
+            .count();
+        let wrong = obvious
+            .iter()
+            .filter(|o| !o.correct && o.margin >= t)
+            .count();
+        let amb = ambiguous.iter().filter(|&&m| m >= t).count();
+        share(right, obvious.len()) >= 0.8
+            && share(wrong, obvious.len()) <= 0.05
+            && share(amb, ambiguous.len()) <= 0.1
+            && flat.iter().all(|&m| m < t)
     })
+}
+
+/// The label of option `i` of a choice question.
+fn option_label(q: &QuestionSpec, i: usize) -> Option<&'static str> {
+    match &q.kind {
+        QuestionKind::Choice(opts) => opts.get(i).map(|o| o.label),
+        _ => None,
+    }
+}
+
+/// `obvious/<label>/*.txt` → `(label, state)`; every sub-directory must name an option of `q`.
+fn read_obvious(dir: &Path, q: &QuestionSpec) -> Result<Vec<(&'static str, String)>, String> {
+    let QuestionKind::Choice(opts) = &q.kind else {
+        return Err("calibration needs a choice question".into());
+    };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Ok(Vec::new());
+    };
+    let mut subdirs: Vec<PathBuf> = rd
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_dir())
+        .collect();
+    subdirs.sort();
+    let mut out = Vec::new();
+    for sub in subdirs {
+        let name = sub.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        let label = opts
+            .iter()
+            .map(|o| o.label)
+            .find(|l| *l == name)
+            .ok_or_else(|| {
+                format!(
+                    "{}: '{name}' is not an option of this question",
+                    sub.display()
+                )
+            })?;
+        out.extend(read_states(&sub)?.into_iter().map(|s| (label, s)));
+    }
+    Ok(out)
 }
 
 /// The `p`th percentile (nearest rank) of `xs`; 0 when empty.
@@ -746,9 +833,19 @@ mod tests {
         );
     }
 
+    fn right(margins: &[f32]) -> Vec<ObviousAnswer> {
+        margins
+            .iter()
+            .map(|&margin| ObviousAnswer {
+                margin,
+                correct: true,
+            })
+            .collect()
+    }
+
     #[test]
     fn jev_probe_calibration_picks_the_lowest_separating_margin() {
-        let obvious = [0.9, 0.85, 0.8, 0.76, 0.7, 0.66, 0.6, 0.55, 0.5, 0.2];
+        let obvious = right(&[0.9, 0.85, 0.8, 0.76, 0.7, 0.66, 0.6, 0.55, 0.5, 0.2]);
         let ambiguous = [0.05, 0.1, 0.12, 0.2, 0.25, 0.3, 0.33, 0.35, 0.4, 0.45];
         let flat = [0.01, 0.02];
         // ≥80 % of obvious needs t ≤ 0.55; ≤10 % of ambiguous needs t > 0.40.
@@ -756,12 +853,46 @@ mod tests {
     }
 
     #[test]
-    fn jev_probe_calibration_says_no_when_sets_overlap() {
-        let obvious = [0.3; 10];
-        let ambiguous = [0.3; 10];
+    fn jev_probe_calibration_confident_wrong_answers_disqualify() {
+        // Same margins, but the two most confident "obvious" answers picked the WRONG label:
+        // only 7/10 are right-and-confident at any useful t, and 2/10 would be acted on wrongly.
+        let mut obvious = right(&[0.9, 0.85, 0.8, 0.76, 0.7, 0.66, 0.6, 0.55, 0.5, 0.2]);
+        obvious[0].correct = false;
+        obvious[1].correct = false;
+        let ambiguous = [0.05, 0.1, 0.12, 0.2, 0.25, 0.3, 0.33, 0.35, 0.4, 0.45];
         assert_eq!(calibrate_threshold(&obvious, &ambiguous, &[]), None);
+        // A wrong answer that is NOT confident is harmless: the gate would never act on it.
+        let mut quiet = right(&[0.9, 0.85, 0.8, 0.76, 0.7, 0.66, 0.6, 0.55, 0.5, 0.2]);
+        quiet[9].correct = false;
+        assert_eq!(calibrate_threshold(&quiet, &ambiguous, &[]), Some(0.45));
+    }
+
+    #[test]
+    fn jev_probe_calibration_says_no_when_sets_overlap() {
+        assert_eq!(
+            calibrate_threshold(&right(&[0.3; 10]), &[0.3; 10], &[]),
+            None
+        );
         // A flat answer above every obvious one forbids every threshold below it.
-        assert_eq!(calibrate_threshold(&[0.6; 10], &[0.0; 10], &[0.9]), None);
+        assert_eq!(
+            calibrate_threshold(&right(&[0.6; 10]), &[0.0; 10], &[0.9]),
+            None
+        );
+    }
+
+    #[test]
+    fn jev_probe_obvious_dirs_must_name_an_option() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let q = ProbeQuestion::Posture.spec();
+        std::fs::create_dir_all(tmp.path().join("disengage")).expect("mkdir");
+        std::fs::write(tmp.path().join("disengage/a.txt"), "self  hp:5(crit)\n").expect("write");
+        let got = read_obvious(tmp.path(), &q).expect("reads");
+        assert_eq!(got, vec![("disengage", "self  hp:5(crit)".to_string())]);
+        std::fs::create_dir_all(tmp.path().join("charge")).expect("mkdir");
+        assert!(
+            read_obvious(tmp.path(), &q).is_err(),
+            "'charge' is not an option"
+        );
     }
 
     #[test]
