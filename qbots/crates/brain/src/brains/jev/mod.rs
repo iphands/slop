@@ -438,6 +438,39 @@ mod tests {
     }
 
     #[test]
+    fn jev_posture_pinned_disengage_never_freezes_the_bot() {
+        // Plan 72 W4 / T12: the enemy leaves the worldview while a disengage is in force — q3's
+        // own exits (enemy_alive false) must still return the bot to roaming, with movement.
+        let (mut b, stub) = fight_brain();
+        tick_view(&mut b, &fight_view());
+        stub.set_latest(Some(posture_decision(1, 0)));
+        tick_view(&mut b, &fight_view());
+        assert_eq!(b.status(), "retreat");
+        let empty = empty_view();
+        let mut nav = StubNav {
+            pursue: Some(Vec3::new(200.0, 0.0, 0.0)),
+            ..Default::default()
+        };
+        let out = b.tick(BrainContext {
+            view: &empty,
+            nav: Some(&mut nav),
+            cm: None,
+            dt: 0.1,
+            ticks: 2,
+            goal_override: None,
+        });
+        assert_eq!(
+            b.status(),
+            "seek-ltg",
+            "the pinned posture does not trap the FSM"
+        );
+        assert!(
+            out.intent.forward != 0.0 || out.intent.side != 0.0,
+            "and the bot moves"
+        );
+    }
+
+    #[test]
     fn jev_posture_hold_is_a_no_op() {
         let (mut b, stub) = fight_brain();
         let view = fight_view();
