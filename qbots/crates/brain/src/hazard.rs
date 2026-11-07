@@ -61,6 +61,28 @@ pub fn dir_is_hazardous(cm: &CollisionModel, pos: Vec3, world_dir: Vec3) -> bool
     false
 }
 
+/// Extra A* cost for a node beside a deadly rim (Plan 74 B6) — on the order of a few graph
+/// edges, so a route detours around a walkway edge when a comparable alternative exists but
+/// still uses the walkway when it is the only way.
+pub const RIM_NODE_COST: f32 = 256.0;
+
+/// Per-node additive A* cost: [`RIM_NODE_COST`] for every node where [`rim_pressure`] fires,
+/// else 0. Static per map — compute once and add it to the per-tick risk overlay. Plan 74 B5:
+/// a quarter of q2dm3 lava deaths were walk-offs from one walkway edge while path-following a
+/// retreat; Plan 50 named "bias A* costs away from channel-adjacent nodes" as the next step.
+pub fn rim_node_costs(graph: &world::NavGraph, cm: &CollisionModel) -> Vec<f32> {
+    (0..graph.node_count())
+        .map(|i| {
+            let p = Vec3::from(graph.node_pos(i));
+            if rim_pressure(cm, p).is_some() {
+                RIM_NODE_COST
+            } else {
+                0.0
+            }
+        })
+        .collect()
+}
+
 /// Inward push away from nearby deadly rims, or `None` when no rim is near.
 ///
 /// Plan 63 (q2dm6 telemetry): **81% of lava entries had damage in the prior 1.5 s** —

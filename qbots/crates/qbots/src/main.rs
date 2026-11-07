@@ -1031,6 +1031,8 @@ pub(crate) async fn bot_task(
     // Plan 08: per-bot danger/popularity heatmap observer + the origin we were
     // at last time we were alive (death attribution, before the respawn teleport).
     let mut heatmap_obs: Option<brain::HeatmapObserver> = None;
+    // Plan 74 B6: the map's static rim surcharge, added to the heatmap overlay each tick.
+    let mut rim_overlay: Option<Arc<Vec<f32>>> = None;
     let mut last_alive_pos: Option<Vec3> = None;
 
     // Plan 51: wall-press/stall episode detector — one `EVT wall_press` line per
@@ -1411,6 +1413,7 @@ pub(crate) async fn bot_task(
                     nav_driver = None;
                     collision = None;
                     heatmap_obs = None;
+                    rim_overlay = None;
                     last_serverframe = None;
                     motion.clear();
                     last_health = None;
@@ -1492,6 +1495,7 @@ pub(crate) async fn bot_task(
                                     Arc::clone(&map_nav.graph),
                                     name,
                                 ));
+                                rim_overlay = Some(Arc::clone(&map_nav.rim));
                             }
                         }
                     }
@@ -1750,7 +1754,12 @@ pub(crate) async fn bot_task(
                                 obs.on_print(text, name, frame.serverframe);
                             }
                             let (w_danger, w_pop) = brain.heatmap_weights();
-                            let overlay = obs.cost_overlay(w_danger, w_pop);
+                            let mut overlay = obs.cost_overlay(w_danger, w_pop);
+                            if let Some(rim) = &rim_overlay {
+                                for (o, r) in overlay.iter_mut().zip(rim.iter()) {
+                                    *o += r;
+                                }
+                            }
                             if let Some(nav) = nav_driver.as_mut() {
                                 nav.set_risk_overlay(overlay);
                             }

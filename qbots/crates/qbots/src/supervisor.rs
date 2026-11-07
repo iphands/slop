@@ -35,6 +35,9 @@ pub struct MapNav {
     /// Static item table (Plan 30) — every `item_*`/`weapon_*`/`ammo_*` spawn from the BSP,
     /// classified + nearest-node-resolved once per map and shared to every bot via `BrainMap`.
     pub items: Vec<brain::brains::core::MapItem>,
+    /// Static per-node A* surcharge beside deadly rims (Plan 74 B6), added to every bot's
+    /// per-tick risk overlay.
+    pub rim: Arc<Vec<f32>>,
 }
 
 /// Process-wide cache of nav graphs keyed by map name. The first bot to discover
@@ -115,12 +118,21 @@ fn build_map_nav(cfg: &Config, map: &str) -> Option<MapNav> {
     // before `built.graph` is moved into the shared `Arc`.
     let items = brain::items::build_map_items(&built.bsp, &built.graph);
     tracing::info!(map, item_spawns = items.len(), "map item table built");
+    let t_rim = std::time::Instant::now();
+    let rim = brain::hazard::rim_node_costs(&built.graph, &built.cm);
+    tracing::info!(
+        map,
+        rim_nodes = rim.iter().filter(|c| **c > 0.0).count(),
+        ms = t_rim.elapsed().as_millis() as u64,
+        "rim cost overlay built"
+    );
     Some(MapNav {
         graph: Arc::new(built.graph),
         cm: built.cm,
         roam_nodes: built.largest,
         bounds,
         items,
+        rim: Arc::new(rim),
     })
 }
 
