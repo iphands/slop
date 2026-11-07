@@ -1024,6 +1024,7 @@ pub(crate) async fn bot_task(
     let mut last_pickup_cs: Option<i16> = None; // Track STAT_PICKUP_STRING for weapon pickups (Plan 68)
                                                 // Plan 74 T7: the current life's clock (`secs_to_strong`), on this session's monotonic base.
     let mut life = jev::life::LifeClock::default();
+    let mut status_trail = jev::life::StatusTrail::default();
     let life_t0 = std::time::Instant::now();
     let mut last_frags: Option<i32> = None; // Track frags for kill detection
 
@@ -1723,7 +1724,15 @@ pub(crate) async fn bot_task(
                             // server/mod — this is the lens for verifying classification.
                             tracing::debug!(text = %text.trim_end(), "svc_print");
                             if let Some(kind) = brain::classify_env_death(text, name) {
-                                tracing::warn!(kind = kind.name(), "EVT env_suicide");
+                                let at = last_alive_pos.unwrap_or_default();
+                                tracing::warn!(
+                                    kind = kind.name(),
+                                    trail = %status_trail.render(life_t0.elapsed().as_secs_f32()),
+                                    x = at.x as i32,
+                                    y = at.y as i32,
+                                    z = at.z as i32,
+                                    "EVT env_suicide"
+                                );
                                 stats.record_env_suicide(name, kind);
                             }
                         }
@@ -1777,6 +1786,8 @@ pub(crate) async fn bot_task(
                             // The live fleet brain drives its own FSM/item/roam goal ladder.
                             goal_override: None,
                         });
+                        // Plan 74: the FSM trail an env death is logged with.
+                        status_trail.observe(life_t0.elapsed().as_secs_f32(), brain.status());
 
                         // Plan 51: feed the wall-press/stall detector. The wall probe
                         // only runs on hindered ticks (pushing but not moving).

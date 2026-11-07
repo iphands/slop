@@ -49,9 +49,51 @@ impl LifeClock {
     }
 }
 
+/// The last few brain-status transitions with their times — logged with an environmental death
+/// so "what was the bot doing when it walked into the lava" is in the log, not a guess.
+#[derive(Debug, Default)]
+pub struct StatusTrail {
+    /// `(time, status)`, oldest first, at most [`StatusTrail::KEEP`].
+    trail: std::collections::VecDeque<(f32, String)>,
+}
+
+impl StatusTrail {
+    /// Transitions kept.
+    pub const KEEP: usize = 4;
+
+    /// Record `status` at `now` if it differs from the last one.
+    pub fn observe(&mut self, now: f32, status: &str) {
+        if self.trail.back().is_some_and(|(_, s)| s == status) {
+            return;
+        }
+        if self.trail.len() == Self::KEEP {
+            self.trail.pop_front();
+        }
+        self.trail.push_back((now, status.to_string()));
+    }
+
+    /// `seek-ltg@-5.2s>fight@-1.0s` — each status with how long before `now` it began.
+    pub fn render(&self, now: f32) -> String {
+        self.trail
+            .iter()
+            .map(|(t, s)| format!("{s}@-{:.1}s", now - t))
+            .collect::<Vec<_>>()
+            .join(">")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_trail_keeps_the_last_transitions() {
+        let mut t = StatusTrail::default();
+        for (i, s) in ["a", "a", "b", "c", "d", "e"].iter().enumerate() {
+            t.observe(i as f32, s);
+        }
+        assert_eq!(t.render(6.0), "b@-4.0s>c@-3.0s>d@-2.0s>e@-1.0s");
+    }
 
     #[test]
     fn jev_life_clock_times_the_first_strong_weapon() {
