@@ -32,7 +32,7 @@
 |---|------|---------------|--------|-------|
 | 1 | T1: Lock the scenario corpus (human), split | `context/fixtures/jev/calibration/**` | done | 138 states (56 in `34f28aefa` + 82 here), all drafted by the agent, **skimmed and approved by the user 2026-11-06 before any scoring**; every half ≥10 obvious / ≥10 ambiguous, flat cases in both halves |
 | 2 | T2: `jev-probe lab` — variants, split, scoring | `crates/qbots/src/jev/lab.rs`, `probe.rs` | done | 10 closed variants (baseline + 3 drop-a-fact, add-threat, hp-band-only, add-summary, consequence options, criterion / role instructions); FNV-1a split; holdout needs `--confirm-holdout`; `--split-report` is offline. 7 tests |
-| 3 | T3: Run the lab, write findings | `context/distilled/jev_lab.md` | pending | **live** — needs endpoint permission |
+| 3 | T3: Run the lab, write findings | `context/distilled/jev_lab.md` | in-progress | permission granted 2026-11-06; rounds 1–3 done (15 variants, 1 028 asks, 0 failed). **Waiting on the human**: adopt `carry_on` for the objective (relabel the obvious `hold_position` cases?) and re-review some objective `ambiguous` labels the model answers confidently |
 | 4 | T4: Port winner, holdout once, calibrate | renderer, question specs, goldens | pending | closes Plan 72 W2 |
 | 5 | T5: Decision journal + outcome windows | `brain::jev::source`, `JevPolicy`, `qbots::jev::journal` | pending | needs Plan 72 T10 + T11 |
 | 6 | T6: Shadow mode for `jev_static` | `brains/jev`, config, supervisor | pending | parity test: shadow ≡ NullDecider output |

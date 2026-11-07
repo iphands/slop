@@ -193,7 +193,7 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 > verification-checklist item in each brain plan — not optional.
 
 > **Currently active**:
-> - **Plan 73** — Jev lab + arena: in progress, 1/9 tasks done (T2); next T1 (human: grow + lock the corpus — first 56 committed) and T3 (live lab runs, needs endpoint permission).
+> - **Plan 73** — Jev lab + arena: in progress, 2/9 tasks done (T1, T2); T3 in progress — lab rounds 1–3 recorded in `context/distilled/jev_lab.md`, waiting on two human label decisions.
 > - **Plan 72** — Jev decision brain: **blocked** at 8/16 (T2–T9 done, W1 passed) on its W2 gate, which Plan 73 T1–T4 produce; resumes at T10.
 > Plan 71 is **deferred** (see its row), not closed.
 > **Next free plan number: 74.**
