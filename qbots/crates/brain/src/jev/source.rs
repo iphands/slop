@@ -183,6 +183,9 @@ pub struct ObjectiveOutcome {
     pub secs_to_arrive: Option<f32>,
     /// The held weapon's power tier was higher at close than at open.
     pub upgraded: bool,
+    /// Why the objective ended inside the window: `arrived`, `empty`, `timeout`, `stall`, or
+    /// `None` (still held at close — death, level change, superseded, or 30 s).
+    pub released: Option<&'static str>,
 }
 
 /// How long an outcome window stays open (brain time, seconds).

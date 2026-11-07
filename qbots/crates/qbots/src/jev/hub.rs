@@ -455,7 +455,7 @@ impl DecisionSource for BotHandle {
             line["outcome"]["objective"] = serde_json::json!({
                 "applied": ob.applied, "rule": ob.rule, "arrived": ob.arrived,
                 "secs_to_arrive": ob.secs_to_arrive.map(round1),
-                "upgraded": ob.upgraded,
+                "upgraded": ob.upgraded, "released": ob.released,
             });
         }
         let _ = tx.send(line.to_string());

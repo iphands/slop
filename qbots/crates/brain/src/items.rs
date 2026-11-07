@@ -73,15 +73,33 @@ fn is_pickup(class: EntityClass) -> bool {
 /// decaying back to "assume present" after the class respawn timer — never shared omniscience.
 ///
 /// Keyed by index into the [`BrainMap::items`](crate::brains::core::BrainMap::items) table.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct ItemMemory {
     /// item-index → wall-clock seconds when we last saw its pad empty.
     taken: std::collections::HashMap<usize, f32>,
+    /// Within this distance a missing pad entity counts as "taken" ([`ITEM_TRUST_RANGE`] unless
+    /// built with [`ItemMemory::with_trust_range`]).
+    trust_range: f32,
+}
+
+impl Default for ItemMemory {
+    fn default() -> Self {
+        Self::with_trust_range(ITEM_TRUST_RANGE)
+    }
 }
 
 impl ItemMemory {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A memory that trusts PVS absence only within `range` (Plan 74 B2: PVS does not carry a
+    /// pad behind a wall even 400 u away, so a 500 u range marks live pads "taken").
+    pub fn with_trust_range(range: f32) -> Self {
+        Self {
+            taken: std::collections::HashMap::new(),
+            trust_range: range,
+        }
     }
 
     /// Update the memory from this frame: for every known item within [`ITEM_TRUST_RANGE`], mark
@@ -94,7 +112,7 @@ impl ItemMemory {
             if !is_pickup(item.class) {
                 continue;
             }
-            if (bot - item.origin).length() > ITEM_TRUST_RANGE {
+            if (bot - item.origin).length() > self.trust_range {
                 continue; // too far to trust the PVS absence
             }
             let stocked = view

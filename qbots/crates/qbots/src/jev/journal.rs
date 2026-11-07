@@ -242,6 +242,8 @@ pub struct ObjEntry {
     pub arrived: bool,
     /// Held weapon tier rose.
     pub upgraded: bool,
+    /// Why the objective ended inside the window (`None` = still held at close).
+    pub released: Option<String>,
     /// Died inside the window.
     pub died: bool,
     /// Health delta.
@@ -269,6 +271,7 @@ pub fn parse_objective(line: &str) -> Option<ObjEntry> {
         rule: s(&ob["rule"]),
         arrived: ob["arrived"].as_bool().unwrap_or(false),
         upgraded: ob["upgraded"].as_bool().unwrap_or(false),
+        released: s(&ob["released"]),
         died: o["died"].as_bool().unwrap_or(false),
         hp_delta: o["hp_delta"].as_i64().unwrap_or(0) as i32,
         armor_delta: o["armor_delta"].as_i64().unwrap_or(0) as i32,
@@ -379,6 +382,18 @@ pub fn objective_report(es: &[ObjEntry]) -> String {
             v.iter().map(|e| f64::from(e.armor_delta)).sum::<f64>() / n as f64,
             low_power(n)
         );
+    }
+    s.push_str("why objectives ended (applied seeks only)\n");
+    let mut why: BTreeMap<String, usize> = BTreeMap::new();
+    for e in es
+        .iter()
+        .filter(|e| e.applied.as_deref().is_some_and(|a| a != "carry_on"))
+    {
+        let r = e.released.as_deref().unwrap_or("held at close");
+        *why.entry(format!("{} {r}", e.arm)).or_default() += 1;
+    }
+    for (k, n) in &why {
+        let _ = writeln!(s, "  {k:<34} {n}");
     }
     s.push_str("model/rule agreement (decisive model answers)\n");
     let mut arms: BTreeMap<&str, (usize, usize)> = BTreeMap::new();

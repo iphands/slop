@@ -64,6 +64,9 @@ pub const OBJECTIVE_MAX_S: f32 = 30.0;
 pub const ARRIVE_RADIUS: f32 = 64.0;
 /// No objective ask until the bot has been alive this long (brain time, seconds).
 pub const RESPAWN_SETTLE_S: f32 = 2.0;
+/// jev trusts a missing pad entity as "taken" only this close (Plan 74 B2) — the shared 500 u
+/// marked pads behind walls taken and released 0 % of B1's armor trips before arrival.
+const PAD_TRUST_RANGE: f32 = 192.0;
 /// A cached retreat pad is recomputed after this long (brain time, seconds) — each is one flood.
 const RETREAT_REFRESH_S: f32 = 1.0;
 /// After an objective ask attempt (sent, paced, or nothing to offer), wait this long before the
@@ -156,6 +159,8 @@ struct ObjWindow {
     applied: Option<&'static str>,
     rule: Option<&'static str>,
     arrived_at: Option<f32>,
+    /// Why the objective was released inside the window (first release only).
+    released: Option<&'static str>,
 }
 
 /// An open outcome window: the readings when it opened, and what has happened since.
@@ -177,7 +182,7 @@ impl JevPolicy {
             roam_nodes: Vec::new(),
             nav_graph: None,
             items: Vec::new(),
-            memory: ItemMemory::new(),
+            memory: ItemMemory::with_trust_range(PAD_TRUST_RANGE),
             objective: None,
             asks_objective: true,
             rule: false,
@@ -276,6 +281,7 @@ impl JevPolicy {
                     arrived: w.arrived_at.is_some(),
                     secs_to_arrive: w.arrived_at.map(|t| t - w.opened),
                     upgraded: self.held_tier > w.tier,
+                    released: w.released,
                 }),
             },
         );
@@ -418,15 +424,25 @@ impl JevPolicy {
             .items
             .get(pad.item)
             .is_none_or(|it| !self.memory.available(pad.item, it.class, self.time));
-        if arrived || empty || self.time - since >= OBJECTIVE_MAX_S {
-            self.release_objective();
-        }
+        let why = if arrived {
+            "arrived"
+        } else if empty {
+            "empty"
+        } else if self.time - since >= OBJECTIVE_MAX_S {
+            "timeout"
+        } else {
+            return;
+        };
+        self.release_objective(why);
     }
 
-    /// Drop the held objective and ask again soon.
-    fn release_objective(&mut self) {
+    /// Drop the held objective and ask again soon; the open objective window records why.
+    fn release_objective(&mut self, why: &'static str) {
         if self.objective.take().is_some() {
             self.pending_trigger.get_or_insert(Trigger::Released);
+            if let Some(w) = self.obj_window.as_mut().filter(|w| w.released.is_none()) {
+                w.released = Some(why);
+            }
         }
     }
 
@@ -476,7 +492,7 @@ impl JevPolicy {
         self.nav_graph = Some(nav_graph);
         self.items = items;
         // Indices are into the old map's table.
-        self.memory = ItemMemory::new();
+        self.memory = ItemMemory::with_trust_range(PAD_TRUST_RANGE);
         self.objective = None;
     }
 
@@ -629,6 +645,7 @@ impl JevPolicy {
             applied,
             rule: rule_label,
             arrived_at: None,
+            released: None,
         });
     }
 
@@ -673,7 +690,7 @@ impl GoalPolicy for JevPolicy {
     }
 
     fn on_stall(&mut self) {
-        self.release_objective();
+        self.release_objective("stall");
         self.retreat = None;
     }
 

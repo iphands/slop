@@ -581,6 +581,7 @@ async fn jev_journal_records_objective_outcomes_and_lives() {
                 arrived: true,
                 secs_to_arrive: Some(4.26),
                 upgraded: true,
+                released: Some("arrived"),
             }),
             ..Default::default()
         },
@@ -624,6 +625,7 @@ async fn jev_journal_records_objective_outcomes_and_lives() {
         (Some(true), Some(true))
     );
     assert_eq!(ob["secs_to_arrive"].as_f64(), Some(4.3));
+    assert_eq!(ob["released"].as_str(), Some("arrived"));
     let l = lines.iter().find(|v| v["kind"] == "life").expect("life");
     assert_eq!(
         (l["arm"].as_str(), l["secs"].as_f64()),
