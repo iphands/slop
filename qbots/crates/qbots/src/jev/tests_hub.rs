@@ -706,6 +706,7 @@ async fn jev_a2_disengage_needs_hurt_suppresses_it_on_a_healthy_bot() {
     t.push(10, Ok(&disengage_answer()));
     let c = HubConfig {
         disengage_needs_hurt: true,
+        posture_live: true, // A2 is a refinement of a LIVE posture (off by default since B10)
         ..cfg()
     };
     let (_hub, h) = start(c, 2, &t);
@@ -728,7 +729,11 @@ async fn jev_a2_disengage_needs_hurt_suppresses_it_on_a_healthy_bot() {
 async fn jev_a2_off_by_default_keeps_the_healthy_disengage() {
     let t = Scripted::default();
     t.push(10, Ok(&disengage_answer()));
-    let (_hub, h) = start(cfg(), 1, &t);
+    let c = HubConfig {
+        posture_live: true,
+        ..cfg()
+    };
+    let (_hub, h) = start(c, 1, &t);
     h[0].submit(posture_ask(100)).expect("accepted");
     settle(50).await;
     assert_eq!(h[0].latest().map(|d| d.posture), Some(Some(0)));
@@ -755,4 +760,10 @@ async fn jev_b9_posture_off_stores_no_posture_even_for_a_hurt_bot() {
         1,
         "the answer still arrived and was journalled"
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn jev_posture_is_off_by_default_since_b10() {
+    assert!(!HubConfig::default().posture_live);
+    assert!(!crate::config::JevCfg::default().posture_live);
 }

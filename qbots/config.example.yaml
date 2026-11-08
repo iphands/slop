@@ -90,6 +90,11 @@ fleet:
 #   ttl_s: 24.0                      # a stored decision older than this is ignored
 #   max_state_tokens: 512            # hard cap on the rendered state
 #   gate_margin_binary: 0.30         # FROZEN 2026-11-06 (Plan 73 T4 holdout calibration, posture)
-#   gate_margin_multi: 0.30          # unused for now — the 3-way objective failed calibration
+#   gate_margin_multi: 0.30          # the Plan 74 pickup objective (holdout RC 100 %, CW 0)
+#   posture_live: false              # Plan 74: posture is asked + journalled but not applied —
+                                     #   q3 decides fights; on q2dm3 jev's extra retreats cost
+                                     #   kills and lava deaths (B8 vs B10/B11). true = Plan 72's
+                                     #   live disengage/hold layer.
+#   disengage_needs_hurt: false      # Plan 73 A2: with posture_live, disengage only when hurt
 #   journal: false                   # Plan 73: one JSON line per decision + what happened next,
                                      #   to logs/jev/journal-<unix>.jsonl (gitignored)

@@ -1,0 +1,33 @@
+# Plan 74 arena round B11 (replication of B10) — 3 x 10 min, q2dm3 PARKED, 3 jev + 3 q3, posture_live false, patrol on
+# journals: logs/jev/journal-1794099211.jsonl logs/jev/journal-1794099827.jsonl logs/jev/journal-1794100442.jsonl
+objective decisions by arm × applied
+  jev@q2dm3 (nothing applied)        n=81   arrived=  0.0%  upgraded= 13.6%  died= 63.0%  hp= -40.0  armor=  +4.5  LOW POWER
+  jev@q2dm3 carry_on                 n=6    arrived=  0.0%  upgraded=  0.0%  died=  0.0%  hp= -26.8  armor=  -9.2  LOW POWER
+  jev@q2dm3 seek_armor               n=24   arrived= 50.0%  upgraded=  8.3%  died= 37.5%  hp= -35.9  armor=  +4.1  LOW POWER
+  jev@q2dm3 seek_health              n=1    arrived=  0.0%  upgraded=  0.0%  died=  0.0%  hp=  +0.0  armor=  +2.0  LOW POWER
+  jev@q2dm3 seek_weapon              n=71   arrived= 18.3%  upgraded= 19.7%  died= 45.1%  hp= -51.2  armor=  -1.2  LOW POWER
+why objectives ended (applied seeks only)
+  jev@q2dm3 arrived                  3
+  jev@q2dm3 empty                    51
+  jev@q2dm3 held at close            41
+  jev@q2dm3 stall                    1
+model/rule agreement (decisive model answers)
+  jev@q2dm3    n=102  agree= 96.1%
+lives by arm (secs_to_strong = spawn → first non-weak weapon)
+  jev@q2dm3    lives=114  got_strong= 36.8%  median_secs_to_strong=5.9s    life= 36.6s  frags/life=0.27
+  q3@q2dm3     lives=157  got_strong= 37.6%  median_secs_to_strong=2.8s    life= 32.2s  frags/life=0.20
+P3 weak-weapon share of posture decisions:
+  jev        255/447 = 57%
+run 1:
+  jev_as   kills= 17 deaths= 48 kd=0.35 env=35 wp=32
+  q3_as    kills= 12 deaths= 63 kd=0.19 env=46 wp=39
+run 2:
+  q3_as    kills= 14 deaths= 53 kd=0.26 env=40 wp=40
+  jev_as   kills= 12 deaths= 46 kd=0.26 env=33 wp=36
+run 3:
+  jev_as   kills=  9 deaths= 20 kd=0.45 env=15 wp=26
+  q3_as    kills=  7 deaths= 41 kd=0.17 env=30 wp=25
+round total:
+  jev_as   kills= 38 deaths=114 kd=0.33 env=83 wp=94
+  q3_as    kills= 33 deaths=157 kd=0.21 env=116 wp=104
+# lava deaths: jev 76, q3 103; squish jev 5, q3 9

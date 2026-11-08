@@ -109,7 +109,7 @@ impl Default for HubConfig {
             journal: None,
             shadow: false,
             disengage_needs_hurt: false,
-            posture_live: true,
+            posture_live: false,
         }
     }
 }

@@ -114,7 +114,9 @@ pub struct JevCfg {
     /// Plan 73 arena round A2: a `disengage` only applies to a hurt bot (health < 50).
     pub disengage_needs_hurt: bool,
     /// Plan 74 B9: `false` = the posture answer is still asked and journalled but never stored,
-    /// so q3 alone decides fights (jev = q3 + the pickup objective). Default `true`.
+    /// so q3 alone decides fights (jev = q3 + the pickup objective + patrol). **Default `false`**
+    /// since Plan 74 B10/B11: on the parked lava map jev beat q3 2:1 on K/D with posture off,
+    /// while with posture on (B8) it trailed — jev's extra retreats walked it into lava.
     pub posture_live: bool,
 }
 
@@ -142,7 +144,7 @@ impl Default for JevCfg {
             journal: false,
             shadow: false,
             disengage_needs_hurt: false,
-            posture_live: true,
+            posture_live: false,
         }
     }
 }
