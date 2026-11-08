@@ -1715,7 +1715,7 @@ pads with `ItemMemory`, and treat "held" as a lower bound on what the bot owns.
 
 ## Sources
 - qbots: crates/brain/src/{items.rs,weapons.rs,brains/core.rs}, crates/brain/tests/map_items_q2dm1.rs
-- qbots: context/plans/74_jev_pickup_objective_tracker.md (T1 Evidence)
+- qbots: context/plans/completed/74_jev_pickup_objective_tracker.md (T1 Evidence)
 
 # An external client's weapon model must follow the view model, never its own requests
 
@@ -1771,4 +1771,4 @@ Park the map (`timelimit 0`) for comparisons, log the map on every journal line,
 (`QBOTS_NO_RIM_COST`, `QBOTS_NO_PATROL`) and alternating 5-min on/off segments in one session.
 
 ## Sources
-- qbots: context/plans/74_jev_pickup_objective_tracker.md (Rounds X1–X3, B2, B6)
+- qbots: context/plans/completed/74_jev_pickup_objective_tracker.md (Rounds X1–X3, B2, B6)

@@ -1,6 +1,6 @@
 # Plan 74 — Jev pickup objective: let the model choose which out-of-sight pickup to go for
 
-> **Status**: in-progress
+> **Status**: done (closed 2026-11-07 — 9/9 tasks; jev beats q3 on the parked lava map, K/D 0.36 vs 0.18 over B10+B11)
 > **Created**: 2026-11-07
 > **Depends on**: Plan 72 (the `jev` brain, hub, `GoalPolicy::objective` seam), Plan 73 (the lab,
 > the journal, the arena), Plan 30 (`build_map_items`, `ItemMemory`)
@@ -148,7 +148,7 @@ answer never steers.
 
 ### T1: Confirm the open facts, record them
 
-**File**: `context/plans/74_jev_pickup_objective_tracker.md` (Key Facts → Evidence)
+**File**: `context/plans/completed/74_jev_pickup_objective_tracker.md` (Key Facts → Evidence)
 
 **What to do**: Resolve the three unconfirmed Key Facts, citing source lines: (1) how the hub's
 stored decision and `DecisionSource::latest` carry answers — can a posture ask clobber a pending
@@ -423,6 +423,27 @@ paragraph with numbers; what wording/facts worked; follow-ups (re-engage timing,
 
 ---
 
+### Resolutions at close (2026-11-07)
+
+1. **The rule may be all there is** — largely true for *what* to fetch: model/rule agreement
+   95–100 % (B1–B11). The model's measurable value is its confidence gate (jev beat jvr in B1,
+   B3, B4; not in B5, B6). jev's win over q3 comes mostly from map knowledge (risk-priced
+   pickups, patrol) plus the core fixes — recorded as the pre-registered acceptable outcome.
+2. **Stale pads** — real, and worse than expected: PVS absence at 500 u (then 192 u) marked live
+   pads taken; trust is now 128 u and pad matching allows `droptofloor`'s fall. `empty` is still
+   the commonest release on contested q2dm3 (follow-up).
+3. **Unknown inventory** — resolved differently: the bigger problem was q3 believing it held
+   what it requested; `weapons::Arsenal` learns ownership from the view model.
+4. **Hub slot clobbering** — resolved in T4: per-question pacing; an objective is released only
+   by a newer ticket that asked the objective.
+5. **Herding** — not measured (per-pad goal counts not computed); candidates are per-bot nearest
+   pads, and patrol skips recently visited pads. Left as is.
+6. **Live states less decisive than the corpus** — materialised: 45 % of jev's live objective
+   answers fell under the 0.30 margin in B10/B11 (146 / 326), vs 0 % of the corpus holdout.
+7. **Re-engage timing** — stays deferred (reason above); posture itself is now advisory by default.
+8. **Effort** — 11 arena rounds and 3 interleaved A/Bs instead of ≤ 4 rounds: the user asked to keep
+   iterating until jev dominated; each round taught something (four mechanical bugs, then lava).
+
 ## Verification Checklist
 
 - [x] T1: hub question keying, DM auto-switch rule, q2dm1/q2dm3 pad counts recorded with sources
@@ -435,5 +456,5 @@ paragraph with numbers; what wording/facts worked; follow-ups (re-engage timing,
 - [x] T7: objective windows + per-life `secs_to_strong` for every arm; journal sections tested
 - [x] T8: predictions committed before each round (B1–B11, X1–X3 recorded exploratory); lives per arm ≥ 100 in B8–B11, earlier rounds flagged LOW POWER; P1–P3 answered in B1
 - [x] T9: `jev_lab.md`, `BRAINS.md`, `brain_notes.md`, `pitfalls.md` updated and re-read
-- [ ] Rule A held at every commit (`just all` chained before `git commit`)
-- [ ] Rule C: plan + tracker `git mv` to `completed/`, `SERIES.md` marked done
+- [x] Rule A held at every commit (`just all` chained before `git commit`) — *for every code commit; docs-only bookkeeping commits (pre-registrations, round records without code) were not separately gated; `f30f27894` and `1bcb46f04` were gated on the combined tree, `23ca644c1` re-verified alone in a worktree; the T3 gate failure on a stale schema assert blocked its commit as designed*
+- [x] Rule C: plan + tracker `git mv` to `completed/`, `SERIES.md` marked done (2026-11-07)

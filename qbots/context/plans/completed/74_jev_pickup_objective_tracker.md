@@ -4,7 +4,7 @@
 
 - Status: 100% complete (9/9 tasks)
 - Start date: 2026-11-07
-- Plan: `context/plans/74_jev_pickup_objective.md`
+- Plan: `context/plans/completed/74_jev_pickup_objective.md`
 - Headline metric: per-life **`secs_to_strong`** (spawn → first non-weak held weapon) per arm;
   secondary: weak-weapon share of posture decisions (Plan 73 baseline **76 %**, 1 153 / 1 510).
 - Arms: `q3` (no pad knowledge), `jev` (model picks the pad), `jvr` (code rule picks from the
@@ -122,3 +122,6 @@
 |-----------|-----|----------|
 | q2dm3 lava deaths ~2.4× Plan 50's final soak, in every q3-based brain (X1) — mostly in `retreat`, entry mechanism not yet instrumented (lava burn masks prior hits in the log) | dominates every q2dm3 measurement (83 % of B3 deaths) | a later core plan (instrument entry like Plan 50) |
 | The visible `items weapon:` fact still counts ammo boxes (`EntityClass::ItemWeapon`) | it is a posture input; changing it would void posture's 0.30 calibration | a later plan (re-calibrate posture) |
+| Pickup trips still mostly end `empty` or held-at-close rather than `arrived` (B4: jev 6 arrivals vs 21 empty) | contested q2dm3 pads, and PVS absence is only a proxy for "taken" | a later plan (measure arrival on a parked, less contested map) |
+| Posture and the Plan 74 fixes have not been re-measured on a dry map (q2dm1) | `posture_live: false` was chosen on lava evidence; on q2dm1 Plan 73 found posture neutral | a later plan (q2dm1 duel, posture on/off A/B) |
+| Restore the arena server's `timelimit 900` (parked at 0 on q2dm3 for Plan 74) | outward server state; the user decides when the lava arena is done | the user |
