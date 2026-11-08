@@ -1,0 +1,8 @@
+patrol=on r1 map_changes=0 map=q2dm3 | jvr_as bots=3 kills=7 deaths=19 kd=0.37 env=14|q3_as bots=3 kills=2 deaths=23 kd=0.09 env=19|
+patrol=off r1 map_changes=0 map=q2dm3 | jvr_as bots=3 kills=4 deaths=14 kd=0.29 env=14|q3_as bots=3 kills=2 deaths=20 kd=0.10 env=14|
+patrol=on r2 map_changes=0 map=q2dm3 | q3_as bots=3 kills=3 deaths=11 kd=0.27 env=9|jvr_as bots=3 kills=3 deaths=23 kd=0.13 env=19|
+patrol=off r2 map_changes=0 map=q2dm3 | q3_as bots=3 kills=8 deaths=21 kd=0.38 env=14|jvr_as bots=3 kills=4 deaths=27 kd=0.15 env=21|
+patrol=on r3 map_changes=0 map=q2dm3 | jvr_as bots=3 kills=9 deaths=16 kd=0.56 env=10|q3_as bots=3 kills=4 deaths=20 kd=0.20 env=13|
+patrol=off r3 map_changes=0 map=q2dm3 | q3_as bots=3 kills=6 deaths=16 kd=0.38 env=12|jvr_as bots=3 kills=3 deaths=16 kd=0.19 env=11|
+
+[exited with code 0]
