@@ -867,3 +867,14 @@ source (the A/B control; with `jev.shadow` it asks and journals but never acts).
   `retreat_goal` is hazard-blind (drowning) — follow-up.
 - **Not built**: objective (failed W2), region / fleet-coach layer (needs the `AGENTS.md`
   carve-out + its own lab work) — Plan 72 T10, T13–T15 skipped with reasons.
+
+## 2026-11-07 — Plan 74: jev beats q3 on the lava map (B1–B11)
+Arena: 3 jev v 3 q3 (earlier 2/2/2 with jvr), 10-min runs, q2dm3 parked from B7. Core fixes that
+every q3-based brain gets: weapon choice follows the view model and learns ownership
+(`weapons::Arsenal`; kills ×2), idle weapon readiness, live health/powerup models classified,
+pad matching allows `droptofloor`, no retreat backpedal beside a deadly rim, static rim
+surcharge in routing (X2: −28 % lava deaths). jev-only: risk-priced pickup objective (rim +
+mover surcharge), patrol of strong-weapon/armor pads (X3: kills 19 v 11), posture advisory by
+default. B10/B11: K/D 0.36 v 0.18, deaths 192 v 272. Lava is still about two thirds of deaths
+on q2dm3 for both arms (B11: jev 67 %, q3 66 %) — the next core lever (entry instrumentation, Plan 50 style). Details:
+`context/distilled/jev_lab.md` "Plan 74 arena".

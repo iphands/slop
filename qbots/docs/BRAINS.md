@@ -16,6 +16,7 @@ nav layer selects a backend with `NavMode` / `build_navigator`.
 | **runtester** | `runtester` | Combat-free pathfinder — the `spawn-to-*` movement-scenario brain | ❌ | ✅ |
 | **jev** | `jev` | q3, with its engage/disengage posture taken from a hosted decision model (§7) | ✅ | ✅ |
 | **jev_static** | `jvs` (alias `jev_static`) | jev with all its plumbing and no decisions — jev's A/B control; with `jev.shadow` it asks and journals but never acts | ✅ | ✅ |
+| **jev_rule** | `jvr` (alias `jev_rule`) | jev with the pickup chosen by a fixed code rule from the same candidates (the model is asked and journalled, never applied) — Plan 74's control; needs no model | ✅ | ✅ |
 
 Source: `crates/brain/src/brains/{main,q3,sentry,runtester}.rs`. Research distillations:
 `context/distilled/eraser.md` (main), `context/distilled/quake3.md` (q3). Implementation history:
@@ -32,7 +33,7 @@ internal constants in §4) is a code-level default that requires editing the sou
 
 | Switch | Where | Values | Default |
 |--------|-------|--------|---------|
-| `--brain <kind>` | `connect-one`, `run` | `main` \| `sentry` \| `runtester` \| `q3` \| `zb2` \| `xon` \| `jev` \| `jvs` | `main` (`run`: `[fleet].brain`) |
+| `--brain <kind>` | `connect-one`, `run` | `main` \| `sentry` \| `runtester` \| `q3` \| `zb2` \| `xon` \| `jev` \| `jvs` \| `jvr` | `main` (`run`: `[fleet].brain`) |
 | `--brain <kind>` | `spawn-to-spawn`, `spawn-to-weapon` | `runtester` \| `main` (A/B pathing; combat forced off) | `runtester` |
 | `--brains a,b,…` | `competition` | comma list; **`runtester` rejected** (non-combat) | `main` |
 | `[fleet].brain` | `config.yaml` | `"main"` \| `"sentry"` \| `"runtester"` \| `"q3"` \| `"zb2"` \| `"xon"` | `main` |
@@ -245,25 +246,41 @@ See `context/plans/completed/23_*`–`26_*` (the seam) and `36_*`–`38_*` (q3) 
 
 ---
 
-## 7. `jev` — q3 plus a hosted decision model (Plans 72–73)
+## 7. `jev` — q3 plus a hosted decision model (Plans 72–74)
 
-`jev` is `Q3Brain<JevPolicy>`: q3's FSM, aim, weapon choice, dodge and recovery unchanged, with
-one high-level choice — **engage or disengage** — taken from the `/v1/systemone` decision model
-at `jev.endpoint` (contract: `context/distilled/jev.md`). With an enemy in view it asks on
-contact, on taking damage, or on a due refresh; an answer that clears the calibrated margin
-(0.30) and says `disengage` forces q3's retreat **and** clears its chase for 6 s of brain time;
-`hold` changes nothing. All model I/O goes through one process-wide hub (`crates/qbots/src/jev/`)
-— a bot never waits on the model, and a dead endpoint refuses to start (`require: true`).
+`jev` is `Q3Brain<JevPolicy>`: q3's FSM, aim, weapon choice, dodge and recovery unchanged, plus
+what q3 cannot see — the map's item table — and a hosted `/v1/systemone` decision model at
+`jev.endpoint` (contract: `context/distilled/jev.md`). All model I/O goes through one
+process-wide hub (`crates/qbots/src/jev/`): a bot never waits on the model, and a dead endpoint
+refuses to start (`require: true`). What jev does on top of q3 (Plan 74):
+
+- **Pickup objective.** While roaming with no enemy in view, code lists the cheapest reachable,
+  not-known-empty pad per class — a *strong* weapon better than the held one, health, armor —
+  and the model picks one (`seek_weapon / seek_health / seek_armor / carry_on`, margin gate
+  0.30); the bot walks there until it arrives, the pad reads empty, it stalls, dies or 30 s pass.
+- **Risk-priced routes.** Pads are priced by travel cost through a per-node surcharge for lava
+  rims (+256) and mover rides (+512), so jev prefers pickups it can reach without walkways or
+  trains — and the model sees a risky pad as farther.
+- **Patrol.** With nothing to fetch it walks the strong-weapon and armor pads (not revisited for
+  30 s) instead of q3's random roam nodes — where opponents come to re-arm.
+- **Posture is advisory.** The engage/disengage question is still asked and journalled, but by
+  default (`posture_live: false`) not applied: on the lava map its extra retreats cost kills.
+
+On parked q2dm3, 3 jev v 3 q3 over two identical 30-min rounds: K/D **0.36 vs 0.18**, kills
+69 vs 49, deaths 192 vs 272 (Plan 74 B10/B11, `context/distilled/jev_lab.md`).
 
 | Switch | Where | Effect |
 |---|---|---|
 | `jev:` block (`enabled`, `endpoint`, `model`, `require`, budget/pacing knobs) | `config.yaml` | off by default; see `config.example.yaml` |
-| `jev.journal: true` | `config.yaml` | one JSON line per decision + what happened next → `logs/jev/journal-<unix>.jsonl` |
-| `jev.shadow: true` | `config.yaml` | `jev_static` bots ask and journal too, never acting — the arena's "what would the model have said" |
-| `qbots jev-probe <health\|lab\|calibrate\|sensitivity\|…\|journal>` | CLI | the only tool that talks to the endpoint in development; `journal` analyses arena logs offline |
-| `competition --roster context/fixtures/jev/arena.yaml` | CLI | the arena: 3 q3 + 2 jev + 1 shadow `jev_static` |
+| `jev.posture_live` | `config.yaml` | `false` (default): posture asked + journalled, q3 decides fights; `true`: Plan 72's live disengage |
+| `jev.disengage_needs_hurt` | `config.yaml` | with a live posture, disengage only when hurt (Plan 73 A2) |
+| `jev.journal: true` | `config.yaml` | one JSON line per decision + what followed, and one per life (`secs_to_strong`, every arm) → `logs/jev/journal-<unix>.jsonl` |
+| `jev.shadow: true` | `config.yaml` | `jev_static` bots ask and journal too, never acting |
+| `--brain jvr` | CLI / roster | the code-rule control: same candidates, the pickup picked by a fixed rule; works without the model (`require: false`) |
+| `QBOTS_NO_PATROL`, `QBOTS_NO_RIM_COST` | env | measurement switches for interleaved A/B (patrol; the rim surcharge in every bot's routing) |
+| `qbots jev-probe <health\|lab\|calibrate\|…\|journal>` | CLI | the only tool that talks to the endpoint in development; `journal` analyses arena logs (objectives, model/rule agreement, lives by arm@map) |
+| `competition --roster context/fixtures/jev/arena_74_duel.yaml` | CLI | the arena: 3 jev + 3 q3 (`arena_74.yaml` adds jvr; `arena_74_rule_duel.yaml` is model-free) |
 
-The wording of the state and the question was chosen by measurement, not taste — the language
-lab's rules and numbers are in `context/distilled/jev_lab.md`. The objective question
-(health / armor / carry on) failed calibration and is not asked.
+The wording of the state and the questions was chosen by measurement, not taste — the language
+lab's rules and numbers are in `context/distilled/jev_lab.md`.
 

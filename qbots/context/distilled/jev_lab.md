@@ -261,3 +261,31 @@ Holdout (once, production): **RC 100 %, CW 0 %, acc 100 %, flatA 0.015**, leakA 
   ambiguous criterion (built for posture, where acting changes q3) rejects it anyway. Decision:
   W2 for this question = holdout RC ≥ 80 %, CW 0, flat answers below the 0.30 gate — met. The
   arena, not the corpus, judges whether the choices are good.
+
+## Plan 74 arena — B1–B11 (2026-11-07): what made jev beat q3
+
+Rounds were 3 × 10 min; from B7 the server was **parked on q2dm3** (lava) on purpose; B2–B6
+were q2dm3 by rotation. Raw reports: `context/fixtures/jev/arena/b*_report.txt`.
+
+- **A1 Mechanics before strategy.** B1 lost on bugs, not choices: q3 believed every *requested*
+  weapon was held (aimed a railgun, fired the blaster), every live health pickup was invisible
+  (Q2 names them `items/healing/*`, `items/mega_h`), pads never matched their dropped items
+  (`droptofloor` moves them up to 128 u down), and a 500 u "PVS absence ⇒ taken" range
+  released trips at pads behind walls. Fixing the weapon model alone more than doubled kills
+  (X1 A/B: 4/7 → 6/16).
+- **A2 The model ≈ the rule on what to fetch** (95–100 % agreement); its value is the
+  confidence gate — fewer, better trips than a rule applied on every ask.
+- **A3 On a lava map, retreating is what kills.** ~55 % of lava deaths ended in `retreat`.
+  Posture `disengage` adds retreats: with it live (B8) jev trailed q3 (K/D 0.23 v 0.30); off
+  (B9–B11) jev led. Posture is now advisory by default.
+- **A4 Route risk is a map fact jev can use and q3 cannot.** Pricing pickups through rim and
+  mover surcharges cut jev's crush deaths (B3–B6 jev 32 v q3 20 → B7+ at parity) and lava
+  deaths; a rim surcharge in everyone's routing cut lava deaths 28 % (X2 A/B).
+- **A5 Patrol pads, don't wander.** Walking strong-weapon/armor pads instead of random roam
+  nodes: jev-core kills 19 v 11, q3's 9 v 16 (X3 A/B) — it contests where q3 re-arms.
+- **A6 Measure with interleaved A/B, not rounds.** Lava deaths swung ±30 % between identical
+  rounds (127/112/85/127); alternating 5-min on/off segments in one session settled what three
+  round comparisons could not.
+
+**Result** (B10 + B11, identical, parked q2dm3, 3 jev v 3 q3): K/D **0.36 vs 0.18**, kills 69
+v 49, deaths 192 v 272, lava 122 v 182; jev won 4 of 6 runs, tied 1.

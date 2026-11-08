@@ -433,7 +433,7 @@ paragraph with numbers; what wording/facts worked; follow-ups (re-engage timing,
 - [x] W1: `just all` green; parity + posture goldens unchanged
 - [x] T6: corpus committed before scoring (skim waived by the user); holdout once; threshold 0.30 kept, W2 passed as redefined (leak criterion dropped for a pickup question)
 - [x] T7: objective windows + per-life `secs_to_strong` for every arm; journal sections tested
-- [ ] T8: predictions committed before each round; ≥ 100 lives per arm or LOW POWER; P1–P3 answered
-- [ ] T9: `jev_lab.md`, `BRAINS.md`, `brain_notes.md` updated and re-read
+- [x] T8: predictions committed before each round (B1–B11, X1–X3 recorded exploratory); lives per arm ≥ 100 in B8–B11, earlier rounds flagged LOW POWER; P1–P3 answered in B1
+- [x] T9: `jev_lab.md`, `BRAINS.md`, `brain_notes.md`, `pitfalls.md` updated and re-read
 - [ ] Rule A held at every commit (`just all` chained before `git commit`)
 - [ ] Rule C: plan + tracker `git mv` to `completed/`, `SERIES.md` marked done

@@ -194,7 +194,7 @@ starts, or completes.** Status values: `pending` | `in-progress` | `done` | `blo
 > verification-checklist item in each brain plan — not optional.
 
 > **Currently active**:
-> - **Plan 74** — Jev pickup objective: in progress, 7/9 tasks done, W1 + W2 passed; next T8 (arena rounds). Plan 71 is **deferred** (see its row).
+> - **Plan 74** — Jev pickup objective: all 9 tasks done (jev beats q3 on the parked lava map, B10/B11) — ready for `/hands-plan close 74`. Arena server parked on q2dm3 (`timelimit 0`; restore 900). Plan 71 is **deferred** (see its row).
 > **Next free plan number: 75.**
 
 > Active plans live alongside this file as `NN_name.md` + `NN_name_tracker.md`.

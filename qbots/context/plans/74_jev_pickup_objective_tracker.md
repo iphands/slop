@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Status: 78% complete (7/9 tasks)
+- Status: 100% complete (9/9 tasks)
 - Start date: 2026-11-07
 - Plan: `context/plans/74_jev_pickup_objective.md`
 - Headline metric: per-life **`secs_to_strong`** (spawn → first non-weak held weapon) per arm;
@@ -37,8 +37,8 @@
 | 5 | T5: `jvr` code-rule control arm | `brains/jev/{mod,policy,pads}.rs`, `brains/mod.rs`, `qbots::jev::hub`, supervisor | done | `BrainKind::JevRule` (`jvr` / `jev_rule`); `PadCandidates::rule_pick`; the rule's pad is applied when the hub **accepts** the ask (same moments as jev); the model's objective answer acks `Shadowed`; posture live. Hub: `wants_hub` (one truth table for 3 supervisor gates + `JevLink::for_bot`), jvr objective asks count `shadow_asked`. 3 tests |
 | 6 | T6: Corpus, lab, holdout, calibrate (live) | `context/fixtures/jev/calibration/objective_v2/**`, `probe.rs`, `lab.rs`, `jev_lab.md` | done | user waived the label skim 2026-11-07 ("make best guesses, keep moving"); labels were committed before scoring. Round 5 (tuning, 15 variants): production wording best, RC 96 % CW 0. Holdout once: **RC 100 %, CW 0, flat 0.015**. `calibrate` fails v2 on ambiguous leak only → **W2 redefined** for a pickup question (see Gates); gate stays 0.30 |
 | 7 | T7: Objective outcomes + per-life `secs_to_strong` | `jev/source.rs`, `brains/jev/{policy,pads}.rs`, `qbots::jev::{hub,life,journal,probe}`, `main.rs`, supervisor | done | separate 30 s objective window (posture windows unchanged): applied label, **rule label (both arms)**, arrived, secs_to_arrive, upgraded, died, hp/armor/frags; `LifeClock` + `LifeSink` journal `{"kind":"life"}` for **every** arm in a hub fleet; `jev-probe journal` prints objective-by-applied, model/rule agreement, lives-by-arm. Tests: 1 brain, 1 life, 1 journal, 1 hub |
-| 8 | T8: Arena rounds (live) | `context/fixtures/jev/arena_74.yaml`, reports | pending | |
-| 9 | T9: Findings, docs, close | `jev_lab.md`, `BRAINS.md`, `brain_notes.md` | pending | |
+| 8 | T8: Arena rounds (live) | `context/fixtures/jev/arena_74*.yaml`, `arena/b*_report.txt`, core + jev fixes | done | B1–B11 + A/Bs X1–X3 (Rounds). Stop rule met: jev beats q3 on the parked lava map, replicated (B10/B11: K/D 0.36 v 0.18). 11 rounds instead of the planned ≤ 4 — deviation: rounds kept teaching (four mechanical bugs, then lava levers); the user asked to keep iterating until jev dominated |
+| 9 | T9: Findings, docs, close | `jev_lab.md`, `BRAINS.md`, `brain_notes.md`, `pitfalls.md` | done | `jev_lab.md` "Plan 74 arena" (A1–A6 + result); BRAINS.md §7 rewritten (jvr row, switches); brain_notes 2026-11-07; three pitfalls (weapon model, pickup models, arena noise). Close via `/hands-plan close 74` |
 
 ## Gates
 

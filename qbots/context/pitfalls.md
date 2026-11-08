@@ -1716,3 +1716,59 @@ pads with `ItemMemory`, and treat "held" as a lower bound on what the bot owns.
 ## Sources
 - qbots: crates/brain/src/{items.rs,weapons.rs,brains/core.rs}, crates/brain/tests/map_items_q2dm1.rs
 - qbots: context/plans/74_jev_pickup_objective_tracker.md (T1 Evidence)
+
+# An external client's weapon model must follow the view model, never its own requests
+
+## Problem
+
+`use <name>` for a weapon the bot does not own is a **silent server no-op**. q3's combat set
+`held_weapon = desired` the moment it requested a switch (Plan 38 baseline), so after one
+ignored `use Railgun` it aimed as if holding a hitscan railgun while firing the blaster, and —
+believing it already held the best gun — never asked for the rocket launcher it actually
+picked up. The parity golden even showed it requesting a railgun it already held. Every
+q3-based brain was affected; it surfaced only when Plan 74 measured "time to a strong weapon".
+
+## Fix
+
+Take the held weapon from the view model (`SelfState::held_weapon`) every tick; request switches
+through `weapons::Arsenal`, which marks a request not granted within 0.5 s as refused for 8 s
+and retries later (a pickup may have happened); reset on death. Kills more than doubled in an
+interleaved A/B (Plan 74 X1).
+
+## Sources
+- qbots: crates/brain/src/weapons.rs (`Arsenal`), crates/brain/src/brains/q3/mod.rs (`combat_drive`)
+
+# Classify pickups by the models the server really sends (Q2 health is `items/healing/*`)
+
+## Problem
+
+`classify_model` called a model health only if its path contained "health" — but every Q2
+health pickup is `models/items/healing/{stimpack,medium,large}` or `models/items/mega_h`, and
+powerups are `items/invulner`, `items/enviro`, `items/adrenal`, `items/band`, … — so no brain ever
+saw a live health item or most powerups. Nothing failed loudly; bots just never detoured for health.
+
+## Fix
+
+Match the real world-model paths (vendor `g_items.c:2171-2685`) and pin them in a test. When
+classifying wire data, test against the vendor's literal strings, not a guessed keyword.
+
+## Sources
+- qbots: crates/brain/src/perception.rs (`classify_model`)
+
+# Arena rounds are too noisy to judge a 25 % effect — interleave on/off segments
+
+## Problem
+
+Identical 3 × 10-min q2dm3 rounds gave 127, 112, 85 and 127 lava deaths (±30 %), and a server
+that rotates maps silently turns a comparison into a different measurement (Plan 74 B2 ran
+entirely on q2dm3 after B1 on q2dm1). Two "improvements" read off round-to-round deltas were
+noise in one direction or the other.
+
+## Fix
+
+Park the map (`timelimit 0`) for comparisons, log the map on every journal line, compare arms
+**within** a round, and settle keep/drop decisions with an interleaved A/B: an env switch
+(`QBOTS_NO_RIM_COST`, `QBOTS_NO_PATROL`) and alternating 5-min on/off segments in one session.
+
+## Sources
+- qbots: context/plans/74_jev_pickup_objective_tracker.md (Rounds X1–X3, B2, B6)
