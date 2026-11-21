@@ -3,7 +3,7 @@
 A **fork** of [daniel3303/ClaudeCodeStatusLine](https://github.com/daniel3303/ClaudeCodeStatusLine),
 customized to always show the working directory.
 
-- **Upstream pin:** commit `5da9695`
+- **Upstream pin:** commit `738c365` (v1.4.5)
 - **License:** MIT — Copyright (c) 2025 Daniel Oliveira. See [`LICENSE`](LICENSE), retained
   verbatim. All the heavy lifting (token accounting, rate-limit windows, version cache,
   color theme) is upstream's work; the local delta is ~13 lines.
@@ -11,7 +11,7 @@ customized to always show the working directory.
 Rendered:
 
 ```
-Opus 4.8 1M | ~/prog/slop/cache | cache@main | 42k/1m (4%) | effort: high | 5h 1% @23:10 | 7d 4% @Fri Jul 24, 04:00 | v2.1.214
+Opus 4.8 1M (high) | ~/prog/slop/cache | cache@main | 42k/1m (4%) | 5h 1% @23:10 | 7d 4% @Fri Jul 24, 04:00 | v2.1.214
 ```
 
 ## What was changed
